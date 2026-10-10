@@ -137,7 +137,11 @@ duplicates AS (
     ON D.novel_id = N._id
     WHERE N.favorite_at IS NOT NULL
     AND N._id != :id
-    AND (lower(N.title) LIKE '%' || lower(:title) || '%' OR D.novel_id IS NOT NULL)
+    -- A blank title would match every title
+    AND (
+        (trim(:title) != '' AND lower(N.title) LIKE '%' || lower(:title) || '%')
+        OR D.novel_id IS NOT NULL
+    )
 ),
 chapter_counts AS (
     SELECT

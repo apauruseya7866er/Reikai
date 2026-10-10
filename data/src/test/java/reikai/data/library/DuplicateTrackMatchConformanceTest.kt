@@ -14,7 +14,8 @@ import tachiyomi.data.manga.MangaRepositoryImpl
 
 /**
  * The add-to-library duplicate check also matches entries tracked to the same remote entry, for both
- * types. A tracker that never sets a remote id leaves it 0, which identifies nothing (mihonapp/mihon#4008).
+ * types. A tracker that never sets a remote id leaves it 0, which identifies nothing (mihonapp/mihon#4008),
+ * and a blank title names nothing either (mihonapp/mihon#3308).
  */
 class DuplicateTrackMatchConformanceTest {
 
@@ -49,6 +50,14 @@ class DuplicateTrackMatchConformanceTest {
         type.duplicatesOfFirst(database) shouldBe emptyList()
     }
 
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `a blank title matches no entry by title`(type: Type) = runTest {
+        type.seed(driver, remoteId = 0L)
+
+        type.duplicatesOfFirst(database, title = "") shouldBe emptyList()
+    }
+
     /** Two favourited entries with unrelated titles, each tracked on tracker 1 at [remoteId]. */
     enum class Type {
         MANGA {
@@ -64,8 +73,8 @@ class DuplicateTrackMatchConformanceTest {
                     "'t', 0, 0, 0, 0, '', 0, 0), (2, 1, $remoteId, 't', 0, 0, 0, 0, '', 0, 0)",
             )
 
-            override suspend fun duplicatesOfFirst(database: Database) =
-                MangaRepositoryImpl(database).getDuplicateLibraryManga(1L, "alpha").map { it.manga.id }
+            override suspend fun duplicatesOfFirst(database: Database, title: String) =
+                MangaRepositoryImpl(database).getDuplicateLibraryManga(1L, title).map { it.manga.id }
         },
         NOVEL {
             override fun statements(remoteId: Long) = listOf(
@@ -76,14 +85,14 @@ class DuplicateTrackMatchConformanceTest {
                     "(1, 1, $remoteId, 't', 0, 0, 0, 0, '', 0, 0), (2, 1, $remoteId, 't', 0, 0, 0, 0, '', 0, 0)",
             )
 
-            override suspend fun duplicatesOfFirst(database: Database) =
-                NovelRepositoryImpl(database).getDuplicateLibraryNovel(1L, "alpha").map { it.novel.id }
+            override suspend fun duplicatesOfFirst(database: Database, title: String) =
+                NovelRepositoryImpl(database).getDuplicateLibraryNovel(1L, title).map { it.novel.id }
         },
         ;
 
         abstract fun statements(remoteId: Long): List<String>
 
-        abstract suspend fun duplicatesOfFirst(database: Database): List<Long>
+        abstract suspend fun duplicatesOfFirst(database: Database, title: String = "alpha"): List<Long>
 
         suspend fun seed(driver: JdbcSqliteDriver, remoteId: Long) =
             statements(remoteId).forEach { driver.execute(null, it, 0).await() }

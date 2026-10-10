@@ -446,6 +446,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Peeking at a possible duplicate no longer throws away the add you were making.** Long-press opens it, and the same question is waiting when you come back.
 - **The duplicate warning when adding a novel now also catches a library novel tracked to the same tracker entry, shows the artist, flags a source that is no longer installed and offers a one-tap Migrate, as manga's already does.** Migrate moves progress, categories, cover and tracking to the new source.
 - **Adding a manga no longer flags an unrelated library manga as a duplicate because both are tracked on a tracker that gives no entry id (from Mihon).** Upstream: mihonapp/mihon#4008.
+- **Adding a manga or novel with a blank title no longer flags every series in your library as a possible duplicate (from Mihon).** Upstream: mihonapp/mihon#3308.
 - **Global search now searches the local source too, whichever languages you have turned on (from Mihon).** Upstream: mihonapp/mihon#3784.
 - **A local-source manga now lists its chapters when one of its archives can't be read, instead of failing to list any (from Mihon).** Upstream: mihonapp/mihon#3997.
 - **Light-novel sources and plugins now sit under their proper language heading, beside manga sources of that language, and show it as a short code in the migration source picker.**
