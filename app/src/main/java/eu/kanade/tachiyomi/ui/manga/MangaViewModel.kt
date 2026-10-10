@@ -2031,8 +2031,9 @@ class MangaViewModel(
                 // RK <--
             }
 
-            // RK: the header's count, which covers what the markers would and stays when the pref hides them
+            // RK: the header's count covers what the markers would, and the pref hides both
             val missingChapterCount by lazy {
+                if (hideMissingChapters) return@lazy 0
                 ChapterGap.total(
                     processedChapters,
                     { it.gapNeighbour },

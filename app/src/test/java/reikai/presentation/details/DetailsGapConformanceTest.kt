@@ -36,7 +36,7 @@ import tachiyomi.domain.manga.model.Manga
 /**
  * What a details list counts its missing-chapter markers against: every chapter of the series, so
  * neither a filter nor hiding a chapter makes a gap, revealed or not; and "Hide missing chapters" drops
- * only the list's markers, never the header's count. Pinned once over both types.
+ * the list's markers and the header's count alike. Pinned once over both types.
  */
 class DetailsGapConformanceTest {
 
@@ -93,8 +93,8 @@ class DetailsGapConformanceTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("probes")
-    fun `hiding missing chapters drops the list's marker and keeps the header's count`(probe: Probe) = runTest {
-        probe.elevenMissing(this, hideMarkers = true) shouldBe (emptyList<Int>() to 1)
+    fun `hiding missing chapters drops the list's marker and the header's count`(probe: Probe) = runTest {
+        probe.elevenMissing(this, hideMarkers = true) shouldBe (emptyList<Int>() to 0)
     }
 
     companion object {

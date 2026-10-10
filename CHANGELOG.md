@@ -215,6 +215,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **A manga or novel's page now shows the outline of what it is loading instead of a spinner.**
 - **The cover viewer now offers Edit only for series in your library or on local storage, where a custom cover is kept.**
 - **Sorting a chapter list "By source" now really follows that source's own listing, on manga and novels.** Pick "By chapter number" for the old order.
+- **Settings -> Library -> Hide missing chapter indicators now also hides the missing-chapter count above a manga or novel's chapter list (from Mihon).** Upstream: mihonapp/mihon#4039.
 
 #### Fixed
 
