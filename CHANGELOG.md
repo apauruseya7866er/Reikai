@@ -223,6 +223,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Missing chapter warnings no longer count a chapter the series lists elsewhere, or one you hid or filtered out, in the chapter list or between chapters in the reader, on manga and novels.** The header counts each missing number once.
 - **A series whose site shows a placeholder until its cover loads now keeps its real cover.** A series already stuck on the placeholder takes its cover back from its source's listing.
 - **Refreshing a manga no longer blanks its author, artist, description or status when its source sends none.**
+- **Refreshing a manga no longer clears the chapters you selected when its new chapters download on their own, as novels already did (from Mihon).** Upstream: mihon a82d27c3a.
 - **Removing a novel from the library on its page now offers to delete its downloaded chapters, and removing a novel from anywhere now clears its saved cover, a custom one included, as manga does.**
 - **Turning incognito off now closes a novel's page opened from a source, as it already did a manga's.**
 - **When two manga chapters share a number, upload date or name, Resume, Continue reading and Download next now pick the one the reader opens next.**

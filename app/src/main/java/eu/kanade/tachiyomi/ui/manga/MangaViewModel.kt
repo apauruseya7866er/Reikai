@@ -1352,6 +1352,7 @@ class MangaViewModel(
                 downloadManager.startDownloadNow(chapterId)
             } else {
                 downloadChapters(copies) // RK
+                toggleAllSelection(false)
             }
 
             // RK: the prompt and its once-per-screen rule are written once with novels
@@ -1462,7 +1463,6 @@ class MangaViewModel(
             downloadManager.downloadChapters(ownerOf(mangaId, state), group)
         }
         // RK <--
-        toggleAllSelection(false)
     }
 
     // RK --> chapter owner lookup for merged groups
