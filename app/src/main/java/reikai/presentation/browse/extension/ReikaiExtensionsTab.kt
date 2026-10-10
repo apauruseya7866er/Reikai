@@ -12,9 +12,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,7 +32,6 @@ import dev.zacsweers.metrox.viewmodel.metroViewModel
 import eu.kanade.presentation.browse.ExtensionInstallErrorDialog
 import eu.kanade.presentation.browse.ExtensionItem
 import eu.kanade.presentation.browse.ExtensionNotLoadedDialog
-import eu.kanade.presentation.browse.ExtensionSplitButton
 import eu.kanade.presentation.browse.ExtensionTrustDialog
 import eu.kanade.presentation.browse.ExtensionUninstallConfirmation
 import eu.kanade.presentation.browse.NotLoadedDialog
@@ -56,6 +52,7 @@ import eu.kanade.tachiyomi.util.system.launchRequestPackageInstallsPermission
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.rounded.Download
 import mihon.icons.materialsymbols.rounded.Info
+import mihon.icons.materialsymbols.rounded.Public
 import mihon.icons.materialsymbols.rounded.Refresh
 import mihon.icons.materialsymbols.rounded.Settings
 import reikai.domain.library.ContentType
@@ -68,9 +65,13 @@ import reikai.novel.source.NovelSource
 import reikai.presentation.browse.ReikaiBrowseViewModel
 import reikai.presentation.browse.browseLanguageLabel
 import reikai.presentation.browse.components.BrowseSectionHeader
+import reikai.presentation.browse.components.ExtensionAction
+import reikai.presentation.browse.components.ExtensionActionButtons
 import reikai.presentation.browse.components.ExtensionRowDetail
 import reikai.presentation.browse.components.NovelSourceIcon
 import reikai.presentation.browse.components.SourceNameRow
+import reikai.presentation.browse.components.failedInstall
+import reikai.presentation.browse.components.retryInstall
 import reikai.presentation.browse.extension.details.NovelPluginDetailsScreen
 import reikai.presentation.browse.repos.RepositoriesScreen
 import reikai.presentation.browse.sourceLanguageName
@@ -510,7 +511,9 @@ private fun NovelExtensionRow(
             // Keyed as the install writes it, so a reinstall from the dialog shows its progress and error here.
             val key = canonicalizePluginUrl(payload.url)
             val installing = key in state.inProgress
-            val details = stringResource(MR.strings.ext_not_loaded_details) to { onNotLoaded(payload) }
+            val details = ExtensionAction(MaterialSymbols.Rounded.Info, MR.strings.ext_not_loaded_details) {
+                onNotLoaded(payload)
+            }
             PluginRow(
                 modifier = modifier,
                 name = payload.name,
@@ -524,16 +527,10 @@ private fun NovelExtensionRow(
                 action = {
                     NovelRowAction(inProgress = installing) {
                         val error = state.errors[key]
-                        if (error != null) {
-                            PluginRetryButton(error, onInstallError, listOf(details)) { model.reinstall(payload) }
-                        } else {
-                            IconButton(onClick = details.second) {
-                                Icon(
-                                    imageVector = MaterialSymbols.Rounded.Info,
-                                    contentDescription = details.first,
-                                )
-                            }
-                        }
+                        ExtensionActionButtons(
+                            secondary = error?.let { failedInstall(it, onInstallError) } ?: details,
+                            primary = error?.let { retryInstall { model.reinstall(payload) } },
+                        )
                     }
                 },
             )
@@ -549,9 +546,11 @@ private fun NovelExtensionRow(
                 it in state.inProgress
             }
             val open = if (failure != null) {
-                stringResource(MR.strings.ext_not_loaded_details) to { onNotLoaded(failure) }
+                ExtensionAction(MaterialSymbols.Rounded.Info, MR.strings.ext_not_loaded_details) {
+                    onNotLoaded(failure)
+                }
             } else {
-                stringResource(MR.strings.action_settings) to {
+                ExtensionAction(MaterialSymbols.Rounded.Settings, MR.strings.action_settings) {
                     navigator.push(NovelPluginDetailsScreen(update.entry.id))
                 }
             }
@@ -562,7 +561,7 @@ private fun NovelExtensionRow(
                 iconUrl = update.entry.iconUrl,
                 version = versionLabel(update.installedVersion, row.updateVersion),
                 repoName = state.repoNames[key],
-                onClickItem = { if (!installing) open.second() },
+                onClickItem = { if (!installing) open.onClick() },
                 onLongClickItem = {
                     when {
                         installing -> Unit
@@ -574,16 +573,16 @@ private fun NovelExtensionRow(
                 action = {
                     NovelRowAction(inProgress = installing) {
                         val error = state.errors[key]
-                        if (error != null) {
-                            PluginRetryButton(error, onInstallError, listOf(open)) { model.update(update) }
-                        } else {
-                            ExtensionSplitButton(
-                                icon = MaterialSymbols.Rounded.Download,
-                                contentDescription = stringResource(MR.strings.ext_update),
-                                onClick = { model.update(update) },
-                                menuItems = listOf(open),
-                            )
-                        }
+                        ExtensionActionButtons(
+                            secondary = error?.let { failedInstall(it, onInstallError) } ?: open,
+                            primary = if (error != null) {
+                                retryInstall { model.update(update) }
+                            } else {
+                                ExtensionAction(MaterialSymbols.Rounded.Download, MR.strings.ext_update) {
+                                    model.update(update)
+                                }
+                            },
+                        )
                     }
                 },
             )
@@ -600,18 +599,20 @@ private fun NovelExtensionRow(
             onLongClickItem = { onConfirmUninstall(payload) },
             badge = badge,
             action = {
-                FilledTonalIconButton(onClick = { navigator.push(NovelPluginDetailsScreen(payload.id)) }) {
-                    Icon(
-                        imageVector = MaterialSymbols.Rounded.Settings,
-                        contentDescription = stringResource(MR.strings.action_settings),
-                    )
-                }
+                ExtensionActionButtons(
+                    secondary = ExtensionAction(MaterialSymbols.Rounded.Settings, MR.strings.action_settings) {
+                        navigator.push(NovelPluginDetailsScreen(payload.id))
+                    },
+                    primary = null,
+                )
             },
         )
         is LnRegistryEntry -> {
             val key = canonicalizePluginUrl(payload.url)
             val webView = payload.site.takeIf { it.isNotEmpty() }?.let {
-                stringResource(MR.strings.action_open_in_web_view) to { navigator.push(webViewFor(payload)) }
+                ExtensionAction(MaterialSymbols.Rounded.Public, MR.strings.action_open_in_web_view) {
+                    navigator.push(webViewFor(payload))
+                }
             }
             PluginRow(
                 modifier = modifier,
@@ -629,38 +630,21 @@ private fun NovelExtensionRow(
                     // install runs, as they do on the apk side.
                     NovelRowAction(inProgress = key in state.inProgress) {
                         val error = state.errors[key]
-                        if (error != null) {
-                            PluginRetryButton(error, onInstallError, listOfNotNull(webView)) { model.install(payload) }
-                        } else {
-                            ExtensionSplitButton(
-                                icon = MaterialSymbols.Rounded.Download,
-                                contentDescription = stringResource(MR.strings.ext_install),
-                                onClick = { model.install(payload) },
-                                menuItems = listOfNotNull(webView),
-                            )
-                        }
+                        ExtensionActionButtons(
+                            secondary = error?.let { failedInstall(it, onInstallError) } ?: webView,
+                            primary = if (error != null) {
+                                retryInstall { model.install(payload) }
+                            } else {
+                                ExtensionAction(MaterialSymbols.Rounded.Download, MR.strings.ext_install) {
+                                    model.install(payload)
+                                }
+                            },
+                        )
                     }
                 },
             )
         }
     }
-}
-
-/** A failed install's Retry, with why it failed ahead of the row's other actions, as an apk row has it. */
-@Composable
-private fun PluginRetryButton(
-    error: InstallStep.Error,
-    onInstallError: (InstallStep.Error) -> Unit,
-    otherActions: List<Pair<String, () -> Unit>>,
-    onRetry: () -> Unit,
-) {
-    ExtensionSplitButton(
-        icon = MaterialSymbols.Rounded.Refresh,
-        contentDescription = stringResource(MR.strings.action_retry),
-        onClick = onRetry,
-        menuItems = listOf(stringResource(MR.strings.ext_install_error_details) to { onInstallError(error) }) +
-            otherActions,
-    )
 }
 
 /**
