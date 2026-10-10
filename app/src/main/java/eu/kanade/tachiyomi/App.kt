@@ -16,7 +16,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
-import androidx.lifecycle.lifecycleScope
 import androidx.work.Configuration
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
@@ -54,6 +53,7 @@ import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
 import exh.md.MangaDexTrackCoverFactory
 import exh.md.MangaDexTrackCoverKeyer
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -62,6 +62,7 @@ import logcat.LogPriority
 import logcat.LogcatLogger
 import mihon.app.di.AppGraph
 import mihon.app.di.injekt.MetroInjektRegistrar
+import mihon.core.metro.AppCoroutineScope
 import mihon.core.metro.GraphProvider
 import mihon.core.migration.Migrator
 import mihon.telemetry.TelemetryConfig
@@ -109,6 +110,9 @@ class App :
     @Inject private lateinit var unifiedUpdatesWidgetManager: UnifiedUpdatesWidgetManager // RK
 
     @Inject private lateinit var basePreferences: BasePreferences
+
+    @Inject @AppCoroutineScope
+    private lateinit var scope: CoroutineScope
 
     private val disableIncognitoReceiver = DisableIncognitoReceiver()
 
@@ -206,8 +210,6 @@ class App :
         graph.mangaCoverMetadata.load()
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)
-
-        val scope = ProcessLifecycleOwner.get().lifecycleScope
 
         // Show notification to disable Incognito Mode when it's enabled
         basePreferences.incognitoMode.changes()

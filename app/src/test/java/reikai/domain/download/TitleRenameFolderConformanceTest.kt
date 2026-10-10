@@ -27,6 +27,7 @@ import reikai.domain.source.ReikaiSourcePreferences
 import reikai.novel.download.FakeSharedPreferences
 import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.NovelDownloadProvider
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -103,6 +104,7 @@ class MangaTitleRenameHalf : TitleRenameHalf {
         val manga = Manga.create().copy(id = 1L, source = 1L, title = "Old")
         val sourceFolder = downloads.findFile("src")!!
         val manager = DownloadManager(
+            scope = testAppScope(),
             context = mockk(relaxed = true),
             provider = mockk {
                 every { findMangaDir("Old", any()) } answers { sourceFolder.findFile("Old") }
@@ -130,11 +132,13 @@ class NovelTitleRenameHalf : TitleRenameHalf {
         val novel = Novel.create().copy(id = 1L, source = "src", url = "/n", title = "Old")
         val libraryPreferences = LibraryPreferences(InMemoryPreferenceStore())
         val manager = NovelDownloadManager(
+            scope = testAppScope(),
             context = mockk(relaxed = true) {
                 every { getSharedPreferences(any(), any()) } returns FakeSharedPreferences()
                 every { getSystemService(NotificationManager::class.java) } returns mockk(relaxed = true)
             },
             provider = NovelDownloadProvider(
+                scope = testAppScope(),
                 storageManager = mockk<StorageManager> {
                     every { getNovelDownloadsDirectory() } returns downloads
                     every { changes } returns MutableSharedFlow()

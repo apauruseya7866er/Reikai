@@ -6,10 +6,9 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.presentation.track.trackerErrorMessage
 import reikai.util.runCatchingCancellable
 import tachiyomi.core.common.util.lang.withUIContext
@@ -22,11 +21,12 @@ import tachiyomi.core.common.util.system.logcat
  * screen closed mid-request would otherwise cancel the local half after the remote one landed. Upstream
  * drops the tracker binding either way; see docs/dev/subsystems/tracking.md and adult-sources.md.
  */
+@Inject
 @SingleIn(AppScope::class)
-class RemoteFirstRemoval internal constructor(private val context: Context, private val scope: CoroutineScope) {
-
-    @Inject
-    constructor(context: Context) : this(context, CoroutineScope(SupervisorJob() + Dispatchers.IO))
+class RemoteFirstRemoval(
+    private val context: Context,
+    @AppCoroutineScope private val scope: CoroutineScope,
+) {
 
     /** [name] is who the remote call went to, for the failure toast. */
     fun launch(name: String, alsoRemote: Boolean, remote: suspend () -> Unit, local: suspend () -> Unit) {

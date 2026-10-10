@@ -18,6 +18,7 @@ import reikai.domain.novel.LnSourceIdentity
 import reikai.domain.novel.NovelPreferences
 import reikai.novel.install.LnPluginInstaller
 import reikai.novel.source.ireader.IReaderSourceHolder
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.source.model.SourceNotInstalledException
 import ireader.core.source.CatalogSource as IReaderCatalogSource
@@ -30,6 +31,7 @@ class NovelSourceManagerTest {
         every { get() } returns emptyMap()
     }
     private val manager = NovelSourceManager(
+        scope = testAppScope(),
         installer = { mockk<LnPluginInstaller>(relaxed = true) },
         extensionManager = mockk<ExtensionManager> { every { loadedNovelExtensionsFlow } returns loaded },
         prefs = mockk<NovelPreferences> { every { seenNovelSources() } returns seen },
@@ -37,6 +39,7 @@ class NovelSourceManagerTest {
 
     // Fails any call that would load the plugins.
     private val withoutPlugins = NovelSourceManager(
+        scope = testAppScope(),
         installer = { error("loaded the plugins") },
         extensionManager = mockk<ExtensionManager> { every { loadedNovelExtensionsFlow } returns flowOf(emptyList()) },
         prefs = mockk<NovelPreferences> { every { seenNovelSources() } returns seen },

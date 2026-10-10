@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import kotlinx.coroutines.CoroutineScope
 import mihon.core.archive.archiveReader
 import mihon.core.archive.epubReader
 import reikai.presentation.reader.ReaderResume
@@ -28,6 +29,7 @@ class ChapterLoader(
     private val downloadManager: DownloadManager,
     private val downloadProvider: DownloadProvider,
     private val chapterCache: ChapterCache,
+    private val appScope: CoroutineScope,
     // RK: resume position even on already-read chapters when enabled
     private val readerPreferences: ReaderPreferences,
     private val manga: Manga,
@@ -108,7 +110,7 @@ class ChapterLoader(
                 }
             }
             // RK: readerPreferences for the user-set preload count
-            source is HttpSource -> HttpPageLoader(chapter, source, chapterCache, readerPreferences)
+            source is HttpSource -> HttpPageLoader(chapter, source, chapterCache, appScope, readerPreferences)
             source is StubSource -> error(context.stringResource(MR.strings.source_not_installed, source.toString()))
             else -> error(context.stringResource(MR.strings.loader_not_implemented_error))
         }

@@ -41,6 +41,7 @@ import reikai.domain.novel.model.CustomNovelInfo
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.repository.CustomNovelInfoRepository
 import reikai.novel.source.NovelSourceManager
+import reikai.util.testAppScope
 import tachiyomi.domain.manga.interactor.SetCustomMangaInfo
 import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.model.Manga
@@ -186,6 +187,7 @@ class BackupCustomInfoConformanceTest {
                     novelHistoryRepository = mockk(),
                     // Its installer fails the backup if anything loads the plugins.
                     novelSourceManager = NovelSourceManager(
+                        scope = testAppScope(),
                         installer = { error("loaded the plugins") },
                         extensionManager = mockk { every { loadedNovelExtensionsFlow } returns flowOf(emptyList()) },
                         prefs = mockk {

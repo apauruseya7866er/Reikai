@@ -24,6 +24,7 @@ import reikai.domain.novel.NovelPreferences
 import reikai.novel.source.NovelSourceManager
 import reikai.novel.source.ireader.IReaderSourceHolder
 import reikai.novel.source.novelApp
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
 import ireader.core.source.HttpSource as IReaderHttpSource
@@ -188,6 +189,7 @@ class NovelImageRequestsTest {
             network = mockk<NetworkHelper> { every { client } returns OkHttpClient() },
             novelPreferences = preferences,
             sourceManager = NovelSourceManager(
+                scope = testAppScope(),
                 installer = { error("loaded the plugins") },
                 extensionManager = mockk<ExtensionManager> {
                     every { loadedNovelExtensionsFlow } returns

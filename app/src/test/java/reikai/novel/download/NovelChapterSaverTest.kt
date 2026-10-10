@@ -20,6 +20,7 @@ import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.novel.source.NovelSource
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.storage.service.StorageManager
 import java.io.File
@@ -49,6 +50,7 @@ class NovelChapterSaverTest {
 
     private val provider by lazy {
         NovelDownloadProvider(
+            scope = testAppScope(),
             storageManager = mockk<StorageManager> {
                 every { getNovelDownloadsDirectory() } returns UniFile.fromFile(root)
                 every { changes } returns MutableSharedFlow()

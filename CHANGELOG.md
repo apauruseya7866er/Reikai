@@ -198,6 +198,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Deleting a manga chapter's download from Updates or History now works after its extension is uninstalled.**
 - **With Group by series on, an Updates group you expanded now stays open when the screen rotates.**
 - **A new-chapter notification for an adult series that gained a newer version now opens that chapter, and its Mark as read and Download actions work.**
+- **Mark as read and Download on a manga or novel new-chapter notification now finish even if Android closes the app right after the tap (partly from Mihon).** Upstream: mihon f921ec07a.
 - **A manga chapter that just finished downloading no longer shows as still downloading in Updates (from Mihon).** Upstream: mihon 1e471a414.
 - **A series with one new chapter in the Updates Group by series view now reads "1 new chapter".**
 
@@ -682,6 +683,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **With Hide adult content in notifications on, manga update notifications no longer come out blank for ordinary series from a source that carries extra metadata.**
 - **Statistics' Downloaded figure now includes novel chapters.**
 - **Showing the crash screen no longer runs the app's startup work, such as your data migrations, a second time.**
+- **A failure in background work that outlives its screen, such as saving the download index or installing an extension, no longer crashes the app (from Mihon).** It is logged and reported instead. Upstream: mihon f9c5fa901.
 - **With Verbose logging on, logs and crash dumps no longer include your Hikka sign-in token.**
 - **A long series title no longer pushes the chapter numbers out of its update notification.**
 - **The Reikai icon on a notification is now the same size as the other notification icons.**
@@ -716,6 +718,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - Synced from Mihon: refreshed translations (mihonapp/mihon#3563, mihonapp/mihon#3677, mihonapp/mihon#3701, mihonapp/mihon#3938, mihonapp/mihon#3950, mihonapp/mihon#3972, mihonapp/mihon#3987), and dependency and toolchain updates up to Android SDK 37.2.
 - Synced from Mihon: settings sliders redraw only their own row while dragged instead of the whole settings screen (mihonapp/mihon#3958), and background jobs are renamed to workers, with work queued before an upgrade still running.
 - Synced from Mihon: global search no longer leaves threads behind each time it is opened (mihonapp/mihon#4036).
+- Under the hood, synced from Mihon: background work that outlives a screen runs on one app-wide coroutine scope, manga and novels alike (mihon f921ec07a).
 - Under the hood, synced from Mihon: screens hold state in AndroidX ViewModels (mihonapp/mihon#3594, mihonapp/mihon#3763), and components are wired together at build time, closing a class of release-only crash (mihonapp/mihon#3608, mihonapp/mihon#3965).
 - Under the hood, synced from Mihon: extensions load via the platform class loader (mihonapp/mihon#3874, with its fix for Android before 17 from mihon 6d4ed6cb2), cancelling an extension install no longer goes through a local broadcast (mihonapp/mihon#3226), and dates use kotlinx-datetime (mihonapp/mihon#3001).
 - Under the hood, synced from Mihon: category edits write only their column (mihonapp/mihon#3693), the database waits briefly when busy, it uses WAL on every device with one reader instead of four on low-memory ones (mihon 61cd786e7), and tracker internals were tidied up (mihonapp/mihon#3900, mihonapp/mihon#3908).

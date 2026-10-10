@@ -37,6 +37,7 @@ import reikai.domain.source.ReikaiSourcePreferences
 import reikai.novel.download.FakeSharedPreferences
 import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.NovelDownloadWorker
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
@@ -121,6 +122,7 @@ class MangaEmptiedQueueHalf : EmptiedQueueHalf {
             every { stop(null) } answers { stopped.complete(Unit) }
         }
         val manager = DownloadManager(
+            scope = testAppScope(),
             context = mockk(relaxed = true),
             provider = mockk(relaxed = true) {
                 every { findMangaDir(any(), any()) } returns mockk(relaxed = true) {
@@ -194,6 +196,7 @@ class NovelEmptiedQueueHalf : EmptiedQueueHalf {
             every { any<Context>().activeNetworkState() } returns NetworkState(online, online, false)
             every { Dispatchers.IO } returns StandardTestDispatcher(test.testScheduler)
             val manager = NovelDownloadManager(
+                scope = testAppScope(),
                 context = context,
                 provider = mockk(relaxed = true) {
                     every { findNovelDir(novel) } returns mockk(relaxed = true) {

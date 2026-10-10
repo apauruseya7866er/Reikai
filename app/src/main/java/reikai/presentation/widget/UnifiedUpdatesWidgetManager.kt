@@ -4,11 +4,11 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import androidx.glance.appwidget.updateAll
-import androidx.lifecycle.LifecycleCoroutineScope
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -47,7 +47,7 @@ class UnifiedUpdatesWidgetManager(
     }
 
     context(context: Context)
-    fun init(scope: LifecycleCoroutineScope) {
+    fun init(scope: CoroutineScope) {
         val receiver = ComponentName(context, UnifiedUpdatesGlanceReceiver::class.java)
         // Null where the device has no widget host at all.
         placed.value = AppWidgetManager.getInstance(context)?.getAppWidgetIds(receiver)?.isNotEmpty() == true

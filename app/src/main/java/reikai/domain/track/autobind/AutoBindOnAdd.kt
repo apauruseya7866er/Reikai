@@ -7,10 +7,9 @@ import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.tachiyomi.source.Source
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.novel.model.Novel
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
@@ -23,19 +22,19 @@ import tachiyomi.domain.manga.model.Manga
 @Inject
 @SingleIn(AppScope::class)
 class AutoBindOnAdd(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val addTracks: AddTracks,
     private val bindNovelTrackers: BindNovelTrackers,
 ) {
 
-    private val scope = CoroutineScope(
-        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> logcat(LogPriority.WARN, e) },
-    )
+    // A match that fails (offline, a site down) is expected, so it is logged and never crashes a debug build.
+    private val logFailure = CoroutineExceptionHandler { _, e -> logcat(LogPriority.WARN, e) }
 
     fun manga(manga: Manga, source: Source) {
-        scope.launch { addTracks.bindEnhancedTrackers(manga, source) }
+        scope.launch(logFailure) { addTracks.bindEnhancedTrackers(manga, source) }
     }
 
     fun novel(novel: Novel) {
-        scope.launch { bindNovelTrackers.await(novel) }
+        scope.launch(logFailure) { bindNovelTrackers.await(novel) }
     }
 }

@@ -13,6 +13,7 @@ import reikai.domain.novel.NovelTrackRepository
 import reikai.domain.novel.interactor.GetNovelTracks
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.model.NovelTrack
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
 
@@ -32,6 +33,7 @@ class PushNovelUnreadTest {
 
     // Novels 1 and 2 are one merge group; only novel 1 carries the track.
     private fun push(sharing: Boolean) = PushNovelUnread(
+        scope = testAppScope(),
         getNovelTracks = GetNovelTracks(
             repository = mockk<NovelTrackRepository> {
                 coEvery { getTracksByNovelId(1L) } returns listOf(track)

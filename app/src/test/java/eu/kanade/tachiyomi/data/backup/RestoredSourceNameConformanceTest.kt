@@ -17,6 +17,7 @@ import reikai.domain.novel.LnSourceIdentity
 import reikai.domain.novel.NovelPreferences
 import reikai.novel.source.NovelSourceManager
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.repository.StubSourceRepository
 import tachiyomi.domain.source.service.SourceManager
@@ -92,6 +93,7 @@ class RestoredSourceNameConformanceTest {
     }
 
     private fun novelSourceManager(prefs: NovelPreferences) = NovelSourceManager(
+        scope = testAppScope(),
         installer = { error("loaded the plugins") },
         extensionManager = mockk<ExtensionManager> { every { loadedNovelExtensionsFlow } returns flowOf(emptyList()) },
         prefs = prefs,

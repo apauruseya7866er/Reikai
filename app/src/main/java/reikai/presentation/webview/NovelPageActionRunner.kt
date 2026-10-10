@@ -7,9 +7,8 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import mihon.core.metro.AppCoroutineScope
 import reikai.novel.source.NovelPageFetcher
 import reikai.novel.source.NovelPageFetcher.ChapterFromPage
 import tachiyomi.core.common.i18n.pluralStringResource
@@ -24,11 +23,10 @@ import tachiyomi.i18n.MR
 @Inject
 @SingleIn(AppScope::class)
 class NovelPageActionRunner(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val fetcher: NovelPageFetcher,
 ) {
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     fun useForDetails(novelId: Long, url: String, html: String) = run {
         if (fetcher.useForDetails(novelId, url, html)) string(MR.strings.novel_page_details_updated) else unreadable()

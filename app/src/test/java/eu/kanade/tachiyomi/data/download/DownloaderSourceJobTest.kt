@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
@@ -113,6 +114,7 @@ class DownloaderSourceJobTest {
         mockkStatic(Dispatchers::class)
         every { Dispatchers.IO } returns StandardTestDispatcher(testScheduler)
         return Downloader(
+            scope = testAppScope(),
             context = context,
             provider = DownloadProvider(
                 context,

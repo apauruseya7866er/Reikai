@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
+import reikai.util.testAppScope
 import java.io.File
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -67,6 +68,7 @@ class NovelDownloadCacheRenewTest {
     @Test
     fun `a chapter written while the index scans stays downloaded`() = runTest {
         cache = NovelDownloadCache(
+            scope = testAppScope(),
             context = mockk(relaxed = true) { every { cacheDir } returns this@NovelDownloadCacheRenewTest.cacheDir },
             storageManager = mockk {
                 every { changes } returns MutableSharedFlow()

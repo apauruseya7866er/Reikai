@@ -36,6 +36,7 @@ import reikai.domain.novel.model.NovelChapter
 import reikai.domain.source.ReikaiSourcePreferences
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
 
@@ -99,6 +100,7 @@ class NovelDownloadManagerDrainTest {
         mockkStatic(Dispatchers::class)
         every { Dispatchers.IO } returns io
         manager = NovelDownloadManager(
+            scope = testAppScope(),
             context = context,
             provider = mockk { every { availableSpace() } returns -1L },
             cache = mockk { every { downloadedChapterIds(novel, any()) } returns emptySet() },

@@ -7,6 +7,8 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import kotlinx.coroutines.CoroutineScope
+import mihon.core.metro.AppCoroutineScope
 import okio.BufferedSource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.manga.model.MangaCover
@@ -21,6 +23,7 @@ import java.io.File
 @Inject
 @SingleIn(AppScope::class)
 class MangaCoverMetadata(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val uiPreferences: UiPreferences,
     private val coverCache: CoverCache,
 ) {
@@ -49,7 +52,7 @@ class MangaCoverMetadata(
     /** Extract the vibrant color in the background, skipping work when the feature is off or already known. */
     fun setVibrantColorAsync(mangaCover: MangaCover, bufferedSource: BufferedSource? = null, ogFile: File? = null) {
         if (!uiPreferences.themeCoverBased.get() || mangaCover.vibrantCoverColor != null) return
-        launchIO { setVibrantColor(mangaCover, bufferedSource, ogFile) }
+        scope.launchIO { setVibrantColor(mangaCover, bufferedSource, ogFile) }
     }
 
     fun setVibrantColor(mangaCover: MangaCover, bufferedSource: BufferedSource? = null, ogFile: File? = null) {

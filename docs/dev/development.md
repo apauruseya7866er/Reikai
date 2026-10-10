@@ -40,7 +40,7 @@ Multi-module Gradle project; convention plugins live in `gradle/build-logic` (`i
 | `app/` | Android application (Compose + Voyager UI, AndroidX ViewModels) |
 | `core/common` | Shared utilities (coroutine + preference helpers) |
 | `core/archive` | Archive handling |
-| `core/metro` | Metro DI helpers: graph lookup (`metroGraph`) and the `IsDebugBuild` qualifier; ViewModel wiring comes from the `metrox-viewmodel` library |
+| `core/metro` | Metro DI helpers: graph lookup (`metroGraph`) and the `IsDebugBuild` and `AppCoroutineScope` qualifiers; ViewModel wiring comes from the `metrox-viewmodel` library |
 | `core-metadata` | Local-source metadata models (`ComicInfo.xml`, the legacy JSON details file) |
 | `data/` | SQLDelight database + repository implementations |
 | `domain/` | Business logic + interactors (immutable `tachiyomi.domain.*` models; has unit tests) |

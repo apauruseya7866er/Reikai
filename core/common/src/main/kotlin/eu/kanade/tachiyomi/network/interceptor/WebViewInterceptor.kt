@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
 import eu.kanade.tachiyomi.util.system.setUserAgent
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CoroutineScope
 import okhttp3.Headers
 import okhttp3.HttpUrl // RK
 import okhttp3.Interceptor
@@ -26,6 +27,7 @@ import kotlin.concurrent.withLock // RK
 
 abstract class WebViewInterceptor(
     private val context: Context,
+    private val scope: CoroutineScope,
     private val defaultUserAgentProvider: () -> String,
 ) : Interceptor {
 
@@ -101,7 +103,7 @@ abstract class WebViewInterceptor(
             }
 
             if (!WebViewUtil.supportsWebView(context)) {
-                launchUI {
+                scope.launchUI {
                     context.toast(MR.strings.information_webview_required, Toast.LENGTH_LONG)
                 }
                 return@withLock response

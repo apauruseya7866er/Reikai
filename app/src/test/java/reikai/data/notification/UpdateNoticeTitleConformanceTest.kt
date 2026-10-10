@@ -34,6 +34,7 @@ import reikai.domain.entry.GetEntryCustomInfo
 import reikai.domain.novel.model.CustomNovelInfo
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
+import reikai.util.testAppScope
 import tachiyomi.core.common.i18n.pluralStringResource
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
@@ -133,6 +134,7 @@ class MangaUpdateNoticeHalf : UpdateNoticeHalf() {
     private var bigText: CharSequence? = null
 
     private val notifier = LibraryUpdateNotifier(
+        scope = testAppScope(),
         context = context,
         securityPreferences = security,
         sourceManager = mockk(),

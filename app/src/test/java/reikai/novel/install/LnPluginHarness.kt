@@ -11,6 +11,7 @@ import reikai.novel.host.LnPluginInfo
 import reikai.novel.host.LnPluginLoader
 import reikai.novel.source.NovelSourceManager
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 
 /**
  * A real installer and source manager over a mocked plugin host and script store, with every script
@@ -32,6 +33,7 @@ class LnPluginHarness(installedUrls: Set<String>) {
         private set
 
     val manager: NovelSourceManager = NovelSourceManager(
+        testAppScope(),
         { installer },
         mockk<ExtensionManager> { every { loadedNovelExtensionsFlow } returns flowOf(emptyList()) },
         prefs,

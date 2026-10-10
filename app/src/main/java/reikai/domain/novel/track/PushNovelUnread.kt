@@ -6,10 +6,9 @@ import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.novel.interactor.GetNovelTracks
 import reikai.domain.novel.interactor.UpsertNovelTrack
 import reikai.domain.novel.model.NovelChapter
@@ -24,19 +23,19 @@ import tachiyomi.core.common.util.system.logcat
 @Inject
 @SingleIn(AppScope::class)
 class PushNovelUnread(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val getNovelTracks: GetNovelTracks,
     private val trackerManager: TrackerManager,
     private val upsertNovelTrack: UpsertNovelTrack,
 ) {
 
-    private val scope = CoroutineScope(
-        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> logcat(LogPriority.WARN, e) },
-    )
+    // A site write that fails is expected, so it is logged and never crashes a debug build.
+    private val logFailure = CoroutineExceptionHandler { _, e -> logcat(LogPriority.WARN, e) }
 
     /** One call per track, however many merged sources the unread spans. */
     fun launch(unread: List<NovelChapter>) {
         if (unread.isEmpty()) return
-        scope.launch {
+        scope.launch(logFailure) {
             tracksFor(unread).forEach { (track, reached) ->
                 val tracker = trackerManager.get(track.trackerId)
                 if (tracker !is UnreadPushTracker || !tracker.isLoggedIn) return@forEach

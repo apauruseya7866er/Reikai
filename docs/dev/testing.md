@@ -59,6 +59,9 @@ There is no shared test-fixtures module, so these live beside the tests that use
   `@RegisterExtension val main = MainDispatcherExtension()` and pass each ViewModel to `track(model)`:
   Main is reset only after every tracked model's `viewModelScope` has been cancelled and joined, so a
   coroutine parked off Main by `flowOn` cannot resume into the next test.
+- **`testAppScope()`** (`app/src/test/java/reikai/util/`): the scope to pass where a test builds an
+  app singleton that takes `@AppCoroutineScope`. It is the graph's scope without the release builds'
+  exception handler, so an uncaught failure still reaches the test runner.
 - **In-memory SQLite:** `JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)`, then
   `Database.Schema.create(driver).await()`, then `DatabaseBindings.providesDatabase(driver)`, which is
   production's database with its column adapters. Close the driver in `@AfterEach`.

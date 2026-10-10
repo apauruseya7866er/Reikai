@@ -39,6 +39,7 @@ import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.NovelDownloadWorker
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
 import java.io.IOException
@@ -220,6 +221,7 @@ class NovelNetworkWaitHalf : NetworkWaitHalf {
         val downloadPreferences = DownloadPreferences(InMemoryPreferenceStore())
         downloadPreferences.downloadOnlyOverWifi.set(wifiOnly)
         val manager = NovelDownloadManager(
+            scope = testAppScope(),
             context = mockk<Context>(relaxed = true) {
                 every { getSharedPreferences(any(), any()) } returns FakeSharedPreferences()
                 every { getSystemService(NotificationManager::class.java) } returns

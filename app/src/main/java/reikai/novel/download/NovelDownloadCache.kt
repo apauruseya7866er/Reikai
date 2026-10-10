@@ -6,7 +6,6 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -26,6 +25,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.download.DownloadIndexRules
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
@@ -46,12 +46,11 @@ import kotlin.time.Duration.Companion.seconds
 @Inject
 @SingleIn(AppScope::class)
 class NovelDownloadCache(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val storageManager: StorageManager,
     private val provider: NovelDownloadProvider,
 ) {
-
-    private val scope = CoroutineScope(Dispatchers.IO)
 
     private val _changes = Channel<Unit>(Channel.UNLIMITED)
     val changes = _changes.receiveAsFlow()

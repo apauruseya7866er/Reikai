@@ -58,6 +58,7 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import exh.util.defaultReaderType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,6 +74,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.chapter.hiddenKey
 import reikai.domain.download.MangaChapterDownloadActions
 import reikai.domain.download.rowDownloadChapters
@@ -147,6 +149,7 @@ import kotlin.time.Clock
 @AssistedInject
 class ReaderViewModel(
     @Assisted private val savedState: SavedStateHandle,
+    @AppCoroutineScope private val appScope: CoroutineScope,
     private val context: Context,
     private val sourceManager: SourceManager,
     private val downloadManager: DownloadManager,
@@ -592,6 +595,7 @@ class ReaderViewModel(
                     downloadManager,
                     downloadProvider,
                     chapterCache,
+                    appScope,
                     readerPreferences,
                     group.mangaById,
                     sourceManager,

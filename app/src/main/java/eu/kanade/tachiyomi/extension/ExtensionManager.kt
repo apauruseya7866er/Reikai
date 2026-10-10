@@ -19,7 +19,6 @@ import exh.source.ExhPreferences
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -35,6 +34,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import mihon.domain.extension.interactor.UpdateExtensionStores
 import mihon.domain.extension.model.ExtensionStore
 import mihon.domain.extension.repository.ExtensionStoreRepository
@@ -68,6 +68,7 @@ import java.util.Locale
 @Inject
 @SingleIn(AppScope::class)
 class ExtensionManager(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val preferences: SourcePreferences,
     private val trustExtension: TrustExtension,
@@ -80,8 +81,6 @@ class ExtensionManager(
     // RK: keeps the listing's icons for a novel app whose own icon shows nothing
     private val novelPreferences: NovelPreferences,
 ) {
-
-    val scope = CoroutineScope(SupervisorJob())
 
     private val initialized = CompletableDeferred<Unit>()
 
@@ -150,7 +149,7 @@ class ExtensionManager(
     init {
         scope.launch(Dispatchers.IO) {
             loadExtensions()
-            ExtensionInstallReceiver(InstallationListener()).register(context)
+            ExtensionInstallReceiver(InstallationListener(), scope).register(context)
 
             // Everything the load decision rests on can change while running, so decide again
             // RK --> content warnings compare against what the scan used rather than drop(1), which

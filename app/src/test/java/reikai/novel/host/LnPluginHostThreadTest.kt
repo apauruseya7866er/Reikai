@@ -10,6 +10,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import org.junit.jupiter.api.Test
+import reikai.util.testAppScope
 
 /**
  * A plugin load reaches the engine from whatever thread the caller is on, often a screen's Main.
@@ -31,6 +32,7 @@ class LnPluginHostThreadTest {
             }
         }
         val host = LnPluginHost(
+            testAppScope(),
             context,
             mockk<NetworkHelper> { every { client } returns OkHttpClient() },
             mockk(relaxed = true),

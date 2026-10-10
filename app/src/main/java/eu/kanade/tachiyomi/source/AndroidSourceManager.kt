@@ -28,8 +28,6 @@ import exh.source.ExhPreferences
 import exh.source.NHENTAI_NET_SOURCE_ID
 import exh.source.PURURIN_SOURCE_ID
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -38,6 +36,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import mihon.core.metro.AppCoroutineScope
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.repository.StubSourceRepository
 import tachiyomi.domain.source.service.SourceManager
@@ -59,6 +58,7 @@ internal var nHentaiDelegatedSourceIds: List<Long> = emptyList()
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
 class AndroidSourceManager(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context, // RK: the built-in adult sources need it
     private val extensionManager: ExtensionManager,
     private val sourceRepository: StubSourceRepository,
@@ -67,8 +67,6 @@ class AndroidSourceManager(
     // RK: gates the built-in E-Hentai / ExHentai sources.
     private val exhPreferences: ExhPreferences,
 ) : SourceManager {
-
-    private val scope = CoroutineScope(Job() + Dispatchers.IO)
 
     /**
      * Null until the extensions have loaded, so that nothing observes the empty seed value.

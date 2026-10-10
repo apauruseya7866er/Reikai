@@ -12,6 +12,7 @@ import io.mockk.every
 import io.mockk.mockk
 import okhttp3.Response
 import org.junit.jupiter.api.Test
+import reikai.util.testAppScope
 
 class HttpPageLoaderTest {
 
@@ -26,7 +27,7 @@ class HttpPageLoaderTest {
         }
         // The loader also takes the reader preferences, for its preload amount.
         val readerPreferences = mockk<ReaderPreferences> { every { preloadSize.get() } returns 4 }
-        val loader = HttpPageLoader(chapter, source, chapterCache, readerPreferences)
+        val loader = HttpPageLoader(chapter, source, chapterCache, testAppScope(), readerPreferences)
         coEvery { source.getImage(page) } returns response
 
         try {

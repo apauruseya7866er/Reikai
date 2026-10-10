@@ -10,8 +10,6 @@ import eu.kanade.tachiyomi.source.Source
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
@@ -22,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.novel.LnSourceIdentity
 import reikai.domain.novel.NovelPreferences
 import reikai.domain.novel.identity
@@ -44,14 +43,13 @@ import tachiyomi.domain.source.model.SourceNotInstalledException
 @Inject
 @SingleIn(AppScope::class)
 class NovelSourceManager(
+    @AppCoroutineScope private val scope: CoroutineScope,
     // Deferred because the installer registers back into this map, so the two are a cycle; Metro cuts
     // it at the deferred parameter, the same way ReikaiBindings cuts the merge managers' propagator edge.
     private val installer: () -> LnPluginInstaller,
     extensionManager: ExtensionManager,
     private val prefs: NovelPreferences,
 ) {
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val sourcesFlow = MutableStateFlow<Map<String, NovelSource>>(emptyMap())
 

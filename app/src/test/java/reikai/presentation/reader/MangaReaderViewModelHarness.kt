@@ -33,6 +33,7 @@ import reikai.domain.download.MangaChapterDownloadActions
 import reikai.domain.manga.MangaPreferences
 import reikai.domain.manga.MergedChapterProvider
 import reikai.domain.source.SourceKey
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.data.Database
@@ -192,6 +193,7 @@ class MangaReaderViewModelHarness private constructor(
             )
             val downloadPreferences = DownloadPreferences(prefs)
             val model = ReaderViewModel(
+                appScope = testAppScope(),
                 savedState = SavedStateHandle(
                     mapOf("manga" to manga.id, "chapter" to chapterId, "source_scoped" to sourceScoped),
                 ),

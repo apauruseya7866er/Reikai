@@ -7,9 +7,8 @@ import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.entry.EntryId
 import reikai.presentation.track.trackerErrorMessage
 import tachiyomi.core.common.i18n.stringResource
@@ -25,6 +24,7 @@ import tachiyomi.i18n.MR
 @Inject
 @SingleIn(AppScope::class)
 class SourceTrackerDispatcher(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val trackPreferences: TrackPreferences,
     // Deferred: the interactors that call this sit below the source managers it reads through, and a
@@ -36,7 +36,7 @@ class SourceTrackerDispatcher(
 
     private val lastToast = HashMap<String, Long>()
 
-    private val kernel = SourceTrackerKernel(CoroutineScope(SupervisorJob() + Dispatchers.IO), loader) { name, error ->
+    private val kernel = SourceTrackerKernel(scope, loader) { name, error ->
         logcat(LogPriority.ERROR, error) { "$name could not sync reading to its site" }
         // One toast per site while it keeps failing, since a bulk removal offline fails once per entry.
         val now = System.currentTimeMillis()
@@ -44,7 +44,7 @@ class SourceTrackerDispatcher(
             (now - (lastToast[name] ?: 0L) >= TOAST_COOLDOWN_MS).also { if (it) lastToast[name] = now }
         }
         if (shown) {
-            launchUI {
+            scope.launchUI {
                 val reason = context.trackerErrorMessage(name, error)
                 context.toast(context.stringResource(MR.strings.source_tracker_failed, name, reason))
             }

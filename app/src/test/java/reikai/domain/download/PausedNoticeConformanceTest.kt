@@ -47,6 +47,7 @@ import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.NovelDownloadWorker
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
+import reikai.util.testAppScope
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
@@ -349,6 +350,7 @@ class NovelPausedNoticeHalf : PausedNoticeHalf {
         every { NovelDownloadWorker.stop(any()) } answers { worker?.cancel() }
         val downloadPreferences = DownloadPreferences(InMemoryPreferenceStore())
         manager = NovelDownloadManager(
+            scope = testAppScope(),
             context = app,
             provider = mockk { every { availableSpace() } returns -1L },
             cache = mockk { every { downloadedChapterIds(novel, any()) } returns emptySet() },

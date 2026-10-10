@@ -36,6 +36,7 @@ import reikai.novel.download.FakeSharedPreferences
 import reikai.novel.download.NovelDownloadCache
 import reikai.novel.download.NovelDownloadProvider
 import reikai.novel.download.NovelDownloadStore
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -72,7 +73,8 @@ class MergedDuplicateDownloadsTest {
         every { changes } returns MutableSharedFlow()
     }
     private val downloadProvider = DownloadProvider(mockk(), storageManager, libraryPreferences)
-    private val novelProvider = NovelDownloadProvider(storageManager, downloadProvider, libraryPreferences)
+    private val novelProvider =
+        NovelDownloadProvider(testAppScope(), storageManager, downloadProvider, libraryPreferences)
 
     private val sourceManager = mockk<SourceManager> {
         coEvery { getOrStub(SOURCE_ID) } returns StubSource(id = SOURCE_ID, lang = "en", name = "Src")

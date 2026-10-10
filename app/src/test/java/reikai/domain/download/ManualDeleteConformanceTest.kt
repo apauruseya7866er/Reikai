@@ -28,6 +28,7 @@ import reikai.novel.download.NovelDownloadCache
 import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.NovelDownloadProvider
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.chapter.model.Chapter
@@ -100,6 +101,7 @@ class MangaManualDeleteHalf : ManualDeleteHalf {
                 { removed.complete(firstArg<List<Chapter>>().mapTo(HashSet()) { it.id }) }
         }
         val manager = DownloadManager(
+            scope = testAppScope(),
             context = mockk(relaxed = true),
             provider = mockk { every { findChapterDirs(any(), any(), any()) } returns (null to emptyList()) },
             cache = cache,
@@ -156,6 +158,7 @@ class NovelManualDeleteHalf : ManualDeleteHalf {
                 mockk<NotificationManager>(relaxed = true)
         }
         val manager = NovelDownloadManager(
+            scope = testAppScope(),
             context = context,
             provider = provider,
             cache = mockk<NovelDownloadCache>(relaxed = true),

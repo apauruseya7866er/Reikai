@@ -184,7 +184,7 @@ Trust is Mihon's: a store's signing key covers its extensions, a keyless store's
 - **No novel tracker pulls progress down, re-points on migration or acts as a source's own server.** A novel copy of manga's pull-style sync, a shared migration re-point kernel and the server-tracker screen behaviours were declined on that premise; revisit if a novel tracker ever does one.
 - **Rate limits pace downloads only.** The extensions declaring a minimum already pace their own client, so an app-wide host throttle was not taken from tsundoku.
 - **The per-book commands sheet was not built.** No published IReader extension declares a command it reads. Revisit if one does.
-- **A page action runs on `NovelPageActionRunner`'s own scope, not WorkManager**, whose 10 KB input cannot carry a page's HTML.
+- **A page action runs on the app scope through `NovelPageActionRunner`, not WorkManager**, whose 10 KB input cannot carry a page's HTML.
 - **An LNReader plugin cannot read a link.** The plugin type declares only `resolveUrl`, path to address, so a plugin's novel is reached through the address guess.
 
 ## Upstream divergences

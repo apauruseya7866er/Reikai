@@ -23,6 +23,7 @@ import reikai.domain.novel.NovelPreferences
 import reikai.domain.novel.NovelRepository
 import reikai.novel.install.LnPluginInstaller
 import reikai.novel.source.NovelSourceManager
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.source.interactor.GetSourcesWithNonLibraryManga
 import tachiyomi.domain.source.model.Source
@@ -153,6 +154,7 @@ class ClearDatabaseViewModelTest {
     ).also { model -> model.state.filterIsInstance<ClearDatabaseViewModel.State.Ready>().first() }
 
     private fun manager(seen: Map<String, LnSourceIdentity>) = NovelSourceManager(
+        scope = testAppScope(),
         installer = { mockk<LnPluginInstaller>(relaxed = true) },
         extensionManager = mockk<ExtensionManager> {
             every { loadedNovelExtensionsFlow } returns

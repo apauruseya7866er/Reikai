@@ -16,6 +16,7 @@ import reikai.domain.novel.model.Novel
 import reikai.novel.download.NovelDownload
 import reikai.novel.download.NovelDownloadManager
 import reikai.novel.source.NovelSourceManager
+import reikai.util.testAppScope
 
 class NovelDownloadQueueProviderTest {
 
@@ -31,6 +32,7 @@ class NovelDownloadQueueProviderTest {
             novelRepo = mockk { coEvery { getById(1L) } returns Novel.create().copy(id = 1L, source = "gone") },
             chapterRepo = mockk(),
             sourceManager = NovelSourceManager(
+                scope = testAppScope(),
                 installer = { mockk(relaxed = true) },
                 extensionManager = mockk<ExtensionManager> {
                     every { loadedNovelExtensionsFlow } returns MutableStateFlow(emptyList())

@@ -9,8 +9,6 @@ import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.notificationManager
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.data.notification.isHiddenAdult
 import reikai.domain.download.DownloadRetry
 import reikai.domain.download.SeriesCompletions
@@ -64,6 +63,7 @@ import kotlin.random.Random
 @Inject
 @SingleIn(AppScope::class)
 class NovelDownloadManager(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val provider: NovelDownloadProvider,
     private val cache: NovelDownloadCache,
@@ -88,8 +88,6 @@ class NovelDownloadManager(
      * live queue under it, so no write can put back a row the queue already dropped.
      */
     private val storeLock = Any()
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _queueState = MutableStateFlow<List<NovelDownload>>(emptyList())
     val queueState: StateFlow<List<NovelDownload>> = _queueState.asStateFlow()

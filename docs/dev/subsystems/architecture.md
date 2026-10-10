@@ -11,8 +11,10 @@ The wiring every screen and background job sits on: how objects are built and sh
 Metro resolves dependencies in the compiler, so a missing binding is a build error and nothing is looked up by reflection at runtime. `App` implements `GraphProvider<AppGraph>` (`:core:metro`), builds the graph once per process and calls `graph.inject(this)`; anything with a `Context` reaches it as `context.appGraph`.
 
 - `AppGraph` is Mihon's graph in Mihon's order. It extends `ViewModelGraph` and `ReikaiGraph`, which holds Reikai's own `inject()` members and accessors, so a Reikai addition never edits Mihon's member list.
-- Providers that cannot be an annotated class live in binding containers: `AppBindings` (Mihon's `Json`, `XML`, `ProtoBuf`), `ReikaiBindings` (the two merge managers and the tracker-library fetcher list), and `DatabaseBindings` in `:data` (`SqlDriver`, `Database`).
+- Providers that cannot be an annotated class live in binding containers: `AppBindings` (Mihon's `Json`, `XML`, `ProtoBuf` and the `@AppCoroutineScope` scope), `ReikaiBindings` (the two merge managers and the tracker-library fetcher list), and `DatabaseBindings` in `:data` (`SqlDriver`, `Database`).
 - Every other class joins by carrying `@Inject`, with `@SingleIn(AppScope::class)` for a singleton and `@ContributesBinding(AppScope::class)` for an implementation of an interface. Migrations join a set with `@ContributesIntoSet`, ViewModels a map with `@ContributesIntoMap`.
+
+Short work an app singleton runs past the screen that asked for it (a download index save, a queue restore, a page action) goes on the one `@AppCoroutineScope` `CoroutineScope`, a `SupervisorJob` on `Dispatchers.IO` taken as a constructor parameter. Its exception handler re-throws a failure to the thread's crash handler in a debug build and logs and reports it to Crashlytics in every other, since by the time it fails the screen that started it may be gone. Manga and novel singletons share it; only owners with a real cancellation point (the reader's views, `HttpPageLoader`, `ShizukuInstaller`) build their own.
 
 A dependency whose construction must wait is a `() -> T` parameter. Metro hands the provider through without calling it, so the object is built when the parameter is invoked. `NovelDownloadManager` is the one that matters: building it restores the saved download queue and can start the download worker, so every reader takes it deferred, and `DeleteNovelChaptersAfterRead` is the choke point the library, details, updates and the notification receiver all reach it through.
 
@@ -61,6 +63,7 @@ The layout, by subject:
 - `app/src/main/java/mihon/app/di/ReikaiViewModelFactory.kt`: the ViewModel factory over both maps.
 - `app/src/main/java/eu/kanade/tachiyomi/util/view/ViewExtensions.kt`: `setComposeContent`, which provides `LocalMetroViewModelFactory`.
 - `core/metro/src/main/kotlin/mihon/core/metro/GraphProvider.kt`: `GraphProvider`, `metroGraph`.
+- `core/metro/src/main/kotlin/mihon/core/metro/AppCoroutineScope.kt`: the app scope's qualifier; `providesAppCoroutineScope` in `AppBindings` builds it.
 - `app/src/main/java/eu/kanade/tachiyomi/App.kt`: graph construction, `initializeMigrator`, the `:error_handler` gate.
 - `app/src/main/java/mihon/core/migration/Migrator.kt` and `MigrationStrategy.kt`: `initialize`, `await`, the version-range strategies.
 - `app/src/main/java/mihon/core/migration/migrations/`: every preference migration.
@@ -84,6 +87,7 @@ The layout, by subject:
 - **`viewModelScope` is cancelled before `onCleared()` runs.** Cleanup written as a launch inside `onCleared()` never happens; it must be synchronous.
 - **No `flowWithLifecycle` inside a ViewModel.** The model outlives the Activity, so a captured `Lifecycle` is a dead one after rotation; use `stateIn(WhileSubscribed)` with a lifecycle-aware collect instead.
 - **The novel merge manager and its tracker propagator form a cycle.** `ReikaiBindings` supplies the propagator as `() -> PropagateNovelTrackerLinks`, cutting it at one edge.
+- **A launch on the app scope whose failure is expected passes its own handler.** Otherwise a network failure crashes a debug build; `AutoBindOnAdd` and `PushNovelUnread` launch with a log-only `CoroutineExceptionHandler`, which replaces the scope's for that child.
 - **The checker sees what the compiler does not.** `di-interop-check.ps1` fails on an Injekt read the registrar does not bind, an unscoped or unread binding, an Injekt registration, and a ViewModel or migration left out of its multibinding; it runs from the `pre-commit` hook and CI.
 
 ## Decisions
@@ -109,7 +113,7 @@ The layout, by subject:
 
 ## Tests
 
-`MetroInjektRegistrarTest` (all fifteen bindings resolve through `fullType`), `ReikaiViewModelFactoryTest` (a model resolves only once contributed), `MigratorTest` (strategy selection and ordering), plus one test per migration under `app/src/test/java/mihon/core/migration/migrations/`. `pwsh scripts/di-interop-check.ps1` runs the graph checks. Run a class with `./gradlew :app:testDebugUnitTest --tests "<FullyQualifiedClassName>"`.
+`MetroInjektRegistrarTest` (all fifteen bindings resolve through `fullType`), `ReikaiViewModelFactoryTest` (a model resolves only once contributed), `MigratorTest` (strategy selection and ordering), `AppCoroutineScopeTest` (a failed app-scope child crashes only a debug build), plus one test per migration under `app/src/test/java/mihon/core/migration/migrations/`. `pwsh scripts/di-interop-check.ps1` runs the graph checks. Run a class with `./gradlew :app:testDebugUnitTest --tests "<FullyQualifiedClassName>"`.
 
 ## Related
 

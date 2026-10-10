@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.storage.service.StorageManager
@@ -66,6 +67,7 @@ class NovelDownloadCacheRemoveTest {
     }
     private val provider by lazy {
         NovelDownloadProvider(
+            scope = testAppScope(),
             storageManager = storageManager,
             downloadProvider = DownloadProvider(mockk(), mockk(), libraryPreferences),
             libraryPreferences = libraryPreferences,
@@ -76,6 +78,7 @@ class NovelDownloadCacheRemoveTest {
     private suspend fun scannedCache(): NovelDownloadCache {
         (removed + kept).forEach { provider.writeChapter(novel, it, "<p>${it.name}</p>") }
         val cache = NovelDownloadCache(
+            scope = testAppScope(),
             context = mockk(relaxed = true) { every { cacheDir } returns this@NovelDownloadCacheRemoveTest.cacheDir },
             storageManager = storageManager,
             provider = provider,

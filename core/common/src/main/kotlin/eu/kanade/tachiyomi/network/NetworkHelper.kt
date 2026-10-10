@@ -9,6 +9,8 @@ import eu.kanade.tachiyomi.network.interceptor.FlareSolverrClient
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
 import eu.kanade.tachiyomi.network.interceptor.pinFlareSolverrUserAgents // RK
+import kotlinx.coroutines.CoroutineScope
+import mihon.core.metro.AppCoroutineScope
 import okhttp3.Cache
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -19,6 +21,7 @@ import kotlin.time.Duration.Companion.seconds
 @Inject
 @SingleIn(AppScope::class)
 class NetworkHelper(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val preferences: NetworkPreferences,
 ) {
@@ -80,7 +83,7 @@ class NetworkHelper(
     val client = clientBuilder
         .addInterceptor(
             // RK --> pass preferences + the FlareSolverr client for the FS bypass path
-            CloudflareInterceptor(context, cookieJar, ::defaultUserAgentProvider, preferences, flareSolverr),
+            CloudflareInterceptor(context, cookieJar, scope, ::defaultUserAgentProvider, preferences, flareSolverr),
             // RK <--
         )
         .build()

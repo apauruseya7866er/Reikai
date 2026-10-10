@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.drop
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.download.deletableDownloads // RK
 import reikai.domain.download.movesDownloadFolder // RK
 import reikai.domain.download.removableDownloads // RK
@@ -44,6 +46,7 @@ import tachiyomi.i18n.MR
 @Inject
 @SingleIn(AppScope::class)
 class DownloadManager(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val provider: DownloadProvider,
     private val cache: DownloadCache,
@@ -265,7 +268,7 @@ class DownloadManager(
      * @param source the source of the chapters.
      */
     fun deleteChapters(chapters: List<Chapter>, manga: Manga, source: Source) {
-        launchIO {
+        scope.launchIO {
             // RK --> a Delete the user asked for is not held back by the categories kept from removal,
             // which govern automatic removal only (deleteRemovableChapters); upstream filters both alike
             val filteredChapters = deletableDownloads(
@@ -307,7 +310,7 @@ class DownloadManager(
      * @param removeQueued whether to also remove queued downloads.
      */
     fun deleteManga(manga: Manga, source: Source, removeQueued: Boolean = true) {
-        launchIO {
+        scope.launchIO {
             if (removeQueued) {
                 removeQueuedManga(manga) // RK
             }

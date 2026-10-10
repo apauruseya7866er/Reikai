@@ -29,6 +29,7 @@ import kotlinx.coroutines.test.setMain
 import mihon.app.di.AppGraph
 import mihon.core.metro.GraphProvider
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
@@ -103,6 +104,7 @@ class DownloadWorkerFixture(
 
     val downloader by lazy {
         Downloader(
+            scope = testAppScope(),
             context = app,
             provider = provider,
             cache = mockk(relaxed = true),
@@ -119,6 +121,7 @@ class DownloadWorkerFixture(
 
     val downloadManager by lazy {
         DownloadManager(
+            scope = testAppScope(),
             context = app,
             provider = provider,
             cache = mockk(relaxed = true),

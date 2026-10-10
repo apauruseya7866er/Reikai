@@ -13,7 +13,6 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -34,6 +33,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.novel.network.deviceWebViewUserAgent
 import reikai.novel.source.WEB_STORAGE_KEY_PREFIX
 import reikai.util.runCatchingCancellable
@@ -54,6 +54,7 @@ import java.util.concurrent.Executors
 @Inject
 @SingleIn(AppScope::class)
 class LnPluginHost(
+    @AppCoroutineScope private val scope: CoroutineScope,
     context: Context,
     networkHelper: NetworkHelper,
     preferenceStore: PreferenceStore,
@@ -124,7 +125,6 @@ class LnPluginHost(
 
     // Idle sweeper lifecycle; guarded by [sweeperLock].
     private val sweeperLock = Any()
-    private val hostScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var sweeperJob: Job? = null
 
     // Read from assets once and evaluated into every engine, in order.
@@ -325,7 +325,7 @@ class LnPluginHost(
     private fun ensureSweeper() {
         synchronized(sweeperLock) {
             if (sweeperJob?.isActive == true) return
-            sweeperJob = hostScope.launch {
+            sweeperJob = scope.launch(Dispatchers.Default) {
                 while (true) {
                     delay(SWEEP_INTERVAL_MS)
                     var anyLive = false

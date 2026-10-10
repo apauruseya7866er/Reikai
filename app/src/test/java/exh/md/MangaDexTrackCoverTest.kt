@@ -24,6 +24,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import reikai.domain.source.ReikaiSourcePreferences
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.source.service.SourceManager
 import java.io.File
@@ -66,7 +67,7 @@ class MangaDexTrackCoverTest {
         val factory = MangaDexTrackCoverFactory(
             lazy { client },
             CoverCache(context),
-            MangaCoverMetadata(UiPreferences(InMemoryPreferenceStore()), CoverCache(context)),
+            MangaCoverMetadata(testAppScope(), UiPreferences(InMemoryPreferenceStore()), CoverCache(context)),
             SourcePreferences(InMemoryPreferenceStore()),
             ReikaiSourcePreferences(InMemoryPreferenceStore()),
             sourceManager,

@@ -7,7 +7,9 @@ import app.cash.quickjs.QuickJs
 import com.dokar.quickjs.binding.function
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import mihon.app.di.appGraph
@@ -38,11 +40,14 @@ class HeadlessJsIntegrationTest {
 
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    // Stands in for the graph's app scope; only the hosts' idle sweeper runs on it.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     @Test
     fun lnPluginsRunInProductionHeadlessHost() = runBlocking {
         val networkHelper = Injekt.get<NetworkHelper>()
         val client = networkHelper.client
-        val host = LnPluginHost(context, networkHelper, context.appGraph.preferenceStore)
+        val host = LnPluginHost(scope, context, networkHelper, context.appGraph.preferenceStore)
         val loader = LnPluginLoader(context, networkHelper)
         val report = StringBuilder("\n===== Production headless LN host =====\n")
 
@@ -174,7 +179,7 @@ class HeadlessJsIntegrationTest {
 
         val networkHelper = Injekt.get<NetworkHelper>()
         val client = networkHelper.client
-        val host = LnPluginHost(context, networkHelper, context.appGraph.preferenceStore)
+        val host = LnPluginHost(scope, context, networkHelper, context.appGraph.preferenceStore)
         val loader = LnPluginLoader(context, networkHelper)
 
         val entries = runCatching {
@@ -372,7 +377,7 @@ class HeadlessJsIntegrationTest {
      */
     @Test
     fun storageReadsBackAStoredUndefined() = runBlocking {
-        val host = LnPluginHost(context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
         val plugin = """
             var storage = require('@libs/storage').storage;
             module.exports.default = {
@@ -394,7 +399,7 @@ class HeadlessJsIntegrationTest {
      */
     @Test
     fun webStorageReachesAPluginThatReadsItAtConstruction() = runBlocking {
-        val host = LnPluginHost(context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
         val plugin = """
             var localStorage = require('@libs/storage').localStorage;
             var stored = localStorage.get();
@@ -416,7 +421,7 @@ class HeadlessJsIntegrationTest {
     /** LNReader's opt-in to the browser's storage reaches the app, which keeps none for a plugin without it. */
     @Test
     fun aPluginAskingForTheSiteStorageSaysSo() = runBlocking {
-        val host = LnPluginHost(context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
         val plugin = """
             module.exports.default = {
               id: 'web-storage-flag-test', name: 'T', site: 'https://example.org', version: '1.0.0',
@@ -433,7 +438,7 @@ class HeadlessJsIntegrationTest {
      */
     @Test
     fun aPluginsNewerStatusesReadAsSharedOnes() = runBlocking {
-        val host = LnPluginHost(context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
         val plugin = """
             var NovelStatus = require('@libs/novelStatus').NovelStatus;
             module.exports.default = {
@@ -455,7 +460,7 @@ class HeadlessJsIntegrationTest {
      */
     @Test
     fun aPluginWhoseReplayFailedLoadsAgainOnTheNextCall() = runBlocking {
-        val host = LnPluginHost(context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
         val plugin = """
             var storage = require('@libs/storage').storage;
             if (storage.get('fail')) throw new Error('constructor failed');

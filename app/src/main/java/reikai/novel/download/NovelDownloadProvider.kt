@@ -8,10 +8,9 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.download.Downloader
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.download.renameDownloadFolder
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
@@ -29,12 +28,11 @@ import tachiyomi.domain.storage.service.StorageManager
 @Inject
 @SingleIn(AppScope::class)
 class NovelDownloadProvider(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val storageManager: StorageManager,
     private val downloadProvider: DownloadProvider,
     private val libraryPreferences: LibraryPreferences,
 ) {
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var downloadsDir = storageManager.getNovelDownloadsDirectory()
 

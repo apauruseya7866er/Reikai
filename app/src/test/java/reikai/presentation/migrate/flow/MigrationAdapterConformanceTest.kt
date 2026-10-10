@@ -31,6 +31,7 @@ import reikai.novel.host.SourceNovel
 import reikai.novel.source.NovelItemsPage
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
@@ -300,6 +301,7 @@ object NovelProbe : Probe {
             }
         }
         val sourceManager = NovelSourceManager(
+            scope = testAppScope(),
             installer = { mockk(relaxed = true) },
             extensionManager = mockk<ExtensionManager> {
                 every { loadedNovelExtensionsFlow } returns MutableStateFlow(emptyList())

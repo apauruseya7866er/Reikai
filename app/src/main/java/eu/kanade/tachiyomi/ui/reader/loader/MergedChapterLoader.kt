@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import kotlinx.coroutines.CoroutineScope
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 
@@ -22,6 +23,7 @@ class MergedChapterLoader(
     private val downloadManager: DownloadManager,
     private val downloadProvider: DownloadProvider,
     private val chapterCache: ChapterCache,
+    private val appScope: CoroutineScope,
     private val readerPreferences: ReaderPreferences,
     private val mangaById: Map<Long, Manga>,
     private val sourceManager: SourceManager,
@@ -40,6 +42,7 @@ class MergedChapterLoader(
             downloadManager,
             downloadProvider,
             chapterCache,
+            appScope,
             readerPreferences,
             manga,
             sourceManager.getOrStub(manga.source),

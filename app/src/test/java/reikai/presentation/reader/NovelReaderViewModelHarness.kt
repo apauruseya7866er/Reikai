@@ -73,6 +73,7 @@ import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
 import reikai.presentation.novel.details.NovelDetailsViewModel
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
@@ -136,6 +137,7 @@ class NovelReaderViewModelHarness private constructor(
         }
     }
     private val sourceManager = NovelSourceManager(
+        scope = testAppScope(),
         installer = { installer },
         extensionManager = mockk { every { loadedNovelExtensionsFlow } returns flowOf(emptyList()) },
         prefs = novelPreferences,

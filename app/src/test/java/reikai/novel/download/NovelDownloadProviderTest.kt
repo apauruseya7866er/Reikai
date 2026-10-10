@@ -18,6 +18,7 @@ import org.junit.jupiter.params.provider.CsvSource
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.storage.service.StorageManager
 import java.io.File
@@ -44,6 +45,7 @@ class NovelDownloadProviderTest {
 
     private val provider by lazy {
         NovelDownloadProvider(
+            scope = testAppScope(),
             storageManager = mockk<StorageManager> {
                 every { getNovelDownloadsDirectory() } returns UniFile.fromFile(root)
                 every { changes } returns MutableSharedFlow()

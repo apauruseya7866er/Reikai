@@ -19,6 +19,7 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import java.io.File
 
@@ -65,7 +66,11 @@ class CoverRequestClientTest {
             diskCacheKeyLazy = lazy { "cover" },
             getClient = { client },
             imageLoader = imageLoader,
-            mangaCoverMetadata = MangaCoverMetadata(UiPreferences(InMemoryPreferenceStore()), CoverCache(context)),
+            mangaCoverMetadata = MangaCoverMetadata(
+                testAppScope(),
+                UiPreferences(InMemoryPreferenceStore()),
+                CoverCache(context),
+            ),
         )
     }
 

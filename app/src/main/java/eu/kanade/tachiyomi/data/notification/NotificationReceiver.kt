@@ -20,8 +20,11 @@ import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.workManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import mihon.app.di.appGraph
+import mihon.core.metro.AppCoroutineScope
 import reikai.data.notification.NovelNewChaptersNotice
 import reikai.data.novel.update.NovelUpdateWorker
 import reikai.domain.novel.NovelChapterRepository
@@ -31,7 +34,6 @@ import reikai.domain.novel.model.NovelChapter
 import reikai.novel.download.NovelDownloadManager
 import reikai.presentation.details.novelDetailsIntent
 import tachiyomi.core.common.Constants
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.interactor.GetManga
@@ -67,6 +69,9 @@ class NotificationReceiver : BroadcastReceiver() {
 
     // RK: marking a manga chapter read goes through the interactor every other screen marks with.
     @Inject private lateinit var setReadStatus: SetReadStatus
+
+    @Inject @AppCoroutineScope
+    private lateinit var scope: CoroutineScope
 
     override fun onReceive(context: Context, intent: Intent) {
         context.appGraph.inject(this)
@@ -165,7 +170,7 @@ class NotificationReceiver : BroadcastReceiver() {
     }
 
     private fun markNovelChaptersAsRead(chapterIds: LongArray) {
-        launchIO {
+        launchAsync {
             val chapters = chapterIds.toList().mapNotNull { novelChapterRepository.getById(it) }
             // Through the interactor, so delete-after-read applies exactly as it does in the reader.
             setNovelReadStatus.await(read = true, chapters = chapters)
@@ -173,7 +178,7 @@ class NotificationReceiver : BroadcastReceiver() {
     }
 
     private fun downloadNovelChapters(chapterIds: LongArray) {
-        launchIO {
+        launchAsync {
             novelDownloadManager().downloadChapters(
                 chapterIds.toList().mapNotNull { novelChapterRepository.getById(it) },
             )
@@ -257,7 +262,7 @@ class NotificationReceiver : BroadcastReceiver() {
      * @param mangaId id of manga
      */
     private fun markAsRead(chapterUrls: Array<String>, mangaId: Long) {
-        launchIO {
+        launchAsync {
             // RK -->
             // SetReadStatus deletes the rows as written, so a category kept from removal keeps them, and
             // tells the source's own tracker.
@@ -274,10 +279,25 @@ class NotificationReceiver : BroadcastReceiver() {
      * @param mangaId id of manga
      */
     private fun downloadChapters(chapterUrls: Array<String>, mangaId: Long) {
-        launchIO {
-            val manga = getManga.await(mangaId) ?: return@launchIO
+        launchAsync {
+            val manga = getManga.await(mangaId) ?: return@launchAsync
             val chapters = chapterUrls.mapNotNull { getChapter.await(it, mangaId) }
             downloadManager.downloadChapters(manga, chapters)
+        }
+    }
+
+    /**
+     * Runs [block] on the application scope while keeping the broadcast alive, so the process isn't torn down before
+     * the work finishes.
+     */
+    private fun launchAsync(block: suspend CoroutineScope.() -> Unit) {
+        val pendingResult = goAsync()
+        scope.launch {
+            try {
+                block()
+            } finally {
+                pendingResult.finish()
+            }
         }
     }
 

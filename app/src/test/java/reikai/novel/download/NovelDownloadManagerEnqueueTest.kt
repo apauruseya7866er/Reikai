@@ -25,6 +25,7 @@ import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.source.ReikaiSourcePreferences
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 
 /**
@@ -139,6 +140,7 @@ class NovelDownloadManagerEnqueueTest {
 
     private fun launchManager() {
         manager = NovelDownloadManager(
+            scope = testAppScope(),
             context = context,
             provider = mockk(),
             cache = cache,

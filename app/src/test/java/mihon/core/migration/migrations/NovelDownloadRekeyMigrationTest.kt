@@ -25,6 +25,7 @@ import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.novel.download.NovelDownloadProvider
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.storage.service.StorageManager
@@ -55,6 +56,7 @@ class NovelDownloadRekeyMigrationTest {
 
     private val provider by lazy {
         NovelDownloadProvider(
+            scope = testAppScope(),
             storageManager = storageManager,
             downloadProvider = DownloadProvider(mockk(), mockk(), libraryPreferences),
             libraryPreferences = libraryPreferences,

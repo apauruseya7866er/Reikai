@@ -27,6 +27,7 @@ import reikai.novel.source.novelApp
 import reikai.novel.source.novelCatalogue
 import reikai.presentation.MainDispatcherExtension
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.Preference
 import kotlin.time.Duration.Companion.seconds
 
@@ -38,6 +39,7 @@ class NovelSourceListsLoadTest {
         every { get() } returns emptyMap()
     }
     private val manager = NovelSourceManager(
+        scope = testAppScope(),
         installer = { mockk<LnPluginInstaller>(relaxed = true) },
         extensionManager = mockk<ExtensionManager> {
             every { loadedNovelExtensionsFlow } returns flow {
