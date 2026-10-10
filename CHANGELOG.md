@@ -566,6 +566,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 #### Fixed
 
 - **An outdated manga extension no longer crashes the app when you browse it or open one of its series (partly from Tsundoku).** It shows an error instead. Upstream: tsundoku-otaku/tsundoku#398.
+- **A queued manga or novel chapter that its source removes is now taken out of the download queue instead of failing there (from Mihon).** Upstream: mihonapp/mihon#3845.
 - **Manga chapters you downloaded or deleted no longer show the wrong download state after the app starts (from Mihon).** Upstream: mihonapp/mihon#3968.
 - **A manga chapter whose download finished just as downloads stopped is no longer downloaded again as a second copy (from Mihon).** Upstream: mihon 611578313.
 - **Installing an extension through Shizuku works again (from Mihon).** Upstream: mihonapp/mihon#3630, mihonapp/mihon#3676.

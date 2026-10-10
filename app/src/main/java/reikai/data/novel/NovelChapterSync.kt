@@ -123,6 +123,9 @@ suspend fun syncChaptersWithNovelSource(
     // (mirrors the manga rename-on-sync, pinned by RenameOnSyncConformanceTest). No-op when the chapter
     // isn't downloaded.
     downloadRenames.forEach { (old, new) -> novelDownloadManager?.renameChapter(novel, old, new) }
+    // The source no longer lists these, so their queued downloads could only fail, as the manga sync
+    // cancels them too (RemovedChapterQueueConformanceTest).
+    novelDownloadManager?.cancelDownloads(toDelete.map { it.id })
 
     return NovelChapterSyncResult(insertedChapters.filterNot { it.url in changedOrDuplicateReadUrls }, changed = true)
 }
