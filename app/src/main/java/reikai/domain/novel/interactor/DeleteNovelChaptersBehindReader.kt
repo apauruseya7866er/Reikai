@@ -2,11 +2,15 @@ package reikai.domain.novel.interactor
 
 import dev.zacsweers.metro.Inject
 import reikai.domain.download.NovelRemovableDownloads
+import reikai.domain.merge.ChapterUnit
+import reikai.domain.merge.expandToUnits
 import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.NovelPreferences
 import reikai.domain.reader.chapterToDeleteBehind
+import reikai.domain.reader.duplicatesOfRead
 import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.NovelDownloadPendingDeleter
+import tachiyomi.domain.library.service.LibraryPreferences
 
 /**
  * "After reading automatically delete" in the novel reader, as Mihon's reader runs it: finishing a
@@ -24,16 +28,36 @@ class DeleteNovelChaptersBehindReader(
     private val downloadManager: () -> NovelDownloadManager,
     private val chapterRepository: NovelChapterRepository,
     private val pendingDeleter: NovelDownloadPendingDeleter,
+    private val libraryPreferences: LibraryPreferences,
 ) {
 
     /** [orderedIds] is the session's reading order, so the slots count positions the user actually
-     *  moves through rather than raw chapter numbers. */
-    suspend fun await(orderedIds: List<Long>, readChapterId: Long) {
+     *  moves through rather than raw chapter numbers. [memberIds] and [stitch] are the merge group's,
+     *  as [reikai.presentation.reader.text.NovelChapterFinish] takes them. */
+    suspend fun await(orderedIds: List<Long>, readChapterId: Long, memberIds: List<Long>, stitch: List<ChapterUnit>) {
         val slots = novelPreferences.removeAfterReadSlots().get()
         val targetId = orderedIds.chapterToDeleteBehind(readChapterId, slots) { it } ?: return
         val target = chapterRepository.getById(targetId) ?: return
-        if (!target.read || removableDownloads(listOf(target)).isEmpty()) return
-        pendingDeleter.addChapters(listOf(target))
+        if (!target.read) return
+        // The copies "mark duplicate read" marked with it go too, as manga's trim takes them
+        // (DeleteDuplicatesBehindReaderConformanceTest).
+        val markDuplicates = libraryPreferences.markDuplicateReadChapterAsRead.get()
+            .contains(LibraryPreferences.MARK_DUPLICATE_CHAPTER_READ_EXISTING)
+        val duplicates = if (!markDuplicates) {
+            emptyList()
+        } else {
+            memberIds.flatMap { chapterRepository.getByNovelId(it) }
+                .duplicatesOfRead(
+                    target,
+                    expandToUnits(setOf(target.id), stitch),
+                    numberOf = { it.chapterNumber },
+                    idOf = { it.id },
+                    ownerOf = { it.novelId },
+                )
+                .map { it.copy(read = true) }
+        }
+        val removable = removableDownloads(listOf(target) + duplicates)
+        if (removable.isNotEmpty()) pendingDeleter.addChapters(removable)
     }
 
     /** Deletes what [await] queued. The host calls it on leaving the reader. */

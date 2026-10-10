@@ -927,9 +927,11 @@ class ReaderViewModel(
         // If chapter is completely read, no need to download it
         chapterToDownload = null
 
-        if (chapterToDelete != null) {
-            enqueueDeleteReadChapters(chapterToDelete)
-        }
+        if (chapterToDelete == null || !chapterToDelete.chapter.read) return
+
+        val markDuplicateAsRead = libraryPreferences.markDuplicateReadChapterAsRead.get()
+            .contains(LibraryPreferences.MARK_DUPLICATE_CHAPTER_READ_EXISTING)
+        enqueueDeleteChapters(chapterToDelete.chapter.toDomainChapter()!!, markDuplicateAsRead) // RK
     }
 
     // RK: the position names its own chapter, so the chrome cannot pair this page number with a
@@ -1557,20 +1559,39 @@ class ReaderViewModel(
         }
     }
 
+    // RK --> [chapter] and, with [withDuplicates], the copies the shared duplicatesOfRead rule marks read
+    // with it, in place of upstream's number match over the whole list, which across a merge group
+    // reaches chapters of other numbers. Read fresh, as the mark is, and each copy deleted from its own
+    // source's downloads. DeleteDuplicatesBehindReaderConformanceTest pins it to the novel trim.
+
     /**
-     * Enqueues this [chapter] to be deleted when [deletePendingChapters] is called. The download
-     * manager handles persisting it across process deaths.
+     * Enqueues these chapters to be deleted when [deletePendingChapters] is called. The download
+     * manager handles persisting them across process deaths.
      */
-    private fun enqueueDeleteReadChapters(chapter: ReaderChapter) {
-        if (!chapter.chapter.read) return
+    private fun enqueueDeleteChapters(chapter: Chapter, withDuplicates: Boolean) {
         manga ?: return
-        // RK: delete-after-read targets the chapter's own source's download.
-        val chapterManga = mangaForChapterId(chapter.chapter.manga_id)
 
         viewModelScope.launchNonCancellable {
-            downloadManager.enqueueChaptersToDelete(listOf(chapter.chapter.toDomainChapter()!!), chapterManga)
+            val duplicates = if (!withDuplicates) {
+                emptyList()
+            } else {
+                groupChapters()
+                    .duplicatesOfRead(
+                        chapter,
+                        groupCopyIds(chapter.id).toSet(),
+                        numberOf = { it.chapterNumber },
+                        idOf = { it.id },
+                        ownerOf = { it.mangaId },
+                    )
+                    // Finishing a chapter trims before its own copies are marked read, so they may not be yet
+                    .map { it.copy(read = true) }
+            }
+            (listOf(chapter) + duplicates).groupBy { it.mangaId }.forEach { (ownerId, owned) ->
+                downloadManager.enqueueChaptersToDelete(owned, mangaForChapterId(ownerId))
+            }
         }
     }
+    // RK <--
 
     /**
      * Deletes all the pending chapters. This operation will run in a background thread and errors

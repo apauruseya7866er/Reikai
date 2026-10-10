@@ -108,6 +108,7 @@ class NovelReaderViewModelHarness private constructor(
 
     private val store = EmittingPreferenceStore()
     val novelPreferences = NovelPreferences(store)
+    val libraryPreferences = LibraryPreferences(store)
 
     private val database = DatabaseBindings.providesDatabase(driver)
     private val novelRepo = NovelRepositoryImpl(database)
@@ -291,6 +292,9 @@ class NovelReaderViewModelHarness private constructor(
         downloaded[chapter.id] = text
     }
 
+    /** What the reader's trim behind it queued for deletion on leaving. */
+    val pendingDeletes = mutableListOf<NovelChapter>()
+
     private val removable =
         NovelRemovableDownloads(novelPreferences, GetNovelCategories(CategoryRepositoryImpl(database)))
 
@@ -324,7 +328,7 @@ class NovelReaderViewModelHarness private constructor(
             downloadManagerProvider = { downloadManager },
             upsertNovelHistory = UpsertNovelHistory(history),
             setNovelReadStatus = setNovelReadStatus(),
-            libraryPreferences = LibraryPreferences(store),
+            libraryPreferences = libraryPreferences,
             // The tracker network.
             trackNovelChapter = mockk(relaxed = true),
             trackPreferences = TrackPreferences(store),
@@ -346,7 +350,10 @@ class NovelReaderViewModelHarness private constructor(
                 removable,
                 { downloadManager },
                 chapterRepo,
-                mockk(relaxed = true),
+                mockk(relaxed = true) {
+                    every { addChapters(any()) } answers { pendingDeletes += firstArg<List<NovelChapter>>() }
+                },
+                libraryPreferences,
             ),
             // Only the Downloaded only switch; BasePreferences itself cannot be built on the JVM.
             basePreferences = mockk<BasePreferences> {

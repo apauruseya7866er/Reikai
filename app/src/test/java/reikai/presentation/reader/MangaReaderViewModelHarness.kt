@@ -149,6 +149,7 @@ class MangaReaderViewModelHarness private constructor(
         missingSources: Set<Long> = emptySet(),
         onDownload: (List<Chapter>) -> Unit = {},
         onDelete: (List<Chapter>) -> Unit = {},
+        onEnqueueDelete: (List<Chapter>) -> Unit = {},
         probe: suspend (ReaderViewModel, ReaderViewModel.State) -> T,
     ): T {
         val resolved = group ?: single(manga)
@@ -174,6 +175,7 @@ class MangaReaderViewModelHarness private constructor(
                 }
                 coEvery { downloadChapters(any(), any(), any()) } answers { onDownload(secondArg()) }
                 every { deleteChapters(any(), any(), any()) } answers { onDelete(firstArg()) }
+                coEvery { enqueueChaptersToDelete(any(), any()) } answers { onEnqueueDelete(firstArg()) }
             }
             val getManga = GetManga(mangas)
             val sourceManager = mockk<SourceManager>(relaxed = true)

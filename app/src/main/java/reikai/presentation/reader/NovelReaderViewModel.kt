@@ -1003,7 +1003,7 @@ class NovelReaderViewModel(
      */
     private suspend fun markChapterRead(chapter: NovelChapter) {
         chapterFinish.finish(chapter, memberIds, groupStitch) {
-            deleteChaptersBehindReader.await(orderedIds, chapter.id)
+            deleteChaptersBehindReader.await(orderedIds, chapter.id, memberIds, groupStitch)
         }
     }
 

@@ -16,6 +16,7 @@ import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.NovelDownloadPendingDeleter
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.library.service.LibraryPreferences
 
 /**
  * "After reading automatically delete" in the novel reader, as Mihon's reader runs it: finishing a
@@ -71,6 +72,7 @@ class DeleteNovelChaptersBehindReaderTest {
         )
         val repo = mockk<NovelChapterRepository>()
         coEvery { repo.getById(any()) } answers { chapters[firstArg<Long>()] }
+        coEvery { repo.getByNovelId(any()) } returns chapters.values.toList()
         val categories = mockk<GetNovelCategories>()
         coEvery { categories.awaitByNovelId(any()) } returns novelCategoryIds.map {
             Category(id = it, name = "c$it", order = it, flags = 0L)
@@ -85,19 +87,20 @@ class DeleteNovelChaptersBehindReaderTest {
             },
             chapterRepository = repo,
             pendingDeleter = pending,
+            libraryPreferences = LibraryPreferences(store),
         )
     }
 
     @Test
     fun `finishing a chapter queues the one the slots retire`() = runTest {
-        subject(slots = 1).await(orderedIds = order, readChapterId = 4L)
+        subject(slots = 1).await(orderedIds = order, readChapterId = 4L, memberIds = listOf(7L), stitch = emptyList())
 
         queued.map { it.id } shouldBe listOf(3L)
     }
 
     @Test
     fun `finishing a chapter deletes nothing while the reader is open`() = runTest {
-        subject(slots = 0).await(orderedIds = order, readChapterId = 4L)
+        subject(slots = 0).await(orderedIds = order, readChapterId = 4L, memberIds = listOf(7L), stitch = emptyList())
 
         coVerify(exactly = 0) { manager.deleteChapters(any()) }
     }
@@ -105,7 +108,7 @@ class DeleteNovelChaptersBehindReaderTest {
     @Test
     fun `leaving the reader deletes the queued chapters`() = runTest {
         val interactor = subject(slots = 1)
-        interactor.await(orderedIds = order, readChapterId = 4L)
+        interactor.await(orderedIds = order, readChapterId = 4L, memberIds = listOf(7L), stitch = emptyList())
 
         interactor.deletePending()
 
@@ -123,7 +126,9 @@ class DeleteNovelChaptersBehindReaderTest {
     @Test
     fun `a chapter that is not read yet is not queued`() = runTest {
         val chapters = order.associateWith { chapter(it, read = it != 3L) }
-        subject(chapters = chapters).await(orderedIds = order, readChapterId = 4L)
+        subject(
+            chapters = chapters,
+        ).await(orderedIds = order, readChapterId = 4L, memberIds = listOf(7L), stitch = emptyList())
 
         queued shouldBe emptyList()
     }
@@ -131,7 +136,9 @@ class DeleteNovelChaptersBehindReaderTest {
     @Test
     fun `a bookmarked chapter is kept by default`() = runTest {
         val chapters = order.associateWith { chapter(it, bookmark = it == 3L) }
-        subject(chapters = chapters).await(orderedIds = order, readChapterId = 4L)
+        subject(
+            chapters = chapters,
+        ).await(orderedIds = order, readChapterId = 4L, memberIds = listOf(7L), stitch = emptyList())
 
         queued shouldBe emptyList()
     }
@@ -140,7 +147,7 @@ class DeleteNovelChaptersBehindReaderTest {
     fun `a bookmarked chapter is queued once the user allows removing them`() = runTest {
         val chapters = order.associateWith { chapter(it, bookmark = it == 3L) }
         subject(chapters = chapters, allowRemovingBookmarked = true)
-            .await(orderedIds = order, readChapterId = 4L)
+            .await(orderedIds = order, readChapterId = 4L, memberIds = listOf(7L), stitch = emptyList())
 
         queued.map { it.id } shouldBe listOf(3L)
     }
@@ -148,7 +155,7 @@ class DeleteNovelChaptersBehindReaderTest {
     @Test
     fun `a novel in an excluded category keeps its chapters`() = runTest {
         subject(excludedCategoryIds = setOf("11"), novelCategoryIds = listOf(11L))
-            .await(orderedIds = order, readChapterId = 4L)
+            .await(orderedIds = order, readChapterId = 4L, memberIds = listOf(7L), stitch = emptyList())
 
         queued shouldBe emptyList()
     }
@@ -157,7 +164,7 @@ class DeleteNovelChaptersBehindReaderTest {
     @Test
     fun `a novel outside the excluded categories is still queued`() = runTest {
         subject(excludedCategoryIds = setOf("11"), novelCategoryIds = listOf(12L))
-            .await(orderedIds = order, readChapterId = 4L)
+            .await(orderedIds = order, readChapterId = 4L, memberIds = listOf(7L), stitch = emptyList())
 
         queued.map { it.id } shouldBe listOf(3L)
     }
