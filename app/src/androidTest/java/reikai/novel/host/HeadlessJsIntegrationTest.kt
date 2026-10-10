@@ -314,6 +314,58 @@ class HeadlessJsIntegrationTest {
     }
 
     /**
+     * The host's text codecs answer bad input as a browser does (WHATWG Encoding): a malformed UTF-8
+     * sequence decodes to U+FFFD instead of throwing, which a fetched page's `text()` relies on, and a
+     * lone surrogate encodes to U+FFFD. `fatal` still throws. Inline: no network.
+     */
+    @Test
+    fun textCodecsReplaceMalformedInputLikeABrowser() = runBlocking {
+        val q = DokarQuickJs.create(Dispatchers.IO)
+        try {
+            q.function("__lnLog") { null }
+            q.evaluate<Any?>("(function(){globalThis.self=globalThis;globalThis.window=globalThis;})()")
+            LnPluginHost.RUNTIME_ASSETS.forEach { path ->
+                q.evaluate<Any?>(context.assets.open(path).bufferedReader().use { it.readText() })
+            }
+            val results = q.evaluate<String>(
+                """
+                (function () {
+                  function d(bytes, opts) { return new TextDecoder("utf-8", opts).decode(new Uint8Array(bytes)); }
+                  function hex(s) { var o = []; for (var i = 0; i < s.length; i++) o.push(s.charCodeAt(i).toString(16)); return o.join(" "); }
+                  var fatal;
+                  try { d([0xff], { fatal: true }); fatal = "no-throw"; } catch (e) { fatal = e.name; }
+                  return [
+                    hex(d([0x61, 0xff, 0x62])),
+                    hex(d([0xe2, 0x82])),
+                    hex(d([0xc0, 0xaf])),
+                    hex(d([0xed, 0xa0, 0x80])),
+                    d([0xef, 0xbb, 0xbf, 0x61]),
+                    hex(d([0xf0, 0x9f, 0x98, 0x80])),
+                    hex(new TextDecoder().decode(new Uint16Array([0x6261]))),
+                    fatal,
+                    Array.from(new TextEncoder().encode("a\uD800b")).join(","),
+                  ].join("|");
+                })()
+                """.trimIndent(),
+            )
+            val expected = listOf(
+                "61 fffd 62",
+                "fffd",
+                "fffd fffd",
+                "fffd fffd fffd",
+                "a",
+                "d83d de00",
+                "61 62",
+                "TypeError",
+                "97,239,191,189,98",
+            )
+            assertEquals(expected.joinToString("|"), results)
+        } finally {
+            q.close()
+        }
+    }
+
+    /**
      * A stored undefined reads back as undefined, as LNReader's Storage.get returns item.value
      * (refs/lnreader-main/src/plugins/helpers/storage.ts). JSON drops the undefined, so the envelope
      * carried only its timestamp and came back whole. Inline plugin: no network.

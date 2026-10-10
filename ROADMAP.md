@@ -10,10 +10,6 @@ Backlog, grouped by area. Unordered within an area.
 
 - **Reikai design refresh (off stock Material 3)** `[L]` - move shape, typography, component styling, spacing and layout off stock Material 3 across the shared `Entry*` surfaces, under whichever theme the reader picked. Exploratory; it starts by seeding tokens in `DESIGN.md`. [Doc](docs/dev/subsystems/content-layer.md).
 
-### Novels
-
-- **Plugin host text decoding matches a browser** `[S]` - the QuickJS host's `TextDecoder` throws on invalid UTF-8 where a browser substitutes a replacement character; no installed plugin hits it yet. [Doc](docs/dev/subsystems/ln-plugin-host.md).
-
 ## Parked and not building
 
 Not forward work, so it lives in [docs/dev/parked.md](docs/dev/parked.md): what each item is, why it

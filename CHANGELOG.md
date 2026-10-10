@@ -346,6 +346,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Fixed
 
+- **A novel source whose pages contain a malformed character now loads them instead of failing, as a browser would.** Applies to every installed light-novel plugin.
 - **Updating your novel library can no longer save one novel's title and cover onto another, and Settings -> Advanced -> Repair novel details fixes novels it already hit.** It finds the affected novels and re-fetches each from its own source.
 - **Novel new-chapter notifications now show the cover and the Reikai icon, name the new chapters with Mark as read and Download, and open the chapter when tapped, which only manga's did.** The summary lists the novels that updated.
 - **Updating your novel library now shows how far along it is as a percentage, which only manga's did.**

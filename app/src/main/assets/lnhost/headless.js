@@ -242,21 +242,107 @@
     globalThis.FormData = FD;
   }
 
+  // UTF-8 only, with the browser's (WHATWG Encoding) handling of bad input: a malformed sequence
+  // decodes to U+FFFD and a lone surrogate encodes to U+FFFD, rather than throwing, since every
+  // Response.text() decodes through here. `fatal: true` throws a TypeError, as a browser does.
   if (typeof globalThis.TextEncoder === "undefined") {
     var TE = function () {};
-    TE.prototype.encode = function (s) {
-      var u = unescape(encodeURIComponent(String(s)));
-      var a = new Uint8Array(u.length);
-      for (var i = 0; i < u.length; i++) a[i] = u.charCodeAt(i);
-      return a;
+    TE.prototype.encoding = "utf-8";
+    TE.prototype.encode = function (input) {
+      var s = input === undefined ? "" : String(input);
+      var out = [];
+      for (var i = 0; i < s.length; i++) {
+        var c = s.charCodeAt(i);
+        if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+          var next = s.charCodeAt(i + 1);
+          if (next >= 0xdc00 && next <= 0xdfff) {
+            c = 0x10000 + ((c - 0xd800) << 10) + (next - 0xdc00);
+            i++;
+          } else {
+            c = 0xfffd;
+          }
+        } else if (c >= 0xd800 && c <= 0xdfff) {
+          c = 0xfffd;
+        }
+        if (c < 0x80) out.push(c);
+        else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+        else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+        else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 0x3f), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+      }
+      return new Uint8Array(out);
     };
     globalThis.TextEncoder = TE;
-    var TD = function () {};
-    TD.prototype.decode = function (b) {
-      var a = new Uint8Array(b);
+    var TD = function (label, options) {
+      this.fatal = !!(options && options.fatal);
+      this.ignoreBOM = !!(options && options.ignoreBOM);
+    };
+    TD.prototype.encoding = "utf-8";
+    TD.prototype.decode = function (input) {
+      if (input === undefined) return "";
+      var a = ArrayBuffer.isView(input)
+        ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+        : new Uint8Array(input);
+      var fatal = this.fatal;
+      var units = [];
       var s = "";
-      for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
-      return decodeURIComponent(escape(s));
+      function emit(cp) {
+        if (cp > 0xffff) {
+          cp -= 0x10000;
+          units.push(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+        } else {
+          units.push(cp);
+        }
+        if (units.length >= 8192) {
+          s += String.fromCharCode.apply(null, units);
+          units = [];
+        }
+      }
+      function bad() {
+        if (fatal) throw new TypeError("The encoded data was not valid utf-8");
+        emit(0xfffd);
+      }
+      var i = 0;
+      if (!this.ignoreBOM && a.length >= 3 && a[0] === 0xef && a[1] === 0xbb && a[2] === 0xbf) i = 3;
+      var needed = 0, seen = 0, cp = 0, lower = 0x80, upper = 0xbf;
+      while (i < a.length) {
+        var b = a[i];
+        if (needed === 0) {
+          if (b <= 0x7f) emit(b);
+          else if (b >= 0xc2 && b <= 0xdf) { needed = 1; cp = b & 0x1f; }
+          else if (b >= 0xe0 && b <= 0xef) {
+            if (b === 0xe0) lower = 0xa0;
+            if (b === 0xed) upper = 0x9f;
+            needed = 2;
+            cp = b & 0x0f;
+          } else if (b >= 0xf0 && b <= 0xf4) {
+            if (b === 0xf0) lower = 0x90;
+            if (b === 0xf4) upper = 0x8f;
+            needed = 3;
+            cp = b & 0x07;
+          } else bad();
+          i++;
+          continue;
+        }
+        if (b < lower || b > upper) {
+          // The broken sequence becomes one U+FFFD and this byte is read again as a new start.
+          needed = seen = cp = 0;
+          lower = 0x80;
+          upper = 0xbf;
+          bad();
+          continue;
+        }
+        lower = 0x80;
+        upper = 0xbf;
+        cp = (cp << 6) | (b & 0x3f);
+        seen++;
+        i++;
+        if (seen === needed) {
+          emit(cp);
+          needed = seen = cp = 0;
+        }
+      }
+      if (needed !== 0) bad();
+      return s + String.fromCharCode.apply(null, units);
     };
     globalThis.TextDecoder = TD;
   }
