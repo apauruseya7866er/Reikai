@@ -475,16 +475,24 @@ internal fun RecentsDownloadProgress.asProvider(): () -> Int = when (this) {
  */
 internal fun LazyListScope.lastUpdatedItem(lastUpdated: Long) {
     item(key = "recents-lastUpdated") {
-        Box(
-            modifier = Modifier
-                .animateItem(fadeInSpec = null, fadeOutSpec = null)
-                .padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
-        ) {
-            Text(
-                text = stringResource(MR.strings.updates_last_update_info, relativeTimeSpanString(lastUpdated)),
-                fontStyle = FontStyle.Italic,
-            )
-        }
+        LastUpdatedHeader(
+            lastUpdated = lastUpdated,
+            modifier = Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null),
+        )
+    }
+}
+
+/** The same line drawn outside a list, so an empty updated feed still says when the library last updated. */
+@Composable
+internal fun LastUpdatedHeader(lastUpdated: Long, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
+    ) {
+        Text(
+            text = stringResource(MR.strings.updates_last_update_info, relativeTimeSpanString(lastUpdated)),
+            fontStyle = FontStyle.Italic,
+        )
     }
 }
 

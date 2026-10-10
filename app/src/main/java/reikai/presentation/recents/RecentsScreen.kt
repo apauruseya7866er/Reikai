@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListScope
@@ -265,33 +266,45 @@ fun Screen.RecentsScreen(
             Box(modifier = Modifier.weight(1f)) {
                 when {
                     rendered == null || rendered?.loading == true -> LoadingScreen(Modifier.padding(bodyPadding))
-                    rows.isEmpty() -> RecentsEmptyState(
-                        mode = mode,
-                        query = query,
-                        filterActive = filterActive,
-                        onFilterClicked = { filterSheetOpen = true },
-                        modifier = Modifier.padding(bodyPadding),
-                    )
                     else -> {
-                        val feed: @Composable () -> Unit = {
-                            val listState = rememberLazyListState()
-                            KeepListAtTop(listState, rows.first().listKey())
-                            FastScrollLazyColumn(state = listState, contentPadding = bodyPadding) {
-                                if (showsUpdated) {
-                                    lastUpdatedItem(lastUpdated)
+                        val feed: @Composable () -> Unit = if (rows.isEmpty()) {
+                            {
+                                // Inside the pull-to-refresh like the list, so an empty updated feed still
+                                // says when the library last updated and can still be pulled to update it.
+                                Column(modifier = Modifier.padding(bodyPadding).fillMaxSize()) {
+                                    if (showsUpdated) {
+                                        LastUpdatedHeader(lastUpdated)
+                                    }
+                                    RecentsEmptyState(
+                                        mode = mode,
+                                        query = query,
+                                        filterActive = filterActive,
+                                        onFilterClicked = { filterSheetOpen = true },
+                                        modifier = Modifier.weight(1f),
+                                    )
                                 }
-                                recentsRows(
-                                    rows = rows,
-                                    engine = engine,
-                                    mode = mode,
-                                    membership = membership,
-                                    selection = selection,
-                                    selectionEnabled = selectionEnabled,
-                                    orderedRefs = orderedRefs,
-                                    swipeActions = swipeActions,
-                                    onOpen = ::open,
-                                    onOpenDetails = ::openDetails,
-                                )
+                            }
+                        } else {
+                            {
+                                val listState = rememberLazyListState()
+                                KeepListAtTop(listState, rows.first().listKey())
+                                FastScrollLazyColumn(state = listState, contentPadding = bodyPadding) {
+                                    if (showsUpdated) {
+                                        lastUpdatedItem(lastUpdated)
+                                    }
+                                    recentsRows(
+                                        rows = rows,
+                                        engine = engine,
+                                        mode = mode,
+                                        membership = membership,
+                                        selection = selection,
+                                        selectionEnabled = selectionEnabled,
+                                        orderedRefs = orderedRefs,
+                                        swipeActions = swipeActions,
+                                        onOpen = ::open,
+                                        onOpenDetails = ::openDetails,
+                                    )
+                                }
                             }
                         }
                         // Pull-to-refresh belongs to the feed a library update actually changes.

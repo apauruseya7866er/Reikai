@@ -190,6 +190,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **History rows can now be long-pressed for bulk actions and carry a download button, with the chapter, the time and your place in it each on its own line.**
 - **Tapping History again now resumes the most recent thing you read on the library chip you are looking at, whatever you have typed in its search.**
 - **History and Updates now stay at the top when new rows arrive, if that is where you were.**
+- **An empty Updates feed now still shows when the library last updated and can be pulled to refresh (from Mihon).** Upstream: mihonapp/mihon#3790.
 - **Moving a series to another category now updates a category-filtered Updates feed straight away.**
 - **The combined Updates widget now drops a novel once you have read its new chapters.**
 - **The home screen updates widgets now show their empty and locked text instead of nothing (from Mihon).** Upstream: mihon 76b146f3d.

@@ -36,7 +36,7 @@ Identity is `EntryId` for entries and `ChapterRef` (an `EntryId` plus the raw ch
    - `digestRows` (Grouped): collapsed across lanes first, so a series claims one section (its newest activity); then New chapters capped at four, Continue reading at nine minus that, Newly added at four. Sections sort by their newest row; the two chapter sections get a footer jumping to their single-lane mode.
 4. **Prune.** The selection is pruned to what `rendered` draws, so a row a cap or filter took off screen is neither counted nor acted on.
 
-Everything describing the list is one value on the engine: the chip, the query, loading, emptiness, `filterActive`, the selection, the dialog slot and the last-updated line. `lastUpdated` and `refreshing` (the update jobs' real running state) come from the active providers.
+Everything describing the list is one value on the engine: the chip, the query, loading, emptiness, `filterActive`, the selection, the dialog slot and the last-updated line. `lastUpdated` and `refreshing` (the update jobs' real running state) come from the active providers. A mode that shows the updated lane keeps the last-updated line and pull-to-refresh when its feed is empty: the empty state sits inside the refresh under that line, as Mihon's Updates screen does.
 
 ### Filters
 
