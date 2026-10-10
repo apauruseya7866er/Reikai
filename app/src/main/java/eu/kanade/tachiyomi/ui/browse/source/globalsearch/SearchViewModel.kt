@@ -15,6 +15,7 @@ import reikai.presentation.browse.storedMangaRows
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.source.local.isLocal
 
 abstract class SearchViewModel(
     // RK: upstream's initialState dropped with the state it seeded (see addFlow).
@@ -49,7 +50,7 @@ abstract class SearchViewModel(
      */
     suspend fun searchableSources(pinnedOnly: Boolean): List<Source> {
         val enabled = sourceManager.getAll()
-            .filter { it.lang in enabledLanguages && "${it.id}" !in disabledSources }
+            .filter { (it.lang in enabledLanguages || it.isLocal()) && "${it.id}" !in disabledSources }
 
         val filter = extensionFilter
         if (!filter.isNullOrEmpty()) {
