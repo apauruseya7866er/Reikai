@@ -29,6 +29,8 @@ data class SmartUpdateFacts(
     val unreadCount: Long,
     val hasStarted: Boolean,
     val nextUpdate: Long,
+    // An entry added without opening it has no details yet, so it is always fetched
+    val initialized: Boolean,
 )
 
 /**
@@ -37,6 +39,7 @@ data class SmartUpdateFacts(
  */
 fun smartUpdateSkip(facts: SmartUpdateFacts, restrictions: Set<String>, fetchWindowEnd: Long): SmartUpdateSkip? =
     when {
+        !facts.initialized -> null
         facts.fetchesOnce && facts.totalChapters > 0L -> SmartUpdateSkip.NOT_ALWAYS_UPDATE
         else -> smartUpdateProgressSkip(facts, restrictions)
             ?: SmartUpdateSkip.NOT_IN_RELEASE_PERIOD.takeIf {
@@ -62,6 +65,7 @@ fun LibraryManga.smartUpdateFacts() = SmartUpdateFacts(
     unreadCount = unreadCount,
     hasStarted = hasStarted,
     nextUpdate = manga.nextUpdate,
+    initialized = manga.initialized,
 )
 
 fun LibraryNovel.smartUpdateFacts() = SmartUpdateFacts(
@@ -71,4 +75,5 @@ fun LibraryNovel.smartUpdateFacts() = SmartUpdateFacts(
     unreadCount = unreadCount,
     hasStarted = hasStarted,
     nextUpdate = novel.nextUpdate,
+    initialized = novel.initialized,
 )

@@ -95,6 +95,15 @@ class SmartUpdateSkipTest {
         smartUpdateSkip(facts, setOf(MANGA_OUTSIDE_RELEASE_PERIOD), WINDOW_END) shouldBe null
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("entries")
+    fun `a never initialized entry is fetched whatever would skip it`(entry: SmartUpdateEntry) {
+        val facts = entry.facts(fetchesOnce = true, completed = true, total = 3, initialized = false)
+        val restrictions = setOf(MANGA_NON_COMPLETED, MANGA_NON_READ, MANGA_OUTSIDE_RELEASE_PERIOD)
+
+        smartUpdateSkip(facts, restrictions, WINDOW_END) shouldBe null
+    }
+
     companion object {
         private const val WINDOW_END = 2_000L
 
@@ -111,6 +120,7 @@ interface SmartUpdateEntry {
         total: Long = 0,
         read: Long = 0,
         nextUpdate: Long = 0,
+        initialized: Boolean = true,
     ): SmartUpdateFacts
 }
 
@@ -118,12 +128,20 @@ class MangaSmartUpdateEntry : SmartUpdateEntry {
 
     override fun toString() = "manga"
 
-    override fun facts(fetchesOnce: Boolean, completed: Boolean, total: Long, read: Long, nextUpdate: Long) =
+    override fun facts(
+        fetchesOnce: Boolean,
+        completed: Boolean,
+        total: Long,
+        read: Long,
+        nextUpdate: Long,
+        initialized: Boolean,
+    ) =
         LibraryManga(
             manga = Manga.create().copy(
                 updateStrategy = if (fetchesOnce) UpdateStrategy.ONLY_FETCH_ONCE else UpdateStrategy.ALWAYS_UPDATE,
                 status = (if (completed) SManga.COMPLETED else SManga.ONGOING).toLong(),
                 nextUpdate = nextUpdate,
+                initialized = initialized,
             ),
             categories = emptyList(),
             totalChapters = total,
@@ -139,12 +157,20 @@ class NovelSmartUpdateEntry : SmartUpdateEntry {
 
     override fun toString() = "novel"
 
-    override fun facts(fetchesOnce: Boolean, completed: Boolean, total: Long, read: Long, nextUpdate: Long) =
+    override fun facts(
+        fetchesOnce: Boolean,
+        completed: Boolean,
+        total: Long,
+        read: Long,
+        nextUpdate: Long,
+        initialized: Boolean,
+    ) =
         LibraryNovel(
             novel = Novel.create().copy(
                 updateStrategy = if (fetchesOnce) UpdateStrategy.ONLY_FETCH_ONCE else UpdateStrategy.ALWAYS_UPDATE,
                 status = (if (completed) NovelStatusCode.COMPLETED else NovelStatusCode.ONGOING).toLong(),
                 nextUpdate = nextUpdate,
+                initialized = initialized,
             ),
             categories = emptyList(),
             totalChapters = total,
