@@ -39,7 +39,7 @@ A preference migration implements `Migration` with a `version` and joins the set
 
 ### Settings screens and search
 
-Each top-level Settings screen is a `SearchableSettings` object (a Voyager `Screen`) returning a list of `Preference` groups; `SettingsMainScreen` lists the root entries. Settings search builds its index from the `settingScreens` list in `SettingsSearchScreen.kt`, one entry per screen, and indexes every row with a non-blank title under a `HighlightKey` of (group, title), which is what scrolls to and highlights the row a result opens. A `CustomPreference` with a blank title (the About logo, its link icons) never becomes a result.
+Each top-level Settings screen is a `SearchableSettings` object (a Voyager `Screen`) returning a list of `Preference` groups; `SettingsMainScreen` lists the root entries. Settings search builds its index from the `settingScreens` list in `SettingsSearchScreen.kt`, one entry per screen, and indexes every row with a non-blank title under a `HighlightKey` of (group, title), which is what scrolls to and highlights the row a result opens. A group heading that matches is a result of its own, keyed `HighlightKey.heading`, and opens the screen at that heading. A `CustomPreference` with a blank title (the About logo, its link icons) never becomes a result.
 
 `SearchableSettings.isEnabled()` suspends, because the MangaDex gate waits for the extension scan. Search resolves every gate once with `produceState` and shows nothing until they answer; Browse and sources reads the MangaDex gate the same way.
 

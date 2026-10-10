@@ -662,6 +662,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Settings -> Advanced now opens on Debugging and Help headers, with Manage notifications under Background activity.**
 - **The manga and novel Hide missing chapter indicators switches now sit together under Settings -> Library -> Behavior, each naming the content type it affects.**
 - **Settings search now finds what is on the About screen, like the licenses and the update check.** About is also sorted into Legal and Links sections.
+- **Settings search now also finds a group of settings by its heading and opens the screen at it (from Mihon).** Upstream: mihonapp/mihon#4044.
 
 #### Fixed
 

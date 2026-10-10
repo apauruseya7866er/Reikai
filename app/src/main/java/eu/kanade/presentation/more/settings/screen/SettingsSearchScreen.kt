@@ -177,45 +177,51 @@ private fun SearchResult(
     val result by produceState<List<SearchResultItem>?>(initialValue = null, searchKey) {
         value = index.asSequence()
             .flatMap { settingsData ->
+                // RK: highlightKey is (group, title), so the scroll lands on the exact row
+                fun result(title: String, categoryTitle: String?, highlightKey: HighlightKey) = SearchResultItem(
+                    route = settingsData.route,
+                    title = title,
+                    breadcrumbs = getLocalizedBreadcrumb(
+                        path = settingsData.title,
+                        node = categoryTitle,
+                        isLtr = isLtr,
+                    ),
+                    highlightKey = highlightKey, // RK
+                )
+
+                fun Preference.PreferenceItem<*, *>.matches(): Boolean {
+                    // Don't show info preference
+                    if (this is Preference.PreferenceItem.InfoPreference) return false
+                    val inTitle = title.contains(searchKey, true)
+                    val inSummary = subtitle?.contains(searchKey, true) ?: false
+                    return inTitle || inSummary
+                }
+
                 settingsData.contents.asSequence()
                     // Only search from enabled prefs and one with valid title
                     .filter { it.visible && it.title.isNotBlank() }
-                    // Flatten items contained inside *enabled* PreferenceGroup
                     .flatMap { p ->
                         when (p) {
                             is Preference.PreferenceGroup -> {
-                                if (p.visible) {
-                                    p.preferenceItems.asSequence()
-                                        .filter { it.visible && it.title.isNotBlank() }
-                                        .map { p.title to it }
+                                // A matching heading leads to the group itself, not to one of its items
+                                val heading = if (p.title.contains(searchKey, true)) {
+                                    sequenceOf(result(p.title, null, HighlightKey.heading(p.title))) // RK
+                                } else {
+                                    emptySequence()
+                                }
+                                val items = p.preferenceItems.asSequence()
+                                    .filter { it.visible && it.title.isNotBlank() && it.matches() }
+                                    .map { result(it.title, p.title, HighlightKey(p.title, it.title)) } // RK
+                                heading + items
+                            }
+                            is Preference.PreferenceItem<*, *> -> {
+                                if (p.matches()) {
+                                    sequenceOf(result(p.title, null, HighlightKey(null, p.title))) // RK
                                 } else {
                                     emptySequence()
                                 }
                             }
-                            is Preference.PreferenceItem<*, *> -> sequenceOf(null to p)
                         }
-                    }
-                    // Don't show info preference
-                    .filterNot { it.second is Preference.PreferenceItem.InfoPreference }
-                    // Filter by search query
-                    .filter { (_, p) ->
-                        val inTitle = p.title.contains(searchKey, true)
-                        val inSummary = p.subtitle?.contains(searchKey, true) ?: false
-                        inTitle || inSummary
-                    }
-                    // Map result data
-                    .map { (categoryTitle, p) ->
-                        SearchResultItem(
-                            route = settingsData.route,
-                            title = p.title,
-                            breadcrumbs = getLocalizedBreadcrumb(
-                                path = settingsData.title,
-                                node = categoryTitle,
-                                isLtr = isLtr,
-                            ),
-                            // RK: carry the group so highlighting lands on the exact row.
-                            highlightKey = HighlightKey(categoryTitle, p.title),
-                        )
                     }
             }
             .take(10) // Just take top 10 result for quicker result

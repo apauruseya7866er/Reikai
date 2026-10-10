@@ -57,5 +57,10 @@ interface SearchableSettings : Screen {
 data class HighlightKey(val group: String?, val title: String) {
     /** True when this item position matches the search [key]. A null [key] group matches by title only. */
     fun matches(key: HighlightKey): Boolean = title == key.title && (key.group == null || group == key.group)
+
+    companion object {
+        /** A group's own heading, keyed under itself so a same-titled row in another group cannot match it. */
+        fun heading(title: String) = HighlightKey(group = title, title = title)
+    }
 }
 // RK <--

@@ -55,7 +55,12 @@ fun PreferenceScreen(
 
                     item {
                         Column {
-                            PreferenceGroupHeader(title = preference.title)
+                            PreferenceGroupHeader(
+                                title = preference.title,
+                                // RK: a heading result carries HighlightKey.heading, not the bare title
+                                highlighted = highlightKey != null &&
+                                    HighlightKey.heading(preference.title).matches(highlightKey),
+                            )
                         }
                     }
                     items(preference.preferenceItems) { item ->
@@ -91,7 +96,7 @@ private fun List<Preference>.findHighlightedIndex(highlightKey: HighlightKey): I
     return flatMap { pref ->
         if (pref is Preference.PreferenceGroup) {
             buildList<HighlightKey?> {
-                add(null) // Header
+                add(HighlightKey.heading(pref.title)) // Header
                 addAll(pref.preferenceItems.map { groupItem -> HighlightKey(pref.title, groupItem.title) })
                 add(null) // Spacer
             }
