@@ -697,6 +697,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Hide adult content in notifications now keeps adult titles out of every notification that names a manga or novel.** That covers updates, downloads, backup restores and read aloud.
 - **Hide notification content now also covers read aloud and its lock screen, novel downloads and updates, the light-novel plugin update notice and the follows sync.**
 - **With Hide adult content in notifications on, manga update notifications no longer come out blank for ordinary series from a source that carries extra metadata.**
+- **Hide adult content in notifications now also hides a manga from an adult-named source whose extension is not installed, as the library's adult filter does.**
 - **Statistics' Downloaded figure now includes novel chapters.**
 - **Showing the crash screen no longer runs the app's startup work, such as your data migrations, a second time.**
 - **A failure in background work that outlives its screen, such as saving the download index or installing an extension, no longer crashes the app (from Mihon).** It is logged and reported instead. Upstream: mihon f9c5fa901.

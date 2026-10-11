@@ -32,8 +32,9 @@ class AdultContentChecker(
         adultSources = {
             adultMangaSources(entries.mapTo(mutableSetOf(), Manga::source), AdultWarnings.MIXED_OR_NSFW)
         },
+        // The stub keeps an uninstalled source's stored name, as the library's Lewd filter reads it
         isAdult = { manga, adultSources ->
-            isAdultEntry(manga.source in adultSources, sourceManager.get(manga.source)?.name, manga.genre)
+            isAdultEntry(manga.source in adultSources, sourceManager.getOrStub(manga.source).name, manga.genre)
         },
     )
 

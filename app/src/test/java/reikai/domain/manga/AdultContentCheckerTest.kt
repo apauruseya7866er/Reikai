@@ -21,6 +21,7 @@ import reikai.domain.novel.model.Novel
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.service.SourceManager
 
 class AdultContentCheckerTest {
@@ -39,6 +40,7 @@ class AdultContentCheckerTest {
         every { extensionManager.loadedExtensionsFlow } returns MutableStateFlow(emptyList())
         val sourceManager = mockk<SourceManager>()
         coEvery { sourceManager.get(any()) } answers { source }
+        coEvery { sourceManager.getOrStub(any()) } answers { source ?: StubSource(firstArg(), "", "") }
         return AdultContentChecker(extensionManager, sourceManager, mockk())
     }
 
@@ -70,6 +72,20 @@ class AdultContentCheckerTest {
     @Test
     fun `flags an adult source name via the heuristic`() = runTest {
         checker(source = plainSource("NHentai")).isAdult(manga(1L)) shouldBe true
+    }
+
+    /** The library's Lewd filter keeps an uninstalled source's stored name, so the notification rule must too. */
+    @Test
+    fun `flags an uninstalled source by the name it was stored with`() = runTest {
+        val sourceManager = mockk<SourceManager>()
+        coEvery { sourceManager.get(any()) } returns null
+        coEvery { sourceManager.getOrStub(any()) } answers { StubSource(firstArg(), "all", "NHentai") }
+        val extensionManager = mockk<ExtensionManager> {
+            every { loadedExtensionsFlow } returns MutableStateFlow(emptyList())
+        }
+
+        AdultContentChecker(extensionManager, sourceManager, mockk())
+            .isAdult(manga(1L, genre = listOf("Comedy"))) shouldBe true
     }
 
     @Test
@@ -138,6 +154,7 @@ class AdultContentCheckerTest {
                 val sourceManager = mockk<SourceManager>()
                 val source = mockk<Source> { every { name } returns "Some Reader" }
                 coEvery { sourceManager.get(any()) } returns source
+                coEvery { sourceManager.getOrStub(any()) } returns source
                 val entry = Manga.create().copy(id = 1L, source = SOURCE_ID, url = "u", title = "t", genre = genre)
                 return 1L in AdultContentChecker(extensionManager, sourceManager, mockk()).adultIdsAmong(listOf(entry))
             }
