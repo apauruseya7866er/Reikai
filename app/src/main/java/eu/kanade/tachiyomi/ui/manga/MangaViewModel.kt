@@ -120,6 +120,7 @@ import reikai.domain.merge.DetailsRemoval
 import reikai.domain.merge.DownloadTargets
 import reikai.domain.merge.GroupChapterFlags
 import reikai.domain.merge.MergeScope
+import reikai.domain.merge.RemovalPrompt
 import reikai.domain.merge.gapPresent
 import reikai.domain.merge.refreshMergeGroup
 import reikai.domain.merge.toGapNeighbour
@@ -737,17 +738,13 @@ class MangaViewModel(
         toggleFavorite(checkDuplicate = true) // RK: a remove reports itself, see removeFromLibrary
     }
 
-    // RK --> the heart's remove. Which entries leave is the details removal rule novels share
-    //        (DetailsRemoval); the E-Hentai account confirm and the downloads prompt see exactly those.
+    // RK --> the heart's confirmed remove. Which entries leave is the details removal rule novels share
+    //        (DetailsRemoval); the downloads prompt sees exactly those.
     fun removeFromLibrary(mangaIds: List<Long>) {
         viewModelScope.launchIO {
-            val targets = mangaIds.map { getMangaAndChapters.awaitManga(it) }
-            // The account confirm is per gallery, so only a remove of one gallery asks it.
-            val gallery = targets.singleOrNull()?.takeIf(::shouldConfirmEhRemoveFromAccount)
-            if (gallery != null) {
-                dialog.value = Dialog.EhRemoveFavorite(gallery)
-                return@launchIO
-            }
+            // A confirm left open while the entry left the library elsewhere does nothing.
+            val targets = mangaIds.map { getMangaAndChapters.awaitManga(it) }.filter { it.favorite }
+            if (targets.isEmpty()) return@launchIO
             // On the app scope: the removal is several writes, and a page closed between them leaves a member
             // half removed. Only the downloads prompt needs the page.
             appScope.launch { removeNow(targets) }
@@ -784,12 +781,13 @@ class MangaViewModel(
 
             if (isFavorited) {
                 // Remove from library
-                // RK --> asks first on a merged entry's All view, and takes a source chip's own entry
-                val removal = mergeGroup.removal(manga.id)
-                if (removal.asksForGroup) {
-                    dialog.value = Dialog.RemoveFromLibrary(removal)
-                } else {
-                    removeFromLibrary(removal.targets(removeGrouped = false))
+                // RK --> always asks, once: the shared confirm (a merged entry's All view offering the group,
+                //        a source chip taking its own entry), or an E-Hentai gallery's account confirm
+                dialog.value = when (val prompt = mergeGroup.removal(manga.id).prompt(::hasOwnRemoveConfirm)) {
+                    is RemovalPrompt.Confirm -> Dialog.RemoveFromLibrary(prompt.removal)
+                    is RemovalPrompt.SourceConfirm -> Dialog.EhRemoveFavorite(
+                        getMangaAndChapters.awaitManga(prompt.entryId),
+                    )
                 }
                 // RK <--
             } else {
@@ -862,8 +860,9 @@ class MangaViewModel(
         return accepted.manga.id.takeIf { it != manga.id && accepted.manga.favorite }
     }
 
-    private fun shouldConfirmEhRemoveFromAccount(manga: Manga): Boolean {
-        return manga.isEhBasedManga() && exhPreferences.isFavoritesBackupOn()
+    // The account confirm is per gallery, so only a remove of one gallery asks it.
+    private suspend fun hasOwnRemoveConfirm(mangaId: Long): Boolean {
+        return getMangaAndChapters.awaitManga(mangaId).isEhBasedManga() && exhPreferences.isFavoritesBackupOn()
     }
 
     // A failed account removal keeps the gallery in the library. The removal runs on an app-wide scope
@@ -871,6 +870,7 @@ class MangaViewModel(
     fun confirmEhRemoveFromLibrary(gallery: Manga, removeFromAccount: Boolean) {
         dismissDialog()
         viewModelScope.launchIO {
+            if (!getMangaAndChapters.awaitManga(gallery.id).favorite) return@launchIO
             val source = sourceManager.get(gallery.source) as? EHentai ?: return@launchIO removeNow(listOf(gallery))
             source.removeGallery(remoteFirstRemoval, gallery, removeFromAccount) { removeNow(listOf(gallery)) }
         }

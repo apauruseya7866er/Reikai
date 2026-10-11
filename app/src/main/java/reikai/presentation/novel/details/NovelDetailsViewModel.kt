@@ -85,6 +85,7 @@ import reikai.domain.merge.DetailsRemoval
 import reikai.domain.merge.DownloadTargets
 import reikai.domain.merge.GroupChapterFlags
 import reikai.domain.merge.GroupMarks
+import reikai.domain.merge.RemovalPrompt
 import reikai.domain.merge.refreshMergeGroup
 import reikai.domain.novel.NovelChapterAggregation
 import reikai.domain.novel.NovelChapterListEntry
@@ -1075,12 +1076,9 @@ class NovelDetailsViewModel(
                 }
                 addToLibrary(novel)
             } else {
-                val removal = mergeGroup.removal(novel.id)
-                if (removal.asksForGroup) {
-                    showDialog(NovelDetailsDialog.RemoveFromLibrary(removal))
-                } else {
-                    removeFromLibrary(removal.targets(removeGrouped = false))
-                }
+                // No novel source keeps a remove confirm of its own, so this is always the shared one.
+                val prompt = mergeGroup.removal(novel.id).prompt { false } as RemovalPrompt.Confirm
+                showDialog(NovelDetailsDialog.RemoveFromLibrary(prompt.removal))
             }
         }
     }
@@ -1089,7 +1087,10 @@ class NovelDetailsViewModel(
     // removed. Only the downloads prompt needs the page.
     fun removeFromLibrary(novelIds: List<Long>) {
         appScope.launch {
-            val removed = removeNovelsFromLibrary.await(novelIds)
+            // A confirm left open while the entry left the library elsewhere does nothing.
+            val targets = novelIds.filter { novelRepo.getById(it)?.favorite == true }
+            if (targets.isEmpty()) return@launch
+            val removed = removeNovelsFromLibrary.await(targets)
             viewModelScope.launchIO { promptDeleteDownloadsOnRemoved(removed) }
         }
     }

@@ -394,7 +394,10 @@ private fun MangaViewModel.State.Success.toSharedDetailsDialog(isUpdateIntervalE
         MangaViewModel.Dialog.TrackSheet -> EntryDetailsDialog.TrackSheet(EntryId.Manga(manga.id), manga.title)
         is MangaViewModel.Dialog.DeleteChapters -> EntryDetailsDialog.DeleteChapters(d.chapters.map { it.id })
         is MangaViewModel.Dialog.ClearDownloads -> EntryDetailsDialog.ClearDownloads(d.target)
-        is MangaViewModel.Dialog.RemoveFromLibrary -> EntryDetailsDialog.RemoveFromLibrary(d.removal)
+        is MangaViewModel.Dialog.RemoveFromLibrary -> EntryDetailsDialog.RemoveFromLibrary(
+            d.removal,
+            manga.withCustomInfo(customInfo).title,
+        )
         is MangaViewModel.Dialog.ChapterNumber -> EntryDetailsDialog.ChapterNumber(d.edit)
         else -> null
     }

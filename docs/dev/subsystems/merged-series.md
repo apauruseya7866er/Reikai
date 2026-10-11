@@ -85,7 +85,7 @@ Tracking spans the group while `sync_tracker_links_grouped` is on: `GroupTrackRe
 
 ### Removal
 
-All removal goes through `EntryLibraryRemoval` (tracker hand-out, one favorite write, then covers). The details heart decides its targets with `DetailsRemoval`: under a source chip it removes that source; under All on a merged entry it asks with the "All grouped sources" choice (`GroupedSourcesChoice`, shared with the library Remove dialog), ticked by default. Removal keeps the membership row so a re-add rejoins; Manage sources' remove also splits the source out.
+All removal goes through `EntryLibraryRemoval` (tracker hand-out, one favorite write, then covers). The details heart decides its targets and its prompt with `DetailsRemoval`, and always asks exactly once: under a source chip it removes that source; under All on a merged entry the confirm offers the "All grouped sources" choice (`GroupedSourcesChoice`, shared with the library Remove dialog), ticked by default; a lone E-Hentai gallery backed up to the account shows its account confirm in place of the shared one (`RemovalPrompt`). A confirm whose entry already left the library does nothing. Removal keeps the membership row so a re-add rejoins; Manage sources' remove also splits the source out.
 
 ### Backup
 

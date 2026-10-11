@@ -67,8 +67,8 @@ sealed interface EntryDetailsDialog {
     /** Confirm clearing downloads, [target] captured when it opened. */
     data class ClearDownloads(val target: ClearDownloadsTarget) : EntryDetailsDialog
 
-    /** The heart's remove asking about every grouped source, [removal] captured when it opened. */
-    data class RemoveFromLibrary(val removal: DetailsRemoval) : EntryDetailsDialog
+    /** The heart's remove confirm for [entryTitle], [removal] captured when it opened. */
+    data class RemoveFromLibrary(val removal: DetailsRemoval, val entryTitle: String) : EntryDetailsDialog
 
     /** Correct one chapter's number, [edit] read when it opened. */
     data class ChapterNumber(val edit: ChapterNumberEdit) : EntryDetailsDialog
@@ -199,7 +199,8 @@ fun Screen.EntryDetailsDialogHost(
             onConfirm = { behavior.clearDownloads(dialog.target.ids) },
         )
         is EntryDetailsDialog.RemoveFromLibrary -> RemoveFromLibraryDialog(
-            groupedSourceCount = dialog.removal.groupIds.size,
+            entryTitle = dialog.entryTitle,
+            groupedSourceCount = if (dialog.removal.offersGroup) dialog.removal.groupIds.size else 0,
             onDismissRequest = onDismissRequest,
             onConfirm = { behavior.removeFromLibrary(dialog.removal.targets(it)) },
         )

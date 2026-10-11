@@ -220,6 +220,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 #### Changed
 
 - **Manga and novel chapter numbers are now read from the whole chapter list, so a volume is no longer taken for the chapter number and a chapter without one is numbered from its neighbours (from Mihon).** Numbers update on the next refresh; ones you corrected stay. Upstream: mihon e42e01049.
+- **Removing a manga or novel from your library from its page now asks you to confirm first, including under a merged series' source chip (from Mihon).** A series from an adult source that backs favourites up to your account asks once, with that option included. Upstream: mihonapp/mihon#4073.
 - **A manga or novel's page now shows the outline of what it is loading instead of a spinner.**
 - **The cover viewer now offers Edit only for series in your library or on local storage, where a custom cover is kept.**
 - **Sorting a chapter list "By source" now really follows that source's own listing, on manga and novels.** Pick "By chapter number" for the old order.
