@@ -26,6 +26,7 @@ import io.mockk.unmockkStatic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.job
@@ -289,6 +290,19 @@ suspend fun settled(
     until: (ReaderViewModel.State) -> Boolean,
 ): ReaderViewModel.State = withContext(Dispatchers.Default) {
     withTimeout(10_000) { model.state.first(until) }
+}
+
+/** The chapter sheet's rows as [model]'s production provider builds them, with nothing queued. */
+suspend fun sheetRows(model: ReaderViewModel): List<ReaderChapterRow> {
+    val provider = MangaReaderProvider(
+        viewModel = model,
+        readerPreferences = ReaderPreferences(InMemoryPreferenceStore()),
+        downloadManager = mockk<DownloadManager>(relaxed = true) {
+            every { queueState } returns MutableStateFlow(emptyList())
+        },
+        titleWords = EnglishChapterTitleWords,
+    )
+    return withContext(Dispatchers.Default) { provider.chapterList.rows.first() }
 }
 
 /** [chapter] as loaded with [count] pages, which the stubbed page loader never does itself. */

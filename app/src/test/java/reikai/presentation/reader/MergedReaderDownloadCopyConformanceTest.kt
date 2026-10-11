@@ -1,7 +1,6 @@
 package reikai.presentation.reader
 
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
-import eu.kanade.tachiyomi.ui.reader.chapter.ReaderChapterItem
 import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
@@ -189,17 +188,9 @@ class MangaDownloadProbe : ReaderDownloadProbe {
         settle(queued) - ReaderCopy.A2
     }
 
-    override suspend fun sheetOffersDownload(scope: TestScope, row: ReaderCopy): Boolean = open { model, _, group, _ ->
-        val chapter = group.pooledChapters.first { it.id == ids.getValue(row) }
-        ReaderChapterItem(chapter, sourceName = null)
-            .toReaderChapterRow(
-                emptyMap(),
-                model.sheetFlags(listOf(chapter)),
-                false,
-                EnglishChapterTitleWords,
-                model.downloadTargets,
-            )
-            .offersDownload
+    override suspend fun sheetOffersDownload(scope: TestScope, row: ReaderCopy): Boolean = open { model, _, _, _ ->
+        val chapter = ReaderCopy.entries.filter { it.name.drop(1) == row.name.drop(1) }.mapTo(HashSet(), ids::getValue)
+        sheetRows(model).single { it.id in chapter }.offersDownload
     }
 
     private suspend fun settle(queued: Set<Long>): Set<ReaderCopy> = withContext(Dispatchers.Default) {

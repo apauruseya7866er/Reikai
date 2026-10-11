@@ -1,12 +1,7 @@
 package reikai.presentation.reader
 
-import eu.kanade.tachiyomi.data.download.DownloadManager
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import io.kotest.matchers.shouldBe
-import io.mockk.every
-import io.mockk.mockk
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -14,12 +9,10 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
-import tachiyomi.core.common.preference.InMemoryPreferenceStore
 
 /**
  * Whether the reader's chapter sheet draws a row's download control on a series that is not merged,
@@ -77,17 +70,7 @@ class ReaderSheetDownloadOfferConformanceTest {
                     onDisk = setOf(10L),
                     missingSources = if (sourceInstalled) emptySet() else setOf(SOURCE),
                 ) { model, _ ->
-                    val provider = MangaReaderProvider(
-                        viewModel = model,
-                        readerPreferences = ReaderPreferences(InMemoryPreferenceStore()),
-                        downloadManager = mockk<DownloadManager>(relaxed = true) {
-                            every { queueState } returns MutableStateFlow(emptyList())
-                        },
-                        titleWords = EnglishChapterTitleWords,
-                    )
-                    withContext(Dispatchers.Default) { provider.chapterList.rows.first() }
-                        .single { it.id == asked }
-                        .offersDownload
+                    sheetRows(model).single { it.id == asked }.offersDownload
                 }
             }
 

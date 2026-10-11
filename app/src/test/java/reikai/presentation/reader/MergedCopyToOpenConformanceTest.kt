@@ -146,14 +146,8 @@ class MangaCopyProbe : MergedCopyProbe {
     }
 
     override suspend fun sheetShowsDownloaded(scope: TestScope, sourceScoped: Boolean): Boolean =
-        open(onDisk = setOf(22L), downloadedOnly = false, sourceScoped = sourceScoped) { model, _, group ->
-            val rows = if (sourceScoped) {
-                group.pooledChapters.filter { it.mangaId == LEADING }
-            } else {
-                renderStoredStitch(group.pooledChapters, group.stitch) { it.id }
-            }
-            val row = rows.first { it.chapterNumber == 6.0 }
-            model.sheetFlags(rows).isDownloaded(row)
+        open(onDisk = setOf(22L), downloadedOnly = false, sourceScoped = sourceScoped) { model, _, _ ->
+            sheetRows(model).single { it.id == 12L || it.id == 22L }.downloadState == Download.State.DOWNLOADED
         }
 
     /**
