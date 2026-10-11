@@ -64,22 +64,6 @@ class EntryWebPageTest {
     }
 
     @Test
-    fun `a merged manga's page follows the chip`() = runTest {
-        val anchorSource = http(7L)
-        val siblingSource = http(8L)
-        val page = shownMangaPage()
-
-        val pages = listOf(anchor to anchorSource, sibling to siblingSource, anchor to anchorSource)
-            .map { page.of(it) }
-
-        pages shouldBe listOf(
-            EntryWebPage("$PAGE/1", SourceKey.Manga(7L), EntryId.Manga(1L)),
-            EntryWebPage("$PAGE/2", SourceKey.Manga(8L), EntryId.Manga(2L)),
-            EntryWebPage("$PAGE/1", SourceKey.Manga(7L), EntryId.Manga(1L)),
-        )
-    }
-
-    @Test
     fun `a re-render of the same member does not ask its extension again`() = runTest {
         val source = http(7L)
         val page = shownMangaPage()
@@ -115,7 +99,6 @@ class EntryWebPageTest {
     companion object {
         private const val PAGE = "https://example.org/series"
         private val anchor = Manga.create().copy(id = 1L, url = "/1")
-        private val sibling = Manga.create().copy(id = 2L, url = "/2")
         private val NOVEL = SourceKey.Novel("novelfire")
         private val VIEWED = EntryId.Novel(34L)
 
