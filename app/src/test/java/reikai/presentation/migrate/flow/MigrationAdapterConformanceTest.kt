@@ -91,6 +91,16 @@ class MigrationAdapterConformanceTest {
         adapter.resolve(hit)?.syncedNow shouldBe false
     }
 
+    // The engine skips its own refresh after a fresh sync, so one that stored nothing must not count.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a fetch that stored no chapters is not a fresh sync`(probe: Probe) = runTest {
+        val adapter = probe.adapter(listing = listOf("/t"), chapters = 0, sourceChapters = emptyList())
+        val hit = adapter.candidates(probe.entry(onSource = probe.oldSource), "q", probe.target).single()
+
+        adapter.resolve(hit)?.syncedNow shouldBe false
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("probes")
     fun `a stored target without chapters counts as unknown`(probe: Probe) = runTest {
