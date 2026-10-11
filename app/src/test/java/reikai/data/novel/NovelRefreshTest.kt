@@ -311,7 +311,7 @@ class NovelRefreshTest {
 
     private val twoPages get() = PagedSource(listOf(chapter("/c/2", 2.0)), mapOf("2" to listOf(chapter("/c/1", 1.0))))
 
-    // Page 2 syncs against the page 1 this refresh just stored, so on its own it would read as a release.
+    // Page 2 syncs after the page 1 this refresh just stored, so the novel already has chapters by then.
     @Test
     fun `a paged novel's first fetch is not counted as a release`() = runTest {
         val novel = weeklyNovelUpdatedThreeDaysAgo()
@@ -321,12 +321,28 @@ class NovelRefreshTest {
         daysUntilNextUpdate(novel) shouldBe 4
     }
 
+    // An opened novel stored only page 1, so page 2 fills in the back catalogue.
     @Test
-    fun `a chapter found on a later page of a stored novel is counted as a release`() = runTest {
+    fun `chapters on a page the novel never stored are not counted as a release`() = runTest {
         val novel = weeklyNovelUpdatedThreeDaysAgo()
         storedChapter(novel, "/c/2", 2.0, read = false, page = "1")
 
         refresh(novel, twoPages)
+
+        daysUntilNextUpdate(novel) shouldBe 4
+    }
+
+    @Test
+    fun `a new chapter on a page the novel stored is counted as a release`() = runTest {
+        val novel = weeklyNovelUpdatedThreeDaysAgo()
+        storedChapter(novel, "/c/2", 2.0, read = false, page = "1")
+        storedChapter(novel, "/c/1", 1.0, read = false, page = "2")
+        val source = PagedSource(
+            listOf(chapter("/c/3", 3.0), chapter("/c/2", 2.0)),
+            mapOf("2" to listOf(chapter("/c/1", 1.0))),
+        )
+
+        refresh(novel, source)
 
         daysUntilNextUpdate(novel) shouldBe 7
     }

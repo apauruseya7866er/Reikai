@@ -128,17 +128,19 @@ class ReleasePredictionConformanceTest {
             undatedUploads = true,
         ),
 
-        // A release found before, after and on the day after the day it was due.
+        // Each release case below predicts a different day when the release found is ignored, so a type
+        // that drops foundRelease fails it. Early: out on the 30th, due the 1st, found the 31st.
         EARLY_RELEASE(
             everyDays("2019-10-02", "2019-12-25", 7) + LocalDate.parse("2019-12-30"),
-            LocalDate.parse("2019-12-30"),
+            LocalDate.parse("2019-12-31"),
             nextUpdate = LocalDate.parse("2020-01-01").atStartOfDayIn(ZONE),
             foundRelease = true,
         ),
+
+        // Late: due the 1st, out on the 3rd, found on the 8th, the next day it was due.
         LATE_RELEASE(
             everyDays("2019-12-04", "2019-12-25", 7) + LocalDate.parse("2020-01-03"),
-            LocalDate.parse("2020-01-03"),
-            nextUpdate = LocalDate.parse("2020-01-01").atStartOfDayIn(ZONE),
+            LocalDate.parse("2020-01-08"),
             foundRelease = true,
         ),
         BACKDATED_RELEASE(
@@ -148,11 +150,11 @@ class ReleasePredictionConformanceTest {
             foundRelease = true,
         ),
 
-        // Three days of releases every three weeks, found on a batch's second day.
+        // Three days of releases every three weeks, a batch's first day found on its second.
         BATCHES(
             everyDays("2019-09-02", "2019-12-16", 21)
                 .flatMap { start -> (0..2).map { start.plus(DatePeriod(days = it)) } }
-                .filter { it <= LocalDate.parse("2019-12-17") },
+                .filter { it <= LocalDate.parse("2019-12-16") },
             LocalDate.parse("2019-12-17"),
             foundRelease = true,
         ),

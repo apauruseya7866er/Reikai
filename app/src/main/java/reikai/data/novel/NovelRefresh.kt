@@ -172,9 +172,7 @@ suspend fun refreshNovelFromSource(
             numberOverrides,
             novelDownloadManager = novelDownloadManager,
         )
-        // The first page goes first, so it decides whether this is the novel's first fetch
-        synced = listOfNotNull(synced, walked).reduceOrNull(NovelChapterSyncResult::plus)
-            ?: NovelChapterSyncResult.UNCHANGED
+        synced = synced?.plus(walked) ?: walked
     }
     if (synced != null) {
         predictNovelFetchInterval(

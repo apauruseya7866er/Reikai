@@ -115,10 +115,7 @@ suspend fun syncChaptersWithNovelSource(
         }
     }
 
-    val hadChapters = dbChapters.isNotEmpty()
-    if (toAdd.isEmpty() && toDelete.isEmpty() && toChange.isEmpty()) {
-        return NovelChapterSyncResult(emptyList(), changed = false, hadChapters, foundRelease = false)
-    }
+    if (toAdd.isEmpty() && toDelete.isEmpty() && toChange.isEmpty()) return NovelChapterSyncResult.UNCHANGED
 
     val now = Clock.System.now()
     val markDuplicateAsRead = libraryPreferences.markDuplicateReadChapterAsRead.get()
@@ -156,10 +153,12 @@ suspend fun syncChaptersWithNovelSource(
     // cancels them too (RemovedChapterQueueConformanceTest).
     novelDownloadManager?.cancelDownloads(toDelete.map { it.id })
 
+    // A page is compared with what that page held: chapters filling a page never stored are the back
+    // catalogue, whatever other pages the novel has.
+    val hadChapters = if (page == null) dbChapters.isNotEmpty() else dbChapters.any { it.page == page }
     return NovelChapterSyncResult(
         insertedChapters.filterNot { it.url in changedOrDuplicateReadUrls },
         changed = true,
-        hadChapters,
         foundRelease(hadChapters, arrivals),
     )
 }

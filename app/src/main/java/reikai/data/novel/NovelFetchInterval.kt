@@ -64,7 +64,7 @@ suspend fun novelFetchInterval(
  * Manga's sync-time prediction rule, run once after a whole-novel sync. [novel] is the snapshot from
  * before the sync, whose `lastUpdate` the prediction counts from. As manga's sync, an unchanged list
  * still moves a prediction that was forced, never made, or has fallen behind [window]. [foundRelease]
- * is the sync's own (see [NovelChapterSyncResult.plus] for a page walk's).
+ * is the sync's, any page of a walk counting.
  */
 suspend fun predictNovelFetchInterval(
     novel: Novel,
