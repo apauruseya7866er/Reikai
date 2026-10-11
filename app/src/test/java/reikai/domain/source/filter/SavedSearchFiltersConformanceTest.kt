@@ -13,6 +13,7 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
@@ -84,9 +85,14 @@ class SavedSearchFiltersConformanceTest {
     fun `an entry whose kind or name is not a plain value is skipped rather than thrown`(
         probe: SavedSearchFiltersProbe,
     ) {
-        val malformed = """[{"_type":{},"name":"x"},{"_type":"CHECKBOX","name":[]}]"""
+        val entries = Json.parseToJsonElement(probe.save(names = listOf("A", "B", "C"), chosen = "B")!!) as? JsonArray
+        // An LNReader plugin's values are one name-to-value object, with no per-entry kind or name to break.
+        assumeTrue(entries != null, "$probe saves no per-filter entries")
+        val malformed = Json.parseToJsonElement("""[{"_type":{},"name":"x"},{"_type":"CHECKBOX","name":[]}]""")
+        val payload = JsonArray(malformed.jsonArray + entries!!).toString()
 
-        probe.restore(malformed, names = listOf("A", "B", "C"), preset = "A") shouldBe listOf("A")
+        // The good entries sit beside the broken ones, so a decode that gave up on the whole payload keeps A.
+        probe.restore(payload, names = listOf("A", "B", "C"), preset = "A") shouldBe listOf("B")
     }
 
     @ParameterizedTest(name = "{0}")
