@@ -152,7 +152,11 @@ class ChapterNumberOverrideConformanceTest {
                     Manga.create().copy(id = OWNER, title = "T", source = 1),
                     mockk<Source> { every { id } returns 1L },
                 )
-                return runCatching { coVerify(exactly = 1) { updateManga.awaitUpdateLastUpdate(OWNER) } }.isSuccess
+                return runCatching {
+                    coVerify(exactly = 1) {
+                        updateManga.awaitUpdateFetchIntervalAndLastUpdate(match { it.id == OWNER }, any(), any(), any())
+                    }
+                }.isSuccess
             }
 
             override suspend fun number(database: Database, url: String) =
