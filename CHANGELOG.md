@@ -532,7 +532,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **A tracker's start date is now filled in when the first chapter you read is not chapter 1, on manga and novels.** A date already on the tracker is never replaced.
 - **Removing a tracker with "Also remove from" now keeps it bound when the service refuses, so you can retry.**
 - **Binding or changing the status of a series from your own manga server when you have not started it no longer marks its Chapter 0 read, in Reikai or on the server.**
-- **Kitsu tracking restored from an old Yokai backup now refreshes and updates again, on manga and novels.** It repairs itself the first time it is used.
+- **Kitsu tracking restored from an old Yokai backup now refreshes, updates and fills from tracker again, on manga and novels.** It repairs itself the first time it is used.
 - **A MyAnimeList my: search now offers only manga on a manga and only light novels on a novel.**
 - **Backing out of the category choice when adding a manga from its page no longer binds its server tracker.**
 - **Binding a tracker to a novel you have already read now fills in when you started reading, as it does for manga, and on manga and novels a start date no longer comes from history you removed (partly from Mihon).** Upstream: mihon 553762fae.

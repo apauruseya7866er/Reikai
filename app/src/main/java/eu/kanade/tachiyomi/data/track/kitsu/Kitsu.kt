@@ -210,7 +210,8 @@ class Kitsu(id: Long) : BaseTracker(id, "Kitsu"), DeletableTracker {
 
     // RK --> autofill entry metadata (Fill from tracker)
     override suspend fun getMangaMetadata(track: DomainTrack): TrackMangaMetadata {
-        return api.getMangaMetadata(track)
+        // A Yokai-restored row holds its entry id where the manga id belongs until something heals it
+        return api.getMangaMetadata(track.copy(remoteId = entryResolver.mangaId(track.toDbTrack())))
     }
     // RK <--
 

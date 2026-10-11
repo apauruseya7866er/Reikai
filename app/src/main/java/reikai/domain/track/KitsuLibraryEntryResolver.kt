@@ -30,6 +30,12 @@ class KitsuLibraryEntryResolver(
         return find(track)?.library_id ?: track.library_id
     }
 
+    /** The manga id a metadata read asks for, healed first when the row carries no library id. */
+    suspend fun mangaId(track: Track): Long {
+        if (!track.hasLibraryId()) find(track)
+        return track.remote_id
+    }
+
     private suspend fun healEntryId(track: Track): Boolean {
         if (track.hasLibraryId()) return false
         val entryId = track.remote_id

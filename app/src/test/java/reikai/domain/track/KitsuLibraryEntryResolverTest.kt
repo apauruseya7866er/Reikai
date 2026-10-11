@@ -134,6 +134,18 @@ class KitsuLibraryEntryResolverTest {
         resolver.libraryId(row(remoteId = soloLeveling, libraryId = soloLevelingEntry)) shouldBe soloLevelingEntry
     }
 
+    @Test
+    fun `a metadata read of a row holding the entry id asks for the manga`() = runTest {
+        resolver.mangaId(row(remoteId = soloLevelingEntry, libraryId = 0L)) shouldBe soloLeveling
+    }
+
+    @Test
+    fun `a metadata read of a row with its library id looks nothing up`() = runTest {
+        resolver.mangaId(row(remoteId = soloLeveling, libraryId = soloLevelingEntry))
+
+        entryLookups shouldBe emptyList()
+    }
+
     private companion object {
         const val KITSU = 3L
     }
