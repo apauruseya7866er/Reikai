@@ -30,6 +30,8 @@ import kotlinx.datetime.YearMonth
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.yearMonth
 import mihon.domain.upcoming.interactor.GetUpcomingManga
+import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.presentation.library.sortedByCategoryPref
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.model.Category
@@ -45,7 +47,11 @@ class UpcomingViewModel(
     private val getUpcomingManga: GetUpcomingManga,
     val getCategories: GetCategories,
     val upcomingPreferences: UpcomingPreferences,
+    private val reikaiLibraryPreferences: ReikaiLibraryPreferences, // RK
 ) : ViewModel() {
+
+    // RK: the filter sheet lists categories in the category sort order, as every other picker does
+    val categories: Flow<List<Category>> = getCategories.subscribe().sortedByCategoryPref(reikaiLibraryPreferences)
 
     val excludedCategories = upcomingPreferences.filterExcludedCategories
     val includedCategories = upcomingPreferences.filterIncludedCategories

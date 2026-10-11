@@ -93,7 +93,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **A series renamed in Edit info now shows its new title in Update errors, the download queue, notifications, the library export and the reader.**
 - **The continue button on a novel in the library now follows that novel's chapter filters, as manga does.** Set to bookmarked or downloaded chapters only, it opened the first unread chapter regardless.
 - **Clearing a novel's history now drops it in the library's Last read sort, as it does for manga.** Novels read before history was kept carry their place over on upgrade and from older backups.
-- **Category pickers for adding a series, changing a series' categories and filtering Updates and History now follow your category sort order, on manga and novels.** Adding from Browse, global search, History, a bulk selection or Related manga's See all, and a series' own Edit categories, listed them in database order.
+- **Every category picker and list, including Updates, History and Upcoming filters and Settings -> Library and Downloads, now follows your category sort order, on manga and novels.** Adding a series from anywhere and a series' own Edit categories listed them in database order.
 - **The library's Set categories action now lists hidden categories, so manga can be moved into one.**
 - **Grouping the library by tag or author no longer splits one tag into two groups when sources spell it differently, like Adult and ADULT.**
 - **Grouping the library by source now shows real source names on the category tabs, not the raw internal key.**

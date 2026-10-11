@@ -16,6 +16,7 @@ import eu.kanade.presentation.more.settings.screen.novel.downloadDelayLabel
 import mihon.app.di.appGraph
 import reikai.domain.novel.NovelPreferences
 import reikai.novel.download.NovelDownloadPacing
+import reikai.presentation.library.sortedByCategoryPref
 import reikai.presentation.settings.categoryFilterPreference
 import tachiyomi.domain.category.model.Category
 import tachiyomi.i18n.MR
@@ -34,14 +35,19 @@ object SettingsDownloadScreen : SearchableSettings {
     override fun getPreferences(): List<Preference> {
         val context = LocalContext.current
         val getCategories = remember { context.appGraph.getCategories }
-        val allCategories by getCategories.subscribe().collectAsState(initial = emptyList())
+        // RK --> in the category sort order, as every other category picker lists them
+        val reikaiLibraryPreferences = remember { context.appGraph.reikaiLibraryPreferences }
+        val allCategories by remember { getCategories.subscribe().sortedByCategoryPref(reikaiLibraryPreferences) }
+            .collectAsState(initial = emptyList())
+        // RK <--
 
         val downloadPreferences = remember { context.appGraph.downloadPreferences }
         // RK: light-novel download options
         val novelPreferences = remember { context.appGraph.novelPreferences }
         val getNovelCategories = remember { context.appGraph.getNovelCategories }
-        val novelCategories by getNovelCategories.subscribe()
-            .collectAsState(initial = emptyList())
+        val novelCategories by remember {
+            getNovelCategories.subscribe().sortedByCategoryPref(reikaiLibraryPreferences) // RK
+        }.collectAsState(initial = emptyList())
         return listOf(
             Preference.PreferenceItem.SwitchPreference(
                 preference = downloadPreferences.downloadOnlyOverWifi,

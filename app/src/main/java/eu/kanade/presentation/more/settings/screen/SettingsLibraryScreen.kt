@@ -21,6 +21,7 @@ import reikai.data.novel.update.NovelUpdateWorker
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.novel.NovelPreferences
 import reikai.presentation.library.preferredsources.PreferredSourcesScreen
+import reikai.presentation.library.sortedByCategoryPref
 import reikai.presentation.settings.categoryFilterPreference
 import reikai.presentation.settings.updateScheduleRows
 import tachiyomi.domain.category.model.Category
@@ -51,8 +52,13 @@ object SettingsLibraryScreen : SearchableSettings {
         val reikaiLibraryPreferences = remember { context.appGraph.reikaiLibraryPreferences }
         // RK: novel categories for the novel update-categories filter
         val getNovelCategories = remember { context.appGraph.getNovelCategories }
-        val allCategories by getCategories.subscribe().collectAsState(initial = emptyList())
-        val novelCategories by getNovelCategories.subscribe().collectAsState(initial = emptyList())
+        // RK --> in the category sort order, as every other category picker lists them
+        val allCategories by remember { getCategories.subscribe().sortedByCategoryPref(reikaiLibraryPreferences) }
+            .collectAsState(initial = emptyList())
+        val novelCategories by remember {
+            getNovelCategories.subscribe().sortedByCategoryPref(reikaiLibraryPreferences)
+        }.collectAsState(initial = emptyList())
+        // RK <--
 
         return listOf(
             // RK: pass novel prefs + categories so the Categories group also hosts the novel default category

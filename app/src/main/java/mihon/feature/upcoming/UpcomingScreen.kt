@@ -80,7 +80,7 @@ private fun ColumnScope.CategoryFilterSheet(
 
     HorizontalDivider(modifier = Modifier.padding(MaterialTheme.padding.extraSmall))
 
-    val allCategories by viewModel.getCategories.subscribe().collectAsState(initial = emptyList())
+    val allCategories by viewModel.categories.collectAsState(initial = emptyList()) // RK: in the category sort order
 
     if (allCategories.isEmpty()) {
         LoadingScreen(modifier = Modifier.padding(16.dp))
