@@ -56,14 +56,18 @@ class NovelChapterUpdateFromRemoteTest {
 
     @Test
     fun `a sync removes, adds and renames in one call, keeping the reader's state`() = runTest {
-        val renamed = repository.getById(2L)!!.copy(name = "renamed", read = false, lastTextProgress = 0L)
+        // The source's parse carries none of the reader's state, so the update must keep the stored row's.
+        val renamed = repository.getById(
+            2L,
+        )!!.copy(name = "renamed", read = false, bookmark = true, lastTextProgress = 0L)
 
         repository.updateFromRemote(listOf(1L), listOf(added("c-url-3")), listOf(renamed))
 
-        repository.getByNovelId(1L).map { Triple(it.url, it.name, it.read) } shouldBe listOf(
-            Triple("c-url-3", "new", false),
-            Triple("c-url-2", "renamed", true),
-        )
+        repository.getByNovelId(1L).map { listOf(it.url, it.name, it.read, it.bookmark, it.lastTextProgress) } shouldBe
+            listOf(
+                listOf("c-url-3", "new", false, false, 0L),
+                listOf("c-url-2", "renamed", true, false, 40L),
+            )
     }
 
     @Test
