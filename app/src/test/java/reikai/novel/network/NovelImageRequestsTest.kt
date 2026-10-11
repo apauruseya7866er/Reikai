@@ -120,6 +120,21 @@ class NovelImageRequestsTest {
     }
 
     @Test
+    fun `a plugin's own image header reaches a picture on its site`() = runTest {
+        val identity =
+            LnSourceIdentity(name = "P", site = "https://site.example/", imageHeaders = mapOf("X-Image" to "1"))
+
+        requests(seen = mapOf("p" to identity)).forSource("p")
+            .forUrl("https://cdn.site.example/p.jpg").headers["X-Image"] shouldBe "1"
+    }
+
+    @Test
+    fun `a chapter picture on an IReader source's site gets its cover request headers`() = runTest {
+        requests(loaded = listOf(iReaderApp())).forSource("ireader:42")
+            .forUrl("https://ir.example/p.jpg").headers["Referer"] shouldBe "https://ir.example/"
+    }
+
+    @Test
     fun `an IReader source uses the headers its cover request carries`() = runTest {
         val headers = requests(loaded = listOf(iReaderApp())).forSource("ireader:42").headers
 
