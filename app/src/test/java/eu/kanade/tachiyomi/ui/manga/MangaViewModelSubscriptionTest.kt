@@ -15,16 +15,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.onCompletion
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
@@ -36,17 +31,12 @@ import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.chapter.ChapterRepositoryImpl
 import tachiyomi.data.manga.MangaRepositoryImpl
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.manga.model.Manga
-import java.util.concurrent.atomic.AtomicInteger
-import kotlin.time.Duration.Companion.seconds
 
 /**
- * The details model holds the entry's chapter query open only while its state is collected, plus five seconds,
- * as upstream's stateIn(WhileSubscribed(5.seconds)) does. A real [MangaViewModel] over an in-memory database;
- * the chapter repository counts live collectors of the opened entry's chapter flow, the query the list reads.
- * The model hard-codes Dispatchers.IO and Default, so both are pointed at the test dispatcher to keep time virtual,
- * Default only once the helper's mocks are built.
+ * A merged series' details list follows every member's live downloads. The subscription window itself is
+ * DetailsStateSubscriptionConformanceTest's. The model hard-codes Dispatchers.IO and Default, so both are
+ * pointed at the test dispatcher to keep time virtual, Default only once the helper's mocks are built.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class MangaViewModelSubscriptionTest {
@@ -72,57 +62,9 @@ class MangaViewModelSubscriptionTest {
     }
 
     @Test
-    fun `nothing collecting the state leaves the chapter query unsubscribed`() = runTest(dispatcher) {
-        withModel { _, chapters ->
-            advanceUntilIdle()
-
-            chapters.active.get() shouldBe 0
-        }
-    }
-
-    @Test
-    fun `a collected state holds the chapter query open`() = runTest(dispatcher) {
-        withModel { model, chapters ->
-            backgroundScope.launch { model.state.collect {} }
-            advanceUntilIdle()
-
-            chapters.active.get() shouldBe 1
-        }
-    }
-
-    @Test
-    fun `the chapter query is still held just under five seconds after the last collector leaves`() =
-        runTest(dispatcher) {
-            withModel { model, chapters ->
-                val collector = launch { model.state.collect {} }
-                advanceUntilIdle()
-
-                collector.cancel()
-                advanceTimeBy(4.9.seconds)
-                runCurrent()
-
-                chapters.active.get() shouldBe 1
-            }
-        }
-
-    @Test
-    fun `the chapter query is released five seconds after the last collector leaves`() = runTest(dispatcher) {
-        withModel { model, chapters ->
-            val collector = launch { model.state.collect {} }
-            advanceUntilIdle()
-
-            collector.cancel()
-            advanceTimeBy(5.seconds)
-            runCurrent()
-
-            chapters.active.get() shouldBe 0
-        }
-    }
-
-    @Test
     fun `a sibling source's download progress shows on a merged series' All view`() = runTest(dispatcher) {
         val progress = MutableSharedFlow<Download>(extraBufferCapacity = 1)
-        withModel(merged = true, progress = progress) { model, _ ->
+        withModel(progress = progress) { model ->
             backgroundScope.launch { model.state.collect {} }
             advanceUntilIdle()
 
@@ -141,48 +83,34 @@ class MangaViewModelSubscriptionTest {
         every { progress } returns 40
     }
 
+    /** A merged series of [MANGA_ID] and [SIBLING_ID], opened through the first. */
     private suspend fun TestScope.withModel(
-        merged: Boolean = false,
-        progress: Flow<Download> = emptyFlow(),
-        block: suspend TestScope.(MangaViewModel, CountingChapters) -> Unit,
+        progress: Flow<Download>,
+        block: suspend TestScope.(MangaViewModel) -> Unit,
     ) {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         Database.Schema.create(driver).await()
         val database = DatabaseBindings.providesDatabase(driver)
-        val mangas = MangaRepositoryImpl(database)
-        val chapters = CountingChapters(ChapterRepositoryImpl(database), watched = MANGA_ID)
         driver.seedManga(MANGA_ID, chapterId = 10L)
         driver.seedManga(SIBLING_ID, SIBLING_CHAPTER)
-        val group = if (merged) longArrayOf(MANGA_ID, SIBLING_ID) else longArrayOf(MANGA_ID)
 
         val store = ViewModelStore()
         try {
             val downloads = detailsDownloadManager(queue = listOf(siblingDownload), progress = progress)
-            val model = mangaDetailsModel(MANGA_ID, mangas, chapters, group, downloads) {
+            val model = mangaDetailsModel(
+                MANGA_ID,
+                MangaRepositoryImpl(database),
+                ChapterRepositoryImpl(database),
+                longArrayOf(MANGA_ID, SIBLING_ID),
+                downloads,
+            ) {
                 every { Dispatchers.Default } returns dispatcher
             }.also { store.put("manga", it) }
-            block(model, chapters)
+            block(model)
         } finally {
             store.clear()
             advanceUntilIdle()
             driver.close()
-        }
-    }
-
-    /** Counts live collectors of [watched]'s chapter flow, the query the details list holds open. */
-    private class CountingChapters(
-        private val delegate: ChapterRepository,
-        private val watched: Long,
-    ) : ChapterRepository by delegate {
-        val active = AtomicInteger()
-
-        override suspend fun getChapterByMangaIdAsFlow(
-            mangaId: Long,
-            applyScanlatorFilter: Boolean,
-        ): Flow<List<Chapter>> {
-            val flow = delegate.getChapterByMangaIdAsFlow(mangaId, applyScanlatorFilter)
-            if (mangaId != watched) return flow
-            return flow.onStart { active.incrementAndGet() }.onCompletion { active.decrementAndGet() }
         }
     }
 
