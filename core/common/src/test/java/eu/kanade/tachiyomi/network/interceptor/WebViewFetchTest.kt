@@ -146,8 +146,10 @@ class WebViewFetchTest {
         isSameOrigin("http://[::1]:8080/".toHttpUrl(), "http://[::1:8080]/".toHttpUrl()) shouldBe false
     }
 
+    // Only which request is challenged: that CloudflareInterceptor.served solves and reopens that page
+    // runs a WebView, so it is checked on a device, not here.
     @Test
-    fun `a served hop that Cloudflare challenges is solved on the hop's own site`() {
+    fun `a served hop that Cloudflare challenges names the hop's own request`() {
         val challenge = Response.Builder()
             .request(get("https://target.example.net/chapter").build())
             .protocol(Protocol.HTTP_1_1)
