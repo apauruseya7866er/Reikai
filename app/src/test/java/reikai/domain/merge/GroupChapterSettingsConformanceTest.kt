@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.ui.manga.seedManga
 import io.kotest.matchers.shouldBe
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import mihon.app.di.ReikaiBindings
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
@@ -15,9 +16,9 @@ import reikai.domain.db.PassThroughTransactions
 import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.manga.MangaChapterSettings
-import reikai.domain.manga.MangaMergeManager
+import reikai.domain.manga.MangaGroupCategories
 import reikai.domain.novel.NovelChapterSettings
-import reikai.domain.novel.NovelMergeManager
+import reikai.domain.novel.NovelGroupCategories
 import reikai.domain.novel.NovelPreferences
 import reikai.domain.novel.interactor.SetNovelChapterFlags
 import reikai.domain.novel.interactor.UpdateNovel
@@ -89,9 +90,9 @@ class GroupChapterSettingsConformanceTest {
     @ParameterizedTest
     @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
     fun `a merge gives the members joining the owner's sort`(type: ContentType) = runTest {
-        val side = side(type)
+        val side = side(type).apply { GROUP.forEach { setInLibrary(it, true) } }
 
-        side.settings.adoptOwnerSetting(GROUP)
+        side.mergeManager.merge(GROUP)
 
         side.shownDescending(SIBLING, listOf(SIBLING)) shouldBe true
     }
@@ -216,7 +217,15 @@ class GroupChapterSettingsConformanceTest {
         private val mangas = MangaRepositoryImpl(database)
         private val setFlags = SetMangaChapterFlags(mangas)
         override val settings = MangaChapterSettings(mangas)
-        override val mergeManager = MangaMergeManager(groups, reikaiPreferences, settings::adoptOwnerSetting) {}
+
+        // Built as the graph builds it, so the merge hook the app runs is the one tested.
+        override val mergeManager = ReikaiBindings.providesMangaMergeManager(
+            groups,
+            reikaiPreferences,
+            propagate = mockk(relaxed = true),
+            chapterSettings = settings,
+            groupCategories = MangaGroupCategories(mockk(relaxed = true), mockk(relaxed = true)),
+        )
         private val libraryPreferences = LibraryPreferences(InMemoryPreferenceStore())
         private val adder = MangaLibraryAdder(
             sourceManager = mockk(relaxed = true),
@@ -274,7 +283,13 @@ class GroupChapterSettingsConformanceTest {
         private val preferences = NovelPreferences(InMemoryPreferenceStore())
         private val setFlags = SetNovelChapterFlags(novels, preferences)
         override val settings = NovelChapterSettings(novels)
-        override val mergeManager = NovelMergeManager(groups, reikaiPreferences, settings::adoptOwnerSetting) {}
+        override val mergeManager = ReikaiBindings.providesNovelMergeManager(
+            groups,
+            reikaiPreferences,
+            propagate = { mockk(relaxed = true) },
+            chapterSettings = settings,
+            groupCategories = NovelGroupCategories(mockk(relaxed = true), mockk(relaxed = true)),
+        )
         private val adder = NovelLibraryAdder(
             novelRepository = novels,
             manager = mockk(relaxed = true),

@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.ui.manga.seedManga
 import io.kotest.matchers.shouldBe
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import mihon.app.di.ReikaiBindings
 import mihon.core.migration.migrations.MergedGroupCategoriesMigration
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.params.ParameterizedTest
@@ -20,10 +21,8 @@ import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.manga.MangaChapterSettings
 import reikai.domain.manga.MangaGroupCategories
-import reikai.domain.manga.MangaMergeManager
 import reikai.domain.novel.NovelChapterSettings
 import reikai.domain.novel.NovelGroupCategories
-import reikai.domain.novel.NovelMergeManager
 import reikai.domain.novel.NovelPreferences
 import reikai.domain.novel.interactor.SetNovelCategories
 import reikai.domain.novel.interactor.UpdateNovel
@@ -242,7 +241,15 @@ class GroupCategoriesConformanceTest {
         private val getCategories = GetCategories(categoryRepository)
         private val setMangaCategories = SetMangaCategories(mangas)
         override val categories = MangaGroupCategories(getCategories, setMangaCategories)
-        override val mergeManager = MangaMergeManager(groups, reikaiPreferences, categories::adoptOwnerCategories) {}
+
+        // Built as the graph builds it, so the merge hook the app runs is the one tested.
+        override val mergeManager = ReikaiBindings.providesMangaMergeManager(
+            groups,
+            reikaiPreferences,
+            propagate = mockk(relaxed = true),
+            chapterSettings = MangaChapterSettings(mangas),
+            groupCategories = categories,
+        )
         private val adder = MangaLibraryAdder(
             sourceManager = mockk(relaxed = true),
             libraryPreferences = LibraryPreferences(
@@ -298,7 +305,13 @@ class GroupCategoriesConformanceTest {
         private val getNovelCategories = GetNovelCategories(categoryRepository)
         private val setNovelCategories = SetNovelCategories(novels)
         override val categories = NovelGroupCategories(getNovelCategories, setNovelCategories)
-        override val mergeManager = NovelMergeManager(groups, reikaiPreferences, categories::adoptOwnerCategories) {}
+        override val mergeManager = ReikaiBindings.providesNovelMergeManager(
+            groups,
+            reikaiPreferences,
+            propagate = { mockk(relaxed = true) },
+            chapterSettings = NovelChapterSettings(novels),
+            groupCategories = categories,
+        )
         private val adder = NovelLibraryAdder(
             novelRepository = novels,
             manager = mockk(relaxed = true),
