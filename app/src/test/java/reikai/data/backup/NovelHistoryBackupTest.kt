@@ -48,7 +48,7 @@ class NovelHistoryBackupTest {
                 "favorite_at) VALUES (1, 'src', 'novel', 'title', 0, 0, 0, 0)",
             "INSERT INTO novel_chapters(_id, novel_id, url, name, read, bookmark, chapter_number, " +
                 "source_order, date_fetch, date_upload) VALUES (10, 1, 'chapter', 'c', 1, 0, 1, 0, 0, 0)",
-            "INSERT INTO novel_history(chapter_id, last_read, time_read) VALUES (10, 0, 500)",
+            "INSERT INTO novel_history(chapter_id, last_read, time_read) VALUES (10, NULL, 500)",
         ).forEach { driver.execute(null, it, 0).await() }
         val backup = BackupNovel(source = "src", url = "novel")
 
