@@ -123,6 +123,11 @@ class NovelUpdatesPushTest {
     }
 
     @Test
+    fun `a reread is held back by default, as every tracker's is`() {
+        NovelUpdates(TrackerManager.NOVELUPDATES).followsRereads shouldBe false
+    }
+
+    @Test
     fun `a run of reads asks the site for the series' releases once`() = runTest {
         val tracker = NovelUpdates(TrackerManager.NOVELUPDATES)
 

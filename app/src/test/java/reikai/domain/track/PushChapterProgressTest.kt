@@ -107,6 +107,18 @@ class PushChapterProgressTest {
         tracker.pushChapterProgress(unstartedRow(), chapterNumber = 72.0).started_reading_date shouldBe 0L
     }
 
+    /** NovelUpdates with "Never move progress back" off: the user asked it to follow a reread. */
+    @Test
+    fun `a tracker following rereads is sent a chapter below the service's progress`() = runTest {
+        val rereading = mockk<Tracker>(moreInterfaces = arrayOf(RereadPushTracker::class)) {
+            every { supportsReadingDates } returns false
+            every { (this@mockk as RereadPushTracker).followsRereads } returns true
+            coEvery { update(any(), any()) } answers { firstArg() }
+        }
+
+        rereading.pushChapterProgress(localRow(), chapterNumber = 3.0).last_chapter_read shouldBe 3.0
+    }
+
     /** The clause every dated tracker's `update` carries upstream: only chapter 1 starts the series. */
     private fun upstreamStampsOnlyChapterOne() {
         coEvery { tracker.update(any(), any()) } answers {

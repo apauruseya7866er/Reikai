@@ -171,26 +171,6 @@ class NovelUpdatesReleasesTest {
     }
 
     @Test
-    fun `an automatic read of an earlier chapter leaves the site where it is`() {
-        holdsBack(isRead = true, neverBackwards = true, chapter = 3.0, onSite = 5) shouldBe true
-    }
-
-    @Test
-    fun `a later chapter moves the site on`() {
-        holdsBack(isRead = true, neverBackwards = true, chapter = 6.0, onSite = 5) shouldBe false
-    }
-
-    @Test
-    fun `an earlier chapter moves the site back when the setting is off`() {
-        holdsBack(isRead = true, neverBackwards = false, chapter = 3.0, onSite = 5) shouldBe false
-    }
-
-    @Test
-    fun `a progress set by hand is never held back`() {
-        holdsBack(isRead = false, neverBackwards = true, chapter = 3.0, onSite = 5) shouldBe false
-    }
-
-    @Test
     fun `a series on none of the user's lists is filed as plan to read when nothing is read`() {
         bindOnSite(siteStatus = null, hasReadChapters = false) shouldBe
             BindOnSite.File(NovelUpdates.PLAN_TO_READ)

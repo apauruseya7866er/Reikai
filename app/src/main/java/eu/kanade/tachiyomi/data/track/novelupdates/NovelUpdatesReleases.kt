@@ -74,13 +74,6 @@ internal class HeldReleases(private val fetch: suspend (novelId: String) -> List
 }
 
 /**
- * Whether a read of chapter [chapter] must leave the site where it is: only an automatic read, with
- * the setting on, of a chapter below the progress the site already has.
- */
-internal fun holdsBack(isRead: Boolean, neverBackwards: Boolean, chapter: Double, onSite: Int?): Boolean =
-    isRead && neverBackwards && onSite != null && chapter < onSite
-
-/**
  * The site's progress after unreading the chapters numbered [unread]: the highest chapter still read,
  * never above what the site had. Null, leaving the site alone, when the unread moved nothing it could
  * carry: no numbered chapter (a prologue has no position), the lowest one above the site's progress

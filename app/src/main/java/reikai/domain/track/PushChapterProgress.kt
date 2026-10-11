@@ -30,6 +30,11 @@ data class ChapterPushOutcome(val failed: List<Pair<Tracker, Throwable>>) {
  * caller's row rather than replacing it. Shared by both chapter interactors, so the rule lives once.
  */
 suspend fun Tracker.pushChapterProgress(track: DbTrack, chapterNumber: Double): DbTrack {
+    // Forward only, judged on the refreshed row: the caller's local row can be stale (read on another
+    // device). Nothing is sent, status included, and the service's progress comes back to be stored.
+    // A deliberate divergence from Mihon, whose push moves the service back to the chapter read.
+    val followsRereads = this is RereadPushTracker && followsRereads
+    if (chapterNumber <= track.last_chapter_read && !followsRereads) return track
     // Each tracker's update starts the series only when the push is exactly chapter 1, which misses a
     // series begun anywhere else. A push off zero is the start (both callers only push upwards), and a
     // date already there is never replaced. The service's progress is read before this push overwrites it.

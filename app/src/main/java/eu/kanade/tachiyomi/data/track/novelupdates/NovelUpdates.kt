@@ -16,6 +16,7 @@ import reikai.data.track.NovelTrackerStatuses
 import reikai.data.track.TrackerSignedOutException
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.track.UnreadPushTracker
+import reikai.domain.track.RereadPushTracker
 import reikai.domain.track.autobind.AutoBindEntry
 import reikai.domain.track.autobind.AutoBindTracker
 import reikai.domain.track.highestStillRead
@@ -39,6 +40,7 @@ class NovelUpdates(id: Long) :
     CookieLoginTracker,
     AutoBindTracker,
     UnreadPushTracker,
+    RereadPushTracker,
     NovelStatusTracker {
 
     companion object {
@@ -121,6 +123,8 @@ class NovelUpdates(id: Long) :
         }
         return track
     }
+
+    override val followsRereads: Boolean get() = !trackPreferences.novelUpdatesNeverBackwards.get()
 
     override suspend fun update(track: Track, didReadChapter: Boolean): Track {
         if (didReadChapter) {
@@ -243,21 +247,14 @@ class NovelUpdates(id: Long) :
      * anything is written, so a refused read leaves the site untouched rather than moved under a bind
      * the app never saves, and a note that does not parse fails the push with the list and note untouched.
      * Nothing here catches: a failed write must reach the caller rather than read as success. A
-     * [readChapter] also moves the site's bookmark to its release, and never moves the site back unless
-     * the user allows it.
+     * [readChapter] also moves the site's bookmark to its release. Whether a read may move the site back
+     * is decided before this, by the shared forward-only push ([followsRereads]).
      */
     private suspend fun push(track: Track, readChapter: Boolean = false) {
         val novelId = track.remote_id.toString()
         val existing = api.readNotes(novelId) ?: unrecognisedPage()
         moveToList(novelId, track.status)
 
-        val onSite = progressFrom(existing.notes)
-        val neverBackwards = trackPreferences.novelUpdatesNeverBackwards.get()
-        if (holdsBack(readChapter, neverBackwards, track.last_chapter_read, onSite)) {
-            // The caller stores what this returns, so the app keeps the site's later chapter too.
-            track.last_chapter_read = onSite!!.toDouble()
-            return
-        }
         if (readChapter) {
             val readIds = readReleaseIds(groupChapters(track.manga_id), track.last_chapter_read)
             bookmarkRelease(track, novelId, track.last_chapter_read, readIds)
