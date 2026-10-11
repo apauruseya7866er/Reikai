@@ -1,5 +1,6 @@
 package reikai.presentation.library.updateerror
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -75,6 +76,9 @@ class UpdateErrorsScreen(
             return
         }
         val successState = state as UpdateErrorsScreenState.Success
+
+        // Back leaves selection mode before it leaves the screen, as Komikku's list and Mihon's lists do
+        BackHandler(enabled = successState.selection.size > 0, onBack = viewModel::clearSelection)
 
         Scaffold(
             topBar = { scrollBehavior ->

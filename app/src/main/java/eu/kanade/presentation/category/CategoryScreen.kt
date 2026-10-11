@@ -1,5 +1,6 @@
 package eu.kanade.presentation.category
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -72,6 +73,8 @@ fun CategoryScreen(
     val reorderable = state.categorySortOrder == CategorySortOrder.MANUAL &&
         !state.selectionMode &&
         state.contentType == ContentType.ALL
+    // RK: back leaves selection mode before it leaves the screen, as Mihon's selection lists do
+    BackHandler(enabled = state.selectionMode, onBack = onClearSelection)
     Scaffold(
         topBar = { scrollBehavior ->
             AppBar(

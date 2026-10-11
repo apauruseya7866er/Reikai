@@ -1,6 +1,7 @@
 package reikai.presentation.recommendation.browse
 
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,6 +55,8 @@ class RelatedMangasBrowseScreen(
             create(mangaId = mangaId)
         }
         val state by viewModel.state.collectAsState()
+
+        BackHandler(enabled = state.selectionMode, onBack = viewModel::clearSelection)
 
         Scaffold(
             topBar = { scrollBehavior ->

@@ -110,6 +110,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Deleting a category now clears it from the library and Updates filters and from your collapsed categories.**
 - **Undo in Settings -> Library -> Edit categories now restores only the categories that delete removed, even after a second delete.**
 - **Categories deleted in Settings -> Library -> Edit categories now stay deleted when you go back while the Undo bar is still showing.**
+- **Pressing back while selecting on Edit categories or Update errors now clears the selection instead of leaving the screen.**
 - **Settings -> Library -> Preferred sources lists the local source again, names each source's language in the order Browse uses, starts right under its tabs, and moves a source on every Up or Down tap, on manga and novels.** An uninstalled source used to swallow the tap.
 - **The library filter icon no longer lights up for a custom-interval filter whose update restriction is off.**
 - **A category you set back to the global sort now stays that way if the app is closed partway through updating from an older version.**
@@ -249,6 +250,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Refresh now in Settings -> Recommendations now starts at once and keeps pulling your tracker libraries after you leave the screen.**
 - **The full related-manga grid now says when your filters hide every suggestion, with a button to show them.**
 - **The full related-manga grid now follows Items per row while open, range-selects only the covers between the two you press when grouped, and counts only titles that reached your library.**
+- **Pressing back while selecting in the full related-manga grid now clears the selection instead of closing the grid.**
 - **Searching a genre from a novel's page now goes back to its source's catalogue to search that genre, as manga does.** Opened from anywhere else, it searches your library.
 - **Set as default in a novel's chapter settings now asks first and can apply the settings to your whole library, as manga's does.**
 - **A novel opened from a source, a search or the feed now shows its synopsis expanded on a phone, as manga does.**
