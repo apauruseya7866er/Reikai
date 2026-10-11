@@ -78,6 +78,7 @@ With `eh_use_auto_webtoon` on (the default), a manga whose reading mode is Defau
 - `app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt`: parallel page loading and the limited window off Wi-Fi.
 - `app/src/main/java/reikai/domain/reader/ChapterRetryCooldown.kt`: the wait before an unprompted retry of a failed chapter, both readers.
 - `app/src/main/java/reikai/domain/reader/ReaderProgressWrites.kt`: the order progress saves land in, both readers.
+- `app/src/main/java/reikai/domain/reader/ReaderProgressSave.kt`: `ReaderProgressSave`, `PROGRESS_SAVE_DELAY`, when a position is saved, both readers.
 
 ## Invariants and traps
 
@@ -87,6 +88,7 @@ With `eh_use_auto_webtoon` on (the default), a manga whose reading mode is Defau
 - **A neighbour chapter that failed to load waits out one cooldown before either reader asks for it again on its own** (`ChapterRetryCooldown`, 15 seconds): the manga viewers ask in `ReaderViewModel.preload` on every page turn, the novel window on every reach. The user's Retry skips it, through `userAsked` on `requestPreloadChapter` and `preload` for manga and `retryBoundary` for novels, and an explicit load clears every wait (`reportExplicitLoad`, the novel `load`). A new Retry control that leaves `userAsked` off does nothing for up to 15 seconds.
 - **A read-state write reads its targets from the database, never from the chapters loaded at open**: the chapter sheet's mark and the duplicate-read pass on finishing (see [merged-series.md](merged-series.md)). Those chapters miss whatever this session or a refresh changed since.
 - **Both readers save progress through one `ReaderProgressWrites`**, on the app scope behind a fair lock taken before each write's first suspension, so a slower save for an earlier page cannot land after a later one, and leaving the reader still writes. The pending-download trim waits on `awaitLanded` first, so it never deletes a chapter whose read state has not landed.
+- **Both readers hold a position back through one `ReaderProgressSave`** until the reader has stayed on it for `PROGRESS_SAVE_DELAY` (500 ms), so a run of page turns or scroll reports writes once. A position that finishes the chapter writes at once, since the finish carries mark-as-read and the tracker push; a report in another chapter writes the held one first; the host flushes on pause through `flushPosition`, so a kill after backgrounding loses nothing. A held manga page is not yet in the in-memory chapter's `lastPageRead`, which `requestedPage` already carries.
 - **The event channel is `Channel.UNLIMITED`.** Upstream's rendezvous channel with `trySend` drops an event when no receiver is parked, and a lost `PageChanged` does not heal.
 - **Menu visibility is host state but still lives in `ReaderViewModel.State`**, because the three image viewers read `menuVisible` directly; moving it means editing all three.
 - **A finished manga chapter opens at its start only when picked or stepped to** (`loadAdjacent`), never on every way it becomes current, or paging back into it overwrites the page `onPageSelected` stamped.

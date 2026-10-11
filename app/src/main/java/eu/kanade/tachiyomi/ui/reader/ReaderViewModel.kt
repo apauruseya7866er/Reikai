@@ -102,6 +102,7 @@ import reikai.domain.reader.ChapterProgress
 import reikai.domain.reader.ChapterRetryCooldown // RK
 import reikai.domain.reader.ReadSessionClock
 import reikai.domain.reader.ReaderPosition
+import reikai.domain.reader.ReaderProgressSave
 import reikai.domain.reader.ReaderProgressWrites
 import reikai.domain.reader.chapterToDeleteBehind
 import reikai.domain.reader.chaptersToDownloadAhead
@@ -391,6 +392,11 @@ class ReaderViewModel(
 
     // RK: serializes the progress writes, which outlive the reader, through the rule the novel reader shares
     private val progressWrites = ReaderProgressWrites(appScope)
+
+    // RK: held back until the reader settles on a page, by the rule and delay the novel reader shares
+    private val progressSave = ReaderProgressSave<Long, ReaderPage>(viewModelScope) { _, page ->
+        progressWrites.launch { updateChapterProgress(page.chapter, page) }
+    }
 
     private var chapterToDownload: Download? = null
 
@@ -877,7 +883,12 @@ class ReaderViewModel(
         // RK <--
 
         // Save last page read and mark as read if needed. The database calls are main-safe.
-        progressWrites.launch { updateChapterProgress(selectedChapter, page) } // RK: the shared ordering
+        // RK: finishing the chapter is saved at once, any other page once the reader settles on it
+        progressSave.report(
+            selectedChapter.chapter.id,
+            page,
+            now = pageProgress(selectedChapter, page).isChapterComplete,
+        )
 
         // RK: compared with a switch still loading too, not only the active chapter, see ChapterSwitches.
         chapterSwitches.requestFromPage(selectedChapter.chapter.id, getCurrentChapter()?.chapter?.id)?.let {
@@ -1089,6 +1100,9 @@ class ReaderViewModel(
     fun restartReadTimer() {
         chapterReadSession.start(Clock.System.now()) // RK
     }
+
+    // RK: the host calls this on pause, so a kill cannot drop the page the reader settled on
+    fun flushProgress() = progressSave.flush()
 
     /**
      * Saves the chapter last read history on the app scope, so it's written even when the reader is closing.

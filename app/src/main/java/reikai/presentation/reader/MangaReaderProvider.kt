@@ -98,8 +98,7 @@ class MangaReaderProvider(
 
     override fun onReaderMoved() = Unit
 
-    // Each page turn writes its own position, so nothing is held back.
-    override fun flushPosition() = Unit
+    override fun flushPosition() = viewModel.flushProgress()
 
     // The source id lets the browser reuse that source's headers.
     override suspend fun chapterWebViewIntent(context: Context, url: String, title: String?, chapterId: Long): Intent =

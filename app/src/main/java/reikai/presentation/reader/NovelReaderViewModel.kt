@@ -23,7 +23,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -80,6 +79,7 @@ import reikai.domain.reader.ChapterIncognito
 import reikai.domain.reader.ChapterProgress
 import reikai.domain.reader.ChapterRetryCooldown
 import reikai.domain.reader.ReadSessionClock
+import reikai.domain.reader.ReaderProgressSave
 import reikai.domain.reader.ReaderProgressWrites
 import reikai.domain.reader.chaptersToDownloadAhead
 import reikai.domain.reader.downloadedOrCurrent
@@ -112,7 +112,6 @@ import reikai.presentation.reader.text.NovelResume
 import reikai.presentation.reader.text.NovelWindowReach
 import reikai.util.snapshotOnChange
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
@@ -489,12 +488,8 @@ class NovelReaderViewModel(
 
     private fun reportsCount() = rendererGeneration == openGeneration
 
-    private var progressSaveJob: Job? = null
-
-    /** The reported position not yet written, with the chapter it belongs to: a step must not let a
-     *  debounced write land on the chapter that replaced it. */
-    @Volatile
-    private var pendingSave: Pair<Long, Int>? = null
+    /** Held per chapter, so a step never lets a held write land on the chapter that replaced it. */
+    private val progressSave = ReaderProgressSave<Long, Int>(viewModelScope, ::persistProgress)
 
     /** Per chapter, since the first report of an arriving chapter is no repeat of the departed one's. */
     @Volatile
@@ -527,38 +522,18 @@ class NovelReaderViewModel(
             val threshold = novelPreferences.readerAutoLoadNextAt().get()
             if (before < threshold && clamped >= threshold) viewModelScope.launchIO { rebuildWindow() }
         }
-        // Written here rather than left to the crossing, which happens on its own coroutine: the very
-        // next report belongs to the arriving chapter and would otherwise land on the departed one.
-        val pending = pendingSave
-        if (pending != null && pending.first != id) {
-            progressSaveJob?.cancel()
-            pendingSave = null
-            persistProgress(pending.first, pending.second)
-        }
+        // A repeat is dropped, which a held position for another chapter cannot be: it would have
+        // been the last report, so this one would differ from it.
         if (!settled && lastSaved == id to clamped) return
         lastSaved = id to clamped
-        pendingSave = id to clamped
-        progressSaveJob?.cancel()
         // A settle is where the scroll stopped, and finishing carries mark-as-read, the sibling marking
         // and the tracker push, so neither waits.
-        if (settled || completesChapter(clamped)) {
-            flushProgress()
-            return
-        }
-        progressSaveJob = viewModelScope.launchUI {
-            delay(PROGRESS_SAVE_DEBOUNCE_MS)
-            flushProgress()
-        }
+        progressSave.report(id, clamped, now = settled || completesChapter(clamped))
     }
 
     /** Write the last reported position now. The host calls this on pause, so being backgrounded or
-     *  killed cannot drop a debounced write. */
-    fun flushProgress() {
-        progressSaveJob?.cancel()
-        val (id, percent) = pendingSave ?: return
-        pendingSave = null
-        persistProgress(id, percent)
-    }
+     *  killed cannot drop a held write. */
+    fun flushProgress() = progressSave.flush()
 
     /** The chapter on screen, which a merged session moves across sources. Every bar verb acts on this
      *  one, so it advances only once a chapter has actually rendered. Saved on the way, so a process
@@ -664,10 +639,7 @@ class NovelReaderViewModel(
         val hasNext = chapterAfter(chapterId) != null
         // A position it reported on opening, still waiting to be written, would land after the mark
         // and put a chapter just read back at 0.
-        if (!hasNext && pendingSave?.first == chapterId) {
-            progressSaveJob?.cancel()
-            pendingSave = null
-        }
+        if (!hasNext) progressSave.discardIf { it == chapterId }
         // Off the caller's thread, which for the native renderer is the main one, since this parses.
         progressWrites.launch {
             withContext(io) {
@@ -816,10 +788,7 @@ class NovelReaderViewModel(
         // lets the one two behind go.
         val recentred = buildWindow(arriving, around, openGeneration)
         // A partial position still pending for a chapter being read in full would race the mark.
-        if (pendingSave?.first in passed) {
-            progressSaveJob?.cancel()
-            pendingSave = null
-        }
+        progressSave.discardIf { it in passed }
         flushProgress()
         updateHistory()
         currentChapterId = target
@@ -1482,7 +1451,3 @@ private const val SAVED_CHAPTER_ID = "novel_chapter_id"
 /** Chapters held in the forward-prefetch cache. Small: it exists to make one step instant, not to
  *  keep a session's reading in memory. */
 private const val MAX_CACHED_CHAPTERS = 5
-
-/** A scroll reports continuously, so a write waits this long for the next one rather than hitting the
- *  database on every whole percent. */
-private const val PROGRESS_SAVE_DEBOUNCE_MS = 500L
