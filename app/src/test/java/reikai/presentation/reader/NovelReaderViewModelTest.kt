@@ -276,7 +276,7 @@ class NovelReaderViewModelTest {
         model.webUrlFor(earlier) shouldBe "https://alpha.example" + opened.url
     }
 
-    /** Asked by id, as the failed-chapter actions do, so the row names the source and not the session. */
+    /** Asked by id, as the failed-chapter actions do, while the session reads the other source's chapter. */
     @Test
     fun `a chapter asked for by id gets its own source's web address`() = readerTest { harness ->
         val first = harness.novel(harness.source("alpha"))
@@ -285,9 +285,6 @@ class NovelReaderViewModelTest {
         val other = harness.chapter(second, 2.0)
         harness.merge(first, second)
         val model = harness.open(first, opened.id)
-        advanceUntilIdle()
-
-        model.open(other.id)
         advanceUntilIdle()
 
         model.webUrlOf(other.id) shouldBe "https://beta.example" + other.url
