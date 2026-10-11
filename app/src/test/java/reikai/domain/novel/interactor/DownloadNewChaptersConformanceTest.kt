@@ -74,6 +74,22 @@ class DownloadNewChaptersConformanceTest {
 
     @ParameterizedTest
     @EnumSource(Side::class)
+    fun `an uncategorized entry counts as Default, so excluding Default downloads nothing`(side: Side) = runTest {
+        val filter = side.filter(enabled = true, excluded = setOf(DEFAULT), categorized = false)
+
+        filter.newNumbers(favorite = true, new = listOf(1.0)).shouldContainExactly()
+    }
+
+    @ParameterizedTest
+    @EnumSource(Side::class)
+    fun `an uncategorized entry counts as Default, so including Default downloads`(side: Side) = runTest {
+        val filter = side.filter(enabled = true, included = setOf(DEFAULT), categorized = false)
+
+        filter.newNumbers(favorite = true, new = listOf(1.0)) shouldContainExactly listOf(1.0)
+    }
+
+    @ParameterizedTest
+    @EnumSource(Side::class)
     fun `with unread only on a chapter numbered like a read one is skipped`(side: Side) = runTest {
         val filter = side.filter(enabled = true, unreadOnly = true, read = listOf(1.0))
 
@@ -92,6 +108,7 @@ class DownloadNewChaptersConformanceTest {
                 excluded: Set<Long>,
                 unreadOnly: Boolean,
                 read: List<Double>,
+                categorized: Boolean,
             ): Filter {
                 val prefs = DownloadPreferences(EmittingPreferenceStore())
                 prefs.downloadNewChapters.set(enabled)
@@ -102,7 +119,8 @@ class DownloadNewChaptersConformanceTest {
                     coEvery { await(any(), any()) } returns
                         read.map { Chapter.create().copy(read = true, chapterNumber = it) }
                 }
-                val categories = mockk<GetCategories> { coEvery { await(any<Long>()) } returns listOf(category()) }
+                val categories =
+                    mockk<GetCategories> { coEvery { await(any<Long>()) } returns categoriesOf(categorized) }
                 val filter = FilterChaptersForDownload(chapters, prefs, categories)
                 return Filter { favorite, new ->
                     filter.await(
@@ -119,6 +137,7 @@ class DownloadNewChaptersConformanceTest {
                 excluded: Set<Long>,
                 unreadOnly: Boolean,
                 read: List<Double>,
+                categorized: Boolean,
             ): Filter {
                 val prefs = NovelPreferences(EmittingPreferenceStore())
                 prefs.downloadNewChapters().set(enabled)
@@ -129,7 +148,7 @@ class DownloadNewChaptersConformanceTest {
                     coEvery { getByNovelId(any()) } returns read.map { chapter(it).copy(read = true) }
                 }
                 val categories = mockk<GetNovelCategories> {
-                    coEvery { awaitByNovelId(any()) } returns listOf(category())
+                    coEvery { awaitByNovelId(any()) } returns categoriesOf(categorized)
                 }
                 val filter = FilterNovelChaptersForDownload(chapters, prefs, categories)
                 return Filter { favorite, new ->
@@ -154,13 +173,18 @@ class DownloadNewChaptersConformanceTest {
             excluded: Set<Long> = emptySet(),
             unreadOnly: Boolean = false,
             read: List<Double> = emptyList(),
+            categorized: Boolean = true,
         ): Filter
     }
 
     private companion object {
         const val CATEGORY = 5L
 
-        fun category() = Category(id = CATEGORY, name = "", order = 0, flags = 0)
+        // What both filters file an entry with no category under.
+        const val DEFAULT = 0L
+
+        fun categoriesOf(categorized: Boolean) =
+            if (categorized) listOf(Category(id = CATEGORY, name = "", order = 0, flags = 0)) else emptyList()
 
         fun chapter(number: Double) = NovelChapter(
             id = number.toLong(), novelId = 1L, url = "", name = "", read = false, bookmark = false,
