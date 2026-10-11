@@ -9,6 +9,8 @@ import reikai.domain.merge.DownloadTargets
 import reikai.domain.reader.ChapterProgress
 import reikai.presentation.components.UndatedChapterDate
 import reikai.presentation.selection.ChapterMarks
+import reikai.presentation.selection.ChapterSelectionOffers
+import reikai.presentation.selection.chapterSelectionOffers
 import kotlin.time.Instant
 
 /**
@@ -72,6 +74,19 @@ sealed interface EntryDetailsScreenState {
         fun rowOffersDownload(chapterId: Long, downloadState: Download.State): Boolean =
             downloadTargets.offersDownload(chapterId, downloadState) {
                 details.header.sourceState != EntrySourceState.Missing
+            }
+
+        /** The selected chapter rows, in list order. */
+        val selectedChapters: List<EntryChapterListItem.Chapter>
+            get() = chapters.items.filterIsInstance<EntryChapterListItem.Chapter>().filter { it.id in selection }
+
+        /** What the bulk bar offers for [selectedChapters]: a row that draws no download control adds no Download. */
+        val selectionOffers: ChapterSelectionOffers
+            get() = selectedChapters.let { rows ->
+                chapterSelectionOffers(
+                    rows,
+                    rows.map { row -> row.downloadState.takeIf { rowOffersDownload(row.id, it) } },
+                )
             }
 
         /** A custom cover lands on the entry the library renders, so only the anchor's may be edited. */

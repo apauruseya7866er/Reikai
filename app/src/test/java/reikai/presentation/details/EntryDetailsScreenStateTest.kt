@@ -51,9 +51,29 @@ class EntryDetailsScreenStateTest {
         loaded(viewedEntryId = SIBLING).isCoverAnchored shouldBe false
     }
 
+    @Test
+    fun `a selection offers no Download for a row no installed source holds`() {
+        loaded(
+            items = listOf(chapter(ROW, Download.State.NOT_DOWNLOADED)),
+            selection = setOf(ROW),
+            downloadTargets = DownloadTargets(unavailable = setOf(ROW)),
+        ).selectionOffers.download shouldBe false
+    }
+
+    @Test
+    fun `a selection offers Download for a row an installed source fetches`() {
+        loaded(
+            items = listOf(chapter(ROW, Download.State.NOT_DOWNLOADED)),
+            selection = setOf(ROW),
+        ).selectionOffers.download shouldBe true
+    }
+
     private fun loaded(
         sourceState: EntrySourceState = EntrySourceState.Installed,
         viewedEntryId: Long = ANCHOR,
+        items: List<EntryChapterListItem> = emptyList(),
+        selection: Set<Long> = emptySet(),
+        downloadTargets: DownloadTargets = DownloadTargets.OWN,
     ) = EntryDetailsScreenState.Loaded(
         entryId = EntryId.Manga(ANCHOR),
         viewedEntryId = viewedEntryId,
@@ -78,7 +98,7 @@ class EntryDetailsScreenStateTest {
             descriptionDefaultExpanded = false,
         ),
         chapters = EntryChapterListUiState(
-            items = emptyList(),
+            items = items,
             missingChapterCount = 0,
             showHidden = false,
             hasHiddenChapters = false,
@@ -90,14 +110,28 @@ class EntryDetailsScreenStateTest {
         selectedSourceId = null,
         hasActiveFilter = false,
         isRefreshing = false,
-        selection = emptySet(),
+        selection = selection,
         resumeChapterId = null,
         hasStarted = false,
         hasViewedDownloads = false,
         showChapterNumberOnly = false,
         seedColor = null,
         webPage = null,
-        downloadTargets = DownloadTargets.OWN,
+        downloadTargets = downloadTargets,
+    )
+
+    private fun chapter(id: Long, downloadState: Download.State) = EntryChapterListItem.Chapter(
+        id = id,
+        name = "",
+        subtitle = null,
+        read = false,
+        bookmark = false,
+        dateUpload = null,
+        chapterNumber = 1.0,
+        progress = null,
+        downloadState = downloadState,
+        downloadProgress = 0,
+        numberHinted = false,
     )
 
     private companion object {

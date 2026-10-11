@@ -44,7 +44,6 @@ import reikai.presentation.novel.details.novelPageText
 import reikai.presentation.reader.chapterRowTitle
 import reikai.presentation.reader.chapterTitleWords
 import reikai.presentation.recommendation.RelatedMangaCarousel
-import reikai.presentation.selection.chapterSelectionOffers
 import tachiyomi.domain.library.service.LibraryPreferences
 
 /** Dim level for a hidden chapter row shown via "Show hidden chapters". */
@@ -293,10 +292,8 @@ private fun EntryDetailsSelectionBar(
     fillFraction: Float,
     modifier: Modifier = Modifier,
 ) {
-    val selected = state.chapters.items
-        .filterIsInstance<EntryChapterListItem.Chapter>()
-        .filter { it.id in state.selection }
-    val offers = chapterSelectionOffers(selected, selected.map { it.downloadState })
+    val selected = state.selectedChapters
+    val offers = state.selectionOffers
     MangaBottomActionMenu(
         visible = selected.isNotEmpty(),
         modifier = modifier.fillMaxWidth(fillFraction),
