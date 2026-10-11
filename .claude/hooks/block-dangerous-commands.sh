@@ -260,7 +260,10 @@ while IFS='|' read -r _ blocked probe chain; do
   fi
   # A push naming no branch pushes the current one, so probe the directory the push runs in.
   if [ "$probe" = 1 ]; then
-    CURRENT=$("${git_at[@]}" branch --show-current 2>/dev/null || true)
+    # A cd the hook cannot follow (?, -, ~, a $variable) fails the probe, and an unknown directory
+    # must not read as an allow, so it falls back to the session cwd.
+    CURRENT=$("${git_at[@]}" branch --show-current 2>/dev/null ||
+      git -C "${SESSION_CWD:-.}" branch --show-current 2>/dev/null || true)
     if [ -n "$CURRENT" ] && printf '%s' ",$PROTECTED_BRANCHES," | grep -q ",$CURRENT,"; then
       emit_deny "Blocked: you are on '$CURRENT' (a protected branch). Switch to a feature branch."
     fi
