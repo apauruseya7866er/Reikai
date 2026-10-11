@@ -10,7 +10,7 @@ import reikai.domain.novel.model.NovelCover
 class NovelCoverKeyer(private val coverCache: CoverCache) : Keyer<NovelCover> {
     override fun key(data: NovelCover, options: Options): String {
         // A source result with no stored row passes novelId 0, whose custom-cover file never exists.
-        val owner = EntryId.Novel(data.novelId).takeIf { coverCache.getCustomCoverFile(it).exists() }
+        val owner = EntryId.Novel(data.novelId).takeIf { coverCache.hasCustomCover(it) }
         return coverCacheKey(owner, data.url, data.lastModified)
     }
 }

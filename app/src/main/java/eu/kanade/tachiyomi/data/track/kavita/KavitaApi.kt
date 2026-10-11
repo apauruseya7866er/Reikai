@@ -7,6 +7,8 @@ import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.jsonMime
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import okhttp3.Dns
@@ -182,7 +184,7 @@ class KavitaApi(
         authClient.newCall(
             POST(requestUrl, body = EMPTY_JSON_BODY),
         )
-            .awaitSuccess()
+            .awaitSuccess().close()
         return getTrackSearch(track.tracking_url)
     }
 

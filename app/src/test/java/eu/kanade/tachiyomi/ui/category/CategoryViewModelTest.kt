@@ -7,6 +7,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -64,7 +65,9 @@ class CategoryViewModelTest {
 
     /** A model whose state and events are collected, as the screen collects them. */
     private fun TestScope.model(events: MutableList<CategoryEvent> = mutableListOf()): CategoryViewModel {
-        val model = main.track(CategoryViewModel(actions, reikaiLibraryPreferences))
+        // Unconfined, so a committed delete has landed by the time the call returns
+        val appScope = backgroundScope + UnconfinedTestDispatcher(testScheduler)
+        val model = main.track(CategoryViewModel(appScope, actions, reikaiLibraryPreferences))
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { model.state.collect {} }
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { model.events.collect { events += it } }
         return model

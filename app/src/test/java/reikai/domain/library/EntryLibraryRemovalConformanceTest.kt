@@ -21,6 +21,7 @@ import reikai.domain.novel.interactor.UpdateNovel
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelUpdate
 import reikai.domain.track.source.SourceTrackerDispatcher
+import reikai.util.idleAppScope
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
@@ -177,7 +178,7 @@ class EntryLibraryRemovalConformanceTest {
         val context = mockk<Context> {
             every { getExternalFilesDir(any()) } answers { File(dir, firstArg<String>()).also { it.mkdirs() } }
         }
-        return CoverCache(context)
+        return CoverCache(idleAppScope(), context)
     }
 
     /** One content type's rows, with what the removal told the trackers and wrote. */

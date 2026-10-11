@@ -3,13 +3,14 @@ package reikai.data.library
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkQuery
-import com.google.common.util.concurrent.Futures
 import io.kotest.matchers.shouldBe
 import io.mockk.CapturingSlot
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_ONLY_ON_WIFI
 import java.util.UUID
@@ -44,7 +45,7 @@ class LibraryUpdateScheduleTest {
     }
 
     @Test
-    fun `stopping the scheduled update puts its schedule back`() {
+    fun `stopping the scheduled update puts its schedule back`() = runTest {
         var rescheduled = 0
 
         stopLibraryUpdate(running(AUTO), TAG, AUTO) { rescheduled++ }
@@ -53,7 +54,7 @@ class LibraryUpdateScheduleTest {
     }
 
     @Test
-    fun `stopping a pulled update leaves the schedule alone`() {
+    fun `stopping a pulled update leaves the schedule alone`() = runTest {
         var rescheduled = 0
 
         stopLibraryUpdate(running(MANUAL), TAG, AUTO) { rescheduled++ }
@@ -62,7 +63,7 @@ class LibraryUpdateScheduleTest {
     }
 
     @Test
-    fun `stopping cancels the running update by its id`() {
+    fun `stopping cancels the running update by its id`() = runTest {
         val workManager = running(MANUAL)
 
         stopLibraryUpdate(workManager, TAG, AUTO) {}
@@ -71,7 +72,7 @@ class LibraryUpdateScheduleTest {
     }
 
     @Test
-    fun `stopping asks only for running work, so the queued schedule is never cancelled`() {
+    fun `stopping asks only for running work, so the queued schedule is never cancelled`() = runTest {
         val query = slot<WorkQuery>()
 
         stopLibraryUpdate(running(AUTO, query), TAG, AUTO) {}
@@ -81,8 +82,8 @@ class LibraryUpdateScheduleTest {
 
     /** A work manager whose one running update carries [kind] beside the shared tag. */
     private fun running(kind: String, query: CapturingSlot<WorkQuery> = slot()) = mockk<WorkManager>(relaxed = true) {
-        every { getWorkInfos(capture(query)) } returns
-            Futures.immediateFuture(listOf(WorkInfo(RUNNING_ID, WorkInfo.State.RUNNING, setOf(TAG, kind))))
+        every { getWorkInfosFlow(capture(query)) } returns
+            flowOf(listOf(WorkInfo(RUNNING_ID, WorkInfo.State.RUNNING, setOf(TAG, kind))))
     }
 
     private companion object {

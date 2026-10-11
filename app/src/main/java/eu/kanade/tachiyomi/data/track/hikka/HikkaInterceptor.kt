@@ -12,35 +12,17 @@ import java.io.IOException
 
 class HikkaInterceptor(private val hikka: Hikka) : Interceptor {
     private val json: Json by injectLazy()
+
+    @Volatile
     private var oauth: HKOAuth? = hikka.loadOAuth()
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
 
-        // RK --> every throw here is an IOException, see TrackerSignedOutException
-        val currAuth = oauth ?: throw TrackerSignedOutException("Hikka")
+        var currAuth = oauth ?: throw TrackerSignedOutException("Hikka") // RK: see refreshToken
 
         if (currAuth.isExpired()) {
-            val refreshTokenResponse = chain.proceed(HikkaApi.refreshTokenRequest(currAuth.accessToken))
-            if (!refreshTokenResponse.isSuccessful) {
-                refreshTokenResponse.close()
-                hikka.logout()
-                throw TrackerSignedOutException("Hikka")
-            } else {
-                refreshTokenResponse.close()
-            }
-
-            val authTokenInfoResponse = chain.proceed(HikkaApi.authTokenInfo(currAuth.accessToken))
-            if (!authTokenInfoResponse.isSuccessful) {
-                authTokenInfoResponse.close()
-                throw IOException("Hikka: Auth token info failed")
-            }
-            // RK <--
-
-            val authTokenInfo = with(json) {
-                authTokenInfoResponse.parseAs<HKAuthTokenInfo>()
-            }
-            setAuth(HKOAuth(currAuth.accessToken, authTokenInfo.expiration, authTokenInfo.created))
+            currAuth = refreshToken(chain, currAuth)
         }
 
         val authRequest = originalRequest.newBuilder()
@@ -49,6 +31,32 @@ class HikkaInterceptor(private val hikka: Hikka) : Interceptor {
             .build()
 
         return chain.proceed(authRequest)
+    }
+
+    private fun refreshToken(chain: Interceptor.Chain, expired: HKOAuth): HKOAuth = synchronized(this) {
+        val currAuth = oauth ?: expired
+        if (!currAuth.isExpired()) return@synchronized currAuth
+
+        // RK --> every throw here is an IOException, see TrackerSignedOutException
+        val refreshTokenResponse = chain.proceed(HikkaApi.refreshTokenRequest(currAuth.accessToken))
+        if (!refreshTokenResponse.isSuccessful) {
+            refreshTokenResponse.close()
+            hikka.logout()
+            throw TrackerSignedOutException("Hikka")
+        }
+        refreshTokenResponse.close()
+
+        val authTokenInfoResponse = chain.proceed(HikkaApi.authTokenInfo(currAuth.accessToken))
+        if (!authTokenInfoResponse.isSuccessful) {
+            authTokenInfoResponse.close()
+            throw IOException("Hikka: Auth token info failed")
+        }
+        // RK <--
+
+        val authTokenInfo = with(json) {
+            authTokenInfoResponse.parseAs<HKAuthTokenInfo>()
+        }
+        HKOAuth(currAuth.accessToken, authTokenInfo.expiration, authTokenInfo.created).also(::setAuth)
     }
 
     fun setAuth(oauth: HKOAuth?) {

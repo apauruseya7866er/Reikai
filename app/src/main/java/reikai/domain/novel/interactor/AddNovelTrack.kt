@@ -11,7 +11,6 @@ import reikai.domain.novel.track.toNovelTrack
 import reikai.domain.track.BindChapter
 import reikai.domain.track.bindBackfill
 import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.core.common.util.lang.withNonCancellableContext
 import eu.kanade.tachiyomi.data.database.models.Track as DbTrack
 
 /**
@@ -28,30 +27,28 @@ class AddNovelTrack(
     private val novelHistoryRepository: NovelHistoryRepository,
 ) {
 
-    suspend fun bind(tracker: Tracker, item: DbTrack, novelId: Long) = withNonCancellableContext {
-        withIOContext {
-            val allChapters = novelChapterRepository.getByNovelId(novelId)
-            val hasReadChapters = allChapters.any { it.read }
-            tracker.bind(item, hasReadChapters)
+    suspend fun bind(tracker: Tracker, item: DbTrack, novelId: Long) = withIOContext {
+        val allChapters = novelChapterRepository.getByNovelId(novelId)
+        val hasReadChapters = allChapters.any { it.read }
+        tracker.bind(item, hasReadChapters)
 
-            item.manga_id = novelId
-            var track = item.toNovelTrack(idRequired = false) ?: return@withIOContext
-            upsertNovelTrack.await(track)
+        item.manga_id = novelId
+        var track = item.toNovelTrack(idRequired = false) ?: return@withIOContext
+        upsertNovelTrack.await(track)
 
-            val backfill = bindBackfill(
-                allChapters.map { BindChapter(it.chapterNumber, it.read) },
-                track.lastChapterRead,
-                track.startDate,
-                TimeZone.currentSystemDefault(),
-            ) { novelHistoryRepository.getHistoryByNovelId(novelId).map { it.readAt } }
-            backfill.lastChapterRead?.let {
-                track = track.copy(lastChapterRead = it)
-                novelTrackUpdater.setRemoteLastChapterRead(tracker, track.toDbTrack(), it.toInt())
-            }
-            backfill.startDate?.let {
-                track = track.copy(startDate = it)
-                novelTrackUpdater.setRemoteStartDate(tracker, track.toDbTrack(), it.toEpochMilliseconds())
-            }
+        val backfill = bindBackfill(
+            allChapters.map { BindChapter(it.chapterNumber, it.read) },
+            track.lastChapterRead,
+            track.startDate,
+            TimeZone.currentSystemDefault(),
+        ) { novelHistoryRepository.getHistoryByNovelId(novelId).map { it.readAt } }
+        backfill.lastChapterRead?.let {
+            track = track.copy(lastChapterRead = it)
+            novelTrackUpdater.setRemoteLastChapterRead(tracker, track.toDbTrack(), it.toInt())
+        }
+        backfill.startDate?.let {
+            track = track.copy(startDate = it)
+            novelTrackUpdater.setRemoteStartDate(tracker, track.toDbTrack(), it.toEpochMilliseconds())
         }
     }
 }

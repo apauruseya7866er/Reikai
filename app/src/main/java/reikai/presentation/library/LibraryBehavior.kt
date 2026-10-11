@@ -22,7 +22,7 @@ interface LibraryBehavior {
      * Start a library update for [category], or the whole library when null. Returns false when one is
      * already running, which is what the "already updating" message keys on.
      */
-    fun refresh(category: Category?): Boolean
+    suspend fun refresh(category: Category?): Boolean
 
     // Picking a random entry lives in LibraryEngine, not here: it draws from the assembled list, which is
     // the only thing that knows what is actually on screen (a dynamic group, a hidden category).

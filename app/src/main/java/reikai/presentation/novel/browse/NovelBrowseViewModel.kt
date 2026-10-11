@@ -17,6 +17,7 @@ import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactoryKey
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.source.model.FilterList
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,6 +29,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.JsonElement
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.entry.EntryId
 import reikai.domain.novel.FavoritedNovels
 import reikai.domain.novel.NovelRepository
@@ -65,6 +67,7 @@ class NovelBrowseViewModel(
     @Assisted private val sourceId: String,
     @Assisted private val initialQuery: String,
     @Assisted private val startLatest: Boolean,
+    @AppCoroutineScope private val appScope: CoroutineScope,
     private val installer: LnPluginInstaller,
     private val manager: NovelSourceManager,
     private val novelRepository: NovelRepository,
@@ -263,7 +266,7 @@ class NovelBrowseViewModel(
     fun openSettingsSheet() = state.update { it.copy(settingsSheetOpen = true) }
     fun closeSettingsSheet() = state.update { it.copy(settingsSheetOpen = false) }
 
-    val addFlow = NovelAddFlow(libraryAdder, viewModelScope)
+    val addFlow = NovelAddFlow(libraryAdder, viewModelScope, appScope)
 
     /**
      * Report [item] back as the migration target for the novel with id [entryRawId], then run

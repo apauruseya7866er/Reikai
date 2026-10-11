@@ -5,11 +5,11 @@ import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import reikai.domain.novel.interactor.GetNovelTracks
 import reikai.domain.novel.interactor.UpsertNovelTrack
 import reikai.domain.track.ChapterPushOutcome
 import reikai.domain.track.pushChapterProgress
-import tachiyomi.core.common.util.lang.withNonCancellableContext
 
 /**
  * Novel twin of [eu.kanade.domain.track.interactor.TrackChapter], pinned by the [pushChapterProgress]
@@ -33,7 +33,7 @@ class TrackNovelChapter(
         chapterNumber: Double,
         setupJobOnFailure: Boolean = true,
     ): ChapterPushOutcome {
-        return withNonCancellableContext {
+        return coroutineScope {
             val tracks = getNovelTracks.awaitGroup(novelId)
 
             tracks.mapNotNull { track ->

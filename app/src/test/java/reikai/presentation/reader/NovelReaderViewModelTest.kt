@@ -187,7 +187,8 @@ class NovelReaderViewModelTest {
         val model = harness.open(host, opened.id)
         advanceUntilIdle()
 
-        model.updateHistory()
+        model.saveHistory()
+        advanceUntilIdle()
 
         harness.historyOf(member) shouldBe emptyList()
     }
@@ -206,7 +207,8 @@ class NovelReaderViewModelTest {
         val model = harness.open(host, opened.id)
         advanceUntilIdle()
 
-        model.updateHistory()
+        model.saveHistory()
+        advanceUntilIdle()
 
         harness.historyOf(member) shouldBe listOf(opened.id)
     }

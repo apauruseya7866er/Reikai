@@ -190,7 +190,7 @@ class NovelScreen(
                             },
                             onWordCount = viewModel::showWordCountDialog,
                             onOpenFolder = {
-                                openDownloadFolder(context, viewModel.viewedDownloadDir())
+                                scope.launch { openDownloadFolder(context, viewModel.viewedDownloadDir()) }
                             },
                             onOpenSourceSettings = viewModel::showSourceSettings
                                 .takeIf { s.sourceHasSettings },

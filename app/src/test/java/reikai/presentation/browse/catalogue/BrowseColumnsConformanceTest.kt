@@ -31,6 +31,7 @@ import reikai.presentation.migrate.flow.MigrationPickHandoff
 import reikai.presentation.novel.browse.NovelBrowseViewModel
 import reikai.presentation.novel.browse.NovelBulkFavoriteViewModel
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 
 /** Both catalogues lay their grid out in the library's column counts, read by their models. */
@@ -94,6 +95,7 @@ private class MangaColumnsProbe : ColumnsProbe {
             every { getFilterList() } returns FilterList()
         }
         val model = BrowseSourceViewModel(
+            appScope = testAppScope(),
             sourceId = 1L,
             listingQuery = mangaListingQuery(startLatest = false, initialQuery = null),
             sourceManager = mockk(relaxed = true) { coEvery { getOrStub(1L) } returns source },
@@ -124,6 +126,7 @@ private class NovelColumnsProbe : ColumnsProbe {
         val manager = mockk<NovelSourceManager>(relaxed = true)
         coEvery { manager.get("src") } returns source
         val model = NovelBrowseViewModel(
+            appScope = testAppScope(),
             sourceId = "src",
             initialQuery = "",
             startLatest = false,

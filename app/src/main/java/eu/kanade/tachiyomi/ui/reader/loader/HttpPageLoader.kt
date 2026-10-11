@@ -10,10 +10,13 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
 import reikai.presentation.reader.ReaderRanges
@@ -47,6 +50,12 @@ internal class HttpPageLoader(
     // RK: user-set page preload count, upstream fixes it at 4
     private val preloadSize = readerPreferences.preloadSize.get().coerceIn(ReaderRanges.preloadPages)
 
+    // How many pending loadPage calls want each page index, counting their preloads. Pages are downloaded one
+    // at a time, so once nothing wants the page in flight its download is cancelled instead of holding up the
+    // pages being read. Guards inFlight too.
+    private val wantedPages = HashMap<Int, Int>()
+    private var inFlight: Pair<Int, Job>? = null
+
     init {
         scope.launchIO {
             flow {
@@ -56,10 +65,17 @@ internal class HttpPageLoader(
             }
                 .filter { it.page.status == Page.State.Queue }
                 .collect {
-                    internalLoadPage(
-                        page = it.page,
-                        force = it.priority == PriorityPage.RETRY,
-                    )
+                    coroutineScope {
+                        val load = launch {
+                            internalLoadPage(
+                                page = it.page,
+                                force = it.priority == PriorityPage.RETRY,
+                            )
+                        }
+                        synchronized(wantedPages) { inFlight = it.page.index to load }
+                        load.join()
+                        synchronized(wantedPages) { inFlight = null }
+                    }
                 }
         }
     }
@@ -104,11 +120,23 @@ internal class HttpPageLoader(
             page.status = Page.State.Queue
         }
 
+        val nextPages = nextPages(page, preloadSize)
+        val wanted = listOf(page) + nextPages
+        synchronized(wantedPages) {
+            wanted.forEach { wantedPages.merge(it.index, 1, Int::plus) }
+        }
+
         val queuedPages = mutableListOf<PriorityPage>()
         if (page.status == Page.State.Queue) {
             queuedPages += PriorityPage(page, PriorityPage.DEFAULT).also { queue.offer(it) }
         }
-        queuedPages += preloadNextPages(page, preloadSize)
+        queuedPages += nextPages.mapNotNull {
+            if (it.status == Page.State.Queue) {
+                PriorityPage(it, PriorityPage.ADJACENT).apply { queue.offer(this) }
+            } else {
+                null
+            }
+        }
 
         suspendCancellableCoroutine<Nothing> { continuation ->
             continuation.invokeOnCancellation {
@@ -116,6 +144,13 @@ internal class HttpPageLoader(
                     if (it.page.status == Page.State.Queue) {
                         queue.remove(it)
                     }
+                }
+                synchronized(wantedPages) {
+                    wanted.forEach {
+                        wantedPages.computeIfPresent(it.index) { _, count -> (count - 1).takeIf { it > 0 } }
+                    }
+                    // A cancelled load ends in Error, which the next loadPage of that page queues again
+                    inFlight?.let { (index, load) -> if (index !in wantedPages) load.cancel() }
                 }
             }
         }
@@ -152,24 +187,14 @@ internal class HttpPageLoader(
     }
 
     /**
-     * Preloads the given [amount] of pages after the [currentPage] with a lower priority.
-     *
-     * @return a list of [PriorityPage] that were added to the [queue]
+     * Returns the [amount] of pages after [currentPage], which are preloaded with a lower priority.
      */
-    private fun preloadNextPages(currentPage: ReaderPage, amount: Int): List<PriorityPage> {
+    private fun nextPages(currentPage: ReaderPage, amount: Int): List<ReaderPage> {
         val pageIndex = currentPage.index
         val pages = currentPage.chapter.pages ?: return emptyList()
         if (pageIndex == pages.lastIndex) return emptyList()
 
-        return pages
-            .subList(pageIndex + 1, min(pageIndex + 1 + amount, pages.size))
-            .mapNotNull {
-                if (it.status == Page.State.Queue) {
-                    PriorityPage(it, PriorityPage.ADJACENT).apply { queue.offer(this) }
-                } else {
-                    null
-                }
-            }
+        return pages.subList(pageIndex + 1, min(pageIndex + 1 + amount, pages.size))
     }
 
     /**

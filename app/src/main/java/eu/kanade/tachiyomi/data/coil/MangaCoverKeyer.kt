@@ -23,7 +23,7 @@ class MangaCoverKeyer(
 ) : Keyer<MangaCover> {
     override fun key(data: MangaCover, options: Options): String {
         // RK --> one key rule for manga and novel covers (coverCacheKey); the strings are upstream's
-        val owner = EntryId.Manga(data.mangaId).takeIf { coverCache.getCustomCoverFile(data.mangaId).exists() }
+        val owner = EntryId.Manga(data.mangaId).takeIf { coverCache.hasCustomCover(data.mangaId) }
         return coverCacheKey(owner, data.url, data.lastModified)
         // RK <--
     }

@@ -45,6 +45,7 @@ class ClearDatabaseViewModelTest {
     @Test
     fun `an uninstalled novel source is listed by the name it was last seen with`() = runTest {
         val model = ClearDatabaseViewModel(
+            appScope = testAppScope(),
             mangaRepository = mockk(),
             historyRepository = mockk(),
             getSourcesWithNonLibraryManga = mockk { every { subscribe() } returns flowOf(emptyList()) },
@@ -63,6 +64,7 @@ class ClearDatabaseViewModelTest {
     @Test
     fun `an uninstalled plugin keeps the icon it was last seen with`() = runTest {
         val model = ClearDatabaseViewModel(
+            appScope = testAppScope(),
             mangaRepository = mockk(),
             historyRepository = mockk(),
             getSourcesWithNonLibraryManga = mockk { every { subscribe() } returns flowOf(emptyList()) },
@@ -84,6 +86,7 @@ class ClearDatabaseViewModelTest {
     @Test
     fun `an uninstalled plugin is marked not installed`() = runTest {
         val model = ClearDatabaseViewModel(
+            appScope = testAppScope(),
             mangaRepository = mockk(),
             historyRepository = mockk(),
             getSourcesWithNonLibraryManga = mockk { every { subscribe() } returns flowOf(emptyList()) },
@@ -104,6 +107,7 @@ class ClearDatabaseViewModelTest {
     @Test
     fun `an uninstalled plugin keeps the language it was last seen with`() = runTest {
         val model = ClearDatabaseViewModel(
+            appScope = testAppScope(),
             mangaRepository = mockk(),
             historyRepository = mockk(),
             getSourcesWithNonLibraryManga = mockk { every { subscribe() } returns flowOf(emptyList()) },
@@ -144,6 +148,7 @@ class ClearDatabaseViewModelTest {
         manga: List<SourceWithCount> = emptyList(),
         novels: List<Pair<String, Long>> = emptyList(),
     ) = ClearDatabaseViewModel(
+        appScope = testAppScope(),
         mangaRepository = mockk(),
         historyRepository = mockk(),
         getSourcesWithNonLibraryManga = mockk { every { subscribe() } returns flowOf(manga) },

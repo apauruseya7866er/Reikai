@@ -18,6 +18,7 @@ import androidx.work.WorkQuery
 import eu.kanade.tachiyomi.util.system.isConnectedToWifi
 import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.workManager
+import kotlinx.coroutines.flow.first
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_CHARGING
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_NETWORK_NOT_METERED
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_ONLY_ON_WIFI
@@ -36,7 +37,7 @@ fun shouldDeferAutoUpdate(sdkInt: Int, restrictions: Set<String>, isOnWifi: () -
     isManualRunning || (sdkInt < Build.VERSION_CODES.P && DEVICE_ONLY_ON_WIFI in restrictions && !isOnWifi())
 
 /** [shouldDeferAutoUpdate] for this run; a manual run never defers. */
-fun ListenableWorker.shouldDeferLibraryUpdate(restrictions: Set<String>, autoTag: String, manualTag: String) =
+suspend fun ListenableWorker.shouldDeferLibraryUpdate(restrictions: Set<String>, autoTag: String, manualTag: String) =
     autoTag in tags &&
         shouldDeferAutoUpdate(
             Build.VERSION.SDK_INT,
@@ -72,9 +73,9 @@ inline fun <reified W : ListenableWorker> libraryUpdateManualRequest(
  * Cancels the running update by id rather than by name, so a pulled update leaves the schedule alone.
  * Cancelling the scheduled run ends its periodic request too, so [reschedule] puts that one back.
  */
-fun stopLibraryUpdate(workManager: WorkManager, tag: String, autoTag: String, reschedule: () -> Unit) {
+suspend fun stopLibraryUpdate(workManager: WorkManager, tag: String, autoTag: String, reschedule: () -> Unit) {
     val running = WorkQuery.Builder.fromTags(listOf(tag)).addStates(listOf(WorkInfo.State.RUNNING)).build()
-    workManager.getWorkInfos(running).get().forEach {
+    workManager.getWorkInfosFlow(running).first().forEach {
         workManager.cancelWorkById(it.id)
         if (autoTag in it.tags) reschedule()
     }

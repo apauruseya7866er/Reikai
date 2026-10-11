@@ -14,6 +14,7 @@ import org.junit.jupiter.params.provider.MethodSource
 import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.interactor.UpdateNovel
 import reikai.domain.novel.model.NovelUpdate
+import reikai.util.idleAppScope
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.repository.MangaRepository
 import java.io.File
@@ -76,6 +77,7 @@ private class Covers(dir: File) {
     val stamped = mutableListOf<EntryId>()
 
     val cache = CoverCache(
+        idleAppScope(),
         mockk<Context> {
             every { getExternalFilesDir(any()) } answers { File(dir, firstArg<String>()).apply { mkdirs() } }
         },

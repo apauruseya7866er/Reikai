@@ -9,10 +9,10 @@ import eu.kanade.domain.track.store.DelayedTrackingStore
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import reikai.domain.manga.GetTracksInGroup
 import reikai.domain.track.ChapterPushOutcome
 import reikai.domain.track.pushChapterProgress
-import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.domain.track.interactor.UpsertTrack
 
 @Inject
@@ -34,7 +34,7 @@ class TrackChapter(
         chapterNumber: Double,
         setupJobOnFailure: Boolean = true,
     ): ChapterPushOutcome {
-        return withNonCancellableContext {
+        return coroutineScope {
             val tracks = getTracks.await(mangaId)
 
             tracks.mapNotNull { track ->

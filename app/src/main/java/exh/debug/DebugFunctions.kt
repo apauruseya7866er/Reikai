@@ -190,7 +190,7 @@ class DebugFunctions(
     fun exportProtobufScheme() = ProtoBufSchemaGenerator.generateSchemaText(Backup.serializer().descriptor)
 
     // Both library updaters, since Reikai updates manga and novels in separate jobs.
-    fun killLibraryJobs() {
+    suspend fun killLibraryJobs() {
         LibraryUpdateWorker.stop(context)
         NovelUpdateWorker.stop(context)
     }

@@ -89,7 +89,7 @@ class NovelHistoryViewModel(
                         logcat(LogPriority.ERROR, error)
                         _events.send(Event.InternalError)
                     }
-                    .flowOn(Dispatchers.IO)
+                    .flowOn(Dispatchers.Default)
             }
             // Null is this feed's "not loaded yet", read by the shared screen and by the recents read
             // lane. Its manga twin seeds the same way and for the same reason.

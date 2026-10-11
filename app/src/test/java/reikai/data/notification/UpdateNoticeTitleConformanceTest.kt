@@ -135,7 +135,6 @@ class MangaUpdateNoticeHalf : UpdateNoticeHalf() {
     private var bigText: CharSequence? = null
 
     private val notifier = LibraryUpdateNotifier(
-        scope = testAppScope(),
         context = context,
         securityPreferences = security,
         sourceManager = mockk(),

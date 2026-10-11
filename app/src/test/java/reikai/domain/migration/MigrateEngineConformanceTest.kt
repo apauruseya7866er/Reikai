@@ -10,6 +10,8 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import mihon.domain.migration.models.MigrationFlag
 import mihon.domain.migration.usecases.MigrateMangaUseCase
@@ -656,12 +658,13 @@ class MangaEngine : MigrateEngine {
         }
         val coverCache = mockk<CoverCache> {
             every { getCustomCoverFile(any<Long>()) } answers { coverFile(rec.coverDir, firstArg<Long>()) }
+            every { hasCustomCover(any<Long>()) } answers { coverFile(rec.coverDir, firstArg<Long>()).exists() }
             every { setCustomCoverToCache(any<Manga>(), any()) } answers {
                 coverFile(rec.coverDir, firstArg<Manga>().id).writeBytes(secondArg<InputStream>().readBytes())
             }
         }
         val downloadManager = mockk<DownloadManager>(relaxed = true) {
-            every { deleteManga(any(), any(), any()) } answers { rec.downloadsDeleted += firstArg<Manga>().id }
+            coEvery { deleteManga(any(), any(), any()) } answers { rec.downloadsDeleted += firstArg<Manga>().id }
             coEvery { downloadChapters(any(), any(), any()) } answers { rec.downloadsQueued++ }
         }
         val track = setup.sourceTrackId?.let { mangaTrack(it) }
@@ -694,6 +697,8 @@ class MangaEngine : MigrateEngine {
             }
         }
         val useCase = MigrateMangaUseCase(
+            // Unconfined runs the detached download delete inline, so the outcome already shows it
+            scope = CoroutineScope(Dispatchers.Unconfined),
             sourcePreferences = mockk(relaxed = true),
             trackerManager = mockk(relaxed = true) { every { trackers } returns emptyList() },
             sourceManager = sourceManager,
@@ -840,6 +845,8 @@ class NovelEngine : MigrateEngine {
         }
         val coverCache = mockk<CoverCache> {
             every { getCustomCoverFile(any<EntryId>()) } answers { coverFile(rec.coverDir, firstArg<EntryId>().rawId) }
+            every { hasCustomCover(any<EntryId>()) } answers
+                { coverFile(rec.coverDir, firstArg<EntryId>().rawId).exists() }
             every { setCustomCoverToCache(any<EntryId>(), any()) } answers {
                 coverFile(rec.coverDir, firstArg<EntryId>().rawId).writeBytes(secondArg<InputStream>().readBytes())
             }

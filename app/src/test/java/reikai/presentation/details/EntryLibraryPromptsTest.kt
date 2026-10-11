@@ -104,7 +104,9 @@ class EntryLibraryPromptsTest {
 
     private fun TestScope.offerDelete(removed: List<String>, withDownloads: Set<String>) {
         backgroundScope.launch {
-            host.offerToDeleteDownloads(context, removed, hasDownloads = { it in withDownloads }) { deleted += it }
+            host.offerToDeleteDownloads(context, removed, backgroundScope, hasDownloads = { it in withDownloads }) {
+                deleted += it
+            }
         }
         runCurrent()
     }

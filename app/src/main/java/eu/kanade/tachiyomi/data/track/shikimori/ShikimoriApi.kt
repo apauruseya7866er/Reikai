@@ -20,6 +20,7 @@ import eu.kanade.tachiyomi.network.dataOrElse
 import eu.kanade.tachiyomi.network.jsonMime
 import eu.kanade.tachiyomi.network.parseAs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -119,7 +120,7 @@ class ShikimoriApi(
         withIOContext {
             authClient
                 .newCall(DELETE("$API_URL/v2/user_rates/${track.libraryId}"))
-                .awaitSuccess()
+                .awaitSuccess().close()
         }
     }
 

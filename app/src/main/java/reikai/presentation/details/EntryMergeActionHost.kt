@@ -7,12 +7,12 @@ import androidx.compose.material3.SnackbarResult
 import dev.icerock.moko.resources.StringResource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import reikai.domain.library.EntryLibraryRemoval
 import reikai.domain.merge.MergeManager
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.i18n.MR
 
 /**
@@ -25,6 +25,8 @@ import tachiyomi.i18n.MR
  */
 class EntryMergeActionHost(
     private val scope: CoroutineScope,
+    // Runs what must finish after the screen closes: the undo's restore
+    private val appScope: CoroutineScope,
     private val snackbarHostState: SnackbarHostState,
     private val context: Context,
     private val group: EntryMergeGroupHost,
@@ -107,7 +109,7 @@ class EntryMergeActionHost(
             if (undone) {
                 mergeManager.restoreGroup(snapshot)
                 group.refresh(anchorId())
-                scope.launchNonCancellable { removal.restore(joined) }
+                appScope.launch { removal.restore(joined) }
             } else {
                 offerToDeleteDownloads(joined.keys.toList())
             }

@@ -28,6 +28,7 @@ import reikai.domain.merge.renderStoredStitch
 import reikai.domain.recommendation.ReikaiRecommendationPreferences
 import reikai.domain.track.EntryTrackPort
 import reikai.domain.track.EntryTrackPorts
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -41,6 +42,7 @@ import tachiyomi.domain.source.service.SourceManager
 /**
  * A real [MangaViewModel] opened on [mangaId] over [mangas] and [chapters], grouped with [group] in that
  * order, every other dependency inert. A merged list renders [stitch]; empty, it is every member's rows.
+ * [beforeModel] runs once every mock is built, just before the model is.
  */
 internal fun mangaDetailsModel(
     mangaId: Long,
@@ -50,9 +52,25 @@ internal fun mangaDetailsModel(
     downloadManager: DownloadManager = detailsDownloadManager(),
     sourceManager: SourceManager = mockk(relaxed = true),
     stitch: List<ChapterUnit> = emptyList(),
+    beforeModel: () -> Unit = {},
 ): MangaViewModel {
     val prefs = InMemoryPreferenceStore()
+    // Built ahead of the hook: recording a coEvery reads Dispatchers.Default, which undoes a static stub of it
+    val mergeManager = mockk<MangaMergeManager> {
+        coEvery { computeRelatedIds(any()) } returns group
+        every { relatedIdsChanges() } returns flowOf(Unit)
+    }
+    val mergedChapterProvider = mockk<MergedChapterProvider> {
+        coEvery { stitchOf(any()) } returns stitch
+        every { merged(any(), any()) } answers { renderStoredStitch(firstArg(), secondArg()) { it.id } }
+    }
+    val getFlatMetadataById = mockk<GetFlatMetadataById> {
+        every { subscribe(any()) } returns flowOf(null)
+        coEvery { await(any()) } returns null
+    }
+    beforeModel()
     return MangaViewModel(
+        appScope = testAppScope(),
         context = mockk<Context>(relaxed = true),
         mangaId = mangaId,
         isFromSource = false,
@@ -79,16 +97,10 @@ internal fun mangaDetailsModel(
         getTracksInGroup = mockk(relaxed = true),
         filterChaptersForDownload = mockk(relaxed = true),
         updateMangaFromRemote = mockk(relaxed = true),
-        mergeManager = mockk<MangaMergeManager> {
-            coEvery { computeRelatedIds(any()) } returns group
-            every { relatedIdsChanges() } returns flowOf(Unit)
-        },
+        mergeManager = mergeManager,
         mangaLibraryAdder = mockk(relaxed = true),
         removeMangaFromLibrary = mockk(relaxed = true),
-        mergedChapterProvider = mockk<MergedChapterProvider> {
-            coEvery { stitchOf(any()) } returns stitch
-            every { merged(any(), any()) } answers { renderStoredStitch(firstArg(), secondArg()) { it.id } }
-        },
+        mergedChapterProvider = mergedChapterProvider,
         mangaPreferences = MangaPreferences(prefs),
         relatedMangasLoader = mockk(relaxed = true),
         recommendationPreferences = ReikaiRecommendationPreferences(prefs),
@@ -97,10 +109,7 @@ internal fun mangaDetailsModel(
         prepareRecommendationAssembly = mockk(relaxed = true),
         networkToLocalManga = mockk(relaxed = true),
         uiPreferences = UiPreferences(prefs),
-        getFlatMetadataById = mockk<GetFlatMetadataById> {
-            every { subscribe(any()) } returns flowOf(null)
-            coEvery { await(any()) } returns null
-        },
+        getFlatMetadataById = getFlatMetadataById,
         getPagePreviews = mockk(relaxed = true),
         getCustomMangaInfo = mockk<GetCustomMangaInfo> { every { subscribe(any()) } returns flowOf(null) },
         setCustomMangaInfo = mockk(relaxed = true),

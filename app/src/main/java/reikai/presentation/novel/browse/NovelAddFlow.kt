@@ -38,7 +38,8 @@ sealed interface NovelBrowseDialog {
 class NovelAddFlow(
     private val adder: NovelLibraryAdder,
     scope: CoroutineScope,
-) : EntryAddFlow<NovelBrowseDialog>(scope, ContentType.NOVELS) {
+    appScope: CoroutineScope,
+) : EntryAddFlow<NovelBrowseDialog>(scope, appScope, ContentType.NOVELS) {
 
     fun onLongClick(item: NovelItem, sourceId: String) = launchStep { adder.onLongClick(item, sourceId) }
 

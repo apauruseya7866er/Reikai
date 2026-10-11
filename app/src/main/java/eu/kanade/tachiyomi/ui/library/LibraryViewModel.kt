@@ -22,6 +22,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.online.MetadataSource
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import exh.source.getMainSource
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,7 +37,10 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import mihon.core.common.utils.mutate
+import mihon.core.metro.AppCoroutineScope
 import mihon.domain.library.model.search.QueryNode
 import reikai.domain.chapter.DownloadCandidates
 import reikai.domain.chapter.hiddenKey
@@ -84,7 +88,6 @@ import reikai.presentation.library.toQueryOverlay
 import reikai.presentation.library.withCustomInfo
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.chapter.interactor.GetBookmarkedChaptersByMangaId
@@ -113,6 +116,7 @@ import tachiyomi.domain.source.model.Source as DomainSource
 @ViewModelKey
 @ContributesIntoMap(AppScope::class, binding = binding<ViewModel>())
 class LibraryViewModel(
+    @AppCoroutineScope private val appScope: CoroutineScope,
     private val getLibraryManga: GetLibraryManga,
     // RK: per-entry custom title/cover overrides, overlaid on the displayed rows (display-only)
     private val getCustomMangaInfo: GetCustomMangaInfo,
@@ -237,7 +241,7 @@ class LibraryViewModel(
             )
         }
             .distinctUntilChanged()
-            .flowOn(Dispatchers.IO)
+            .flowOn(Dispatchers.Default)
             // RK: seeded null, which the derived state reads as still loading. The shared assembly emits
             //     a tick after this one; LibraryTab keeps loading until it lands.
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
@@ -462,7 +466,10 @@ class LibraryViewModel(
         val group = mergedChapterProvider.load(manga)
         //     The filters and order are the group's shared chapter settings, the settings owner's.
         val settings = group.chapterSettingsOf(manga)
-        return group.chapters.getNextUnread(settings, downloadManager, group, mangaPreferences.hiddenChapters().get())
+        val hidden = mangaPreferences.hiddenChapters().get()
+        return withContext(Dispatchers.Default) {
+            group.chapters.getNextUnread(settings, downloadManager, group, hidden)
+        }
     }
 
     /**
@@ -475,7 +482,7 @@ class LibraryViewModel(
         //     source that carries it; it does NOT fan out over the members, which carry the same
         //     chapters and would fetch each one once per source.
         val mangas = state.value.mangaFor(ids)
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             val hidden = mangaPreferences.hiddenChapters().get()
             mangas.forEach { manga ->
                 val group = mergedGroupOf(manga)
@@ -550,7 +557,7 @@ class LibraryViewModel(
         // RK: mark every source of a merge group, so a merged series doesn't stay part-read on the
         //     sources that aren't the collapsed primary.
         val memberIds = state.value.memberIdsFor(ids)
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             resolveSelectedGroupManga(memberIds).forEach { manga ->
                 setReadStatus.await(
                     manga = manga,
@@ -578,7 +585,7 @@ class LibraryViewModel(
     ) {
         // RK: resolve the group member ids now, on the caller thread, from the manga being removed.
         val memberIds = if (removeGroupedSources) state.value.memberIdsFor(mangas.map { it.id }) else emptyList()
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             // RK: the merged-away group members are collapsed out of the library state, so resolve
             //     them from the DB by id; falls back to the passed-in mangas when not expanding.
             val targets = if (removeGroupedSources) {
@@ -611,7 +618,7 @@ class LibraryViewModel(
      * @param removeCategories the categories to remove in all mangas.
      */
     fun setMangaCategories(mangaList: List<Manga>, addCategories: List<Long>, removeCategories: List<Long>) {
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             mangaList.forEach { manga ->
                 // RK: the whole merge group takes one result, so its members cannot disagree and let
                 // the card move by itself when the lead changes.

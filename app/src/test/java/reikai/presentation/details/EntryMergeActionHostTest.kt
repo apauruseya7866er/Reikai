@@ -42,6 +42,7 @@ class EntryMergeActionHostTest {
 
     private val host = EntryMergeActionHost(
         scope = scope,
+        appScope = scope,
         snackbarHostState = mockk<SnackbarHostState> {
             coEvery { showSnackbar(any(), any(), any(), any()) } coAnswers {
                 snackbarShown.complete(Unit)

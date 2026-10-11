@@ -102,9 +102,8 @@ class MangaManualDeleteHalf : ManualDeleteHalf {
                 { removed.complete(firstArg<List<Chapter>>().mapTo(HashSet()) { it.id }) }
         }
         val manager = DownloadManager(
-            scope = testAppScope(),
             context = mockk(relaxed = true),
-            provider = mockk { every { findChapterDirs(any(), any(), any()) } returns (null to emptyList()) },
+            provider = mockk { coEvery { findChapterDirs(any(), any(), any()) } returns (null to emptyList()) },
             cache = cache,
             getCategories = mockk {
                 coEvery { await(manga.id) } returns

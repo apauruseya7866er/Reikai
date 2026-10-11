@@ -172,7 +172,7 @@ class MangaAddFlowProbe : AddFlowProbe() {
         userCategories = listOf(libraryCategory(EntryAddFlowConformanceTest.PICKED_CATEGORY)),
         mergeManager = fakeGrouping(mapOf(DUPLICATE to EntryAddFlowConformanceTest.DUPLICATE_GROUP), suggest = true),
     )
-    override val flow = MangaAddFlow(library.adder, scope)
+    override val flow = MangaAddFlow(library.adder, scope, scope)
 
     override fun toString() = "manga"
 
@@ -216,7 +216,7 @@ class NovelAddFlowProbe : AddFlowProbe() {
         userCategories = listOf(libraryCategory(EntryAddFlowConformanceTest.PICKED_CATEGORY)),
         mergeManager = fakeGrouping(mapOf(DUPLICATE to EntryAddFlowConformanceTest.DUPLICATE_GROUP), suggest = true),
     )
-    override val flow = NovelAddFlow(library.adder, scope)
+    override val flow = NovelAddFlow(library.adder, scope, scope)
 
     override fun toString() = "novel"
 

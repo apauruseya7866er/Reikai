@@ -134,7 +134,7 @@ class NovelUpdatesViewModel(
                 copy(update = update.withCustomInfo(it))
             }
     }
-        .flowOn(Dispatchers.IO)
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
 
     val state: StateFlow<State> = updateItems

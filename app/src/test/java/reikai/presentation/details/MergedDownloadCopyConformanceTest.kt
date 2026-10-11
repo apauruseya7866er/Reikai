@@ -169,7 +169,7 @@ class MergedDownloadCopyConformanceTest {
         val downloads = detailsDownloadManager().apply {
             coEvery { downloadChapters(any(), any(), any()) } answers
                 { secondArg<List<Chapter>>().forEach { queued += it.id } }
-            every { startDownloadNow(any()) } answers { queued += firstArg<Long>() }
+            coEvery { startDownloadNow(any()) } answers { queued += firstArg<Long>() }
         }
         val sources = mockk<SourceManager>(relaxed = true) {
             coEvery { getOrStub(any()) } answers {

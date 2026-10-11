@@ -24,6 +24,7 @@ import reikai.presentation.browse.catalogue.EntryBrowseScreenState
 import reikai.presentation.browse.catalogue.NovelBrowseAdapter
 import reikai.presentation.migrate.flow.MigrationPickHandoff
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 
 /** A novel catalogue whose source is gone says so the way a manga one does, by the source's name. */
@@ -44,6 +45,7 @@ class NovelBrowseMissingSourceTest {
         coEvery { manager.get(SOURCE_ID) } returns null
         coEvery { manager.nameOf(SOURCE_ID) } returns "Gone plugin"
         val model = NovelBrowseViewModel(
+            appScope = testAppScope(),
             sourceId = SOURCE_ID,
             initialQuery = "",
             startLatest = false,

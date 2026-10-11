@@ -16,9 +16,11 @@ import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import mihon.app.di.AppGraph
 import mihon.core.metro.metroGraph
 import reikai.domain.download.downloadNetworkIssue
@@ -82,7 +84,7 @@ class DownloadWorker(context: Context, workerParams: WorkerParameters) : Corouti
             // RK --> a network issue pauses the downloader and the worker waits it out, starting it again
             // once the issue clears. A user pause or an emptied queue ends the wait, as stop() clears isPaused.
             // A changed issue pauses again, so the notice never says Wi-Fi once the device is offline
-            networkIssue?.let(downloader::stop)
+            networkIssue?.let { downloader.stop(it) }
             while (downloader.isRunning || downloader.isPaused) {
                 delay(1.seconds)
                 val issue = networkIssue()
@@ -98,7 +100,10 @@ class DownloadWorker(context: Context, workerParams: WorkerParameters) : Corouti
             }
             // RK <--
         } finally {
-            if (downloader.isRunning && (networkIssue != null || isStopped)) downloader.stop(networkIssue)
+            // Stopped by WorkManager means already canceled, and taking the lock would then throw instead of stopping
+            if (downloader.isRunning && (networkIssue != null || isStopped)) {
+                withContext(NonCancellable) { downloader.stop(networkIssue) }
+            }
         }
 
         return Result.success()

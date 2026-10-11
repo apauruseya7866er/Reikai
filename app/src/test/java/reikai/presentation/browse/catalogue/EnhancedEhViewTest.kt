@@ -25,6 +25,7 @@ import reikai.domain.source.ReikaiSourcePreferences
 import reikai.presentation.browse.BulkFavoriteViewModel
 import reikai.presentation.browse.EntryBulkFavoriteViewModel
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 
 /** The E-Hentai catalogue draws its rich rows only while the Settings switch for them is on. */
@@ -56,6 +57,7 @@ class EnhancedEhViewTest {
             every { getFilterList() } returns FilterList()
         }
         val model = BrowseSourceViewModel(
+            appScope = testAppScope(),
             sourceId = sourceId,
             listingQuery = mangaListingQuery(startLatest = false, initialQuery = null),
             sourceManager = mockk(relaxed = true) { coEvery { getOrStub(sourceId) } returns source },

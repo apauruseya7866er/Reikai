@@ -16,8 +16,10 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -107,6 +109,9 @@ class NovelReaderViewModelHarness private constructor(
     }
 
     val dispatcher = StandardTestDispatcher(scheduler)
+
+    // The models' app scope, on the test's scheduler, so a write that outlives a model lands by advanceUntilIdle
+    private val appScope = CoroutineScope(SupervisorJob() + dispatcher)
 
     private val store = EmittingPreferenceStore()
     val novelPreferences = NovelPreferences(store)
@@ -319,6 +324,7 @@ class NovelReaderViewModelHarness private constructor(
             ReconcileMergedChapters(units, setOf(stitcher)),
         )
         return NovelReaderViewModel(
+            appScope = appScope,
             novelId = novelId,
             initialChapterId = chapterId,
             sourceScoped = sourceScoped,
@@ -394,6 +400,7 @@ class NovelReaderViewModelHarness private constructor(
         val mergeManager = NovelMergeManager(groups, reikaiLibraryPreferences, onMerged = {}) {}
         val stitcher = NovelGroupStitcher(groups, novelRepo, chapterRepo, mergeManager, reikaiLibraryPreferences)
         return NovelDetailsViewModel(
+            appScope = appScope,
             sourceId = sourceId,
             novelUrl = url,
             listingCover = null,
@@ -468,7 +475,7 @@ class NovelReaderViewModelHarness private constructor(
         diskProbeGate?.open()
         pluginLoadGate.complete(Unit)
         viewModels.clear()
-        withContext(NonCancellable) { modelJobs.joinAll() }
+        withContext(NonCancellable) { (modelJobs + appScope.coroutineContext.job.children).joinAll() }
         driver.close()
         unmockkStatic(SystemClock::class)
     }

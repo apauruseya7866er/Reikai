@@ -42,11 +42,14 @@ import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import mihon.core.metro.AppCoroutineScope
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.rounded.FlipToBack
 import mihon.icons.materialsymbols.rounded.SelectAll
@@ -57,7 +60,6 @@ import reikai.novel.source.NovelSourceManager
 import reikai.presentation.browse.components.NovelSourceIcon
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchUI
-import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.domain.history.repository.HistoryRepository
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.interactor.GetSourcesWithNonLibraryManga
@@ -284,6 +286,7 @@ class ClearDatabaseScreen : Screen() {
 @ViewModelKey
 @ContributesIntoMap(AppScope::class, binding = binding<ViewModel>())
 class ClearDatabaseViewModel(
+    @AppCoroutineScope private val appScope: CoroutineScope,
     private val mangaRepository: MangaRepository,
     private val historyRepository: HistoryRepository,
     private val getSourcesWithNonLibraryManga: GetSourcesWithNonLibraryManga,
@@ -331,20 +334,23 @@ class ClearDatabaseViewModel(
         }
     }
 
-    suspend fun removeMangaBySourceId(keepReadManga: Boolean) = withNonCancellableContext {
-        val state = state.value as? State.Ready ?: return@withNonCancellableContext
-        // RK --> guarded: a novel-only selection reaches here with no manga selected, and SQLDelight
-        // renders an empty collection as `IN ()`, which SQLite rejects, crashing the whole clear.
-        if (state.selection.isNotEmpty()) {
-            mangaRepository.deleteNonLibraryManga(state.selection, keepReadManga)
-        }
-        // RK <--
-        historyRepository.deleteResetHistory()
-        // RK --> novel side of the clear; the keep-read toggle covers both content types
-        if (state.novelSelection.isNotEmpty()) {
-            novelRepository.deleteNonLibraryNovels(state.novelSelection, keepReadManga)
-        }
-        // RK <--
+    suspend fun removeMangaBySourceId(keepReadManga: Boolean) {
+        val state = state.value as? State.Ready ?: return
+        // Finishes even if the screen is left while it runs
+        appScope.launch {
+            // RK --> guarded: a novel-only selection reaches here with no manga selected, and SQLDelight
+            // renders an empty collection as `IN ()`, which SQLite rejects, crashing the whole clear.
+            if (state.selection.isNotEmpty()) {
+                mangaRepository.deleteNonLibraryManga(state.selection, keepReadManga)
+            }
+            // RK <--
+            historyRepository.deleteResetHistory()
+            // RK --> novel side of the clear; the keep-read toggle covers both content types
+            if (state.novelSelection.isNotEmpty()) {
+                novelRepository.deleteNonLibraryNovels(state.novelSelection, keepReadManga)
+            }
+            // RK <--
+        }.join()
     }
 
     // RK --> one membership toggle for the manga and the novel selection

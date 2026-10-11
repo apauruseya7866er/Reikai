@@ -212,7 +212,7 @@ interface PausedNoticeHalf : AutoCloseable {
     suspend fun start(test: TestScope)
 
     /** The user's pause, until the worker it ends has ended. */
-    fun pause(test: TestScope)
+    suspend fun pause(test: TestScope)
 
     /** The user's resume with no network, until the worker it starts is waiting for one. */
     fun resumeOffline(test: TestScope)
@@ -260,7 +260,7 @@ class MangaPausedNoticeHalf : PausedNoticeHalf {
         f.startWorker()
     }
 
-    override fun pause(test: TestScope) {
+    override suspend fun pause(test: TestScope) {
         fixture!!.downloadManager.pauseDownloads()
         test.tick()
         // WorkManager takes a worker's foreground notice down with it when the worker ends.
@@ -375,7 +375,7 @@ class NovelPausedNoticeHalf : PausedNoticeHalf {
         manager.downloadChapters(listOf(chapter))
     }
 
-    override fun pause(test: TestScope) {
+    override suspend fun pause(test: TestScope) {
         manager.pauseDownloads()
         test.tick()
         // WorkManager takes a worker's foreground notice down with it when the worker ends.

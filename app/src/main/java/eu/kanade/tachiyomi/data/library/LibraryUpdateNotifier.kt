@@ -18,8 +18,6 @@ import eu.kanade.tachiyomi.util.lang.chop
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
-import kotlinx.coroutines.CoroutineScope
-import mihon.core.metro.AppCoroutineScope
 import reikai.data.notification.hiddenEntryIds
 import reikai.data.notification.mainActivityPendingIntent
 import reikai.data.notification.newChaptersEntry
@@ -39,7 +37,6 @@ import reikai.domain.library.ContentType
 import reikai.domain.manga.AdultContentChecker
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.Manga
@@ -49,7 +46,6 @@ import mihon.icons.materialsymbols.R as MaterialSymbolsR
 
 @Inject
 class LibraryUpdateNotifier(
-    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val securityPreferences: SecurityPreferences,
     private val sourceManager: SourceManager,
@@ -234,17 +230,15 @@ class LibraryUpdateNotifier(
         //     because everything a package posts past Android's 50 live notifications is refused.
         val posted = postedEntries(updates, securityPreferences.hideNotificationContent.get())
         if (posted.isNotEmpty()) {
-            scope.launchUI {
-                context.notify(
-                    posted.map { (manga, chapters) ->
-                        NotificationManagerCompat.NotificationWithIdAndTag(
-                            manga.id.hashCode(),
-                            // RK: hide the title + cover for adult manga
-                            createNewChaptersNotification(manga, chapters, manga.id in hidden),
-                        )
-                    },
-                )
-            }
+            context.notify(
+                posted.map { (manga, chapters) ->
+                    NotificationManagerCompat.NotificationWithIdAndTag(
+                        manga.id.hashCode(),
+                        // RK: hide the title + cover for adult manga
+                        createNewChaptersNotification(manga, chapters, manga.id in hidden),
+                    )
+                },
+            )
         }
     }
 

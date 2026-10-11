@@ -31,6 +31,7 @@ import reikai.presentation.browse.EntryBulkFavoriteViewModel
 import reikai.presentation.browse.catalogue.NovelBrowseAdapter
 import reikai.presentation.migrate.flow.MigrationPickHandoff
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 
 /**
@@ -206,6 +207,7 @@ class NovelBrowseFilterRoutingTest {
         val manager = mockk<NovelSourceManager>(relaxed = true)
         coEvery { manager.get(SOURCE_ID) } returns source
         val model = NovelBrowseViewModel(
+            appScope = testAppScope(),
             sourceId = SOURCE_ID,
             initialQuery = "",
             startLatest = false,

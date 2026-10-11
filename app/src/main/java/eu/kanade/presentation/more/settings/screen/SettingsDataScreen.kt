@@ -28,6 +28,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -53,6 +54,7 @@ import eu.kanade.tachiyomi.data.export.LibraryExporter.ExportOptions
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.workManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import logcat.LogPriority
@@ -63,7 +65,7 @@ import reikai.domain.library.LibraryExportRow
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.storage.displayablePath
-import tachiyomi.core.common.util.lang.launchNonCancellable
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.backup.service.BackupPreferences
@@ -182,6 +184,7 @@ object SettingsDataScreen : SearchableSettings {
     private fun getBackupAndRestoreGroup(backupPreferences: BackupPreferences): Preference.PreferenceGroup {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
+        val scope = rememberCoroutineScope()
 
         val lastAutoBackup by backupPreferences.lastAutoBackupTimestamp.collectAsState()
 
@@ -245,13 +248,15 @@ object SettingsDataScreen : SearchableSettings {
                                     modifier = Modifier.fillMaxHeight(),
                                     checked = false,
                                     onCheckedChange = {
-                                        if (!BackupRestoreWorker.isRunning(context.workManager)) {
-                                            if (DeviceUtil.isMiui && DeviceUtil.isMiuiOptimizationDisabled()) {
-                                                context.toast(MR.strings.restore_miui_warning)
+                                        scope.launch {
+                                            if (!BackupRestoreWorker.isRunning(context.workManager)) {
+                                                if (DeviceUtil.isMiui && DeviceUtil.isMiuiOptimizationDisabled()) {
+                                                    context.toast(MR.strings.restore_miui_warning)
+                                                }
+                                                chooseBackup.launch(arrayOf("*/*"))
+                                            } else {
+                                                context.toast(MR.strings.restore_in_progress)
                                             }
-                                            chooseBackup.launch(arrayOf("*/*"))
-                                        } else {
-                                            context.toast(MR.strings.restore_in_progress)
                                         }
                                     },
                                     shape = SegmentedButtonDefaults.itemShape(1, 2),
@@ -296,11 +301,15 @@ object SettingsDataScreen : SearchableSettings {
 
         val chapterCache = remember { context.appGraph.chapterCache }
         var cacheReadableSizeSema by remember { mutableIntStateOf(0) }
-        val cacheReadableSize = remember(cacheReadableSizeSema) { chapterCache.readableSize }
+        val cacheReadableSize by produceState("", cacheReadableSizeSema) {
+            value = withIOContext { chapterCache.readableSize }
+        }
         // RK: adult-source page-preview thumbnail cache
         val pagePreviewCache = remember { context.appGraph.pagePreviewCache }
         var pagePreviewCacheSizeSema by remember { mutableIntStateOf(0) }
-        val pagePreviewCacheSize = remember(pagePreviewCacheSizeSema) { pagePreviewCache.readableSize }
+        val pagePreviewCacheSize by produceState("", pagePreviewCacheSizeSema) {
+            value = withIOContext { pagePreviewCache.readableSize }
+        }
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_storage_usage),
@@ -321,16 +330,15 @@ object SettingsDataScreen : SearchableSettings {
                     title = stringResource(MR.strings.pref_clear_chapter_cache),
                     subtitle = stringResource(MR.strings.used_cache, cacheReadableSize),
                     onClick = {
-                        scope.launchNonCancellable {
+                        scope.launch {
                             try {
-                                val deletedFiles = chapterCache.clear()
-                                withUIContext {
-                                    context.toast(context.stringResource(MR.strings.cache_deleted, deletedFiles))
-                                    cacheReadableSizeSema++
-                                }
-                            } catch (e: Throwable) {
+                                val deletedFiles = withIOContext { chapterCache.clear() }
+                                context.toast(context.stringResource(MR.strings.cache_deleted, deletedFiles))
+                                cacheReadableSizeSema++
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
                                 logcat(LogPriority.ERROR, e)
-                                withUIContext { context.toast(MR.strings.cache_delete_error) }
+                                context.toast(MR.strings.cache_delete_error)
                             }
                         }
                     },
@@ -344,16 +352,15 @@ object SettingsDataScreen : SearchableSettings {
                     title = stringResource(MR.strings.pref_clear_page_preview_cache),
                     subtitle = stringResource(MR.strings.used_cache, pagePreviewCacheSize),
                     onClick = {
-                        scope.launchNonCancellable {
+                        scope.launch {
                             try {
-                                val deletedFiles = pagePreviewCache.clear()
-                                withUIContext {
-                                    context.toast(context.stringResource(MR.strings.cache_deleted, deletedFiles))
-                                    pagePreviewCacheSizeSema++
-                                }
-                            } catch (e: Throwable) {
+                                val deletedFiles = withIOContext { pagePreviewCache.clear() }
+                                context.toast(context.stringResource(MR.strings.cache_deleted, deletedFiles))
+                                pagePreviewCacheSizeSema++
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
                                 logcat(LogPriority.ERROR, e)
-                                withUIContext { context.toast(MR.strings.cache_delete_error) }
+                                context.toast(MR.strings.cache_delete_error)
                             }
                         }
                     },

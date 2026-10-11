@@ -19,7 +19,7 @@ import kotlinx.datetime.toLocalDateTime
 import reikai.novel.install.LnPluginInstaller
 import reikai.novel.install.novelPluginCrashLogEntries
 import reikai.util.crashLogNotLoadedEntry
-import tachiyomi.core.common.util.lang.withNonCancellableContext
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import kotlin.time.Clock
 
@@ -33,7 +33,7 @@ class CrashLogUtil(
     private val lnPluginInstaller: LnPluginInstaller,
 ) {
 
-    suspend fun dumpLogs(exception: Throwable? = null) = withNonCancellableContext {
+    suspend fun dumpLogs(exception: Throwable? = null) = withIOContext {
         try {
             val file = context.createFileInCacheDir("reikai_crash_logs.txt") // RK: Reikai-branded crash dump name
 
@@ -45,7 +45,7 @@ class CrashLogUtil(
             Runtime.getRuntime().exec("logcat *:$logPriority -d -v year -v zone -f ${file.absolutePath}").waitFor()
 
             val uri = file.getUriCompat(context)
-            context.startActivity(uri.toShareIntent(context, "text/plain"))
+            withUIContext { context.startActivity(uri.toShareIntent(context, "text/plain")) }
         } catch (_: Throwable) {
             withUIContext { context.toast("Failed to get logs") }
         }

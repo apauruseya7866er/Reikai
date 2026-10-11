@@ -136,7 +136,7 @@ class MangaLibraryAdapter(
         model.search(query)
     }
 
-    override fun refresh(category: Category?) = LibraryUpdateWorker.startNow(context.workManager, category)
+    override suspend fun refresh(category: Category?) = LibraryUpdateWorker.startNow(context.workManager, category)
 
     // Each verb takes the neutral selection and hands the model only the raw ids of its own content
     // type, so a mixed selection never reaches a provider that cannot act on it.

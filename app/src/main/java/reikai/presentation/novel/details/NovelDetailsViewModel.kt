@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hippo.unifile.UniFile
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Assisted
 import dev.zacsweers.metro.AssistedFactory
@@ -25,6 +26,7 @@ import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.data.track.model.TrackMangaMetadata
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
@@ -48,6 +50,8 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import mihon.core.metro.AppCoroutineScope
 import reikai.data.coil.extractCoverColor
 import reikai.data.coil.seedColor
 import reikai.data.novel.NovelStatusCode
@@ -172,7 +176,6 @@ import reikai.util.runCatchingCancellable
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.domain.category.model.Category
@@ -190,6 +193,7 @@ import kotlin.time.Duration.Companion.seconds
  */
 @AssistedInject
 class NovelDetailsViewModel(
+    @AppCoroutineScope private val appScope: CoroutineScope,
     /** A novel source id is a plugin string, so this is Reikai's shape rather than upstream's Long. */
     @Assisted private val sourceId: String,
     @Assisted private val novelUrl: String,
@@ -852,9 +856,10 @@ class NovelDetailsViewModel(
     fun showPageSelectorDialog() = showDialog(NovelDetailsDialog.PageSelector)
 
     /** The download directory the details overflow's Open folder opens. */
-    fun viewedDownloadDir() = (state.value as? NovelDetailsState.Loaded)
-        ?.downloadFolderOwner
-        ?.let(downloadManager::findNovelDir)
+    suspend fun viewedDownloadDir(): UniFile? {
+        val owner = (state.value as? NovelDetailsState.Loaded)?.downloadFolderOwner ?: return null
+        return downloadManager.findNovelDir(owner)
+    }
 
     /** Counted off the download cache, which is in memory, so running it on every emission is cheap. */
     private fun downloadFolderOwnerOf(viewed: Novel?, group: List<Novel>, anchor: Novel): Novel? =
@@ -867,7 +872,7 @@ class NovelDetailsViewModel(
     }
 
     fun clearDownloads(novelIds: List<Long>) {
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             novelIds.forEach { id -> novelRepo.getById(id)?.let { downloadManager.awaitDeleteNovel(it) } }
         }
     }
@@ -885,6 +890,7 @@ class NovelDetailsViewModel(
     // diverges.
     private val mergeActions = EntryMergeActionHost(
         scope = viewModelScope,
+        appScope = appScope,
         snackbarHostState = snackbarHostState,
         context = context,
         group = mergeGroup,
@@ -1071,6 +1077,7 @@ class NovelDetailsViewModel(
         snackbarHostState.offerToDeleteDownloads(
             context = context,
             removed = removedIds.mapNotNull { novelRepo.getById(it) },
+            deleteScope = appScope,
             hasDownloads = { downloadManager.getDownloadCount(it) > 0 },
         ) { downloadManager.awaitDeleteNovel(it) }
     }
@@ -1133,11 +1140,11 @@ class NovelDetailsViewModel(
     /** Apply Edit-info as a non-destructive overlay: store a value only when it differs from the source
      *  row (a blank field, or an Unknown status, stores nothing, so that field tracks the source again).
      *  The novels row is never touched, so Reset restores the source cleanly. Takes the neutral
-     *  [EntryEditInfoUi] (as the manga side already does) and runs non-cancellable, so a mid-write screen
+     *  [EntryEditInfoUi] (as the manga side already does) and runs on the app scope, so a mid-write screen
      *  close does not drop the edit (mirrors MangaViewModel.saveMangaInfo, pinned by [overridesOver]). */
     fun saveNovelInfo(edited: EntryEditInfoUi) {
         val n = (state.value as? NovelDetailsState.Loaded)?.novel ?: return
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             setCustomNovelInfo.set(edited.toCustomNovelInfo(n))
         }
         dismissDialog()
@@ -1146,8 +1153,8 @@ class NovelDetailsViewModel(
     /** Clear every override; the source row shows through again (no re-fetch needed, it was never overwritten). */
     fun resetNovelInfo() {
         val n = (state.value as? NovelDetailsState.Loaded)?.novel ?: return
-        // Non-cancellable, as the save and manga's reset are, so leaving the screen cannot stop it halfway.
-        viewModelScope.launchNonCancellable { resetEntryInfo.await(EntryId.Novel(n.id)) }
+        // On the app scope, as the save and manga's reset are, so leaving the screen cannot stop it halfway.
+        appScope.launch { resetEntryInfo.await(EntryId.Novel(n.id)) }
         dismissDialog()
     }
 
@@ -1175,17 +1182,20 @@ class NovelDetailsViewModel(
      */
     fun setChapterSettingsAsDefault(applyToLibrary: Boolean) {
         val loaded = state.value as? NovelDetailsState.Loaded ?: return
-        viewModelScope.launchNonCancellable {
-            novelPreferences.defaultChapterSortOrder().set(loaded.sorting)
-            novelPreferences.defaultChapterSortDescending().set(loaded.sortDescending)
-            novelPreferences.defaultChapterHideTitles().set(loaded.hideChapterTitles)
-            novelPreferences.defaultChapterFilterUnread().set(loaded.readFilter)
-            novelPreferences.defaultChapterFilterBookmarked().set(loaded.bookmarkedFilter)
-            novelPreferences.defaultChapterFilterDownloaded().set(loaded.downloadedFilter)
-            chapterSettings.change(loaded.novel.id, mergeGroup.relatedIds.asList()) {
-                setNovelChapterFlags.awaitClearLocalOverrides(loaded.novel)
-            }
-            if (applyToLibrary) setNovelChapterFlags.awaitClearLibraryLocalOverrides()
+        viewModelScope.launch {
+            // The settings outlive the screen, the snackbar doesn't
+            appScope.launch {
+                novelPreferences.defaultChapterSortOrder().set(loaded.sorting)
+                novelPreferences.defaultChapterSortDescending().set(loaded.sortDescending)
+                novelPreferences.defaultChapterHideTitles().set(loaded.hideChapterTitles)
+                novelPreferences.defaultChapterFilterUnread().set(loaded.readFilter)
+                novelPreferences.defaultChapterFilterBookmarked().set(loaded.bookmarkedFilter)
+                novelPreferences.defaultChapterFilterDownloaded().set(loaded.downloadedFilter)
+                chapterSettings.change(loaded.novel.id, mergeGroup.relatedIds.asList()) {
+                    setNovelChapterFlags.awaitClearLocalOverrides(loaded.novel)
+                }
+                if (applyToLibrary) setNovelChapterFlags.awaitClearLibraryLocalOverrides()
+            }.join()
             snackbarHostState.showSnackbar(message = context.stringResource(MR.strings.chapter_settings_updated))
         }
     }
@@ -1196,8 +1206,9 @@ class NovelDetailsViewModel(
     /** Runs [change] on the novel as shown, carrying its group's shared settings, then gives every other
      *  member the result, so a merged series keeps one setting (GroupChapterSettings). */
     private fun changeChapterSettings(change: suspend (Novel) -> Unit) {
-        viewModelScope.launchIO {
-            val n = (state.value as? NovelDetailsState.Loaded)?.novel ?: return@launchIO
+        val n = (state.value as? NovelDetailsState.Loaded)?.novel ?: return
+        // On the app scope, as manga's flag writes are, so a sheet closed with the screen still saves
+        appScope.launch {
             chapterSettings.change(n.id, mergeGroup.relatedIds.asList()) { change(n) }
         }
     }
@@ -1311,7 +1322,7 @@ class NovelDetailsViewModel(
     }
 
     fun saveChapterNumber(edit: ChapterNumberEdit, number: Double?) {
-        viewModelScope.launchNonCancellable { editChapterNumber.save(edit, number) }
+        appScope.launch { editChapterNumber.save(edit, number) }
         clearSelection()
     }
 
@@ -1397,10 +1408,11 @@ class NovelDetailsViewModel(
      */
     private fun setRead(chapters: List<NovelChapter>, read: Boolean) {
         val novel = (state.value as? NovelDetailsState.Loaded)?.novel ?: return
-        viewModelScope.launchIO { autoTrackOnMarkRead.setRead(novel.id, chapters, read) }
+        viewModelScope.launch { autoTrackOnMarkRead.setRead(novel.id, chapters, read) }
     }
 
     private val autoTrackOnMarkRead = EntryAutoTrackOnMarkRead<NovelChapter>(
+        appScope = appScope,
         context = context,
         snackbarHostState = snackbarHostState,
         trackerManager = trackerManager,
@@ -1443,9 +1455,12 @@ class NovelDetailsViewModel(
     }
 
     fun onChapterDownloadAction(chapter: NovelChapter, action: ChapterDownloadAction) {
-        viewModelScope.launchIO {
-            val chapters = rowDownloadChapters(action, listOf(chapter), downloadCopiesOf(listOf(chapter))) { it.id }
-            downloadManager.runChapterAction(action, chapters) { expandForDelete(listOf(chapter)) }
+        viewModelScope.launch {
+            // The queueing outlives the screen, the add to library prompt doesn't, as on manga
+            appScope.launch {
+                val chapters = rowDownloadChapters(action, listOf(chapter), downloadCopiesOf(listOf(chapter))) { it.id }
+                downloadManager.runChapterAction(action, chapters) { expandForDelete(listOf(chapter)) }
+            }.join()
             if (action == ChapterDownloadAction.START || action == ChapterDownloadAction.START_NOW) {
                 promptAddToLibraryOnFirstDownload()
             }
@@ -1453,7 +1468,7 @@ class NovelDetailsViewModel(
     }
 
     fun downloadSelected() = withSelection {
-        downloadManager.downloadChapters(downloadCopiesOf(it))
+        appScope.launch { downloadManager.downloadChapters(downloadCopiesOf(it)) }.join()
         promptAddToLibraryOnFirstDownload()
     }
 
@@ -1501,7 +1516,7 @@ class NovelDetailsViewModel(
                 loaded.marks,
             ) { hiddenKey(it) in hidden }
             if (targets.isNotEmpty()) {
-                downloadManager.downloadChapters(downloadCopiesOf(targets))
+                appScope.launch { downloadManager.downloadChapters(downloadCopiesOf(targets)) }.join()
                 promptAddToLibraryOnFirstDownload()
             }
         }
@@ -1524,7 +1539,8 @@ class NovelDetailsViewModel(
     fun deleteChapters(chapters: List<NovelChapter>) {
         // Expanded first: the row is downloaded when ANY copy holds the file, so deleting only the
         // shown copy would leave the row still reading as downloaded.
-        viewModelScope.launchIO { downloadManager.deleteChapters(expandForDelete(chapters)) }
+        // Outlives the screen, which the delete dialog usually closes along with
+        appScope.launch { downloadManager.deleteChapters(expandForDelete(chapters)) }
         clearSelection()
         dismissDialog()
     }

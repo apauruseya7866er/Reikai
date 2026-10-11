@@ -16,12 +16,14 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import reikai.novel.network.NovelImageRequests
+import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.source.service.SourceManager
 
@@ -51,11 +53,11 @@ class WebViewViewModel(
         field = MutableStateFlow<Map<String, String>?>(null)
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launchIO {
             // RK --> a novel source is found by its text id, which the manga source manager cannot resolve
             if (novelSourceId != null) {
                 headers.value = novelImageRequests.webViewHeaders(novelSourceId)
-                return@launch
+                return@launchIO
             }
             // RK <--
             val source = sourceId?.let { sourceManager.get(it) as? HttpSource }

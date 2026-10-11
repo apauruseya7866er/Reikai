@@ -10,6 +10,8 @@ import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactoryKey
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.Source
+import kotlinx.coroutines.CoroutineScope
+import mihon.core.metro.AppCoroutineScope
 import reikai.presentation.browse.MangaLibraryAdder
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
@@ -26,6 +28,7 @@ class GlobalSearchViewModel(
     getManga: GetManga,
     // RK --> adding to the library goes through the shared adder; no initial state, the engine owns the query
     mangaLibraryAdder: MangaLibraryAdder,
+    @AppCoroutineScope appScope: CoroutineScope,
 ) : SearchViewModel(
     sourcePreferences = sourcePreferences,
     sourceManager = sourceManager,
@@ -33,6 +36,7 @@ class GlobalSearchViewModel(
     networkToLocalManga = networkToLocalManga,
     getManga = getManga,
     mangaLibraryAdder = mangaLibraryAdder,
+    appScope = appScope,
     // RK <--
 ) {
 

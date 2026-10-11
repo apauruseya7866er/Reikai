@@ -6,7 +6,6 @@ import android.os.Build
 import androidx.core.graphics.drawable.toBitmap
 import coil3.annotation.ExperimentalCoilApi
 import coil3.asDrawable
-import coil3.executeBlocking
 import coil3.imageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
@@ -22,7 +21,7 @@ import tachiyomi.presentation.widget.R
  * `BaseUpdatesGridGlanceWidget.prepareData` changes this instead.
  */
 @OptIn(ExperimentalCoilApi::class)
-fun loadWidgetCover(context: Context, data: Any, widthPx: Int, heightPx: Int): Bitmap? {
+suspend fun loadWidgetCover(context: Context, data: Any, widthPx: Int, heightPx: Int): Bitmap? {
     val request = ImageRequest.Builder(context)
         .data(data)
         .memoryCachePolicy(CachePolicy.DISABLED)
@@ -38,7 +37,7 @@ fun loadWidgetCover(context: Context, data: Any, widthPx: Int, heightPx: Int): B
             }
         }
         .build()
-    return context.imageLoader.executeBlocking(request)
+    return context.imageLoader.execute(request)
         .image
         ?.asDrawable(context.resources)
         ?.toBitmap()

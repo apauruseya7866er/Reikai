@@ -17,6 +17,8 @@ import eu.kanade.tachiyomi.network.PUT
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.addJsonObject
@@ -45,10 +47,12 @@ class MangaUpdatesApi(
     }
 
     suspend fun getSeriesListItem(track: Track): Pair<MUListItem, MURating?> {
-        val listItem = with(json) {
-            authClient.newCall(GET("$BASE_URL/v1/lists/series/${track.remote_id}"))
-                .awaitSuccess()
-                .parseAs<MUListItem>()
+        val listItem = withIOContext {
+            with(json) {
+                authClient.newCall(GET("$BASE_URL/v1/lists/series/${track.remote_id}"))
+                    .awaitSuccess()
+                    .parseAs<MUListItem>()
+            }
         }
 
         val rating = getSeriesRating(track)
@@ -99,7 +103,7 @@ class MangaUpdatesApi(
                 body = body.toString().toRequestBody(CONTENT_TYPE),
             ),
         )
-            .awaitSuccess()
+            .awaitSuccess().close()
 
         updateSeriesRating(track)
     }
@@ -114,15 +118,17 @@ class MangaUpdatesApi(
                 body = body.toString().toRequestBody(CONTENT_TYPE),
             ),
         )
-            .awaitSuccess()
+            .awaitSuccess().close()
     }
 
     private suspend fun getSeriesRating(track: Track): MURating? {
         return try {
-            with(json) {
-                authClient.newCall(GET("$BASE_URL/v1/series/${track.remote_id}/rating"))
-                    .awaitSuccess()
-                    .parseAs<MURating>()
+            withIOContext {
+                with(json) {
+                    authClient.newCall(GET("$BASE_URL/v1/series/${track.remote_id}/rating"))
+                        .awaitSuccess()
+                        .parseAs<MURating>()
+                }
             }
         } catch (_: Exception) {
             null
@@ -131,10 +137,12 @@ class MangaUpdatesApi(
 
     // RK --> full series record for "Fill from tracker" (unauthenticated; carries authors + genres).
     suspend fun getSeries(track: DomainTrack): MURecord {
-        return with(json) {
-            client.newCall(GET("$BASE_URL/v1/series/${track.remoteId}"))
-                .awaitSuccess()
-                .parseAs<MURecord>()
+        return withIOContext {
+            with(json) {
+                client.newCall(GET("$BASE_URL/v1/series/${track.remoteId}"))
+                    .awaitSuccess()
+                    .parseAs<MURecord>()
+            }
         }
     }
     // RK <--
@@ -151,12 +159,12 @@ class MangaUpdatesApi(
                     body = body.toString().toRequestBody(CONTENT_TYPE),
                 ),
             )
-                .awaitSuccess()
+                .awaitSuccess().close()
         } else {
             authClient.newCall(
                 DELETE(url = "$BASE_URL/v1/series/${track.remote_id}/rating"),
             )
-                .awaitSuccess()
+                .awaitSuccess().close()
         }
     }
 
@@ -172,17 +180,19 @@ class MangaUpdatesApi(
             // RK <--
         }
 
-        return with(json) {
-            client.newCall(
-                POST(
-                    url = "$BASE_URL/v1/series/search",
-                    body = body.toString().toRequestBody(CONTENT_TYPE),
-                ),
-            )
-                .awaitSuccess()
-                .parseAs<MUSearchResult>()
-                .results
-                .map { it.record }
+        return withIOContext {
+            with(json) {
+                client.newCall(
+                    POST(
+                        url = "$BASE_URL/v1/series/search",
+                        body = body.toString().toRequestBody(CONTENT_TYPE),
+                    ),
+                )
+                    .awaitSuccess()
+                    .parseAs<MUSearchResult>()
+                    .results
+                    .map { it.record }
+            }
         }
     }
 
@@ -208,24 +218,28 @@ class MangaUpdatesApi(
             put("username", username)
             put("password", password)
         }
-        return with(json) {
-            client.newCall(
-                PUT(
-                    url = "$BASE_URL/v1/account/login",
-                    body = body.toString().toRequestBody(CONTENT_TYPE),
-                ),
-            )
-                .awaitSuccess()
-                .parseAs<MULoginResponse>()
-                .context
+        return withIOContext {
+            with(json) {
+                client.newCall(
+                    PUT(
+                        url = "$BASE_URL/v1/account/login",
+                        body = body.toString().toRequestBody(CONTENT_TYPE),
+                    ),
+                )
+                    .awaitSuccess()
+                    .parseAs<MULoginResponse>()
+                    .context
+            }
         }
     }
 
     suspend fun getCurrentUser(): MUCurrentUser {
-        return with(json) {
-            authClient.newCall(GET("$BASE_URL/v1/account/profile"))
-                .awaitSuccess()
-                .parseAs<MUCurrentUser>()
+        return withIOContext {
+            with(json) {
+                authClient.newCall(GET("$BASE_URL/v1/account/profile"))
+                    .awaitSuccess()
+                    .parseAs<MUCurrentUser>()
+            }
         }
     }
 

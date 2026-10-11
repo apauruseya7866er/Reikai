@@ -6,6 +6,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
@@ -15,6 +16,7 @@ import eu.kanade.tachiyomi.util.system.toast
 import exh.md.MangaDexSyncWorker
 import exh.md.utils.FollowStatus
 import exh.md.utils.MdUtil
+import kotlinx.coroutines.launch
 import mihon.app.di.appGraph
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -58,6 +60,7 @@ object SettingsMangaDexScreen : SearchableSettings {
 
         // UNFOLLOWED is not a syncable status. Keys are the status values the sync worker reads back.
         val mdList = trackerManager.mdList
+        val scope = rememberCoroutineScope()
         val statusEntries = mdList.getStatusList()
             .filter { it != FollowStatus.UNFOLLOWED.long }
             .mapNotNull { status -> mdList.getStatus(status)?.let { status.toString() to stringResource(it) } }
@@ -82,18 +85,22 @@ object SettingsMangaDexScreen : SearchableSettings {
             Preference.PreferenceItem.TextPreference(
                 title = stringResource(MR.strings.pref_mangadex_sync_follows_to_library),
                 subtitle = stringResource(MR.strings.pref_mangadex_sync_follows_to_library_summary),
-                onClick = { startSync(context, trackerManager, MangaDexSyncWorker.Target.SYNC_FOLLOWS) },
+                onClick = {
+                    scope.launch { startSync(context, trackerManager, MangaDexSyncWorker.Target.SYNC_FOLLOWS) }
+                },
             ),
             Preference.PreferenceItem.TextPreference(
                 title = stringResource(MR.strings.pref_mangadex_push_favorites_to_mangadex),
                 subtitle = stringResource(MR.strings.pref_mangadex_push_favorites_to_mangadex_summary),
-                onClick = { startSync(context, trackerManager, MangaDexSyncWorker.Target.PUSH_FAVORITES) },
+                onClick = {
+                    scope.launch { startSync(context, trackerManager, MangaDexSyncWorker.Target.PUSH_FAVORITES) }
+                },
             ),
         )
     }
 
     // Both sync actions need the MDList account; nudge the user to Tracking if not signed in yet.
-    private fun startSync(context: Context, trackerManager: TrackerManager, target: MangaDexSyncWorker.Target) {
+    private suspend fun startSync(context: Context, trackerManager: TrackerManager, target: MangaDexSyncWorker.Target) {
         if (!trackerManager.mdList.isLoggedIn) {
             context.toast(MR.strings.pref_mangadex_sign_in_required)
         } else if (MangaDexSyncWorker.startNow(context, target)) {

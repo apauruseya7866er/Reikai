@@ -145,7 +145,7 @@ class UpdateErrorsViewModel(
     }
 
     /** Starts the update of each library behind the chip; true when at least one was not already running. */
-    fun retry(context: Context): Boolean {
+    suspend fun retry(context: Context): Boolean {
         val type = (state.value as? UpdateErrorsScreenState.Success)?.contentType ?: ContentType.ALL
         // Every start is attempted before asking whether any began, so a running manga update cannot
         // short-circuit the novel one.

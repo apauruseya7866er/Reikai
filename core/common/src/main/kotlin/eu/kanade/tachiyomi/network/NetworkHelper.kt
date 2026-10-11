@@ -32,7 +32,7 @@ class NetworkHelper(
     val flareSolverr = FlareSolverrClient(cookieJar, preferences)
     // RK <--
 
-    private val clientBuilder: OkHttpClient.Builder = run {
+    private fun clientBuilder(): OkHttpClient.Builder = run {
         val builder = OkHttpClient.Builder()
             .cookieJar(cookieJar)
             .connectTimeout(30.seconds)
@@ -80,20 +80,22 @@ class NetworkHelper(
         }
     }
 
-    val client = clientBuilder
-        .addInterceptor(
-            // RK --> pass preferences + the FlareSolverr client for the FS bypass path
-            CloudflareInterceptor(context, cookieJar, scope, ::defaultUserAgentProvider, preferences, flareSolverr),
-            // RK <--
-        )
-        .build()
+    val client: OkHttpClient by lazy {
+        clientBuilder()
+            .addInterceptor(
+                // RK --> pass preferences + the FlareSolverr client for the FS bypass path
+                CloudflareInterceptor(context, cookieJar, scope, ::defaultUserAgentProvider, preferences, flareSolverr),
+                // RK <--
+            )
+            .build()
+    }
 
     /**
      * @deprecated Since extension-lib 1.5
      */
     @Deprecated("The regular client handles Cloudflare by default")
     @Suppress("UNUSED")
-    val cloudflareClient: OkHttpClient = client
+    val cloudflareClient: OkHttpClient get() = client
 
     fun defaultUserAgentProvider() = preferences.defaultUserAgent.get().trim()
 }

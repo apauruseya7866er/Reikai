@@ -17,13 +17,16 @@ import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactory
 import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactoryKey
 import dev.zacsweers.metrox.viewmodel.assistedMetroViewModel
 import eu.kanade.presentation.util.Screen
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.NovelUpdate
 import reikai.presentation.notes.EntryNotesScreen
-import tachiyomi.core.common.util.lang.launchNonCancellable
 
 /**
  * Full-screen markdown notes editor for a novel, the twin of
@@ -59,6 +62,7 @@ class NovelNotesScreen(
     class Model(
         @Assisted private val novelId: Long,
         @Assisted initialNotes: String,
+        @AppCoroutineScope private val appScope: CoroutineScope,
         private val novelRepository: NovelRepository,
     ) : ViewModel() {
 
@@ -75,7 +79,8 @@ class NovelNotesScreen(
         fun updateNotes(content: String) {
             if (content == state.value.notes) return
             state.update { it.copy(notes = content) }
-            viewModelScope.launchNonCancellable {
+            // On Main so the debounced saves and the one on leaving are written in order, as manga's are
+            appScope.launch(Dispatchers.Main.immediate) {
                 novelRepository.update(NovelUpdate(novelId) { notes = content })
             }
         }

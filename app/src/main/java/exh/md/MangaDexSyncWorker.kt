@@ -303,7 +303,7 @@ class MangaDexSyncWorker(private val context: Context, workerParams: WorkerParam
          * Starts a sync, or returns false when one is already running. Both targets write the same
          * favorites and follows, so a second never runs beside the first or cancels it.
          */
-        fun startNow(context: Context, target: Target): Boolean {
+        suspend fun startNow(context: Context, target: Target): Boolean {
             if (context.workManager.isRunning(TAG)) return false
             val request = OneTimeWorkRequestBuilder<MangaDexSyncWorker>()
                 .addTag(TAG)

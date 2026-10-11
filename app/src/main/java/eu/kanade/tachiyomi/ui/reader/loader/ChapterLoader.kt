@@ -86,7 +86,7 @@ class ChapterLoader(
     /**
      * Returns the page loader to use for this [chapter].
      */
-    private fun getPageLoader(chapter: ReaderChapter, fromSource: Boolean): PageLoader { // RK
+    private suspend fun getPageLoader(chapter: ReaderChapter, fromSource: Boolean): PageLoader { // RK
         val dbChapter = chapter.chapter
         val isDownloaded = !fromSource && downloadManager.isChapterDownloadedOnDisk( // RK
             dbChapter.name,

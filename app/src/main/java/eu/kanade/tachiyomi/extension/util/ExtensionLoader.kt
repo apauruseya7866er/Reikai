@@ -152,15 +152,16 @@ internal object ExtensionLoader {
             }
             // RK: carries the kind
             ?.mapNotNull { it.toExtensionInfo(isShared = false) }
-            ?: emptySequence()
+            ?.toList()
+            .orEmpty()
+        val privateExtPkgsByName = privateExtPkgs.groupBy { it.packageInfo.packageName }
 
         val extPkgs = (sharedExtPkgs + privateExtPkgs)
             // Remove duplicates. Shared takes priority than private by default
             .distinctBy { it.packageInfo.packageName }
             // Compare version number
             .mapNotNull { sharedPkg ->
-                val privatePkg = privateExtPkgs
-                    .singleOrNull { it.packageInfo.packageName == sharedPkg.packageInfo.packageName }
+                val privatePkg = privateExtPkgsByName[sharedPkg.packageInfo.packageName]?.singleOrNull()
                 selectExtensionPackage(sharedPkg, privatePkg)
             }
             .toList()

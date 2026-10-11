@@ -76,6 +76,7 @@ import reikai.presentation.reader.requeueForRetry
 import reikai.presentation.reader.shouldAutoPreload
 import reikai.presentation.reader.showsTransition
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import java.io.FilterInputStream
@@ -511,7 +512,7 @@ open class WebGpuViewer(
             if (!chapterPreloadsInFlight.add(chapterId)) return
         }
 
-        scope.launch(Dispatchers.Default) {
+        scope.launchIO {
             // RK: a transition page draws the chapter's state, so it repaints as that changes.
             val repaint = launch { chapter.stateFlow.collect { repaintTransitionPages(chapter) } }
             try {
@@ -519,12 +520,12 @@ open class WebGpuViewer(
                 repeat(25) {
                     if (chapter.state is ReaderChapter.State.Loaded) {
                         currentPage?.let { preloadPages(it) }
-                        return@launch
+                        return@launchIO
                     }
                     // RK -->
                     if (chapter.state is ReaderChapter.State.Error) {
                         synchronized(lock) { failedChapterPreloads.add(chapterId) }
-                        return@launch
+                        return@launchIO
                     }
                     // RK <--
                     delay(200.milliseconds)

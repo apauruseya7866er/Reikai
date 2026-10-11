@@ -96,8 +96,11 @@ class NovelDownloadCache(
     fun invalidate() {
         invalidations.incrementAndGet()
         lastRenew = 0L
-        indexFile.delete()
-        scope.launch { renew() }
+        // Deleted on the scope, as the manga cache does, so a caller on the main thread never touches the disk
+        scope.launch {
+            indexFile.delete()
+            renew()
+        }
     }
 
     // String overloads are the real query API (callers with denormalized rows avoid rebuilding a Novel);
@@ -292,7 +295,7 @@ class NovelDownloadCache(
     }
 
     private fun notifyChanges() {
-        scope.launch { _changes.send(Unit) }
+        _changes.trySend(Unit)
         saveIndex()
     }
 

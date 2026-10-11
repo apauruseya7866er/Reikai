@@ -119,14 +119,13 @@ class MangaEmptiedQueueHalf : EmptiedQueueHalf {
         val downloader = mockk<Downloader>(relaxed = true) {
             every { isRunning } returns false
             every { queueState } returns queue
-            every { removeFromQueue(any<List<Chapter>>()) } answers { queue.value = emptyList() }
-            every { stop(null) } answers { stopped.complete(Unit) }
+            coEvery { dequeue(any<List<Chapter>>()) } answers { queue.value = emptyList() }
+            coEvery { stop(null) } answers { stopped.complete(Unit) }
         }
         val manager = DownloadManager(
-            scope = testAppScope(),
             context = mockk(relaxed = true),
             provider = mockk(relaxed = true) {
-                every { findMangaDir(any(), any()) } returns mockk(relaxed = true) {
+                coEvery { findMangaDir(any(), any()) } returns mockk(relaxed = true) {
                     every { name } returns "Old"
                     every { parentFile } returns null
                 }

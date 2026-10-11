@@ -24,11 +24,14 @@ import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
 import eu.kanade.tachiyomi.util.system.workManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import mihon.app.di.AppGraph
 import mihon.app.di.appGraph
 import mihon.core.metro.metroGraph
 import mihon.core.migration.Migrator
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.storage.service.StorageManager
 import java.util.concurrent.TimeUnit
@@ -55,7 +58,7 @@ class BackupCreateWorker(private val context: Context, workerParams: WorkerParam
         if (isAutoBackup && BackupRestoreWorker.isRunning(context.workManager)) return Result.retry()
 
         val uri = inputData.getString(LOCATION_URI_KEY)?.toUri()
-            ?: getAutomaticBackupLocation()
+            ?: withIOContext { getAutomaticBackupLocation() }
             ?: return Result.failure()
 
         setForegroundSafely()
@@ -64,7 +67,10 @@ class BackupCreateWorker(private val context: Context, workerParams: WorkerParam
             ?: BackupOptions()
 
         return try {
-            val location = backupCreatorFactory.create(isAutoBackup = isAutoBackup).backup(uri, options)
+            val location =
+                withIOContext {
+                    backupCreatorFactory.create(isAutoBackup = isAutoBackup).backup(uri, options)
+                }
             if (!isAutoBackup) {
                 notifier.showBackupComplete(UniFile.fromUri(context, location.toUri())!!)
             }
@@ -97,7 +103,7 @@ class BackupCreateWorker(private val context: Context, workerParams: WorkerParam
     }
 
     companion object {
-        fun isManualJobRunning(context: Context): Boolean {
+        suspend fun isManualJobRunning(context: Context): Boolean {
             return context.workManager.isRunning(TAG_MANUAL)
         }
 

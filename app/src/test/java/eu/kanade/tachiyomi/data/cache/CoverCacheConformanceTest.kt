@@ -5,12 +5,15 @@ import eu.kanade.domain.manga.model.hasCustomCover
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import reikai.domain.entry.EntryId
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.hasCustomCover
+import reikai.util.idleAppScope
 import tachiyomi.domain.manga.model.Manga
 import java.io.File
 
@@ -24,11 +27,14 @@ class CoverCacheConformanceTest {
     @TempDir
     lateinit var dir: File
 
-    private fun cache() = CoverCache(
-        mockk<Context> {
-            every { getExternalFilesDir(any()) } answers { File(dir, firstArg<String>()).apply { mkdirs() } }
-        },
-    )
+    private fun cache() = CoverCache(idleAppScope(), context())
+
+    // Unconfined, so the custom cover index is built inside the constructor
+    private fun indexedCache() = CoverCache(CoroutineScope(Dispatchers.Unconfined), context())
+
+    private fun context() = mockk<Context> {
+        every { getExternalFilesDir(any()) } answers { File(dir, firstArg<String>()).apply { mkdirs() } }
+    }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("types")
@@ -69,6 +75,47 @@ class CoverCacheConformanceTest {
         types().single { it.toString() != type.toString() }.set(cache, "x".byteInputStream())
 
         type.has(cache) shouldBe false
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("types")
+    fun `a custom cover already on disk is in the index`(type: CoverType) {
+        cache().getCustomCoverFile(type.id).writeText("x")
+
+        type.has(indexedCache()) shouldBe true
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("types")
+    fun `a custom cover set once indexed is seen as set`(type: CoverType) {
+        val cache = indexedCache()
+
+        type.set(cache, "x".byteInputStream())
+
+        type.has(cache) shouldBe true
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("types")
+    fun `a custom cover deleted once indexed is no longer seen`(type: CoverType) {
+        val cache = indexedCache()
+        type.set(cache, "x".byteInputStream())
+
+        type.delete(cache)
+
+        type.has(cache) shouldBe false
+    }
+
+    /** A cover-key migration moves the file itself, past the cache's own set and delete. */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("types")
+    fun `a custom cover moved in behind the index is seen once reindexed`(type: CoverType) {
+        val cache = indexedCache()
+        val file = cache.getCustomCoverFile(type.id).apply { writeText("x") }
+
+        cache.reindexCustomCovers(file)
+
+        type.has(cache) shouldBe true
     }
 
     class CoverType(

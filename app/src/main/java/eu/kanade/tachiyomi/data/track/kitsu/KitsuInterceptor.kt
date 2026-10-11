@@ -16,6 +16,7 @@ class KitsuInterceptor(private val kitsu: Kitsu) : Interceptor {
     /**
      * OAuth object used for authenticated requests.
      */
+    @Volatile
     private var oauth: KitsuOAuth? = kitsu.restoreToken()
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -24,18 +25,21 @@ class KitsuInterceptor(private val kitsu: Kitsu) : Interceptor {
         // RK --> a signed-out call fails as an IOException, see TrackerSignedOutException
         var currAuth = oauth ?: throw TrackerSignedOutException("Kitsu")
 
-        // Refresh access token if expired.
+        // Refresh access token if expired, once for all the requests that found it expired.
         if (currAuth.isExpired()) {
-            val refreshToken = currAuth.refreshToken ?: throw TrackerSignedOutException("Kitsu")
-            // RK <--
-            val response = chain.proceed(KitsuApi.refreshTokenRequest(refreshToken))
-            if (response.isSuccessful) {
-                currAuth = with(json) {
-                    response.parseAs<KitsuOAuth>()
+            currAuth = synchronized(this) {
+                val latest = oauth ?: throw TrackerSignedOutException("Kitsu")
+                if (!latest.isExpired()) return@synchronized latest
+
+                val refreshToken = latest.refreshToken ?: throw TrackerSignedOutException("Kitsu")
+                // RK <--
+                val response = chain.proceed(KitsuApi.refreshTokenRequest(refreshToken))
+                if (response.isSuccessful) {
+                    with(json) { response.parseAs<KitsuOAuth>() }.also(::newAuth)
+                } else {
+                    response.close()
+                    latest
                 }
-                newAuth(currAuth)
-            } else {
-                response.close()
             }
         }
 

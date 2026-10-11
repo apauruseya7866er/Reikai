@@ -9,6 +9,8 @@ import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import logcat.LogPriority
 import reikai.domain.track.ChapterPushOutcome
 import reikai.presentation.track.trackerFailuresMessage
@@ -26,6 +28,7 @@ import tachiyomi.i18n.MR
  * still advances when a chapter of a sibling source is read.
  */
 class EntryAutoTrackOnMarkRead<C>(
+    private val appScope: CoroutineScope,
     private val context: Context,
     private val snackbarHostState: SnackbarHostState,
     private val trackerManager: TrackerManager,
@@ -44,7 +47,8 @@ class EntryAutoTrackOnMarkRead<C>(
      * way, and a higher number set the tracker past what the user marked.
      */
     suspend fun setRead(entryId: Long, chapters: List<C>, read: Boolean) {
-        writeRead(expandToGroup(chapters), read)
+        // The read state is written even if the screen closes, the tracking prompt isn't
+        appScope.launch { writeRead(expandToGroup(chapters), read) }.join()
         if (read) reportFailures(push(entryId, chapters.map(chapterNumber)))
     }
 

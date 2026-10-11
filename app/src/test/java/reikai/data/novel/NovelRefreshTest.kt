@@ -22,6 +22,7 @@ import reikai.novel.download.NovelDownloadManager
 import reikai.novel.host.ChapterItem
 import reikai.novel.host.NovelItem
 import reikai.novel.source.NovelSource
+import reikai.util.idleAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
 import tachiyomi.data.Database
@@ -66,7 +67,7 @@ class NovelRefreshTest {
             val context = mockk<Context> {
                 every { getExternalFilesDir(any()) } answers { File(cacheRoot, firstArg<String>()).apply { mkdirs() } }
             }
-            coverCache = CoverCache(context)
+            coverCache = CoverCache(idleAppScope(), context)
         }
     }
 

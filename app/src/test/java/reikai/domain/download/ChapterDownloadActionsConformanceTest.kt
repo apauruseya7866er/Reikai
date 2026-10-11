@@ -226,7 +226,7 @@ interface DownloadActionsHalf {
 
     val deleted: Set<Long>
 
-    fun close()
+    suspend fun close()
 }
 
 /**
@@ -300,7 +300,6 @@ class MangaDownloadActionsHalf : DownloadActionsHalf {
     private val downloadManager by lazy {
         spyk(
             DownloadManager(
-                scope = testAppScope(),
                 context = context,
                 provider = provider,
                 cache = mockk(relaxed = true),
@@ -314,7 +313,7 @@ class MangaDownloadActionsHalf : DownloadActionsHalf {
                 sourceTitles = mockk(),
             ),
         ).also { spy ->
-            every { spy.deleteChapters(any(), any(), any()) } answers
+            coEvery { spy.deleteChapters(any(), any(), any()) } answers
                 { deleted += firstArg<List<Chapter>>().map { it.id } }
         }
     }
@@ -357,7 +356,7 @@ class MangaDownloadActionsHalf : DownloadActionsHalf {
 
     override fun isRunning() = downloader.isRunning
 
-    override fun close() = downloader.pause()
+    override suspend fun close() = downloader.pause()
 
     /** The downloader runs on its own IO threads, so its progress is awaited in real time, bounded. */
     private suspend fun awaitOnRealThreads(block: suspend () -> Unit) {
@@ -468,5 +467,5 @@ class NovelDownloadActionsHalf : DownloadActionsHalf {
 
     override fun isRunning() = draining
 
-    override fun close() = Unit
+    override suspend fun close() = Unit
 }

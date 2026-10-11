@@ -18,7 +18,6 @@ import reikai.domain.novel.interactor.SetNovelReadStatus
 import reikai.domain.novel.model.NovelChapter
 import reikai.novel.download.NovelDownloadManager
 import reikai.presentation.recents.EmittingPreferenceStore
-import reikai.util.testAppScope
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
@@ -77,7 +76,6 @@ class MangaMarkReadHalf : MarkReadHalf {
         val handed = mutableListOf<Chapter>()
         val downloadManager = spyk(
             DownloadManager(
-                scope = testAppScope(),
                 context = mockk(relaxed = true),
                 provider = mockk(),
                 cache = mockk(),
@@ -94,7 +92,7 @@ class MangaMarkReadHalf : MarkReadHalf {
                 sourceTitles = mockk(),
             ),
         ).also { spy ->
-            every { spy.deleteChapters(any(), any(), any()) } answers { handed += firstArg<List<Chapter>>() }
+            coEvery { spy.deleteChapters(any(), any(), any()) } answers { handed += firstArg<List<Chapter>>() }
         }
         val setReadStatus = SetReadStatus(
             downloadPreferences = preferences,

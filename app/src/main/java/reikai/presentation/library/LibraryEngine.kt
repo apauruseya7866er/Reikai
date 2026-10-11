@@ -471,7 +471,7 @@ class LibraryEngine(
 
     /** Start a library update, returning true when any provider started one. Under All, one
      *  side's update already running must not report the other's fresh start as already-running. */
-    fun refresh(contentType: ContentType, category: Category?): Boolean =
+    suspend fun refresh(contentType: ContentType, category: Category?): Boolean =
         providersFor(contentType).map { it.refresh(category) }.any { it }
 
     /**

@@ -231,7 +231,7 @@ class EntryMigrationFavoritesViewModel(
             selected = selection.selection,
         )
     }
-        .flowOn(Dispatchers.IO)
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State())
 
     fun toggle(id: EntryId) = selection.update { EntrySelection.toggle(it, id) }

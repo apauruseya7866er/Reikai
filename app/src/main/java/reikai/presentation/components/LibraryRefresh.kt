@@ -6,6 +6,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -14,6 +15,7 @@ import dev.icerock.moko.resources.StringResource
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import reikai.domain.library.ContentType
 import reikai.domain.library.includes
@@ -50,11 +52,12 @@ fun chipUpdating(chip: Flow<ContentType>, updating: List<Pair<ContentType, Flow<
 fun LibraryUpdatePullRefresh(
     updating: Boolean,
     enabled: Boolean,
-    onRefresh: () -> Boolean,
+    onRefresh: suspend () -> Boolean,
     indicatorPadding: PaddingValues = PaddingValues(0.dp),
     content: @Composable () -> Unit,
 ) {
     var pulled by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val running by rememberUpdatedState(updating)
     LaunchedEffect(pulled) {
         if (!pulled) return@LaunchedEffect
@@ -64,7 +67,11 @@ fun LibraryUpdatePullRefresh(
     PullRefresh(
         refreshing = pulled || updating,
         enabled = enabled,
-        onRefresh = { pulled = onRefresh() },
+        // Held from the release frame, since the job query behind onRefresh suspends
+        onRefresh = {
+            pulled = true
+            scope.launch { if (!onRefresh()) pulled = false }
+        },
         indicatorPadding = indicatorPadding,
         content = content,
     )

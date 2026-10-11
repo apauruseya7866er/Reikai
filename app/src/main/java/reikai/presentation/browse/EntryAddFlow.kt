@@ -2,12 +2,13 @@ package reikai.presentation.browse
 
 import cafe.adriel.voyager.core.screen.Screen
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import reikai.domain.library.ContentType
 import reikai.presentation.browse.components.EntryDuplicateCardUi
 import tachiyomi.core.common.preference.CheckboxState
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.category.model.Category
 
 /**
@@ -33,14 +34,15 @@ sealed interface EntryAddDialog {
 
 /**
  * One content type's long-press add flow, held by the model of every screen that lists entries, on
- * that model's scope, so an add left pending while a duplicate is opened is still there on return.
- *
+ * that model's scope, so an add left pending while a duplicate is opened is still there on return. Each
+ * step's writes run on [appScope], so a step the dialog's own dismissal outlives still finishes.
  * [D] is the type's own dialog, which keeps what the neutral one drops (the entry, and for a novel the
  * source it came from). The shared dialogs dismiss before they confirm, so [dismiss] only hides the
  * question; what raised it stays until the flow's next step replaces it, and each verb reads it then.
  */
 abstract class EntryAddFlow<D : Any>(
     private val scope: CoroutineScope,
+    private val appScope: CoroutineScope,
     val contentType: ContentType,
 ) {
     val dialog: StateFlow<EntryAddDialog?>
@@ -76,7 +78,7 @@ abstract class EntryAddFlow<D : Any>(
 
     /** Runs [step] and shows the question it answers, or closes the flow when it answers null. */
     protected fun launchStep(step: suspend () -> D?) {
-        scope.launchIO { show(step()) }
+        scope.launch { show(appScope.async { step() }.await()) }
     }
 
     /** Runs [step] against [current], read when the verb is called: never later, and never after a dismiss. */

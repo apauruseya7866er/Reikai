@@ -33,6 +33,7 @@ import mihon.app.di.appGraph
 import mihon.core.metro.metroGraph
 import mihon.core.migration.Migrator
 import mihon.domain.source.interactor.UpdateMangaFromRemote
+import reikai.data.library.addNewUpdates
 import reikai.data.updateerror.UpdateErrorEntry
 import reikai.data.updateerror.UpdateErrorLog
 import reikai.data.updateerror.UpdateErrorSection
@@ -195,10 +196,10 @@ class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerPara
                         updateHelper.findAcceptedRootAndDiscardOthers(manga.source, chapters) ?: continue
 
                     if (new.isNotEmpty() && manga.id == acceptedRoot.manga.id) {
-                        libraryPreferences.newUpdatesCount.getAndSet { it + new.size }
+                        libraryPreferences.addNewUpdates(new.size)
                         updatedManga += acceptedRoot.manga to new.toTypedArray()
                     } else if (exhNew.isNotEmpty() && updatedManga.none { it.first.id == acceptedRoot.manga.id }) {
-                        libraryPreferences.newUpdatesCount.getAndSet { it + exhNew.size }
+                        libraryPreferences.addNewUpdates(exhNew.size)
                         updatedManga += acceptedRoot.manga to exhNew.toTypedArray()
                     }
 

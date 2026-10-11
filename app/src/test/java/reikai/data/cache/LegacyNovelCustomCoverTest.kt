@@ -8,6 +8,7 @@ import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import reikai.util.idleAppScope
 import java.io.File
 
 class LegacyNovelCustomCoverTest {
@@ -19,6 +20,7 @@ class LegacyNovelCustomCoverTest {
     @Test
     fun `a novel's legacy custom cover is named by its negated id`() {
         val cache = CoverCache(
+            idleAppScope(),
             mockk<Context> {
                 every { getExternalFilesDir(any()) } answers { File(dir, firstArg<String>()).apply { mkdirs() } }
             },

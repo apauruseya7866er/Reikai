@@ -17,4 +17,4 @@ val Novel.readerOrientation: Long
  * `Manga.hasCustomCover`, pinned by CoverCacheConformanceTest.
  */
 fun Novel.hasCustomCover(coverCache: CoverCache): Boolean =
-    coverCache.getCustomCoverFile(EntryId.Novel(id)).exists()
+    coverCache.hasCustomCover(EntryId.Novel(id))

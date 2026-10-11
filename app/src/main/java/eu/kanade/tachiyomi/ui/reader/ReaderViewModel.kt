@@ -57,8 +57,11 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import exh.util.defaultReaderType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -97,6 +100,7 @@ import reikai.domain.reader.ChapterProgress
 import reikai.domain.reader.ChapterRetryCooldown // RK
 import reikai.domain.reader.ReadSessionClock
 import reikai.domain.reader.ReaderPosition
+import reikai.domain.reader.ReaderProgressWrites
 import reikai.domain.reader.chapterToDeleteBehind
 import reikai.domain.reader.chaptersToDownloadAhead
 import reikai.domain.reader.downloadedOrCurrent
@@ -117,7 +121,6 @@ import reikai.presentation.reader.ReaderResume
 import reikai.presentation.reader.unloadForReload
 import tachiyomi.core.common.preference.toggle
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
@@ -382,12 +385,20 @@ class ReaderViewModel(
     // RK: when the chapter was started reading, on the clock novels share (reikai.domain.reader)
     private val chapterReadSession = ReadSessionClock()
 
+    // RK: serializes the progress writes, which outlive the reader, through the rule the novel reader shares
+    private val progressWrites = ReaderProgressWrites(appScope)
+
     private var chapterToDownload: Download? = null
 
     // RK: which overlapping chapter switch may land. Main thread only.
     private val chapterSwitches = ChapterSwitches()
 
-    private val unfilteredChapterList by lazy { runBlocking { groupChapters() } } // RK
+    private var unfilteredChapterList: List<Chapter>? = null
+
+    private suspend fun getUnfilteredChapterList(): List<Chapter> {
+        return unfilteredChapterList
+            ?: groupChapters().also { unfilteredChapterList = it } // RK
+    }
 
     // RK: every chapter of the whole merge group as stored now, so the duplicate-read pass reaches the
     // stitch's copies on sibling sources too; for an unmerged manga this is just its own chapters.
@@ -396,26 +407,34 @@ class ReaderViewModel(
             .flatMap { getChaptersByMangaId.await(it, applyScanlatorFilter = false) }
 
     /**
-     * Chapter list for the active manga. It's retrieved lazily and should be accessed for the first
-     * time in a background thread to avoid blocking the UI.
+     * Chapter list for the active manga. Loaded by [init].
      */
     // RK: the skip-filtered set. It is no longer what the reader pages over (see [fullChapterList]); it
     // only says which chapters a FORWARD step is allowed to land on.
-    private val chapterList by lazy { buildChapterList(applyReadFilter = true) }
+    private lateinit var chapterList: List<ReaderChapter>
 
     // RK: every chapter, and the list the reader actually navigates and the chapter sheet renders.
     // "Skip chapters marked read" means do not stop on a read chapter as you move forward, not make it
     // unreachable, so going back must always reach the chapter you just finished. Sharing
     // [buildChapterList] keeps this the same deduplicated cross-source list, so the sheet, the reader and
     // the merged details list all agree on what exists.
-    private val fullChapterList by lazy { buildChapterList(applyReadFilter = false) }
+    private lateinit var fullChapterList: List<ReaderChapter>
+
+    // RK: completed once [init] has built both lists, which the chapter sheet and the lookups below wait for
+    private val chapterListsLoaded = CompletableDeferred<Unit>()
+
+    // RK: whether both lists are built, for a lookup made before the first open lands
+    private val chapterListsReady: Boolean get() = chapterListsLoaded.isCompleted
+
+    // RK: suspends until [init] has built both lists, so the chapter sheet never builds its rows from none
+    suspend fun awaitChapterLists() = chapterListsLoaded.await()
 
     // RK: the group's merged list with each chapter as the copy an open reads, the list paging walks.
     private fun groupAsOpened(group: MergedChapterProvider.Group): List<Chapter> =
         copiesToOpen?.inPlaceOf(group.chapters) { copy, row -> copy.copy(sourceOrder = row.sourceOrder) }
             ?: group.chapters
 
-    private fun buildChapterList(applyReadFilter: Boolean): List<ReaderChapter> {
+    private suspend fun buildChapterList(applyReadFilter: Boolean): List<ReaderChapter> {
         val manga = manga!!
         // RK: source scope shows only the opened source's own chapters; group scope (default) shows
         // the unified cross-source list resolved in init (falling back to the single-source list if
@@ -424,16 +443,16 @@ class ReaderViewModel(
         // excluded is filtered out of it (mihon 2b4b8472b); both are put back through
         // withOpenedChapter, the kernel the novel readers share, looked up in the unfiltered list.
         val merged = if (sourceScoped) {
-            runBlocking { getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true) }
+            getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true)
         } else {
             // RK --> each merged chapter as the copy an open reads, so paging lands on the one on disk
             mergedGroup?.let(::groupAsOpened)
-                ?: runBlocking { getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true) }
+                ?: getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true)
             // RK <--
         }
         val chapters = withOpenedChapter(
             unified = merged,
-            opened = merged.find { it.id == chapterId } ?: unfilteredChapterList.find { it.id == chapterId },
+            opened = merged.find { it.id == chapterId } ?: getUnfilteredChapterList().find { it.id == chapterId },
             stitch = mergedGroup?.stitch.orEmpty(),
             id = { it.id },
             // A merged manga list runs newest-first, as its sources' own lists do.
@@ -540,7 +559,8 @@ class ReaderViewModel(
         if (currentChapters != null) {
             currentChapters.unref()
             chapterToDownload?.let {
-                downloadManager.addDownloadsToStartOfQueue(listOf(it))
+                // viewModelScope is already cancelled here
+                appScope.launch { downloadManager.addDownloadsToStartOfQueue(listOf(it)) }
             }
         }
     }
@@ -607,6 +627,9 @@ class ReaderViewModel(
                 val source = sourceManager.getOrStub(manga.source)
                 mutableState.update { it.copy(manga = manga, source = source) }
 
+                chapterList = buildChapterList(applyReadFilter = true)
+                fullChapterList = buildChapterList(applyReadFilter = false) // RK
+                chapterListsLoaded.complete(Unit) // RK
                 // RK: from the full list, so the reader pages within one instance space (prev/next
                 //     are resolved there too) rather than mixing it with the skip-filtered set.
                 loadChapter(loader!!, fullChapterList.first { chapterId == it.chapter.id })
@@ -818,10 +841,8 @@ class ReaderViewModel(
         chapterPageIndex = page.index
         // RK <--
 
-        // Save last page read and mark as read if needed
-        viewModelScope.launchNonCancellable {
-            updateChapterProgress(selectedChapter, page)
-        }
+        // Save last page read and mark as read if needed. The database calls are main-safe.
+        progressWrites.launch { updateChapterProgress(selectedChapter, page) } // RK: the shared ordering
 
         // RK: compared with a switch still loading too, not only the active chapter, see ChapterSwitches.
         chapterSwitches.requestFromPage(selectedChapter.chapter.id, getCurrentChapter()?.chapter?.id)?.let {
@@ -903,7 +924,7 @@ class ReaderViewModel(
      * Removes [currentChapter] from download queue
      * if setting is enabled and [currentChapter] is queued for download
      */
-    private fun cancelQueuedDownloads(currentChapter: ReaderChapter): Download? {
+    private suspend fun cancelQueuedDownloads(currentChapter: ReaderChapter): Download? {
         return downloadManager.getQueuedDownloadOrNull(currentChapter.chapter.id)?.also {
             downloadManager.cancelQueuedDownloads(listOf(it))
         }
@@ -914,7 +935,7 @@ class ReaderViewModel(
      * If both conditions are satisfied enqueues chapter for delete
      * @param currentChapter current chapter, which is going to be marked as read.
      */
-    private fun deleteChapterIfNeeded(currentChapter: ReaderChapter) {
+    private suspend fun deleteChapterIfNeeded(currentChapter: ReaderChapter) {
         val removeAfterReadSlots = downloadPreferences.removeAfterReadSlots.get()
         if (removeAfterReadSlots == -1) return
 
@@ -951,6 +972,7 @@ class ReaderViewModel(
         // RK: the in-memory position, requestedPage and chapterPageIndex are written by onPageSelected.
         val progress = pageProgress(readerChapter, page)
 
+        // RK: asked under the lock ReaderProgressWrites takes, which the order of the writes rests on
         if (!incognito.of(readerChapter.chapter.mangaId) && page.status !is Page.State.Error) { // RK
             val wasRead = readerChapter.chapter.read // RK: the finish below reports only a newly read chapter
             val read = wasRead || progress.isChapterComplete // RK: the kernel's completion rule
@@ -1017,8 +1039,8 @@ class ReaderViewModel(
     // NovelReaderViewModel.markReadOnSkip, pinned by MarkReadOnSkipConformanceTest.
     fun markChapterReadOnSkip(readerChapter: ReaderChapter) {
         if (readerChapter.chapter.read || !readerPreferences.markReadOnSkip.get()) return
-        viewModelScope.launchNonCancellable {
-            if (incognito.of(readerChapter.chapter.mangaId)) return@launchNonCancellable
+        progressWrites.launch {
+            if (incognito.of(readerChapter.chapter.mangaId)) return@launch
             readerChapter.update { it.copy(read = true) }
             updateChapterProgressOnComplete(readerChapter, wasRead = false)
             updateChapter.await(
@@ -1033,9 +1055,17 @@ class ReaderViewModel(
     }
 
     /**
+     * Saves the chapter last read history on the app scope, so it's written even when the reader is closing.
+     */
+    fun saveHistory() {
+        // Immediate so the read time is taken when the reader pauses
+        appScope.launch(Dispatchers.Main.immediate) { updateHistory() }
+    }
+
+    /**
      * Saves the chapter last read history if incognito mode isn't on.
      */
-    suspend fun updateHistory() {
+    private suspend fun updateHistory() {
         getCurrentChapter()?.let { readerChapter ->
             if (incognito.of(readerChapter.chapter.mangaId)) return@let // RK
 
@@ -1105,7 +1135,8 @@ class ReaderViewModel(
     }
 
     // From every chapter: the skip-filtered list leaves out a read one, which can fail to load as well.
-    private fun chapterById(chapterId: Long) = fullChapterList.firstOrNull { it.chapter.id == chapterId }?.chapter
+    private fun chapterById(chapterId: Long) =
+        fullChapterList.takeIf { chapterListsReady }?.firstOrNull { it.chapter.id == chapterId }?.chapter
 
     /** The chapter the reader is opening, which a first open that failed is about. */
     val openingChapterId: Long get() = if (chapterId == -1L) initialChapterId else chapterId
@@ -1189,10 +1220,15 @@ class ReaderViewModel(
     /**
      * Updates the viewer position for the open manga.
      */
+    private var readingModeJob: Job? = null
+
     fun setMangaReadingMode(readingMode: ReadingMode) {
         val manga = manga ?: return
-        runBlocking(Dispatchers.IO) {
+        // Only the latest pick matters, and letting an older one finish last would restore its choice
+        readingModeJob?.cancel()
+        readingModeJob = viewModelScope.launchIO {
             setMangaViewerFlags.awaitSetReadingMode(manga.id, readingMode.flagValue.toLong())
+            val updatedManga = getManga.await(manga.id)
             val currChapters = state.value.viewerChapters
             if (currChapters != null) {
                 // RK: the update below re-emits this same ViewerChapters instance, which the
@@ -1204,12 +1240,7 @@ class ReaderViewModel(
                 val currChapter = currChapters.currChapter
                 currChapter.requestedPage = currChapter.chapter.lastPageRead
 
-                mutableState.update {
-                    it.copy(
-                        manga = getManga.await(manga.id),
-                        viewerChapters = currChapters,
-                    )
-                }
+                mutableState.update { it.copy(manga = updatedManga) }
                 eventChannel.send(Event.ReloadViewerChapters)
             }
         }
@@ -1230,10 +1261,15 @@ class ReaderViewModel(
     /**
      * Updates the orientation type for the open manga.
      */
+    private var orientationJob: Job? = null
+
     fun setMangaOrientationType(orientation: ReaderOrientation) {
         val manga = manga ?: return
-        viewModelScope.launchIO {
+        // Only the latest pick matters, and letting an older one finish last would restore its choice
+        orientationJob?.cancel()
+        orientationJob = viewModelScope.launchIO {
             setMangaViewerFlags.awaitSetOrientation(manga.id, orientation.flagValue.toLong())
+            val updatedManga = getManga.await(manga.id)
             val currChapters = state.value.viewerChapters
             if (currChapters != null) {
                 // RK: same re-emit and hand-stamp as setMangaReadingMode, for the same reason.
@@ -1241,12 +1277,7 @@ class ReaderViewModel(
                 val currChapter = currChapters.currChapter
                 currChapter.requestedPage = currChapter.chapter.lastPageRead
 
-                mutableState.update {
-                    it.copy(
-                        manga = getManga.await(manga.id),
-                        viewerChapters = currChapters,
-                    )
-                }
+                mutableState.update { it.copy(manga = updatedManga) }
                 eventChannel.send(Event.SetOrientation(getMangaOrientation()))
                 eventChannel.send(Event.ReloadViewerChapters)
             }
@@ -1285,7 +1316,7 @@ class ReaderViewModel(
 
     /** Snapshot of the reader's chapter list for the in-reader chapter dialog. */
     fun getChapters(): List<ReaderChapterItem> {
-        manga ?: return emptyList()
+        if (manga == null || !chapterListsReady) return emptyList()
         // RK: in a merged group each row carries its source's name as a label, by the kernel every
         // chapter list shares; an unmerged manga gets none. Its download state is the group's, from sheetFlags.
         val sourceNames = mergeSourceLabels(mergedGroup?.sourceNameByMangaId.orEmpty())
@@ -1339,10 +1370,14 @@ class ReaderViewModel(
     // instances for the same row, and a chapter the navigation list skipped (read, with skip-read on)
     // is only in the sheet's. A dialog action therefore has to update every copy it finds, or the change
     // shows in one list and not the other, or silently does nothing for a read chapter.
-    private fun chapterCopies(chapterId: Long) = listOfNotNull(
-        chapterList.find { it.chapter.id == chapterId },
-        fullChapterList.find { it.chapter.id == chapterId },
-    )
+    private fun chapterCopies(chapterId: Long) = if (!chapterListsReady) {
+        emptyList()
+    } else {
+        listOfNotNull(
+            chapterList.find { it.chapter.id == chapterId },
+            fullChapterList.find { it.chapter.id == chapterId },
+        )
+    }
 
     // RK: every source's copy of a chapter within the merge group, so a read or bookmark from the chapter
     // sheet applies group-wide like the details screen's does, instead of only to the source the row came
@@ -1362,7 +1397,8 @@ class ReaderViewModel(
         copies.forEach { copy -> copy.update { it.copy(bookmark = bookmarked) } }
         // Kept in step so the sheet and the app bar cannot disagree about the chapter being read.
         if (getCurrentChapter()?.chapter?.id in ids) mutableState.update { it.copy(bookmarked = bookmarked) }
-        viewModelScope.launchNonCancellable {
+        // On Main so quick toggles are saved in order
+        viewModelScope.launch {
             updateChapter.awaitAll(ids.map { ChapterUpdate(it) { bookmark = bookmarked } })
         }
     }
@@ -1405,7 +1441,7 @@ class ReaderViewModel(
     fun setChapterReadStatus(chapter: Chapter, read: Boolean) {
         val ids = groupCopyIds(chapter.id)
         ids.forEach { id -> chapterCopies(id).forEach { copy -> copy.update { it.copy(read = read) } } }
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             val targets = ids.mapNotNull { getChapter.await(it) }.ifEmpty { listOf(chapter) }
             setReadStatus.await(read, *targets.toTypedArray())
         }
@@ -1414,13 +1450,14 @@ class ReaderViewModel(
     /** Start/cancel/delete a chapter download from the chapter dialog, each from its own source's folder. */
     fun handleChapterDownload(chapter: Chapter, action: ChapterDownloadAction) {
         manga ?: return
-        viewModelScope.launchIO {
+        // The queue edit or delete outlives the reader, which is often closed straight after the tap
+        appScope.launch {
             val chapters = rowDownloadChapters(action, listOf(chapter), downloadCopiesOf(listOf(chapter))) { it.id }
             chapterDownloadActions.run(action, chapters) {
                 // The copies this session's rows count as downloaded: every source's in group scope,
                 // the chapter's own in source scope.
                 val copies = mergeScope.copiesOf(setOf(chapter.id), mergedGroup?.stitch.orEmpty())
-                unfilteredChapterList.filter { it.id in copies }.ifEmpty { listOf(chapter) }
+                getUnfilteredChapterList().filter { it.id in copies }.ifEmpty { listOf(chapter) }
             }
         }
     }
@@ -1456,24 +1493,25 @@ class ReaderViewModel(
             ""
         }
 
-        // Copy file in background.
-        viewModelScope.launchNonCancellable {
-            try {
-                val uri = imageSaver.save(
-                    image = Image.Page(
-                        inputStream = page.stream!!,
-                        name = filename,
-                        location = Location.Pictures.create(relativePath),
-                    ),
-                )
-                withUIContext {
-                    notifier.onComplete(uri)
-                    eventChannel.send(Event.SavedImage(SaveImageResult.Success(uri)))
+        // The save and its notification outlive the reader, the result event doesn't
+        viewModelScope.launch {
+            val result = appScope.async {
+                try {
+                    val uri = imageSaver.save(
+                        image = Image.Page(
+                            inputStream = page.stream!!,
+                            name = filename,
+                            location = Location.Pictures.create(relativePath),
+                        ),
+                    )
+                    withUIContext { notifier.onComplete(uri) }
+                    SaveImageResult.Success(uri)
+                } catch (e: Throwable) {
+                    notifier.onError(e.message)
+                    SaveImageResult.Error(e)
                 }
-            } catch (e: Throwable) {
-                notifier.onError(e.message)
-                eventChannel.send(Event.SavedImage(SaveImageResult.Error(e)))
-            }
+            }.await()
+            eventChannel.send(Event.SavedImage(result))
         }
     }
 
@@ -1492,8 +1530,8 @@ class ReaderViewModel(
 
         val filename = generateFilename(manga, page)
 
-        try {
-            viewModelScope.launchNonCancellable {
+        viewModelScope.launchIO {
+            try {
                 destDir.deleteRecursively()
                 val uri = imageSaver.save(
                     image = Image.Page(
@@ -1503,9 +1541,10 @@ class ReaderViewModel(
                     ),
                 )
                 eventChannel.send(if (copyToClipboard) Event.CopyImage(uri) else Event.ShareImage(uri, page))
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                logcat(LogPriority.ERROR, e)
             }
-        } catch (e: Throwable) {
-            logcat(LogPriority.ERROR, e)
         }
     }
 
@@ -1517,17 +1556,19 @@ class ReaderViewModel(
         val manga = manga ?: return
         val stream = page.stream ?: return
 
-        viewModelScope.launchNonCancellable {
-            val result = try {
-                manga.editCover(coverManager, stream(), updateManga, coverCache)
-                if (manga.isLocal() || manga.favorite) {
-                    SetAsCoverResult.Success
-                } else {
-                    SetAsCoverResult.AddToLibraryFirst
+        viewModelScope.launch {
+            val result = appScope.async {
+                try {
+                    manga.editCover(coverManager, stream(), updateManga, coverCache)
+                    if (manga.isLocal() || manga.favorite) {
+                        SetAsCoverResult.Success
+                    } else {
+                        SetAsCoverResult.AddToLibraryFirst
+                    }
+                } catch (e: Exception) {
+                    SetAsCoverResult.Error
                 }
-            } catch (e: Exception) {
-                SetAsCoverResult.Error
-            }
+            }.await()
             eventChannel.send(Event.SetCoverResult(result))
         }
     }
@@ -1556,7 +1597,8 @@ class ReaderViewModel(
         // the merge group anyway, so this stays consistent after an unmerge).
         val chapterManga = mangaForChapterId(readerChapter.chapter.mangaId)
 
-        viewModelScope.launchNonCancellable {
+        // Reading the last page and leaving right away is common, so it outlives the reader
+        appScope.launch {
             trackChapter.await(context, chapterManga.id, readerChapter.chapter.chapterNumber)
         }
     }
@@ -1570,27 +1612,24 @@ class ReaderViewModel(
      * Enqueues these chapters to be deleted when [deletePendingChapters] is called. The download
      * manager handles persisting them across process deaths.
      */
-    private fun enqueueDeleteChapters(chapter: Chapter, withDuplicates: Boolean) {
+    private suspend fun enqueueDeleteChapters(chapter: Chapter, withDuplicates: Boolean) {
         manga ?: return
-
-        viewModelScope.launchNonCancellable {
-            val duplicates = if (!withDuplicates) {
-                emptyList()
-            } else {
-                groupChapters()
-                    .duplicatesOfRead(
-                        chapter,
-                        groupCopyIds(chapter.id).toSet(),
-                        numberOf = { it.chapterNumber },
-                        idOf = { it.id },
-                        ownerOf = { it.mangaId },
-                    )
-                    // Finishing a chapter trims before its own copies are marked read, so they may not be yet
-                    .map { it.copy(read = true) }
-            }
-            (listOf(chapter) + duplicates).groupBy { it.mangaId }.forEach { (ownerId, owned) ->
-                downloadManager.enqueueChaptersToDelete(owned, mangaForChapterId(ownerId))
-            }
+        val duplicates = if (!withDuplicates) {
+            emptyList()
+        } else {
+            groupChapters()
+                .duplicatesOfRead(
+                    chapter,
+                    groupCopyIds(chapter.id).toSet(),
+                    numberOf = { it.chapterNumber },
+                    idOf = { it.id },
+                    ownerOf = { it.mangaId },
+                )
+                // Finishing a chapter trims before its own copies are marked read, so they may not be yet
+                .map { it.copy(read = true) }
+        }
+        (listOf(chapter) + duplicates).groupBy { it.mangaId }.forEach { (ownerId, owned) ->
+            downloadManager.enqueueChaptersToDelete(owned, mangaForChapterId(ownerId))
         }
     }
     // RK <--
@@ -1600,7 +1639,9 @@ class ReaderViewModel(
      * are ignored.
      */
     private fun deletePendingChapters() {
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
+            // Progress writes started before leaving may still enqueue the chapter just finished
+            progressWrites.awaitLanded() // RK: the shared ordering's
             downloadManager.deletePendingChapters()
         }
     }

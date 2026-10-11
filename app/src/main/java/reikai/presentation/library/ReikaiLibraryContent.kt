@@ -125,7 +125,7 @@ fun ReikaiLibraryContent(
     onToggleDynamicCollapse: (String) -> Unit,
     onGlobalSearchClicked: () -> Unit,
     // pull down at the top of the single-list to update the whole library (overflow Update library).
-    onRefresh: () -> Boolean,
+    onRefresh: suspend () -> Boolean,
     refreshing: Boolean,
     // per-category header affordances; a dynamic group has no category, so these take the real one
     onClickCategorySort: (Category) -> Unit,

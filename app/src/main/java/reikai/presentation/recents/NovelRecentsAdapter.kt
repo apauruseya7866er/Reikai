@@ -286,7 +286,7 @@ class NovelRecentsAdapter(
     override suspend fun clearHistory(): Boolean = historyModel?.removeAllHistory() == true
 
     // Straight to the job, as the manga adapter goes and for the same two reasons.
-    override fun refresh(): Boolean = NovelUpdateWorker.startNow(application.workManager)
+    override suspend fun refresh(): Boolean = NovelUpdateWorker.startNow(application.workManager)
 
     override suspend fun detailsScreen(entry: EntryId): Screen? {
         val novelId = (entry as? EntryId.Novel)?.rawId ?: return null

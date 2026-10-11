@@ -21,6 +21,7 @@ import reikai.novel.host.ChapterItem
 import reikai.novel.host.SourceNovel
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
+import reikai.util.idleAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
@@ -177,7 +178,7 @@ class RepairNovelDetailsTest {
             sourceManager = mockk<NovelSourceManager>().also { coEvery { it.get("src") } returns source },
             downloadManager = { mockk(relaxed = true) },
             libraryPreferences = LibraryPreferences(InMemoryPreferenceStore()),
-            coverCache = CoverCache(context),
+            coverCache = CoverCache(idleAppScope(), context),
             reconcileMergedChapters = ReconcileMergedChapters(
                 repository = mockk(relaxed = true),
                 stitchers = emptySet(),

@@ -313,7 +313,7 @@ data object LibraryTab : Tab {
 
         // RK --> the engine starts the update behind the chip, and the message is the one Recents and
         //        Update errors show
-        val onClickRefresh: (Category?) -> Boolean = { category ->
+        val onClickRefresh: suspend (Category?) -> Boolean = { category ->
             val started = engine.refresh(libraryContentType, category)
             scope.launch {
                 val msgRes = libraryRefreshMessage(started, libraryContentType, category = category != null)
@@ -351,7 +351,7 @@ data object LibraryTab : Tab {
 
         // RK: shared manga continue-reading handler, used by both the pager and the single-list view.
         val onMangaContinueReading: (LibraryManga) -> Unit = { item ->
-            scope.launchIO {
+            scope.launch {
                 val chapter = viewModel.getNextUnreadChapter(item.manga)
                 if (chapter != null) {
                     context.startActivity(ReaderActivity.newIntent(context, chapter.mangaId, chapter.id))
@@ -435,15 +435,15 @@ data object LibraryTab : Tab {
                             // from each category header's sort in the single-list view.
                             engine.openSettingsDialog(libraryContentType, categoryId = null, LibrarySettingsTab.FILTER)
                         },
-                        onClickRefresh = { onClickRefresh(currentRealCategory()) },
-                        onClickGlobalUpdate = { onClickRefresh(null) },
+                        onClickRefresh = { scope.launch { onClickRefresh(currentRealCategory()) } },
+                        onClickGlobalUpdate = { scope.launch { onClickRefresh(null) } },
                         // RK: follows the content-type chip.
                         onClickOpenRandomManga = { onOpenRandom(currentBucket()?.key) },
                         // RK: library-wide tracker refresh, both content types at once, so it does not
                         // follow the chip. A snackbar reports the two states the user can act on.
                         onClickRefreshTrackers = {
-                            val started = TrackerRefreshWorker.startNow(context)
                             scope.launch {
+                                val started = TrackerRefreshWorker.startNow(context)
                                 snackbarHostState.showSnackbar(
                                     context.stringResource(
                                         if (started) {
@@ -622,7 +622,7 @@ data object LibraryTab : Tab {
                                             LibrarySettingsTab.SORT,
                                         )
                                     },
-                                    onRefreshCategory = { category -> onClickRefresh(category) },
+                                    onRefreshCategory = { category -> scope.launch { onClickRefresh(category) } },
                                     onSelectAllInCategory = { bucket -> engine.selectAllInCategory(entriesOf(bucket)) },
                                     // RK: the header shows each category's EFFECTIVE sort, its own override or
                                     // the global sort it follows, decoded the same way on both content types.

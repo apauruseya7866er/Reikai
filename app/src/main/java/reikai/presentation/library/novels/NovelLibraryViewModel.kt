@@ -11,6 +11,7 @@ import eu.kanade.domain.base.BasePreferences
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.ui.library.LibraryItem
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +25,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import mihon.core.metro.AppCoroutineScope
 import mihon.domain.library.model.search.QueryNode
 import reikai.domain.category.GetNovelCategories
 import reikai.domain.chapter.DownloadCandidates
@@ -88,7 +91,6 @@ import reikai.presentation.library.withCustomInfo
 import reikai.util.runCatchingCancellable
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.track.model.Track
@@ -106,6 +108,7 @@ import kotlin.time.Duration.Companion.seconds
 @ViewModelKey
 @ContributesIntoMap(AppScope::class, binding = binding<ViewModel>())
 class NovelLibraryViewModel(
+    @AppCoroutineScope private val appScope: CoroutineScope,
     private val novelRepository: NovelRepository,
     private val removeNovelsFromLibrary: RemoveNovelsFromLibrary,
     private val setNovelReadStatus: SetNovelReadStatus,
@@ -184,7 +187,7 @@ class NovelLibraryViewModel(
         ) { (library, customInfo, tracks), search, settings ->
             buildState(library, customInfo, tracks, search, settings)
         }
-            .flowOn(Dispatchers.IO)
+            .flowOn(Dispatchers.Default)
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
 
     val state: StateFlow<State> = combine(built, searchQuery) { built, searchQuery ->
@@ -409,9 +412,9 @@ class NovelLibraryViewModel(
         // Mark every source of a merge group, so a merged series doesn't stay part-read on the
         // sources that aren't the representative.
         val novelIds = state.value.memberIdsFor(ids)
-        // Non-cancellable like the manga twins: a bulk write must not half-apply because the
+        // On the app scope like the manga twins: a bulk write must not half-apply because the
         // screen was left mid-loop.
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             // The interactor groups by novel for delete-after-read, so pass every selected novel's chapters.
             val chapters = novelIds.flatMap { novelChapterRepository.getByNovelId(it) }
             setNovelReadStatus.await(read, chapters)
@@ -423,7 +426,7 @@ class NovelLibraryViewModel(
         // member would fetch each chapter once per source and waste the storage on near-duplicates.
         // The target is the group's deduplicated list, the one the details "All" view shows, with each
         // chapter fetched from the source that carries it.
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             ids.forEach { id ->
                 val group = getNextNovelChapter.groupChapters(id)
                 val downloadManager = novelDownloadManager()
@@ -458,7 +461,7 @@ class NovelLibraryViewModel(
 
     /** Changes each of [novelIds]' categories together with the rest of its merge group. */
     fun setNovelCategories(novelIds: List<Long>, addCategories: List<Long>, removeCategories: List<Long>) {
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             novelIds.forEach { groupCategories.change(it, addCategories, removeCategories, mergeManager) }
         }
     }
@@ -470,7 +473,7 @@ class NovelLibraryViewModel(
         // Expand merged covers to every grouped source, so the whole series leaves the library.
         removeGroupedSources: Boolean = false,
     ) {
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             val targets = if (removeGroupedSources) state.value.memberIdsFor(novelIds) else novelIds
             if (deleteFromLibrary) removeNovelsFromLibrary.await(targets)
             targets.forEach { novelId ->

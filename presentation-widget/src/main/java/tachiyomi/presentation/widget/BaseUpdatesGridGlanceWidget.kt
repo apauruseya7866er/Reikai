@@ -22,7 +22,9 @@ import dev.zacsweers.metro.HasMemberInjections
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.util.system.dpToPx
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.minus
@@ -110,7 +112,7 @@ abstract class BaseUpdatesGridGlanceWidget : GlanceAppWidget() {
         // Resize to cover size
         val widthPx = CoverWidth.value.toInt().dpToPx
         val heightPx = CoverHeight.value.toInt().dpToPx
-        return withIOContext {
+        return withContext(Dispatchers.Default) {
             this@prepareData
                 .distinctBy { it.mangaId }
                 .take(rowCount * columnCount)

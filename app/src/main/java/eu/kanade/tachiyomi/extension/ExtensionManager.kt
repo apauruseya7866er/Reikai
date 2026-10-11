@@ -57,6 +57,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The manager of extensions installed as another apk which extend the available sources. It handles
@@ -84,7 +85,10 @@ class ExtensionManager(
 
     private val initialized = CompletableDeferred<Unit>()
 
-    private val iconMap = mutableMapOf<String, Drawable>()
+    // A full load replaces both maps, so install events wait for it and apply on top instead of being overwritten
+    private val loadMutex = Mutex()
+
+    private val iconMap = ConcurrentHashMap<String, Drawable>()
 
     @Volatile
     private var stores = emptyList<ExtensionStore>()
@@ -127,12 +131,11 @@ class ExtensionManager(
         field = MutableStateFlow<Map<String, RepoStatus>?>(null)
     // RK <--
 
-    // RK --> one scan at a time. It runs from three places on this scope, and each pass assigns
-    // both maps wholesale from a store list it read when it started, so a slow startup scan landing
-    // after a re-trust would put every extension back to Untrusted until the next launch.
+    // RK --> loadMutex also keeps scans one at a time. A scan runs from three places on this scope, and
+    // each pass assigns both maps wholesale from a store list it read when it started, so a slow startup
+    // scan landing after a re-trust would put every extension back to Untrusted until the next launch.
     // LnPluginInstaller.loadMutex holds the LN plugin loads the same way; the pair stands in for a
     // conformance test (docs/dev/subsystems/browse-and-sources.md).
-    private val loadMutex = Mutex()
 
     /** The content-warning settings the latest scan judged against, see [reloadWhenScanStale]. */
     @Volatile
@@ -481,7 +484,7 @@ class ExtensionManager(
      * @param extension The extension to be registered.
      */
     private fun registerExtension(extension: Extension.Loaded) {
-        loadedExtensionMapFlow.value += extension
+        loadedExtensionMapFlow.update { it + extension }
     }
 
     /**
@@ -491,11 +494,11 @@ class ExtensionManager(
      * @param pkgName The package name of the uninstalled application.
      */
     private fun unregisterExtension(pkgName: String) {
-        loadedExtensionMapFlow.value -= pkgName
-        notLoadedExtensionMapFlow.value -= pkgName
+        loadedExtensionMapFlow.update { it - pkgName }
+        notLoadedExtensionMapFlow.update { it - pkgName }
         // RK -->
-        loadedNovelExtensionMapFlow.value -= pkgName
-        notLoadedNovelExtensionMapFlow.value -= pkgName
+        loadedNovelExtensionMapFlow.update { it - pkgName }
+        notLoadedNovelExtensionMapFlow.update { it - pkgName }
         // RK <--
     }
 
@@ -504,35 +507,35 @@ class ExtensionManager(
      */
     private inner class InstallationListener : ExtensionInstallReceiver.Listener {
 
-        override fun onExtensionLoaded(extension: Extension.Loaded) {
+        override suspend fun onExtensionLoaded(extension: Extension.Loaded) = loadMutex.withLock {
             // RK -->
             if (extension.kind != Extension.Kind.MANGA) {
-                loadedNovelExtensionMapFlow.value += extension
-                notLoadedNovelExtensionMapFlow.value -= extension.pkgName
+                loadedNovelExtensionMapFlow.update { it + extension }
+                notLoadedNovelExtensionMapFlow.update { it - extension.pkgName }
                 refreshStatuses()
-                return
+                return@withLock
             }
             // RK <--
             registerExtension(extension)
-            notLoadedExtensionMapFlow.value -= extension.pkgName
+            notLoadedExtensionMapFlow.update { it - extension.pkgName }
             refreshStatuses()
         }
 
-        override fun onExtensionNotLoaded(extension: Extension.NotLoaded) {
+        override suspend fun onExtensionNotLoaded(extension: Extension.NotLoaded) = loadMutex.withLock {
             // RK -->
             if (extension.kind != Extension.Kind.MANGA) {
-                loadedNovelExtensionMapFlow.value -= extension.pkgName
-                notLoadedNovelExtensionMapFlow.value += extension
+                loadedNovelExtensionMapFlow.update { it - extension.pkgName }
+                notLoadedNovelExtensionMapFlow.update { it + extension }
                 refreshStatuses()
-                return
+                return@withLock
             }
             // RK <--
-            loadedExtensionMapFlow.value -= extension.pkgName
-            notLoadedExtensionMapFlow.value += extension
+            loadedExtensionMapFlow.update { it - extension.pkgName }
+            notLoadedExtensionMapFlow.update { it + extension }
             refreshStatuses()
         }
 
-        override fun onPackageUninstalled(pkgName: String) {
+        override suspend fun onPackageUninstalled(pkgName: String) = loadMutex.withLock {
             ExtensionLoader.uninstallPrivateExtension(context, pkgName)
             unregisterExtension(pkgName)
             updatePendingUpdatesCount()
@@ -565,28 +568,32 @@ class ExtensionManager(
         notLoaded: MutableStateFlow<Map<String, Extension.NotLoaded>>,
     ) {
         val statuses = storeStatuses.value
-        loaded.value = loaded.value.mapValues { (_, extension) ->
-            when (extension.kindListing(available, statuses, stores, storeKeys)) {
-                KindListing.Unknown -> extension
-                KindListing.Unlisted -> extension.copy(hasUpdate = false)
-                KindListing.Listed -> {
-                    val listing = extension.findListing(available, storeKeys)
-                    extension.copy(
-                        hasUpdate = extension.findUpdate(available, storeKeys) != null,
-                        isObsolete = listing == null,
-                        store = if (stores.isEmpty()) extension.store else extension.pickStore(available),
-                    )
+        loaded.update { current ->
+            current.mapValues { (_, extension) ->
+                when (extension.kindListing(available, statuses, stores, storeKeys)) {
+                    KindListing.Unknown -> extension
+                    KindListing.Unlisted -> extension.copy(hasUpdate = false)
+                    KindListing.Listed -> {
+                        val listing = extension.findListing(available, storeKeys)
+                        extension.copy(
+                            hasUpdate = extension.findUpdate(available, storeKeys) != null,
+                            isObsolete = listing == null,
+                            store = if (stores.isEmpty()) extension.store else extension.pickStore(available),
+                        )
+                    }
                 }
             }
         }
-        notLoaded.value = notLoaded.value.mapValues { (_, extension) ->
-            when (extension.kindListing(available, statuses, stores, storeKeys)) {
-                KindListing.Unknown -> extension
-                KindListing.Unlisted -> extension.copy(hasUpdate = false)
-                KindListing.Listed -> extension.copy(
-                    hasUpdate = extension.findUpdate(available, storeKeys) != null,
-                    store = if (stores.isEmpty()) extension.store else extension.pickStore(available),
-                )
+        notLoaded.update { current ->
+            current.mapValues { (_, extension) ->
+                when (extension.kindListing(available, statuses, stores, storeKeys)) {
+                    KindListing.Unknown -> extension
+                    KindListing.Unlisted -> extension.copy(hasUpdate = false)
+                    KindListing.Listed -> extension.copy(
+                        hasUpdate = extension.findUpdate(available, storeKeys) != null,
+                        store = if (stores.isEmpty()) extension.store else extension.pickStore(available),
+                    )
+                }
             }
         }
     }

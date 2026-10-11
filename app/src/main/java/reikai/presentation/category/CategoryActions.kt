@@ -10,7 +10,6 @@ import reikai.domain.category.CategoryIdPreferences
 import reikai.domain.category.deleteCategoryAndCleanup
 import reikai.domain.category.flagsWithHidden
 import reikai.domain.category.isHidden
-import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.interactor.RenameCategory
 import tachiyomi.domain.category.model.Category
@@ -71,15 +70,13 @@ class CategoryActions(
     private val reorderMutex = Mutex()
 
     /** Move a category and renumber the whole list, so one ordering serves both libraries. */
-    suspend fun reorder(category: Category, newIndex: Int): Boolean = withNonCancellableContext {
-        reorderMutex.withLock {
-            val categories = nonSystemCategories().toMutableList()
-            val from = categories.indexOfFirst { it.id == category.id }
-            if (from < 0) return@withNonCancellableContext true
-            val moved = categories.removeAt(from)
-            categories.add(newIndex.coerceIn(0, categories.size), moved)
-            write { categoryRepository.updateAllOrders(orderedIds = categories.map { it.id }) }
-        }
+    suspend fun reorder(category: Category, newIndex: Int): Boolean = reorderMutex.withLock {
+        val categories = nonSystemCategories().toMutableList()
+        val from = categories.indexOfFirst { it.id == category.id }
+        if (from < 0) return@withLock true
+        val moved = categories.removeAt(from)
+        categories.add(newIndex.coerceIn(0, categories.size), moved)
+        write { categoryRepository.updateAllOrders(orderedIds = categories.map { it.id }) }
     }
 
     suspend fun toggleHidden(category: Category) = write {

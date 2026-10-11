@@ -41,6 +41,7 @@ import reikai.presentation.components.UndatedChapterDate
 import reikai.presentation.components.chapterSubtitle
 import reikai.presentation.components.pageProgressLabel
 import reikai.presentation.details.mangaDetailsIntent
+import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -199,7 +200,7 @@ class MangaReaderProvider(
         // Upstream resolves it in launchIO for the same reason (ReaderActivity, assistUrl).
         .flowOn(Dispatchers.IO)
 
-    override suspend fun updateHistory() = viewModel.updateHistory()
+    override fun saveHistory() = viewModel.saveHistory()
 
     override fun restartReadTimer() = viewModel.restartReadTimer()
 
@@ -219,6 +220,7 @@ class MangaReaderProvider(
          */
         override val rows: Flow<List<ReaderChapterRow>> = downloadManager.queueState
             .flatMapLatest { queue ->
+                viewModel.awaitChapterLists()
                 val pageCounts = viewModel.sheetPageCounts()
                 val chapters = viewModel.getChapters()
                     .map { it.copy(chapter = it.chapter.copy(pageCount = pageCounts[it.chapter.id] ?: 0)) }

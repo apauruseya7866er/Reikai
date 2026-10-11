@@ -18,6 +18,8 @@ import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
@@ -57,7 +59,7 @@ class BangumiApi(
                 .toRequestBody()
             // Returns with 202 Accepted on success with no body
             authClient.newCall(POST(url, body = body, headers = headersOf("Content-Type", APP_JSON)))
-                .awaitSuccess()
+                .awaitSuccess().close()
             track
         }
     }
@@ -81,7 +83,7 @@ class BangumiApi(
                 .build()
             // Returns with 204 No Content
             authClient.newCall(request)
-                .awaitSuccess()
+                .awaitSuccess().close()
 
             track
         }

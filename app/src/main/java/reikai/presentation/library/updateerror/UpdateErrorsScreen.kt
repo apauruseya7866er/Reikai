@@ -118,13 +118,13 @@ class UpdateErrorsScreen(
                                         title = stringResource(MR.strings.action_update_library),
                                         icon = MaterialSymbols.Rounded.Refresh,
                                         onClick = {
-                                            val started = viewModel.retry(context)
-                                            val message = libraryRefreshMessage(
-                                                started,
-                                                successState.contentType,
-                                                category = false,
-                                            )
                                             scope.launch {
+                                                val started = viewModel.retry(context)
+                                                val message = libraryRefreshMessage(
+                                                    started,
+                                                    successState.contentType,
+                                                    category = false,
+                                                )
                                                 snackbarHostState.showSnackbar(context.stringResource(message))
                                             }
                                         },

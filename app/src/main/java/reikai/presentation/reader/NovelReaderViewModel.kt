@@ -41,6 +41,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import reikai.data.novel.tts.SystemTtsEngine
 import reikai.domain.download.downloadStateOf
 import reikai.domain.download.offersDownload
@@ -79,6 +80,7 @@ import reikai.domain.reader.ChapterIncognito
 import reikai.domain.reader.ChapterProgress
 import reikai.domain.reader.ChapterRetryCooldown
 import reikai.domain.reader.ReadSessionClock
+import reikai.domain.reader.ReaderProgressWrites
 import reikai.domain.reader.chaptersToDownloadAhead
 import reikai.domain.reader.downloadedOrCurrent
 import reikai.domain.reader.isChapterComplete
@@ -131,6 +133,7 @@ class NovelReaderViewModel(
     /** The host's, so the chapter being read survives a process kill. Assisted like the ids above,
      *  since this model is built through the manual factory rather than off the graph's extras. */
     @Assisted private val savedState: SavedStateHandle,
+    @AppCoroutineScope private val appScope: CoroutineScope,
     private val novelRepo: NovelRepository,
     private val chapterRepo: NovelChapterRepository,
     private val sourceManager: NovelSourceManager,
@@ -171,13 +174,13 @@ class NovelReaderViewModel(
         ): NovelReaderViewModel
     }
 
-    // Shadow the shared launchIO and launchNonCancellable, which hard-code Dispatchers.IO: members win
-    // over imported extensions, so every launch below runs on [io].
+    // Shadow the shared launchIO, which hard-codes Dispatchers.IO: members win over imported extensions,
+    // so every launch below runs on [io].
     private fun CoroutineScope.launchIO(block: suspend CoroutineScope.() -> Unit): Job =
         launch(io, block = block)
 
-    private fun CoroutineScope.launchNonCancellable(block: suspend CoroutineScope.() -> Unit): Job =
-        launchIO { withContext(NonCancellable, block) }
+    // The progress writes, which outlive the session, in the order manga's are, through the same rule
+    private val progressWrites = ReaderProgressWrites(appScope)
 
     // Building the manager restores the persisted queue and can start the download worker, so it is
     // resolved on first read rather than at construction, which keeps that off the opening thread.
@@ -661,10 +664,12 @@ class NovelReaderViewModel(
             pendingSave = null
         }
         // Off the caller's thread, which for the native renderer is the main one, since this parses.
-        viewModelScope.launchNonCancellable {
-            if (!NovelLeaveRule.readsOnReachingEnd(hasNext, chapter.html)) return@launchNonCancellable
-            if (chapterRepo.getById(chapterId)?.read != false) return@launchNonCancellable
-            writeProgress(chapterId, 100)
+        progressWrites.launch {
+            withContext(io) {
+                if (!NovelLeaveRule.readsOnReachingEnd(hasNext, chapter.html)) return@withContext
+                if (chapterRepo.getById(chapterId)?.read != false) return@withContext
+                writeProgress(chapterId, 100)
+            }
         }
     }
 
@@ -774,12 +779,12 @@ class NovelReaderViewModel(
     fun readerMoved() = landing.readerMoved()
 
     /**
-     * Non-cancellable, since the chapters a forward crossing passes are finished only here, and leaving
+     * A progress write, since the chapters a forward crossing passes are finished only here, and leaving
      * the reader mid-fling is when the last crossing is still waiting for the lane.
      */
     private fun requestCrossing() {
-        viewModelScope.launchNonCancellable {
-            lane.withLock { cross() }.forEach { writeProgress(it, 100) }
+        progressWrites.launch {
+            withContext(io) { lane.withLock { cross() }.forEach { writeProgress(it, 100) } }
         }
     }
 
@@ -968,7 +973,7 @@ class NovelReaderViewModel(
      */
     private fun persistProgress(id: Long, clamped: Int) {
         unwritten[id] = clamped
-        viewModelScope.launchNonCancellable { writeUnwritten(id, clamped) }
+        progressWrites.launch { withContext(io) { writeUnwritten(id, clamped) } }
     }
 
     /** [persistProgress] on the caller's own coroutine, for one already outliving the session: a
@@ -1008,9 +1013,15 @@ class NovelReaderViewModel(
         }
     }
 
+    /** [updateHistory] on the app scope, so a reader closing still writes it, as manga's saveHistory. */
+    fun saveHistory() {
+        // Immediate so the read time is taken when the reader pauses
+        appScope.launch(Dispatchers.Main.immediate) { updateHistory() }
+    }
+
     /** Stamp the current chapter into novel history and accumulate this session's read time. Called on
-     *  chapter switch and, through [ReaderProvider.updateHistory], on leaving the reader. */
-    suspend fun updateHistory() {
+     *  chapter switch and, through [ReaderProvider.saveHistory], on leaving the reader. */
+    private suspend fun updateHistory() {
         val chapter = this.chapter.value ?: return
         if (incognito.of(chapter.novelId)) return
         val id = chapter.chapterId
@@ -1028,7 +1039,11 @@ class NovelReaderViewModel(
     /** Called through [ReaderProvider.onActivityFinish] on leaving the reader, which is when the
      *  chapters finishing queued for deletion go, as in manga's `ReaderViewModel.onActivityFinish`. */
     fun onActivityFinish() {
-        viewModelScope.launchNonCancellable { deleteChaptersBehindReader.deletePending() }
+        appScope.launch {
+            // A finish written before leaving may still queue the chapter it read, as on manga
+            progressWrites.awaitLanded()
+            deleteChaptersBehindReader.deletePending()
+        }
     }
 
     /**
@@ -1073,7 +1088,7 @@ class NovelReaderViewModel(
 
     /** Reaches every source's copy of the chapter, as the manga sheet and the details list do. */
     fun setChapterRead(chapterId: Long, read: Boolean) {
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             val copies = groupCopies(chapterId)
             // Unmarked, it can be finished again, and finishing is what reaches the trackers.
             if (!read) chapterFinish.release(copies.map { it.id })
@@ -1085,8 +1100,8 @@ class NovelReaderViewModel(
         val ids = expandToUnits(setOf(chapterId), groupStitch)
         // Kept in step so the sheet and the app bar cannot disagree about the chapter being read.
         if (currentChapterId in ids) this.bookmarked.value = bookmarked
-        // Not cancelled with the reader, which is often closed straight after the tap, as manga's is not.
-        viewModelScope.launchNonCancellable { chapterRepo.setBookmarkBulk(ids.toList(), bookmarked) }
+        // On Main so quick toggles are saved in order, as manga's are
+        viewModelScope.launch { chapterRepo.setBookmarkBulk(ids.toList(), bookmarked) }
     }
 
     /** Every source's copy of [chapterId] the stored stitch places with it, itself included, as the
@@ -1120,8 +1135,9 @@ class NovelReaderViewModel(
 
     /** Start, cancel or delete a chapter download from the sheet. */
     fun downloadChapter(chapterId: Long, action: ChapterDownloadAction) {
-        viewModelScope.launchIO {
-            val chapter = chapterRepo.getById(chapterId) ?: return@launchIO
+        // The queue edit or delete outlives the reader, which is often closed straight after the tap, as on manga
+        appScope.launch {
+            val chapter = chapterRepo.getById(chapterId) ?: return@launch
             val pooled = memberIds.flatMap { chapterRepo.getByNovelId(it) }
             val fetched = downloadTargets.of(listOf(chapter), pooled + chapter) { it.id }
             // The copies the row counts as downloaded, which follow this session's scope.
@@ -1406,9 +1422,11 @@ class NovelReaderViewModel(
      *  MarkReadOnSkipConformanceTest. */
     private fun markReadOnSkip(departedId: Long) {
         if (!novelPreferences.readerMarkReadOnSkip().get()) return
-        viewModelScope.launchNonCancellable {
-            val chapter = chapterRepo.getById(departedId) ?: return@launchNonCancellable
-            if (!chapter.read && !incognito.of(chapter.novelId)) markChapterRead(chapter)
+        progressWrites.launch {
+            withContext(io) {
+                val chapter = chapterRepo.getById(departedId) ?: return@withContext
+                if (!chapter.read && !incognito.of(chapter.novelId)) markChapterRead(chapter)
+            }
         }
     }
 

@@ -16,6 +16,7 @@ class ShikimoriInterceptor(private val shikimori: Shikimori) : Interceptor {
     /**
      * OAuth object used for authenticated requests.
      */
+    @Volatile
     private var oauth: SMOAuth? = shikimori.restoreToken()
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -24,23 +25,26 @@ class ShikimoriInterceptor(private val shikimori: Shikimori) : Interceptor {
         // RK --> a signed-out call fails as an IOException, see TrackerSignedOutException
         var currAuth = oauth ?: throw TrackerSignedOutException("Shikimori")
 
-        // Refresh access token if expired.
+        // Refresh access token if expired, once for all the requests that found it expired.
         if (currAuth.isExpired()) {
-            val refreshToken = currAuth.refreshToken ?: throw TrackerSignedOutException("Shikimori")
-            val response = chain.proceed(ShikimoriApi.refreshTokenRequest(refreshToken))
-            // RK <--
-            if (response.isSuccessful) {
-                currAuth = with(json) {
-                    response.parseAs<SMOAuth>()
+            currAuth = synchronized(this) {
+                val latest = oauth ?: throw TrackerSignedOutException("Shikimori")
+                if (!latest.isExpired()) return@synchronized latest
+
+                val refreshToken = latest.refreshToken ?: throw TrackerSignedOutException("Shikimori")
+                val response = chain.proceed(ShikimoriApi.refreshTokenRequest(refreshToken))
+                // RK <--
+                if (response.isSuccessful) {
+                    with(json) { response.parseAs<SMOAuth>() }.also(::newAuth)
+                } else {
+                    response.close()
+                    latest
                 }
-                newAuth(currAuth)
-            } else {
-                response.close()
             }
         }
         // Add the authorization header to the original request.
         val authRequest = originalRequest.newBuilder()
-            .addHeader("Authorization", "Bearer ${oauth!!.accessToken}")
+            .addHeader("Authorization", "Bearer ${currAuth.accessToken}")
             // RK: Reikai's own user agent, shared with the Shikimori recommendations
             .header("User-Agent", REIKAI_TRACKER_USER_AGENT)
             .build()

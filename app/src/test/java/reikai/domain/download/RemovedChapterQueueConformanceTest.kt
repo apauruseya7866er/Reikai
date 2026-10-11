@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SChapter
 import io.kotest.matchers.shouldBe
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -89,7 +90,7 @@ class RemovedChapterQueueConformanceTest {
                 val downloads = mockk<DownloadManager>(relaxed = true) {
                     every { getQueuedDownloadOrNull(any()) } answers
                         { Download(mockk(), Manga.create(), Chapter.create().copy(id = firstArg())) }
-                    every { cancelQueuedDownloads(any()) } answers
+                    coEvery { cancelQueuedDownloads(any()) } answers
                         { cancelled += firstArg<List<Download>>().map { it.chapter.id } }
                 }
                 sync(database, urls, downloads)

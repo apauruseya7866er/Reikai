@@ -199,7 +199,7 @@ class MyAnimeListApi(
         withIOContext {
             authClient
                 .newCall(DELETE(mangaUrl(track.remoteId).toString()))
-                .awaitSuccess()
+                .awaitSuccess().close()
         }
     }
 

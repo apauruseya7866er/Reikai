@@ -60,7 +60,7 @@ class TrackerLibraryRefreshWorker(
         }
 
         /** Starts the manual pull, or returns false when one is running or the cooldown has not passed. */
-        fun startNow(context: Context): Boolean {
+        suspend fun startNow(context: Context): Boolean {
             if (context.workManager.isRunning(MANUAL_WORK_NAME)) return false
             if (!context.appGraph.refreshTrackerLibrary.tryStartManual()) return false
             val request = OneTimeWorkRequestBuilder<TrackerLibraryRefreshWorker>()

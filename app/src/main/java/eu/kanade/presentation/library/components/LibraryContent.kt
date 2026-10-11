@@ -37,7 +37,7 @@ fun LibraryContent(
     onContinueReadingClicked: ((LibraryItem) -> Unit)?,
     onToggleSelection: (LibraryBucket, LibraryItem) -> Unit,
     onToggleRangeSelection: (LibraryBucket, LibraryItem) -> Unit,
-    onRefresh: () -> Boolean,
+    onRefresh: suspend () -> Boolean,
     refreshing: Boolean,
     onGlobalSearchClicked: () -> Unit,
     getItemCountForCategory: (LibraryBucket) -> Int?,

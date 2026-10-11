@@ -21,6 +21,7 @@ import reikai.domain.dedupe.MergedDuplicateChapter
 import reikai.domain.dedupe.MergedDuplicateRepository
 import reikai.domain.entry.EntryId
 import reikai.domain.library.ContentType
+import reikai.util.idleAppScope
 import java.io.File
 
 class MergedDuplicateCarryMigrationTest {
@@ -31,6 +32,7 @@ class MergedDuplicateCarryMigrationTest {
     // The real cache over a temp directory, so the files are named exactly as the app names them
     private val coverCache by lazy {
         CoverCache(
+            idleAppScope(),
             mockk<Context> {
                 every { getExternalFilesDir(any()) } answers { File(dir, firstArg<String>()).apply { mkdirs() } }
             },

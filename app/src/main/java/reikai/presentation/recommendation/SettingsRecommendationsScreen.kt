@@ -6,11 +6,13 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.screen.SearchableSettings
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.launch
 import mihon.app.di.appGraph
 import reikai.data.recommendation.taste.TrackerLibraryRefreshWorker
 import reikai.domain.recommendation.ReikaiRecommendationPreferences
@@ -115,6 +117,7 @@ object SettingsRecommendationsScreen : SearchableSettings {
     @Composable
     private fun tasteProfileGroup(prefs: ReikaiRecommendationPreferences): Preference.PreferenceGroup {
         val context = LocalContext.current
+        val scope = rememberCoroutineScope()
         val repository = remember { context.appGraph.tasteLibraryRepository }
         val fetchers = remember { context.appGraph.trackerLibraryFetchers }
         val neverLabel = stringResource(MR.strings.pref_last_refresh_never)
@@ -155,13 +158,15 @@ object SettingsRecommendationsScreen : SearchableSettings {
                     // Per-tracker last-pull times under the title, so it actually tells the user something.
                     subtitle = lastRefreshSummary.ifBlank { stringResource(MR.strings.pref_refresh_now_summary) },
                     onClick = {
-                        context.toast(
-                            if (TrackerLibraryRefreshWorker.startNow(context)) {
-                                MR.strings.pref_refresh_now_started
-                            } else {
-                                MR.strings.pref_refresh_now_cooldown
-                            },
-                        )
+                        scope.launch {
+                            context.toast(
+                                if (TrackerLibraryRefreshWorker.startNow(context)) {
+                                    MR.strings.pref_refresh_now_started
+                                } else {
+                                    MR.strings.pref_refresh_now_cooldown
+                                },
+                            )
+                        }
                     },
                 ),
             ),

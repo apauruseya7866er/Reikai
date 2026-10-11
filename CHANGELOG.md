@@ -252,6 +252,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Set as default in a novel's chapter settings now asks first and can apply the settings to your whole library, as manga's does.**
 - **A novel opened from a source, a search or the feed now shows its synopsis expanded on a phone, as manga does.**
 - **A novel showing chapter numbers instead of titles now labels them in your app language on its details page, like manga.**
+- **Deleting downloads, saving chapter settings or editing a manga or novel's info now finishes even if you leave the page right away (from Mihon).** Upstream: mihonapp/mihon#4068.
 
 ### Reader
 
@@ -320,6 +321,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Theme based on cover now also colours the novel reader's bars from the novel's cover, as it already did for manga.**
 - **The novel reader's menu now also hides when you scroll the page, as long-strip manga's does, with its sensitivity under Settings -> Novel reader -> Navigation.**
 - **The novel reader now also has the Fullscreen and Show content in cutout area switches, under Settings -> Novel reader and its Appearance tab, both on by default.**
+- **Reading progress now saves in page order and keeps saving after the reader closes, on manga and novels (from Mihon).** Upstream: mihonapp/mihon#4068.
 
 ### Light novels
 
@@ -539,6 +541,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Closing Edit info while Fill from tracker is still loading no longer shows a tracker error.**
 - **Fill from tracker no longer adds a genre the manga or novel already has as a tag in different capitals.** The existing tag keeps its spelling.
 - **A dropped connection while your MDList login refreshes no longer signs you out.**
+- **A tracker no longer renews an expired sign-in twice when several updates reach it at once (from Mihon).** Upstream: mihonapp/mihon#4068.
 
 ### Downloads & extensions
 
@@ -620,6 +623,8 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Manga download badges now notice chapters you delete outside the app.**
 - **Manga chapters from a group with "/" in its name now stay found after downloading (from Mihon).** Upstream: mihon a5d584eeb.
 - **Pausing and resuming manga downloads no longer leaves duplicate "(1)" pages or failed chapters (from Mihon).** Upstream: mihon 6490c41e6.
+- **Pausing, cancelling or reordering manga downloads while they run no longer drops or repeats a chapter (from Mihon).** Upstream: mihonapp/mihon#4068.
+- **Cancelling an extension install now stops it, and an extension repository served over http loads again (from Mihon).** Upstream: mihonapp/mihon#4068.
 
 ### Backup & restore
 
@@ -694,6 +699,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Moving between screens after Android restored the app in the background no longer risks a crash (from Komikku).**
 - **After rotating the screen or returning to the app, Back in Settings now goes back one screen instead of jumping out to More (from Komikku).**
 - **Reikai's notification categories in Android's settings no longer repeat Mihon's names, so novel updates, novel downloads and each background sync can be told apart.**
+- **The app stalls less when opening, scrolling the library and leaving screens, with more disk and network work moved off the main thread (from Mihon).** Upstream: mihonapp/mihon#4068.
 
 ### Other
 

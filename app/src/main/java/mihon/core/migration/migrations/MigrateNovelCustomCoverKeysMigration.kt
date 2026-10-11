@@ -51,6 +51,7 @@ class MigrateNovelCustomCoverKeysMigration(
                 // An atomic rename replaces an existing target, which can only be a partial copy an older
                 // build left, so the user's cover wins.
                 Files.move(legacyFile.toPath(), targetFile.toPath(), ATOMIC_MOVE)
+                coverCache.reindexCustomCovers(legacyFile, targetFile)
             }.onFailure {
                 logcat(LogPriority.WARN, it) { "Novel cover re-key failed: novel=${novel.id}" }
             }

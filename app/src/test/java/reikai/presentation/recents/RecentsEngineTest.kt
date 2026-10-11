@@ -716,7 +716,7 @@ class RecentsEngineTest {
     }
 
     @Test
-    fun `a refresh that starts one library reports a start, not an already-running`() {
+    fun `a refresh that starts one library reports a start, not an already-running`() = runTest {
         val manga = provider(ContentType.MANGA, refreshStarts = false)
         val novel = provider(ContentType.NOVELS, refreshStarts = true)
 
@@ -724,7 +724,7 @@ class RecentsEngineTest {
     }
 
     @Test
-    fun `a refresh reaches the second library even when the first already started`() {
+    fun `a refresh reaches the second library even when the first already started`() = runTest {
         val manga = provider(ContentType.MANGA, refreshStarts = true)
         val novel = provider(ContentType.NOVELS, refreshStarts = false)
 
@@ -734,7 +734,7 @@ class RecentsEngineTest {
     }
 
     @Test
-    fun `a refresh under one chip leaves the other library alone`() {
+    fun `a refresh under one chip leaves the other library alone`() = runTest {
         val manga = provider(ContentType.MANGA)
         val novel = provider(ContentType.NOVELS)
 
@@ -1895,7 +1895,7 @@ private class FakeRecentsProvider(
         return historyClears
     }
 
-    override fun refresh(): Boolean {
+    override suspend fun refresh(): Boolean {
         refreshed = true
         return refreshStarts
     }

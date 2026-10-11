@@ -7,8 +7,10 @@ import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.binding
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.novel.FavoritedNovels
 import reikai.domain.novel.NovelRepository
 import reikai.domain.source.GetEnabledNovelSources
@@ -32,6 +34,7 @@ import tachiyomi.core.common.util.lang.launchIO
 @ViewModelKey
 @ContributesIntoMap(AppScope::class, binding = binding<ViewModel>())
 class NovelGlobalSearchViewModel(
+    @AppCoroutineScope private val appScope: CoroutineScope,
     private val installer: LnPluginInstaller,
     private val novelRepository: NovelRepository,
     private val libraryAdder: NovelLibraryAdder,
@@ -63,5 +66,5 @@ class NovelGlobalSearchViewModel(
         source.search(query, 1, filters = null).listedNovels().map { novelBrowseRow(it, source.id, favorited) }
 
     // The source id comes from each result's row, since results span sources.
-    val addFlow = NovelAddFlow(libraryAdder, viewModelScope)
+    val addFlow = NovelAddFlow(libraryAdder, viewModelScope, appScope)
 }

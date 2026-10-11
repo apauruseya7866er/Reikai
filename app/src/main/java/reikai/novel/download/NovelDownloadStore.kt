@@ -21,7 +21,7 @@ class NovelDownloadStore(
     private val chapterRepo: NovelChapterRepository,
 ) {
 
-    private val preferences = context.getSharedPreferences("active_novel_downloads", Context.MODE_PRIVATE)
+    private val preferences by lazy { context.getSharedPreferences("active_novel_downloads", Context.MODE_PRIVATE) }
 
     private val json = Json { ignoreUnknownKeys = true }
 

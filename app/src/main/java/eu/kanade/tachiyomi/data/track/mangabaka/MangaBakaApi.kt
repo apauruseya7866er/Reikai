@@ -22,6 +22,8 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
 import eu.kanade.tachiyomi.util.PkceUtil
 import eu.kanade.tachiyomi.util.lang.toLocalDate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
@@ -88,7 +90,7 @@ class MangaBakaApi(
 
             authClient
                 .newCall(POST(url, body = body, headers = headersOf("Content-Type", APP_JSON)))
-                .awaitSuccess()
+                .awaitSuccess().close()
 
             // only returns 201 with the body { "status": 201, "data": true }, so no library ID for us
             track
@@ -101,7 +103,7 @@ class MangaBakaApi(
 
             authClient
                 .newCall(DELETE(url))
-                .awaitSuccess()
+                .awaitSuccess().close()
         }
     }
 
@@ -173,7 +175,7 @@ class MangaBakaApi(
 
             authClient
                 .newCall(PUT(url, body = body, headers = headersOf("Content-Type", APP_JSON)))
-                .awaitSuccess()
+                .awaitSuccess().close()
 
             track
         }

@@ -3,17 +3,21 @@ package reikai.presentation.details
 import android.content.Context
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Mihon's details-heart prompt after a removal: offers to delete the downloads of the [removed] entries
- * that have any. Both content types' heart and Manage sources ask through here.
+ * that have any. Both content types' heart and Manage sources ask through here. The deletes run on
+ * [deleteScope], so leaving the screen once Delete is tapped cannot cut them off halfway.
  */
 suspend fun <T> SnackbarHostState.offerToDeleteDownloads(
     context: Context,
     removed: List<T>,
+    deleteScope: CoroutineScope,
     hasDownloads: suspend (T) -> Boolean,
     delete: suspend (T) -> Unit,
 ) {
@@ -24,7 +28,7 @@ suspend fun <T> SnackbarHostState.offerToDeleteDownloads(
         actionLabel = context.stringResource(MR.strings.action_delete),
         withDismissAction = true,
     )
-    if (result == SnackbarResult.ActionPerformed) withDownloads.forEach { delete(it) }
+    if (result == SnackbarResult.ActionPerformed) deleteScope.launch { withDownloads.forEach { delete(it) } }
 }
 
 /**

@@ -92,9 +92,9 @@ Automatic removal (delete after read, delete after marked read, the reader's tri
 ## Invariants and traps
 
 - **A manga download's failure posts its notice before it sets the status.** Mihon's job cancels a download's coroutine the moment its status turns `ERROR`, and Reikai's notice suspends for the adult verdict, so `Downloader.fail` posts first. The other order left the downloader "running" with only failures queued and refused every retry until restart.
-- **A reorder applies an order to the live queue, never a copy of it.** A sort reads the queue and the drain can finish a chapter meanwhile; replacing the queue with the copy downloaded it again and dropped a chapter queued since. Both reorder paths take only the order through `inOrderOf`.
+- **A reorder applies an order to the live queue, never a copy of it.** A sort reads the queue and the drain can finish a chapter meanwhile; replacing the queue with the copy downloaded it again and dropped a chapter queued since. Both reorder paths take only the order through `inOrderOf`, applied inside the queue's own update (`Downloader.updateQueue` under the downloader's lock, `NovelDownloadManager`'s `_queueState.update`), so a chapter queued between reading the order and applying it is kept.
 - **Every write to the saved novel queue holds `storeLock` and follows the live queue's change**, and a rewrite waits for the launch restore. Otherwise a rewrite deletes saved rows the restore has not read yet, or saves a row that already left.
-- **`SeriesCompletions` is never cleared on a reorder**, which empties the queue in passing.
+- **`SeriesCompletions` is cleared only by Cancel all**, never by a reorder or a single cancel, which keep the counts of the series still queued.
 - **One novel drain runs at a time.** `runQueue` holds `drainLock` for the whole drain, so a Resume during a paused drain's blocking save waits rather than racing it into duplicate files.
 - **`DownloadNotifier.onProgressChange` takes a `Mutex`, not `@Synchronized`**: it suspends for the adult verdict, and a monitor does not hold across a suspension.
 - **Every foreground worker shares one WorkManager service**, which reposts the first worker's last request when another goes foreground, so each worker must hand the service every new waiting reason or a stale "No network" returns.
@@ -115,7 +115,7 @@ Automatic removal (delete after read, delete after marked read, the reader's tri
 
 ## Upstream divergences
 
-`// RK` islands sit in `Downloader` (completed counts, failure reason and order, the retry in `queueChapters`, the network pause in `stop`, the shared space floor), `DownloadManager` (manual versus automatic delete, emptied paused queue, `renameManga` folder guard, `awaitQueueRestored`), `DownloadWorker` (network wait, paused foreground notice), `DownloadNotifier` (adult verdict, `onNetworkPause`, `progressLock`), `DownloadCache` (persisted scan time, shared index rules), `DownloadProvider` (`getChapterNameVariants`) and `DownloadStore`. Recorded in [upstream-sync.md](../upstream-sync.md) "Deliberate divergences": the manual delete, the network wait, the emptied paused queue, `renameManga`, `DownloadCache`'s scan time and the notifier `Mutex`.
+`// RK` islands sit in `Downloader` (completed counts, failure reason and order, the retry in `queueChapters`, the network pause in `stop`, the shared space floor), `DownloadManager` (manual versus automatic delete, emptied paused queue, `renameManga` folder guard, `awaitQueueRestored`, the reorder through `inOrderOf`), `DownloadWorker` (network wait, paused foreground notice), `DownloadNotifier` (adult verdict, `onNetworkPause`, `progressLock`), `DownloadCache` (persisted scan time, shared index rules), `DownloadProvider` (`getChapterNameVariants`) and `DownloadStore`. Recorded in [upstream-sync.md](../upstream-sync.md) "Deliberate divergences": the manual delete, the network wait, the emptied paused queue, `renameManga`, `DownloadCache`'s scan time and the notifier `Mutex`.
 
 ## Extending
 

@@ -31,6 +31,7 @@ import reikai.novel.source.NovelSourceManager
 import reikai.presentation.migrate.flow.MigrationPickHandoff
 import reikai.presentation.novel.browse.NovelBrowseViewModel
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 
 /**
@@ -171,6 +172,7 @@ private class MangaFilterChipProbe : FilterChipProbe {
     override suspend fun open() {
         val store = EmittingPreferenceStore()
         model = BrowseSourceViewModel(
+            appScope = testAppScope(),
             sourceId = SOURCE_ID,
             // Opened the way the screen opens it, so the seeded listing is under test too.
             listingQuery = mangaListingQuery(startLatest = false, initialQuery = null),
@@ -225,6 +227,7 @@ private class NovelFilterChipProbe(
         val manager = mockk<NovelSourceManager>(relaxed = true)
         coEvery { manager.get(SOURCE_ID) } returns source
         model = NovelBrowseViewModel(
+            appScope = testAppScope(),
             sourceId = SOURCE_ID,
             initialQuery = "",
             startLatest = false,

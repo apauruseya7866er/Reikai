@@ -27,6 +27,7 @@ import reikai.novel.source.NovelLink
 import reikai.novel.source.NovelLinkResolver
 import reikai.novel.source.NovelListing
 import reikai.novel.source.NovelSource
+import reikai.util.idleAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
@@ -58,7 +59,7 @@ class ResolveNovelLinkTest {
             val context = mockk<Context> {
                 every { getExternalFilesDir(any()) } answers { File(cacheRoot, firstArg<String>()).apply { mkdirs() } }
             }
-            coverCache = CoverCache(context)
+            coverCache = CoverCache(idleAppScope(), context)
         }
     }
 

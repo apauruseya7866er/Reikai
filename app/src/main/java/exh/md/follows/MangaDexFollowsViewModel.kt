@@ -15,8 +15,10 @@ import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceViewModel
 import exh.metadata.metadata.RaisedSearchMetadata
 import exh.source.ExhPreferences
 import exh.source.getMainSource
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.source.ReikaiSourcePreferences
 import reikai.presentation.browse.MangaLibraryAdder
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -37,6 +39,7 @@ class MangaDexFollowsViewModel(
     @Assisted sourceId: Long,
     private val networkToLocalManga: NetworkToLocalManga,
     // Forwarded to the parent: an assisted subclass supplies its supertype's dependencies itself.
+    @AppCoroutineScope appScope: CoroutineScope,
     sourceManager: SourceManager,
     sourcePreferences: SourcePreferences,
     libraryPreferences: LibraryPreferences,
@@ -50,6 +53,7 @@ class MangaDexFollowsViewModel(
 ) : BrowseSourceViewModel(
     sourceId = sourceId,
     listingQuery = null,
+    appScope = appScope,
     sourceManager = sourceManager,
     sourcePreferences = sourcePreferences,
     libraryPreferences = libraryPreferences,

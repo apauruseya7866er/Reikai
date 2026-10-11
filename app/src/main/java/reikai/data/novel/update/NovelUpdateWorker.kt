@@ -276,7 +276,7 @@ class NovelUpdateWorker(
         /** Run a check immediately (for manual triggers / testing); reuses a running drain via KEEP.
          *  A non-null [category] scopes the run to that category; null updates the whole library
          *  per the include/exclude prefs. */
-        fun startNow(workManager: WorkManager, category: Category? = null): Boolean {
+        suspend fun startNow(workManager: WorkManager, category: Category? = null): Boolean {
             val wm = workManager
             if (wm.isRunning(TAG)) {
                 // Already running either as a scheduled or manual job.
@@ -288,6 +288,8 @@ class NovelUpdateWorker(
             return true
         }
 
-        fun stop(context: Context) = stopLibraryUpdate(context.workManager, TAG, WORK_NAME_AUTO) { setupTask(context) }
+        suspend fun stop(context: Context) = stopLibraryUpdate(context.workManager, TAG, WORK_NAME_AUTO) {
+            setupTask(context)
+        }
     }
 }

@@ -34,6 +34,7 @@ import reikai.presentation.migrate.flow.MigrationPickHandoff
 import reikai.presentation.novel.browse.NovelBrowseViewModel
 import reikai.presentation.novel.browse.NovelBulkFavoriteViewModel
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 
 /**
@@ -95,6 +96,7 @@ private class MangaSavedSearchProbe : SavedSearchProbe {
             every { getFilterList() } answers { FilterList(AuthorFilter()) }
         }
         model = BrowseSourceViewModel(
+            appScope = testAppScope(),
             sourceId = 1L,
             listingQuery = mangaListingQuery(startLatest = false, initialQuery = null),
             sourceManager = mockk(relaxed = true) { coEvery { getOrStub(1L) } returns source },
@@ -140,6 +142,7 @@ private class NovelSavedSearchProbe : SavedSearchProbe {
         val manager = mockk<NovelSourceManager>(relaxed = true)
         coEvery { manager.get(SOURCE_ID) } returns source
         model = NovelBrowseViewModel(
+            appScope = testAppScope(),
             sourceId = SOURCE_ID,
             initialQuery = "",
             startLatest = false,

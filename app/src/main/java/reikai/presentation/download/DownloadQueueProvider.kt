@@ -24,21 +24,21 @@ interface DownloadQueueProvider {
     suspend fun detailsScreen(seriesId: Long): Screen?
 
     /** Download whole series in this order; a series not named keeps its place after them. */
-    fun reorderSeries(seriesIdsInOrder: List<Long>)
+    suspend fun reorderSeries(seriesIdsInOrder: List<Long>)
 
-    fun cancelSeries(seriesId: Long)
+    suspend fun cancelSeries(seriesId: Long)
 
-    fun cancelChapter(chapterId: Long)
+    suspend fun cancelChapter(chapterId: Long)
 
     /** Move a chapter to the front of its downloader and start it, retrying it if it failed. */
-    fun downloadNow(chapterId: Long)
+    suspend fun downloadNow(chapterId: Long)
 
     /** Move a chapter behind the rest of its series; see [withChapterLastInSeries]. */
-    fun moveChapterToBottom(chapterId: Long)
+    suspend fun moveChapterToBottom(chapterId: Long)
 
-    fun cancelAll()
+    suspend fun cancelAll()
 
-    fun pause()
+    suspend fun pause()
 
     fun start()
 

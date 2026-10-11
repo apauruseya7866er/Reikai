@@ -9,12 +9,14 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.binding
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
 import eu.kanade.domain.source.interactor.GetEnabledSources
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.novel.FavoritedNovels
 import reikai.domain.novel.NovelRepository
 import reikai.domain.source.FeedSavedSearchRepository
@@ -51,6 +53,7 @@ import tachiyomi.domain.source.service.SourceManager
 @ViewModelKey
 @ContributesIntoMap(AppScope::class, binding = binding<ViewModel>())
 class FeedViewModel(
+    @AppCoroutineScope private val appScope: CoroutineScope,
     private val feedRepository: FeedSavedSearchRepository,
     private val savedSearchRepository: SavedSearchRepository,
     private val preferences: ReikaiSourcePreferences,
@@ -77,8 +80,8 @@ class FeedViewModel(
         field = MutableStateFlow(FeedState())
 
     /** Adding from a cover, the same flow every browse surface runs, one per content type. */
-    val mangaAddFlow = MangaAddFlow(mangaAdder, viewModelScope)
-    val novelAddFlow = NovelAddFlow(novelAdder, viewModelScope)
+    val mangaAddFlow = MangaAddFlow(mangaAdder, viewModelScope, appScope)
+    val novelAddFlow = NovelAddFlow(novelAdder, viewModelScope, appScope)
 
     private var loadJob: Job? = null
 

@@ -7,10 +7,7 @@ import eu.kanade.tachiyomi.data.download.Downloader
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.onStart
@@ -32,26 +29,17 @@ class MangaDownloadQueueProvider(
 
     override suspend fun awaitQueueRestored() = downloadManager.awaitQueueRestored()
 
-    override val snapshots: Flow<DownloadQueueSnapshot> = channelFlow {
-        var shownNonEmpty = false
-        combine(
-            downloadManager.queueState,
-            downloadManager.isDownloaderRunning,
-            downloadPreferences.parallelSourceLimit.changes(),
-            downloader.completions.counts,
-            downloadManager.queuedDownloadChanges().onStart { emit(Unit) },
-        ) { queue, running, sourceLimit, completed, _ ->
-            Triple(queue, if (running) sourceLimit else 0, completed)
-        }.collectLatest { (queue, sourceLimit, completed) ->
-            // A reorder clears Mihon's queue and adds it back, which would flash the empty screen. A
-            // repopulate cancels this wait; a real cancel-all still lands after it.
-            if (queue.isEmpty() && shownNonEmpty) delay(TRANSIENT_EMPTY_DEBOUNCE_MS)
-            send(snapshotOf(queue, sourceLimit, completed))
-            shownNonEmpty = queue.isNotEmpty()
-        }
+    override val snapshots: Flow<DownloadQueueSnapshot> = combine(
+        downloadManager.queueState,
+        downloadManager.isDownloaderRunning,
+        downloadPreferences.parallelSourceLimit.changes(),
+        downloader.completions.counts,
+        downloadManager.queuedDownloadChanges().onStart { emit(Unit) },
+    ) { queue, running, sourceLimit, completed, _ ->
+        snapshotOf(queue, if (running) sourceLimit else 0, completed)
     }
         // A pass over the whole queue per status change and progress sample, as the novel provider does.
-        .flowOn(Dispatchers.IO)
+        .flowOn(Dispatchers.Default)
 
     override suspend fun chapterNames(seriesId: Long, chapterIds: Collection<Long>): Map<Long, String> =
         downloadManager.queueState.value
@@ -60,30 +48,34 @@ class MangaDownloadQueueProvider(
 
     override suspend fun detailsScreen(seriesId: Long): Screen = MangaScreen(seriesId)
 
-    override fun cancelChapter(chapterId: Long) {
+    override suspend fun cancelChapter(chapterId: Long) {
         downloadManager.getQueuedDownloadOrNull(chapterId)?.let { downloadManager.cancelQueuedDownloads(listOf(it)) }
     }
 
-    override fun downloadNow(chapterId: Long) = downloadManager.startDownloadNow(chapterId)
+    override suspend fun downloadNow(chapterId: Long) = downloadManager.startDownloadNow(chapterId)
 
-    override fun moveChapterToBottom(chapterId: Long) {
+    override suspend fun moveChapterToBottom(chapterId: Long) {
         val queue = downloadManager.queueState.value
         val moved = queue.withChapterLastInSeries(chapterId, { it.chapter.id }, { it.manga.id })
-        if (moved != queue) reorder(moved)
+        if (moved != queue) downloadManager.reorderQueue(moved)
     }
 
-    override fun reorderSeries(seriesIdsInOrder: List<Long>) {
-        reorder(downloadManager.queueState.value.withSeriesInOrder(seriesIdsInOrder) { it.manga.id })
+    override suspend fun reorderSeries(seriesIdsInOrder: List<Long>) {
+        downloadManager.reorderQueue(
+            downloadManager.queueState.value.withSeriesInOrder(seriesIdsInOrder) {
+                it.manga.id
+            },
+        )
     }
 
-    override fun cancelSeries(seriesId: Long) {
+    override suspend fun cancelSeries(seriesId: Long) {
         val downloads = downloadManager.queueState.value.filter { it.manga.id == seriesId }
         if (downloads.isNotEmpty()) downloadManager.cancelQueuedDownloads(downloads)
     }
 
-    override fun cancelAll() = downloadManager.clearQueue()
+    override suspend fun cancelAll() = downloadManager.clearQueue()
 
-    override fun pause() = downloadManager.pauseDownloads()
+    override suspend fun pause() = downloadManager.pauseDownloads()
 
     override fun start() = downloadManager.startDownloads()
 
@@ -98,22 +90,7 @@ class MangaDownloadQueueProvider(
             },
             descending = descending,
         )
-        reorder(sorted)
-    }
-
-    /**
-     * Hands Mihon's downloader [downloads]' order over its live queue, the rule the novel manager's
-     * reorderQueue applies, so an order computed from an older copy brings back nothing and drops nothing.
-     */
-    private fun reorder(downloads: List<Download>) {
-        val live = downloadManager.queueState.value
-        downloadManager.reorderQueue(live.inOrderOf(downloads.map { it.chapter.id }) { it.chapter.id })
-    }
-
-    companion object {
-        // Long enough to swallow the reorder's clear-then-re-add, short enough to be imperceptible on a
-        // real cancel-all.
-        private const val TRANSIENT_EMPTY_DEBOUNCE_MS = 150L
+        downloadManager.reorderQueue(sorted)
     }
 }
 

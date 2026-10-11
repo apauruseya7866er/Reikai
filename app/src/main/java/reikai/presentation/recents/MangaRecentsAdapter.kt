@@ -308,7 +308,7 @@ class MangaRecentsAdapter(
 
     // Straight to the job rather than through the updates model, which only wraps this same call in a
     // snackbar event the shell now owns. It also lets a surface with no updated lane still refresh.
-    override fun refresh(): Boolean = LibraryUpdateWorker.startNow(application.workManager)
+    override suspend fun refresh(): Boolean = LibraryUpdateWorker.startNow(application.workManager)
 
     override suspend fun detailsScreen(entry: EntryId): Screen? =
         (entry as? EntryId.Manga)?.let { MangaScreen(it.rawId) }

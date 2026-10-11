@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
 import mihon.app.di.appGraph
 import reikai.domain.track.site.OwnedSites // RK
 import reikai.novel.source.NovelSettings
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.screens.LoadingScreen
 
@@ -176,7 +177,8 @@ class SourcePreferencesFragment : PreferenceFragmentCompat() {
         val sourceScreen = preferenceManager.createPreferenceScreen(requireContext())
 
         if (source is ConfigurableSource) {
-            val dataStore = SharedPreferencesDataStore(source.sourcePreferences())
+            val sourcePreferences = withIOContext { source.sourcePreferences().also { it.all } }
+            val dataStore = SharedPreferencesDataStore(sourcePreferences)
             preferenceManager.preferenceDataStore = dataStore
 
             source.setupPreferenceScreen(sourceScreen)

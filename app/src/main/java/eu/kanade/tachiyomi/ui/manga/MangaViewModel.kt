@@ -58,6 +58,7 @@ import exh.source.ExhPreferences
 import exh.source.getMainSource
 import exh.source.isEhBasedManga
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -80,12 +81,14 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import mihon.domain.chapter.interactor.FilterChaptersForDownload
 import mihon.domain.source.interactor.UpdateMangaFromRemote
 import reikai.data.coil.extractCoverColor
@@ -171,7 +174,6 @@ import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.model.Category
@@ -207,6 +209,7 @@ class MangaViewModel(
     private val context: Context,
     @Assisted private val mangaId: Long,
     @Assisted private val isFromSource: Boolean,
+    @AppCoroutineScope private val appScope: CoroutineScope,
     private val libraryPreferences: LibraryPreferences,
     trackPreferences: TrackPreferences,
     readerPreferences: ReaderPreferences,
@@ -577,6 +580,12 @@ class MangaViewModel(
             // RK <--
         )
     }
+        // Composition would otherwise build these on first read, on the main thread, for every download progress tick
+        .onEach {
+            it.processedChapters
+            it.chapterListItems
+            it.missingChapterCount // RK
+        }
         .flowOn(Dispatchers.IO)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State.Loading)
 
@@ -603,7 +612,8 @@ class MangaViewModel(
     // RK <--
 
     init {
-        viewModelScope.launchIO {
+        // Progress ticks often, and each one copies the map of download states
+        viewModelScope.launch(Dispatchers.Default) {
             // RK: a merged series lists every grouped source's chapters, so their downloads are followed too
             merge(downloadManager.statusFlow(), downloadManager.progressFlow())
                 .filter { it.manga.id in mergeGroup.relatedIds }
@@ -616,7 +626,7 @@ class MangaViewModel(
         observeExhRootRedirect()
         // RK <--
 
-        viewModelScope.launchIO {
+        viewModelScope.launch {
             // RK: decided by the seed, before the first state, rather than from the loaded state as upstream
             // does, so the refresh flag the first frame shows is already the right one
             val fetch = seed.await()
@@ -681,30 +691,28 @@ class MangaViewModel(
         //     when not merged, so non-grouped entries behave exactly as before.
         val groupIds = mergeGroup.relatedIds
         try {
-            withUIContext {
-                // RK --> one fetch per grouped source by the rule novels share; the first failure is rethrown
-                // once all have run
-                val newChapters = mutableListOf<Chapter>()
-                suspend fun fetch(source: Source, manga: Manga) = updateMangaFromRemote(
-                    source = source,
-                    manga = manga,
-                    fetchDetails = fetchDetails,
-                    fetchChapters = fetchChapters,
-                    manualFetch = manualFetch,
-                ).onSuccess { newChapters += it.newChapters }
-                val firstError = refreshMergeGroup(
-                    anchor = { fetch(sourceManager.getOrStub(manga.source), manga) },
-                    siblings = groupIds.filter { it != manga.id }.map { getMangaAndChapters.awaitManga(it) },
-                    sourceOf = { sourceManager.get(it.source) },
-                    refresh = { manga, source -> fetch(source, manga) },
-                )
+            // RK --> one fetch per grouped source by the rule novels share; the first failure is rethrown
+            // once all have run
+            val newChapters = mutableListOf<Chapter>()
+            suspend fun fetch(source: Source, manga: Manga) = updateMangaFromRemote(
+                source = source,
+                manga = manga,
+                fetchDetails = fetchDetails,
+                fetchChapters = fetchChapters,
+                manualFetch = manualFetch,
+            ).onSuccess { newChapters += it.newChapters }
+            val firstError = refreshMergeGroup(
+                anchor = { fetch(sourceManager.getOrStub(manga.source), manga) },
+                siblings = groupIds.filter { it != manga.id }.map { getMangaAndChapters.awaitManga(it) },
+                sourceOf = { sourceManager.get(it.source) },
+                refresh = { manga, source -> fetch(source, manga) },
+            )
 
-                if (manualFetch) {
-                    downloadNewChapters(newChapters)
-                }
-                firstError?.let { throw it }
-                // RK <--
+            if (manualFetch) {
+                downloadNewChapters(newChapters)
             }
+            firstError?.let { throw it }
+            // RK <--
         } catch (_: CancellationException) {
             // ignore
         } catch (e: Exception) {
@@ -748,6 +756,7 @@ class MangaViewModel(
             snackbarHostState.offerToDeleteDownloads(
                 context = context,
                 removed = removedIds.map { getMangaAndChapters.awaitManga(it) },
+                deleteScope = appScope,
                 hasDownloads = { downloadManager.getDownloadCount(it) > 0 },
             ) { downloadManager.deleteManga(it, sourceManager.getOrStub(it.source)) }
         }
@@ -878,7 +887,7 @@ class MangaViewModel(
     }
 
     fun setFetchInterval(manga: Manga, interval: Int) {
-        viewModelScope.launchIO {
+        viewModelScope.launch {
             updateManga.awaitUpdateFetchInterval(
                 // Custom intervals are negative
                 manga.copy(fetchInterval = -interval),
@@ -906,7 +915,7 @@ class MangaViewModel(
     }
 
     fun clearDownloads(mangaIds: List<Long>) {
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             mangaIds.map { getMangaAndChapters.awaitManga(it) }
                 .forEach { downloadManager.deleteManga(it, sourceManager.getOrStub(it.source)) }
         }
@@ -1275,7 +1284,7 @@ class MangaViewModel(
     }
 
     fun saveChapterNumber(edit: ChapterNumberEdit, number: Double?) {
-        viewModelScope.launchNonCancellable { editChapterNumber.save(edit, number) }
+        appScope.launch { editChapterNumber.save(edit, number) }
         toggleAllSelection(false)
     }
     // RK <--
@@ -1344,16 +1353,21 @@ class MangaViewModel(
     ) {
         val state = successState ?: return // RK
 
-        viewModelScope.launchNonCancellable {
-            // RK: a row whose source is gone fetches an installed source's copy of it, or nothing
-            val copies = state.downloadTargets.of(chapters, { it.id }, ::groupChaptersIn)
-            if (startNow) {
-                val chapterId = copies.singleOrNull()?.id ?: return@launchNonCancellable // RK
-                downloadManager.startDownloadNow(chapterId)
-            } else {
-                downloadChapters(copies) // RK
-                toggleAllSelection(false)
-            }
+        viewModelScope.launch {
+            // The queueing outlives the screen, the add to library prompt doesn't
+            val queued = appScope.async {
+                // RK: a row whose source is gone fetches an installed source's copy of it, or nothing
+                val copies = state.downloadTargets.of(chapters, { it.id }, ::groupChaptersIn)
+                if (startNow) {
+                    val chapterId = copies.singleOrNull()?.id ?: return@async false // RK
+                    downloadManager.startDownloadNow(chapterId)
+                } else {
+                    downloadChapters(copies) // RK
+                }
+                true
+            }.await()
+            if (!queued) return@launch
+            if (!startNow) toggleAllSelection(false)
 
             // RK: the prompt and its once-per-screen rule are written once with novels
             addToLibraryOffer.afterDownload(isInLibrary = { isFavorited }) { toggleFavorite() }
@@ -1410,8 +1424,10 @@ class MangaViewModel(
         // RK: the row shows the queue state of the copy its download fetches
         val activeDownload = (successState?.downloadTargets ?: DownloadTargets.OWN)
             .queuedFor(chapterId, downloadManager::getQueuedDownloadOrNull) ?: return
-        downloadManager.cancelQueuedDownloads(listOf(activeDownload))
-        updateDownloadState(activeDownload.apply { status = Download.State.NOT_DOWNLOADED })
+        viewModelScope.launch {
+            downloadManager.cancelQueuedDownloads(listOf(activeDownload))
+            updateDownloadState(activeDownload.apply { status = Download.State.NOT_DOWNLOADED })
+        }
     }
 
     fun markPreviousChapterRead(pointer: Chapter) {
@@ -1430,7 +1446,7 @@ class MangaViewModel(
     fun markChaptersRead(chapters: List<Chapter>, read: Boolean) {
         toggleAllSelection(false)
         if (chapters.isEmpty()) return
-        viewModelScope.launchIO {
+        viewModelScope.launch {
             // RK: the write across the merge group and the tracker push are the step both details models run
             autoTrackOnMarkRead.setRead(mangaId, chapters, read)
         }
@@ -1438,6 +1454,7 @@ class MangaViewModel(
 
     // RK --> shared with the novel details model, so a change to the tracker push reaches both
     private val autoTrackOnMarkRead = EntryAutoTrackOnMarkRead<Chapter>(
+        appScope = appScope,
         context = context,
         snackbarHostState = snackbarHostState,
         trackerManager = trackerManager,
@@ -1500,28 +1517,28 @@ class MangaViewModel(
      * @param chapters the list of chapters to delete.
      */
     fun deleteChapters(chapters: List<Chapter>) {
-        viewModelScope.launchNonCancellable {
+        val state = successState ?: return
+        // Outlives the screen, which the delete dialog usually closes along with
+        appScope.launch {
             try {
-                successState?.let { state ->
-                    // RK --> in a merged group, delete each chapter's download from its own source.
-                    // Expanded first: the row is downloaded when ANY copy holds the file, so deleting
-                    // only the shown copy would leave the row still reading as downloaded.
-                    val sourceManager = sourceManager
-                    expandForDelete(chapters).groupBy { it.mangaId }.forEach { (mangaId, group) ->
-                        val owner = ownerOf(mangaId, state)
-                        downloadManager.deleteChapters(group, owner, sourceManager.getOrStub(owner.source))
-                    }
-                    // RK <--
+                // RK --> in a merged group, delete each chapter's download from its own source.
+                // Expanded first: the row is downloaded when ANY copy holds the file, so deleting
+                // only the shown copy would leave the row still reading as downloaded.
+                val sourceManager = sourceManager
+                expandForDelete(chapters).groupBy { it.mangaId }.forEach { (mangaId, group) ->
+                    val owner = ownerOf(mangaId, state)
+                    downloadManager.deleteChapters(group, owner, sourceManager.getOrStub(owner.source))
                 }
-            } catch (e: Throwable) {
+                // RK <--
+            } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e)
             }
         }
     }
 
     private fun downloadNewChapters(chapters: List<Chapter>) {
-        viewModelScope.launchNonCancellable {
-            val manga = successState?.manga ?: return@launchNonCancellable
+        appScope.launch {
+            val manga = successState?.manga ?: return@launch
             val chaptersToDownload = filterChaptersForDownload.await(manga, chapters)
 
             if (chaptersToDownload.isNotEmpty()) {
@@ -1599,11 +1616,13 @@ class MangaViewModel(
 
     fun setCurrentSettingsAsDefault(applyToExisting: Boolean) {
         val manga = successState?.manga ?: return
-        viewModelScope.launchNonCancellable {
-            libraryPreferences.setChapterSettingsDefault(manga)
-            if (applyToExisting) {
-                setMangaDefaultChapterFlags.awaitAll()
-            }
+        viewModelScope.launch {
+            appScope.launch {
+                libraryPreferences.setChapterSettingsDefault(manga)
+                if (applyToExisting) {
+                    setMangaDefaultChapterFlags.awaitAll()
+                }
+            }.join()
             snackbarHostState.showSnackbar(message = context.stringResource(MR.strings.chapter_settings_updated))
         }
     }
@@ -1616,7 +1635,7 @@ class MangaViewModel(
     // RK --> a merged series shares one chapter setting, so [change] writes the opened manga from the
     // setting it shows, the settings owner's, and every other member takes the result (GroupChapterSettings)
     private fun changeChapterSettings(manga: Manga, change: suspend () -> Unit) {
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             chapterSettings.change(manga.id, mergeGroup.relatedIds.asList(), change)
         }
     }
@@ -1718,7 +1737,7 @@ class MangaViewModel(
 
     /** Persist edits as a non-destructive per-field override against the raw source [manga]. */
     fun saveMangaInfo(manga: Manga, edited: EntryEditInfoUi) {
-        viewModelScope.launchNonCancellable {
+        appScope.launch {
             setCustomMangaInfo.set(edited.toCustomMangaInfo(manga))
         }
         dismissDialog()
@@ -1726,7 +1745,7 @@ class MangaViewModel(
 
     /** Clear every override, so all fields track the source again. */
     fun resetMangaInfo(manga: Manga) {
-        viewModelScope.launchNonCancellable { resetEntryInfo.await(EntryId.Manga(manga.id)) }
+        appScope.launch { resetEntryInfo.await(EntryId.Manga(manga.id)) }
         dismissDialog()
     }
 
@@ -1741,6 +1760,7 @@ class MangaViewModel(
     // models run). showManageSourcesDialog stays here: its body genuinely diverges.
     private val mergeActions = EntryMergeActionHost(
         scope = viewModelScope,
+        appScope = appScope,
         snackbarHostState = snackbarHostState,
         context = context,
         group = mergeGroup,

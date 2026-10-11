@@ -87,7 +87,7 @@ class HistoryViewModel(
                         logcat(LogPriority.ERROR, error)
                         _events.send(Event.InternalError)
                     }
-                    .flowOn(Dispatchers.IO)
+                    .flowOn(Dispatchers.Default)
             }
             // RK: seeded null, where upstream seeds an empty list. Null is this feed's "not loaded yet",
             //     read by the shared screen and by the recents read lane; an empty seed would make both

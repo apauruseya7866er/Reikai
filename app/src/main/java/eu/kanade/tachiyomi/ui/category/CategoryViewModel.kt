@@ -9,6 +9,7 @@ import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.binding
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.category.categoriesForContentType
 import reikai.domain.library.CategorySortOrder
 import reikai.domain.library.ContentType
@@ -28,7 +30,6 @@ import reikai.presentation.category.CategoryActions
 import reikai.presentation.library.reikaiSortCategories
 import reikai.presentation.selection.EntrySelection
 import reikai.presentation.selection.SelectionStore
-import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.domain.category.model.Category
 import tachiyomi.i18n.MR
 import kotlin.time.Duration.Companion.seconds
@@ -39,6 +40,7 @@ import kotlin.time.Duration.Companion.seconds
 @ViewModelKey
 @ContributesIntoMap(AppScope::class, binding = binding<ViewModel>())
 class CategoryViewModel(
+    @AppCoroutineScope private val appScope: CoroutineScope,
     // RK: CategoryActions stands in for the per-type category interactors
     private val actions: CategoryActions,
     private val reikaiLibraryPreferences: ReikaiLibraryPreferences,
@@ -187,13 +189,13 @@ class CategoryViewModel(
     private suspend fun commitPendingDeletes(batches: Set<Long>) {
         val categories = pendingDelete.value.filterKeys { it in batches }.values.flatten()
         if (categories.isEmpty()) return
-        // RK: non-cancellable so leaving the screen still finishes the delete
-        withNonCancellableContext {
+        // RK: the deletion finishes even if the screen is left while it runs
+        appScope.launch {
             categories.forEach { category ->
                 if (!actions.delete(category)) _events.tryEmit(CategoryEvent.InternalError)
             }
             pendingDelete.update { it - batches }
-        }
+        }.join()
     }
     // RK <--
 

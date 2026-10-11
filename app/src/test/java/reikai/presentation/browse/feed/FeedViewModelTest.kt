@@ -26,6 +26,7 @@ import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
 import reikai.presentation.browse.globalsearch.EntrySearchState
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.service.SourceManager
 import kotlin.time.Duration.Companion.seconds
@@ -69,6 +70,7 @@ class FeedViewModelTest {
     }
 
     private fun feedViewModel(probe: FeedRegistryProbe) = FeedViewModel(
+        appScope = testAppScope(),
         feedRepository = mockk {
             every { subscribeGlobal() } returns flowOf(listOf(FeedSavedSearch(1L, probe.key, null, true, 0L)))
         },

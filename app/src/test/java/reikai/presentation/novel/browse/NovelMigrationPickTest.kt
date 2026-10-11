@@ -22,6 +22,7 @@ import reikai.domain.source.ReikaiSourcePreferences
 import reikai.novel.host.NovelItem
 import reikai.presentation.migrate.flow.MigrationPickHandoff
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 
 /** A novel picked as a migration target is stored first, and one that cannot be stored says so. */
@@ -72,6 +73,7 @@ class NovelMigrationPickTest {
     private fun model(): NovelBrowseViewModel {
         val store = EmittingPreferenceStore()
         return NovelBrowseViewModel(
+            appScope = testAppScope(),
             sourceId = SOURCE_ID,
             initialQuery = "",
             startLatest = false,

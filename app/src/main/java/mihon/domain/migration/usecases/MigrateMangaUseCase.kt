@@ -9,7 +9,10 @@ import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
 import mihon.domain.migration.models.MigrationFlag
 import mihon.domain.source.interactor.UpdateMangaFromRemote
 import reikai.domain.backup.mergedHistory // RK
@@ -37,6 +40,7 @@ import kotlin.time.Clock
 
 @Inject
 class MigrateMangaUseCase(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val sourcePreferences: SourcePreferences,
     private val trackerManager: TrackerManager,
     private val sourceManager: SourceManager,
@@ -182,7 +186,8 @@ class MigrateMangaUseCase(
 
             // Delete downloaded
             if (MigrationFlag.REMOVE_DOWNLOAD in flags && currentSource != null) {
-                downloadManager.deleteManga(current, currentSource)
+                // Not awaited, so a slow storage delete doesn't hold up the migration
+                scope.launch { downloadManager.deleteManga(current, currentSource) }
             }
 
             // Update custom cover (recheck if custom cover exists)
@@ -190,7 +195,9 @@ class MigrateMangaUseCase(
             // Injekt. Same singleton in production, but it was the one dependency this use case did
             // not take by constructor, so the cover carry could not be tested at all.
             if (MigrationFlag.CUSTOM_COVER in flags && current.hasCustomCover(coverCache)) {
-                coverCache.setCustomCoverToCache(target, coverCache.getCustomCoverFile(current.id).inputStream())
+                coverCache.getCustomCoverFile(current.id).inputStream().use {
+                    coverCache.setCustomCoverToCache(target, it)
+                }
                 // RK: bump the timestamp so Coil reloads, matching the novel engine and every other
                 // custom-cover write. Without it a target that already had a custom cover keeps
                 // showing the old one, since the cache key does not change.

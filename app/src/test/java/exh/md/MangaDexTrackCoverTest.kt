@@ -24,6 +24,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import reikai.domain.source.ReikaiSourcePreferences
+import reikai.util.idleAppScope
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.source.service.SourceManager
@@ -66,8 +67,12 @@ class MangaDexTrackCoverTest {
         val sourceManager = mockk<SourceManager> { coEvery { getOnlineSources() } returns emptyList() }
         val factory = MangaDexTrackCoverFactory(
             lazy { client },
-            CoverCache(context),
-            MangaCoverMetadata(testAppScope(), UiPreferences(InMemoryPreferenceStore()), CoverCache(context)),
+            CoverCache(idleAppScope(), context),
+            MangaCoverMetadata(
+                testAppScope(),
+                UiPreferences(InMemoryPreferenceStore()),
+                CoverCache(idleAppScope(), context),
+            ),
             SourcePreferences(InMemoryPreferenceStore()),
             ReikaiSourcePreferences(InMemoryPreferenceStore()),
             sourceManager,

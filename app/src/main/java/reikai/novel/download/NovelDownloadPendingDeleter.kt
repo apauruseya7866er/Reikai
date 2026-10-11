@@ -19,7 +19,7 @@ import reikai.domain.novel.model.NovelChapter
 @SingleIn(AppScope::class)
 class NovelDownloadPendingDeleter(context: Context) {
 
-    private val preferences = context.getSharedPreferences("novel_chapters_to_delete", Context.MODE_PRIVATE)
+    private val preferences by lazy { context.getSharedPreferences("novel_chapters_to_delete", Context.MODE_PRIVATE) }
 
     @Synchronized
     fun addChapters(chapters: List<NovelChapter>) {

@@ -25,6 +25,7 @@ import mihon.app.di.AppGraph
 import mihon.core.metro.metroGraph
 import mihon.core.migration.Migrator
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 
@@ -53,7 +54,9 @@ class BackupRestoreWorker(private val context: Context, workerParams: WorkerPara
         setForegroundSafely()
 
         return try {
-            backupRestorerFactory.create(notifier = notifier, isSync = isSync).restore(uri, options)
+            withIOContext {
+                backupRestorerFactory.create(notifier = notifier, isSync = isSync).restore(uri, options)
+            }
             Result.success()
         } catch (e: Exception) {
             if (e is CancellationException) {
@@ -82,7 +85,7 @@ class BackupRestoreWorker(private val context: Context, workerParams: WorkerPara
     }
 
     companion object {
-        fun isRunning(workManager: WorkManager): Boolean {
+        suspend fun isRunning(workManager: WorkManager): Boolean {
             return workManager.isRunning(TAG)
         }
 

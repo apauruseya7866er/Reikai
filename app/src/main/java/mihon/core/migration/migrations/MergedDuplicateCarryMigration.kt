@@ -74,6 +74,7 @@ class MergedDuplicateCarryMigration(
         customCoverFiles(discarded).filter(File::exists).forEach { file ->
             runCatching {
                 if (target.exists()) file.delete() else Files.move(file.toPath(), target.toPath(), ATOMIC_MOVE)
+                coverCache.reindexCustomCovers(file, target)
             }.onFailure {
                 logcat(LogPriority.WARN, it) { "Merged-duplicate cover carry failed: $discarded to $survivor" }
             }

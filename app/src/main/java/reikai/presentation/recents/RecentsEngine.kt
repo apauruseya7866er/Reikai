@@ -545,7 +545,7 @@ class RecentsEngine(
      * Updates every library on screen, answering whether anything actually started. Mapped before it is
      * reduced, so one type already running cannot short-circuit the other type's start.
      */
-    fun refresh(): Boolean = activeProviders().map { it.refresh() }.any { it }
+    suspend fun refresh(): Boolean = activeProviders().map { it.refresh() }.any { it }
 
     /** The details screen for a row, resolved by the provider that owns the entry. */
     suspend fun detailsScreen(entry: EntryId): Screen? =

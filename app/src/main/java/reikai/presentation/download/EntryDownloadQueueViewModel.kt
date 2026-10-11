@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import reikai.domain.entry.EntryId
 import reikai.domain.entry.GetEntryCustomInfo
 import reikai.domain.library.ContentType
@@ -129,17 +130,20 @@ class EntryDownloadQueueViewModel(
         val cards = state.value.cards
         val known = cards.mapTo(HashSet()) { it.cardKey }
         sourcePreferences.downloadQueueOrder.set(cardKeysInOrder.filter { it in known }.joinToString(ORDER_SEPARATOR))
-        seriesOrderChanges(cards, cardKeysInOrder).forEach { (type, seriesIds) ->
-            providers[type]?.reorderSeries(seriesIds)
+        // The queue edits suspend for the downloader's lock, which a start or stop elsewhere may hold
+        viewModelScope.launch {
+            seriesOrderChanges(cards, cardKeysInOrder).forEach { (type, seriesIds) ->
+                providers[type]?.reorderSeries(seriesIds)
+            }
         }
     }
 
     fun cancel(card: EntryDownloadCardUi) {
-        providers[card.contentType]?.cancelSeries(card.seriesId)
+        viewModelScope.launch { providers[card.contentType]?.cancelSeries(card.seriesId) }
     }
 
     fun cancelAll() {
-        providers.values.forEach { it.cancelAll() }
+        viewModelScope.launch { providers.values.forEach { it.cancelAll() } }
         sourcePreferences.downloadQueueOrder.set("")
     }
 
@@ -147,7 +151,7 @@ class EntryDownloadQueueViewModel(
     fun togglePause() {
         val running = isRunning.value
         if (queueState.value is DownloadQueueState.Downloading) {
-            providers.filterKeys { running[it] == true }.values.forEach { it.pause() }
+            viewModelScope.launch { providers.filterKeys { running[it] == true }.values.forEach { it.pause() } }
         } else {
             val queuedTypes = state.value.cards.mapTo(HashSet()) { it.contentType }
             providers.filterKeys { it in queuedTypes }.values.forEach { it.start() }
@@ -167,15 +171,15 @@ class EntryDownloadQueueViewModel(
     }
 
     fun cancelChapter(type: ContentType, chapterId: Long) {
-        providers[type]?.cancelChapter(chapterId)
+        viewModelScope.launch { providers[type]?.cancelChapter(chapterId) }
     }
 
     fun downloadNow(type: ContentType, chapterId: Long) {
-        providers[type]?.downloadNow(chapterId)
+        viewModelScope.launch { providers[type]?.downloadNow(chapterId) }
     }
 
     fun moveChapterToBottom(type: ContentType, chapterId: Long) {
-        providers[type]?.moveChapterToBottom(chapterId)
+        viewModelScope.launch { providers[type]?.moveChapterToBottom(chapterId) }
     }
 
     suspend fun detailsScreen(card: EntryDownloadCardUi): Screen? =

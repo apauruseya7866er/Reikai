@@ -26,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import reikai.domain.track.ChapterPushOutcome
 import reikai.presentation.track.trackerErrorMessage
+import reikai.util.testAppScope
 import tachiyomi.core.common.i18n.stringResource
 
 /**
@@ -145,6 +146,7 @@ class EntryAutoTrackOnMarkReadTest {
         lastRead: Double = 0.0,
         prompt: SnackbarResult = SnackbarResult.ActionPerformed,
     ) = EntryAutoTrackOnMarkRead<Copy>(
+        appScope = testAppScope(),
         context = mockk(relaxed = true),
         snackbarHostState = mockk<SnackbarHostState> {
             coEvery { showSnackbar(any(), any(), any(), any()) } returns prompt

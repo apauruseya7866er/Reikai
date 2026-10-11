@@ -21,6 +21,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -102,9 +103,12 @@ class DownloadWorkerFixture(
         }
     }
 
+    // Cancelled on close, which ends any download job a test left running
+    private val downloaderScope = testAppScope()
+
     val downloader by lazy {
         Downloader(
-            scope = testAppScope(),
+            scope = downloaderScope,
             context = app,
             provider = provider,
             cache = mockk(relaxed = true),
@@ -121,7 +125,6 @@ class DownloadWorkerFixture(
 
     val downloadManager by lazy {
         DownloadManager(
-            scope = testAppScope(),
             context = app,
             provider = provider,
             cache = mockk(relaxed = true),
@@ -164,7 +167,7 @@ class DownloadWorkerFixture(
     }
 
     override fun close() {
-        downloader.pause()
+        downloaderScope.cancel()
         Dispatchers.resetMain()
         unmockkStatic(Dispatchers::class)
         unmockkObject(DownloadWorker.Companion)

@@ -12,6 +12,7 @@ class MangaBakaInterceptor(private val mangaBaka: MangaBaka) : Interceptor {
 
     private val json: Json by injectLazy()
 
+    @Volatile
     private var oauth: MangaBakaOAuth? = mangaBaka.restoreToken()
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -19,15 +20,19 @@ class MangaBakaInterceptor(private val mangaBaka: MangaBaka) : Interceptor {
 
         var currentAuth = oauth ?: throw TrackerSignedOutException("MangaBaka") // RK: an IOException
 
+        // Refresh once for all the requests that found the token expired
         if (currentAuth.isExpired()) {
-            val response = chain.proceed(MangaBakaApi.refreshTokenRequest(currentAuth.refreshToken))
-            if (response.isSuccessful) {
-                currentAuth = with(json) {
-                    response.parseAs<MangaBakaOAuth>()
+            currentAuth = synchronized(this) {
+                val latest = oauth ?: throw TrackerSignedOutException("MangaBaka") // RK: an IOException
+                if (!latest.isExpired()) return@synchronized latest
+
+                val response = chain.proceed(MangaBakaApi.refreshTokenRequest(latest.refreshToken))
+                if (response.isSuccessful) {
+                    with(json) { response.parseAs<MangaBakaOAuth>() }.also(::setAuth)
+                } else {
+                    response.close()
+                    latest
                 }
-                setAuth(currentAuth)
-            } else {
-                response.close()
             }
         }
 

@@ -188,7 +188,7 @@ class MangaActionsHarness(private val entryMissing: Boolean = false) : ActionsHa
         coEvery { downloadChapters(any(), any(), any()) } answers {
             queued += secondArg<List<Chapter>>().map { it.id }
         }
-        every { deleteChapters(any(), any(), any()) } answers {
+        coEvery { deleteChapters(any(), any(), any()) } answers {
             deleted += firstArg<List<Chapter>>().map { it.id }
         }
     }

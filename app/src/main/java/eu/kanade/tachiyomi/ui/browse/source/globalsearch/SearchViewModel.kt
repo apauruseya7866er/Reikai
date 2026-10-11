@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.Source
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -25,8 +26,9 @@ abstract class SearchViewModel(
     private val networkToLocalManga: NetworkToLocalManga,
     private val getManga: GetManga,
     // RK: upstream's `preferences` dropped, unread since the shared engine took over the search.
-    // RK: the long-press add flow, shared with every browse surface
+    // RK: the long-press add flow, shared with every browse surface, and the scope its writes run on
     mangaLibraryAdder: MangaLibraryAdder,
+    appScope: CoroutineScope,
 ) : ViewModel() {
 
     private val coroutineDispatcher = Dispatchers.IO.limitedParallelism(5)
@@ -74,5 +76,5 @@ abstract class SearchViewModel(
     // RK: upstream's state, its dialog and setMigrateDialog / clearDialog are gone: the results moved to
     //     the shared global-search engine and every long-press dialog, the migrate one included, to the
     //     shared add flow below, which the screen renders for both content types.
-    val addFlow = MangaAddFlow(mangaLibraryAdder, viewModelScope)
+    val addFlow = MangaAddFlow(mangaLibraryAdder, viewModelScope, appScope)
 }

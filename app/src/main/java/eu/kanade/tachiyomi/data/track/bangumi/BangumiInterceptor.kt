@@ -16,6 +16,7 @@ class BangumiInterceptor(private val bangumi: Bangumi) : Interceptor {
     /**
      * OAuth object used for authenticated requests.
      */
+    @Volatile
     private var oauth: BGMOAuth? = bangumi.restoreToken()
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -23,19 +24,10 @@ class BangumiInterceptor(private val bangumi: Bangumi) : Interceptor {
 
         // RK --> a signed-out call fails as an IOException, see TrackerSignedOutException
         var currAuth: BGMOAuth = oauth ?: throw TrackerSignedOutException("Bangumi")
+        // RK <--
 
         if (currAuth.isExpired()) {
-            val refreshToken = currAuth.refreshToken ?: throw TrackerSignedOutException("Bangumi")
-            val response = chain.proceed(BangumiApi.refreshTokenRequest(refreshToken))
-            // RK <--
-            if (response.isSuccessful) {
-                currAuth = with(json) {
-                    response.parseAs<BGMOAuth>()
-                }
-                newAuth(currAuth)
-            } else {
-                response.close()
-            }
+            currAuth = refreshToken(chain, currAuth)
         }
 
         return originalRequest.newBuilder()
@@ -47,6 +39,19 @@ class BangumiInterceptor(private val bangumi: Bangumi) : Interceptor {
             .addHeader("Authorization", "Bearer ${currAuth.accessToken}")
             .build()
             .let(chain::proceed)
+    }
+
+    private fun refreshToken(chain: Interceptor.Chain, expired: BGMOAuth): BGMOAuth = synchronized(this) {
+        val current = oauth ?: expired
+        if (!current.isExpired()) return@synchronized current
+
+        val refreshToken = current.refreshToken ?: throw TrackerSignedOutException("Bangumi") // RK
+        val response = chain.proceed(BangumiApi.refreshTokenRequest(refreshToken))
+        if (!response.isSuccessful) {
+            response.close()
+            return@synchronized current
+        }
+        with(json) { response.parseAs<BGMOAuth>() }.also(::newAuth)
     }
 
     fun newAuth(oauth: BGMOAuth?) {

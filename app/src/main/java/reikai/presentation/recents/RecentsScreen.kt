@@ -54,6 +54,7 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.util.lang.toLocalDate
 import eu.kanade.tachiyomi.util.lang.toTimestampString
+import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import mihon.feature.upcoming.UpcomingScreen
@@ -183,11 +184,11 @@ fun Screen.RecentsScreen(
         }
     }
 
-    fun refresh(): Boolean {
+    suspend fun refresh(): Boolean {
         val started = engine.refresh()
-        scope.launchIO {
+        scope.launch {
             val message = libraryRefreshMessage(started, contentType, category = false)
-            withUIContext { snackbarHostState.showSnackbar(context.stringResource(message)) }
+            snackbarHostState.showSnackbar(context.stringResource(message))
         }
         return started
     }
@@ -216,7 +217,7 @@ fun Screen.RecentsScreen(
                 // Both are the updated lane's: History has never offered either, and a takeover that
                 // added them would be inventing an affordance rather than carrying one across.
                 showsRefresh = showsUpdated,
-                onRefresh = ::refresh,
+                onRefresh = { scope.launch { refresh() } },
                 showsClearHistory = showsRead,
                 onClearHistory = { engine.openDialog(RecentsDialog.ClearHistory) },
             )
@@ -310,7 +311,7 @@ fun Screen.RecentsScreen(
                         if (showsUpdated) {
                             LibraryUpdatePullRefresh(
                                 updating = refreshing,
-                                onRefresh = ::refresh,
+                                onRefresh = { refresh() },
                                 enabled = selection.isEmpty(),
                                 indicatorPadding = bodyPadding,
                             ) { feed() }

@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.manga.model.Manga
@@ -45,6 +46,7 @@ class SearchViewModelThreadsTest {
 
         repeat(3) {
             val viewModel = GlobalSearchViewModel(
+                appScope = testAppScope(),
                 initialExtensionFilter = null,
                 sourcePreferences = SourcePreferences(InMemoryPreferenceStore()),
                 sourceManager = mockk(),

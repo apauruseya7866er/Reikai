@@ -35,10 +35,18 @@ class LibraryUpdateRun(
         memberships = { mergeGroupRepository.getAllMemberships(contentType) },
         stitchOf = { mergedChapterUnitRepository.getStitch(contentType, it) },
         announce = announce,
-        countArrivals = { arrivals -> libraryPreferences.newUpdatesCount.getAndSet { it + arrivals } },
+        countArrivals = libraryPreferences::addNewUpdates,
         queueDownloads = queueDownloads,
         run = run,
     )
+}
+
+/**
+ * Adds [count] to the Updates badge. The manga, novel and gallery jobs run at once, and getAndSet is a separate
+ * read and write, so the add holds the preference.
+ */
+fun LibraryPreferences.addNewUpdates(count: Int) {
+    synchronized(newUpdatesCount) { newUpdatesCount.getAndSet { it + count } }
 }
 
 /** What an update run gathered, entry by entry. The manga job fills it from five coroutines at once. */

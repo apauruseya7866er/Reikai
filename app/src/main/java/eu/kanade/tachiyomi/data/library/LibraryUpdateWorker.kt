@@ -422,7 +422,7 @@ class LibraryUpdateWorker(private val context: Context, workerParams: WorkerPara
             }
         }
 
-        fun startNow(
+        suspend fun startNow(
             workManager: WorkManager,
             category: Category? = null,
         ): Boolean {
@@ -464,6 +464,8 @@ class LibraryUpdateWorker(private val context: Context, workerParams: WorkerPara
         // RK <--
 
         // RK: the rule lives in LibraryUpdateSchedule.kt, which the novel updater shares
-        fun stop(context: Context) = stopLibraryUpdate(context.workManager, TAG, WORK_NAME_AUTO) { setupTask(context) }
+        suspend fun stop(
+            context: Context,
+        ) = stopLibraryUpdate(context.workManager, TAG, WORK_NAME_AUTO) { setupTask(context) }
     }
 }

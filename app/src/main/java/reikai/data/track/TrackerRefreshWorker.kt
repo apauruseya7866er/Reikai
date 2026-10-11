@@ -189,10 +189,10 @@ class TrackerRefreshWorker(
     companion object {
         private const val WORK_NAME = "TrackerRefresh"
 
-        fun isRunning(context: Context): Boolean = context.workManager.isRunning(WORK_NAME)
+        suspend fun isRunning(context: Context): Boolean = context.workManager.isRunning(WORK_NAME)
 
         /** Starts a refresh, or returns false when one is already running. */
-        fun startNow(context: Context): Boolean {
+        suspend fun startNow(context: Context): Boolean {
             if (isRunning(context)) return false
             val request = OneTimeWorkRequestBuilder<TrackerRefreshWorker>()
                 .addTag(WORK_NAME)

@@ -30,7 +30,8 @@ sealed interface MangaAddDialog {
 class MangaAddFlow(
     private val adder: MangaLibraryAdder,
     scope: CoroutineScope,
-) : EntryAddFlow<MangaAddDialog>(scope, ContentType.MANGA) {
+    appScope: CoroutineScope,
+) : EntryAddFlow<MangaAddDialog>(scope, appScope, ContentType.MANGA) {
 
     fun onLongClick(manga: Manga) = launchStep { adder.onLongClick(manga) }
 

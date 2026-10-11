@@ -47,6 +47,7 @@ import coil3.asDrawable
 import coil3.imageLoader
 import coil3.request.CachePolicy
 import coil3.request.ImageRequest
+import coil3.request.SuccessResult
 import coil3.size.Size
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
@@ -56,7 +57,7 @@ import eu.kanade.tachiyomi.data.coil.ImageDecoder
 import eu.kanade.tachiyomi.data.coil.newDecoder
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import mihon.app.di.appGraph
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.rounded.Close
@@ -184,46 +185,44 @@ fun EntryCoverDialog(
                 var boxSize by remember { mutableStateOf(IntSize.Zero) }
 
                 LaunchedEffect(cover) {
-                    ImageRequest.Builder(view.context)
+                    val request = ImageRequest.Builder(view.context)
                         .data(cover)
                         .size(Size.ORIGINAL)
                         .memoryCachePolicy(CachePolicy.DISABLED)
                         .newDecoder(true)
-                        .target { result ->
-                            val res = (result as ImageDecoder.DecodeResultImage)
-                            // Held, then freed, around the upload: its buffer alone doesn't keep
-                            // the frame's native pixels alive.
-                            page = res.frame.use {
-                                runBlocking(Dispatchers.Default) {
-                                    ImagePage.ImageSingle(
-                                        Image(
-                                            res.image,
-                                            res.width,
-                                            res.height,
-                                            createMipMaps = true,
-                                            backgroundColor = 0,
-                                            hdr = res.isHdr,
-                                            hdrHeadroom = res.hdrHeadroom,
-                                            gainmap = res.gainmap?.let {
-                                                GainmapInput(
-                                                    pixels = it.pixels,
-                                                    width = it.width,
-                                                    height = it.height,
-                                                    channels = it.channels,
-                                                    gamma = it.gamma,
-                                                    minContentBoost = it.minContentBoost,
-                                                    maxContentBoost = it.maxContentBoost,
-                                                    offsetSdr = it.offsetSdr,
-                                                    offsetHdr = it.offsetHdr,
-                                                )
-                                            },
-                                        ),
-                                    )
-                                }
-                            }
-                        }
                         .build()
-                        .let(view.context.imageLoader::enqueue)
+                    val result = view.context.imageLoader.execute(request) as? SuccessResult ?: return@LaunchedEffect
+                    val res = result.image as? ImageDecoder.DecodeResultImage ?: return@LaunchedEffect
+                    // Held, then freed, around the upload: its buffer alone doesn't keep
+                    // the frame's native pixels alive.
+                    page = res.frame.use {
+                        withContext(Dispatchers.Default) {
+                            ImagePage.ImageSingle(
+                                Image(
+                                    res.image,
+                                    res.width,
+                                    res.height,
+                                    createMipMaps = true,
+                                    backgroundColor = 0,
+                                    hdr = res.isHdr,
+                                    hdrHeadroom = res.hdrHeadroom,
+                                    gainmap = res.gainmap?.let {
+                                        GainmapInput(
+                                            pixels = it.pixels,
+                                            width = it.width,
+                                            height = it.height,
+                                            channels = it.channels,
+                                            gamma = it.gamma,
+                                            minContentBoost = it.minContentBoost,
+                                            maxContentBoost = it.maxContentBoost,
+                                            offsetSdr = it.offsetSdr,
+                                            offsetHdr = it.offsetHdr,
+                                        )
+                                    },
+                                ),
+                            )
+                        }
+                    }
                 }
 
                 LaunchedEffect(page, boxSize) {

@@ -77,7 +77,7 @@ class ExtensionsEngine(
     }
         // Off the main thread: building, filtering and sorting the list is proportional to every
         // extension the repos offer, which is thousands once a few languages are enabled.
-        .flowOn(Dispatchers.IO)
+        .flowOn(Dispatchers.Default)
         // The typed query itself is not debounced, so the back gesture and the empty-state message
         // answer to what is in the field rather than to what the list last filtered on.
         .combine(query) { state, typed -> state.copy(query = typed) }

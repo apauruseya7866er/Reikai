@@ -61,6 +61,7 @@ import eu.kanade.tachiyomi.util.lang.convertEpochMillisZone
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
@@ -73,6 +74,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import logcat.LogPriority
 import mihon.app.di.appGraph
+import mihon.core.metro.AppCoroutineScope
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.roundedfilled.Delete
 import mihon.icons.materialsymbols.roundedfilled.Warning
@@ -85,7 +87,6 @@ import reikai.domain.track.autobind.AutoBindTrackers
 import reikai.domain.track.autobind.offerTrackers
 import reikai.domain.track.removeTrack
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
@@ -189,6 +190,7 @@ data class EntryTrackInfoDialogHomeScreen(
     @AssistedInject
     class Model(
         @Assisted private val entry: EntryId,
+        @AppCoroutineScope private val appScope: CoroutineScope,
         private val context: Context,
         private val trackerManager: TrackerManager,
         private val autoBindTrackers: AutoBindTrackers,
@@ -222,8 +224,8 @@ data class EntryTrackInfoDialogHomeScreen(
         /** A tracker that knows the entry's source binds it to its match with no manual search. */
         fun registerAutoBind(item: TrackItem) {
             val candidate = autoBindTrackers.of(item.tracker) ?: return
-            viewModelScope.launchNonCancellable {
-                val bindEntry = port.autoBindEntry() ?: return@launchNonCancellable
+            appScope.launch {
+                val bindEntry = port.autoBindEntry() ?: return@launch
                 val match = try {
                     candidate.match(bindEntry)
                 } catch (_: Exception) {
@@ -231,7 +233,7 @@ data class EntryTrackInfoDialogHomeScreen(
                 }
                 if (match == null) {
                     withUIContext { context.toast(MR.strings.error_no_match) }
-                    return@launchNonCancellable
+                    return@launch
                 }
                 bindTrack(context, port, item.tracker, match)
             }
@@ -247,7 +249,7 @@ data class EntryTrackInfoDialogHomeScreen(
         }
 
         fun togglePrivate(item: TrackItem) {
-            viewModelScope.launchNonCancellable {
+            appScope.launch {
                 port.writer.setRemotePrivate(item.tracker, item.track!!.toDbTrack(), !item.track.private)
             }
         }
@@ -300,6 +302,7 @@ data class EntryTrackStatusSelectorScreen(
         @Assisted private val track: Track,
         @Assisted trackerId: Long,
         @Assisted entry: EntryId,
+        @AppCoroutineScope private val appScope: CoroutineScope,
         trackerManager: TrackerManager,
         ports: EntryTrackPorts,
     ) : ViewModel() {
@@ -325,7 +328,7 @@ data class EntryTrackStatusSelectorScreen(
         fun setSelection(selection: Long) = state.update { it.copy(selection = selection) }
 
         fun setStatus() {
-            viewModelScope.launchNonCancellable {
+            appScope.launch {
                 writer.setRemoteStatus(tracker, track.toDbTrack(), state.value.selection)
             }
         }
@@ -366,6 +369,7 @@ data class EntryTrackChapterSelectorScreen(
         @Assisted private val track: Track,
         @Assisted trackerId: Long,
         @Assisted entry: EntryId,
+        @AppCoroutineScope private val appScope: CoroutineScope,
         trackerManager: TrackerManager,
         ports: EntryTrackPorts,
     ) : ViewModel() {
@@ -391,7 +395,7 @@ data class EntryTrackChapterSelectorScreen(
         fun setSelection(selection: Int) = state.update { it.copy(selection = selection) }
 
         fun setChapter() {
-            viewModelScope.launchNonCancellable {
+            appScope.launch {
                 writer.setRemoteLastChapterRead(tracker, track.toDbTrack(), state.value.selection)
             }
         }
@@ -432,6 +436,7 @@ data class EntryTrackScoreSelectorScreen(
         @Assisted private val track: Track,
         @Assisted trackerId: Long,
         @Assisted entry: EntryId,
+        @AppCoroutineScope private val appScope: CoroutineScope,
         trackerManager: TrackerManager,
         ports: EntryTrackPorts,
     ) : ViewModel() {
@@ -456,7 +461,7 @@ data class EntryTrackScoreSelectorScreen(
         fun setSelection(selection: String) = state.update { it.copy(selection = selection) }
 
         fun setScore() {
-            viewModelScope.launchNonCancellable {
+            appScope.launch {
                 writer.setRemoteScore(tracker, track.toDbTrack(), state.value.selection)
             }
         }
@@ -548,6 +553,7 @@ data class EntryTrackDateSelectorScreen(
         @Assisted trackerId: Long,
         @Assisted private val start: Boolean,
         @Assisted private val entry: EntryId,
+        @AppCoroutineScope private val appScope: CoroutineScope,
         trackerManager: TrackerManager,
         ports: EntryTrackPorts,
     ) : ViewModel() {
@@ -573,7 +579,7 @@ data class EntryTrackDateSelectorScreen(
         fun setDate(millis: Long) {
             // Convert to local time
             val localMillis = millis.convertEpochMillisZone(TimeZone.UTC, TimeZone.currentSystemDefault())
-            viewModelScope.launchNonCancellable {
+            appScope.launch {
                 if (start) {
                     writer.setRemoteStartDate(tracker, track.toDbTrack(), localMillis)
                 } else {
@@ -652,6 +658,7 @@ data class EntryTrackDateRemoverScreen(
         @Assisted trackerId: Long,
         @Assisted private val start: Boolean,
         @Assisted entry: EntryId,
+        @AppCoroutineScope private val appScope: CoroutineScope,
         trackerManager: TrackerManager,
         ports: EntryTrackPorts,
     ) : ViewModel() {
@@ -669,7 +676,7 @@ data class EntryTrackDateRemoverScreen(
         fun getServiceName() = tracker.name
 
         fun removeDate() {
-            viewModelScope.launchNonCancellable {
+            appScope.launch {
                 if (start) {
                     writer.setRemoteStartDate(tracker, track.toDbTrack(), 0)
                 } else {
@@ -743,6 +750,7 @@ data class EntryTrackerSearchScreen(
         @Assisted private val currentUrl: String?,
         @Assisted initialQuery: String,
         @Assisted trackerId: Long,
+        @AppCoroutineScope private val appScope: CoroutineScope,
         private val context: Context,
         trackerManager: TrackerManager,
         ports: EntryTrackPorts,
@@ -801,7 +809,7 @@ data class EntryTrackerSearchScreen(
         }
 
         fun registerTracking(item: TrackSearch) {
-            viewModelScope.launchNonCancellable {
+            appScope.launch {
                 bindTrack(context, port, tracker, item)
             }
         }

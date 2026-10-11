@@ -310,7 +310,7 @@ class NovelDownloadManager(
     /** The novel's download directory, for the details overflow's Open folder; null until something
      *  is downloaded. The novel side of the lookup [reikai.presentation.details.openDownloadFolder] opens
      *  for both types, which owns the nothing-downloaded case. */
-    fun findNovelDir(novel: Novel) = provider.findNovelDir(novel)
+    suspend fun findNovelDir(novel: Novel) = withIOContext { provider.findNovelDir(novel) }
 
     /**
      * Drop the whole novel: everything it has queued, then its folder. The manga twin of this is

@@ -45,7 +45,8 @@ import kotlin.time.Duration.Companion.seconds
  * The details model holds the entry's chapter query open only while its state is collected, plus five seconds,
  * as upstream's stateIn(WhileSubscribed(5.seconds)) does. A real [MangaViewModel] over an in-memory database;
  * the chapter repository counts live collectors of the opened entry's chapter flow, the query the list reads.
- * `launchIO` hard-codes Dispatchers.IO, so IO is pointed at the test dispatcher to keep time virtual.
+ * The model hard-codes Dispatchers.IO and Default, so both are pointed at the test dispatcher to keep time virtual,
+ * Default only once the helper's mocks are built.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class MangaViewModelSubscriptionTest {
@@ -157,7 +158,9 @@ class MangaViewModelSubscriptionTest {
         val store = ViewModelStore()
         try {
             val downloads = detailsDownloadManager(queue = listOf(siblingDownload), progress = progress)
-            val model = mangaDetailsModel(MANGA_ID, mangas, chapters, group, downloads).also { store.put("manga", it) }
+            val model = mangaDetailsModel(MANGA_ID, mangas, chapters, group, downloads) {
+                every { Dispatchers.Default } returns dispatcher
+            }.also { store.put("manga", it) }
             block(model, chapters)
         } finally {
             store.clear()

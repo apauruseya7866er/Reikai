@@ -64,7 +64,7 @@ class NovelDownloadQueueProvider(
                 labels = queued.associateWith { labelOf(it) },
             )
         }
-        .flowOn(Dispatchers.IO)
+        .flowOn(Dispatchers.Default)
 
     override suspend fun chapterNames(seriesId: Long, chapterIds: Collection<Long>): Map<Long, String> {
         val cached = chapterNames[seriesId]
@@ -76,28 +76,28 @@ class NovelDownloadQueueProvider(
     override suspend fun detailsScreen(seriesId: Long): Screen? =
         NovelScreen.forStored(seriesId, novelRepo)
 
-    override fun cancelChapter(chapterId: Long) = downloadManager.cancelDownloads(listOf(chapterId))
+    override suspend fun cancelChapter(chapterId: Long) = downloadManager.cancelDownloads(listOf(chapterId))
 
-    override fun downloadNow(chapterId: Long) = downloadManager.startDownloadNow(chapterId)
+    override suspend fun downloadNow(chapterId: Long) = downloadManager.startDownloadNow(chapterId)
 
-    override fun moveChapterToBottom(chapterId: Long) {
+    override suspend fun moveChapterToBottom(chapterId: Long) {
         val queue = downloadManager.queueState.value
         val moved = queue.withChapterLastInSeries(chapterId, { it.chapterId }, { it.novelId })
         if (moved != queue) downloadManager.reorderQueue(moved)
     }
 
-    override fun reorderSeries(seriesIdsInOrder: List<Long>) {
+    override suspend fun reorderSeries(seriesIdsInOrder: List<Long>) {
         val reordered = downloadManager.queueState.value.withSeriesInOrder(seriesIdsInOrder) { it.novelId }
         downloadManager.reorderQueue(reordered)
     }
 
-    override fun cancelSeries(seriesId: Long) = downloadManager.cancelDownloads(
+    override suspend fun cancelSeries(seriesId: Long) = downloadManager.cancelDownloads(
         downloadManager.queueState.value.filter { it.novelId == seriesId }.map { it.chapterId },
     )
 
-    override fun cancelAll() = downloadManager.cancelAllDownloads()
+    override suspend fun cancelAll() = downloadManager.cancelAllDownloads()
 
-    override fun pause() = downloadManager.pauseDownloads()
+    override suspend fun pause() = downloadManager.pauseDownloads()
 
     override fun start() = downloadManager.startDownloads()
 

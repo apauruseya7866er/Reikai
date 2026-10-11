@@ -5,6 +5,8 @@ import app.cash.quickjs.QuickJs
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import tachiyomi.core.common.util.lang.withIOContext
 
 /**
@@ -23,7 +25,7 @@ class JavaScriptEngine(context: Context) {
      * @param script JavaScript to execute.
      * @return Result of JavaScript code as a primitive type.
      */
-    suspend fun <T> evaluate(script: String): T = withIOContext {
+    suspend fun <T> evaluate(script: String): T = withContext(Dispatchers.Default) {
         QuickJs.create().use {
             it.evaluate(script) as T
         }

@@ -33,7 +33,7 @@ class MangaChapterDownloadActions(
             ChapterDownloadAction.START_NOW -> chapters.singleOrNull()?.let { downloadManager.startDownloadNow(it.id) }
             ChapterDownloadAction.CANCEL -> chapters.mapNotNull { downloadManager.getQueuedDownloadOrNull(it.id) }
                 .takeIf { it.isNotEmpty() }
-                ?.let(downloadManager::cancelQueuedDownloads)
+                ?.let { downloadManager.cancelQueuedDownloads(it) }
             ChapterDownloadAction.DELETE -> delete(deleteTargets())
         }
     }

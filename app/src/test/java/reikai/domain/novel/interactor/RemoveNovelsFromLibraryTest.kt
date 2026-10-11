@@ -12,6 +12,7 @@ import org.junit.jupiter.api.io.TempDir
 import reikai.domain.entry.EntryId
 import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
+import reikai.util.idleAppScope
 import java.io.File
 import kotlin.time.Instant
 
@@ -41,7 +42,7 @@ class RemoveNovelsFromLibraryTest {
         val context = mockk<Context> {
             every { getExternalFilesDir(any()) } answers { File(dir, firstArg<String>()).also { it.mkdirs() } }
         }
-        return CoverCache(context)
+        return CoverCache(idleAppScope(), context)
     }
 
     private fun removal(coverCache: CoverCache): RemoveNovelsFromLibrary {

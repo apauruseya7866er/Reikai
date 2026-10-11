@@ -14,6 +14,7 @@ import org.junit.jupiter.api.io.TempDir
 import reikai.domain.entry.EntryId
 import reikai.domain.novel.model.NovelCover
 import reikai.domain.novel.model.novelResultCover
+import reikai.util.idleAppScope
 import tachiyomi.domain.manga.model.MangaCover
 import java.io.File
 import kotlin.time.Instant
@@ -33,7 +34,7 @@ class CoverCacheKeyTest {
     @BeforeEach
     fun setUp() {
         val context = mockk<Context> { every { getExternalFilesDir(any()) } returns dir }
-        coverCache = CoverCache(context)
+        coverCache = CoverCache(idleAppScope(), context)
         options = Options(context)
     }
 

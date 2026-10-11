@@ -17,6 +17,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
+import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.injectLazy
 import kotlin.time.Duration.Companion.minutes
 
@@ -43,35 +44,43 @@ class NovelListApi(
     suspend fun searchNovels(query: String): List<NLNovel> {
         val body = json.encodeToString(NLFilterRequest(titleSearchQuery = query))
             .toRequestBody(jsonMime)
-        return with(json) {
-            rateLimitedClient.newCall(POST("${apiUrl()}/novels/filter", body = body))
-                .awaitSuccess()
-                .parseAs<List<NLNovel>>()
+        return withIOContext {
+            with(json) {
+                rateLimitedClient.newCall(POST("${apiUrl()}/novels/filter", body = body))
+                    .awaitSuccess()
+                    .parseAs<List<NLNovel>>()
+            }
         }
     }
 
     /** Also public, and the only shape carrying `author`. The path rejects a slug with 422. */
     suspend fun getNovel(novelId: String): NLNovel {
-        return with(json) {
-            rateLimitedClient.newCall(GET("${apiUrl()}/novels/$novelId"))
-                .awaitSuccess()
-                .parseAs<NLNovel>()
+        return withIOContext {
+            with(json) {
+                rateLimitedClient.newCall(GET("${apiUrl()}/novels/$novelId"))
+                    .awaitSuccess()
+                    .parseAs<NLNovel>()
+            }
         }
     }
 
     suspend fun getCurrentUser(): NLUser {
-        return with(json) {
-            authClient.newCall(GET("${apiUrl()}/users/current"))
-                .awaitSuccess()
-                .parseAs<NLUser>()
+        return withIOContext {
+            with(json) {
+                authClient.newCall(GET("${apiUrl()}/users/current"))
+                    .awaitSuccess()
+                    .parseAs<NLUser>()
+            }
         }
     }
 
     suspend fun getReadingListEntry(novelId: String): NLReadingListEntry {
-        return with(json) {
-            authClient.newCall(GET("${apiUrl()}/users/current/reading-list/$novelId"))
-                .awaitSuccess()
-                .parseAs<NLReadingListEntry>()
+        return withIOContext {
+            with(json) {
+                authClient.newCall(GET("${apiUrl()}/users/current/reading-list/$novelId"))
+                    .awaitSuccess()
+                    .parseAs<NLReadingListEntry>()
+            }
         }
     }
 

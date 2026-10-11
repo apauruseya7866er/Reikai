@@ -136,5 +136,5 @@ interface RecentsBehavior {
      * Goes to the job rather than through a model, so a surface that renders no updated lane can still
      * offer a refresh; the answer is combined by the engine and the message belongs to the shell.
      */
-    fun refresh(): Boolean
+    suspend fun refresh(): Boolean
 }

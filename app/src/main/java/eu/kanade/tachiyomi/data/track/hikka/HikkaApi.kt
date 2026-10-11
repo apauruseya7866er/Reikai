@@ -19,6 +19,8 @@ import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.jsonMime
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -235,7 +237,7 @@ class HikkaApi(
                 .build()
 
             authClient.newCall(DELETE(url.toString()))
-                .awaitSuccess()
+                .awaitSuccess().close()
         }
     }
 

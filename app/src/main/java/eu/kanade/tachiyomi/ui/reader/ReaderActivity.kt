@@ -128,7 +128,6 @@ import reikai.presentation.reader.settings.ReaderSettingsSheet
 import reikai.presentation.reader.text.hasTravelled
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.util.collectAsState
@@ -747,10 +746,8 @@ class ReaderActivity : BaseActivity() {
         // RK: a session that defers its position writes flushes them here, or being backgrounded and
         // killed loses the pending one.
         engine.provider.flushPosition()
-        lifecycleScope.launchNonCancellable {
-            // RK: the session writes its own history row; the manga model was never given a novel entry.
-            engine.provider.updateHistory()
-        }
+        // RK: the session writes its own history row; the manga model was never given a novel entry.
+        engine.provider.saveHistory()
         super.onPause()
     }
 

@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.minus
@@ -132,7 +133,7 @@ class UpdatesViewModel(
                 copy(update = update.withCustomInfo(it))
             }
     }
-        .flowOn(Dispatchers.IO)
+        .flowOn(Dispatchers.Default)
         // RK: seeded null for the same reason the history feeds are, and read the same way: the
         //     recents updated lane turns it into `loaded`, so an empty seed would announce an empty
         //     Updates tab a tick before the query answers.
@@ -144,11 +145,12 @@ class UpdatesViewModel(
             items = items.orEmpty().applyDownloadOverrides(downloads),
         )
     }
+        .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State())
 
     // RK: init and updateDownloadState sit below the feed here, upstream has them above it
     init {
-        viewModelScope.launchIO {
+        viewModelScope.launch {
             merge(downloadManager.statusFlow(), downloadManager.progressFlow())
                 .catch { logcat(LogPriority.ERROR, it) }
                 .collect(this@UpdatesViewModel::updateDownloadState)

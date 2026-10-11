@@ -41,7 +41,9 @@ import androidx.glance.unit.ColorProvider
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.util.system.dpToPx
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.withContext
 import mihon.app.di.appGraph
 import reikai.domain.entry.EntryCustomInfo
 import reikai.domain.entry.EntryId
@@ -171,7 +173,8 @@ class UnifiedUpdatesGlanceWidget : GlanceAppWidget() {
         val widthPx = CoverWidth.value.toInt().dpToPx
         val heightPx = CoverHeight.value.toInt().dpToPx
 
-        return withIOContext {
+        // Coil loads on its own threads; scaling and converting the covers is CPU work, as upstream's widget does it
+        return withContext(Dispatchers.Default) {
             val novelCovers = novelRows
                 .take(cap)
                 .map { row ->

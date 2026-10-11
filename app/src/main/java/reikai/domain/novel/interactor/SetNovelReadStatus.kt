@@ -8,7 +8,6 @@ import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.track.PushNovelUnread
 import reikai.domain.track.source.ChapterWrite
 import reikai.domain.track.source.SourceTrackerDispatcher
-import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.core.common.util.system.logcat
 
 /**
@@ -48,25 +47,25 @@ class SetNovelReadStatus(
         read: Boolean,
         chapters: List<NovelChapter>,
         afterWrite: suspend (List<NovelChapter>) -> Unit,
-    ): Result = withNonCancellableContext {
+    ): Result {
         val toUpdate = chapters.filter {
             when (read) {
                 true -> !it.read
                 false -> it.read || it.lastTextProgress > 0L
             }
         }
-        if (toUpdate.isEmpty()) return@withNonCancellableContext Result.NoChapters
+        if (toUpdate.isEmpty()) return Result.NoChapters
 
         try {
             chapterRepository.setReadBulk(toUpdate.map { it.id }, read)
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)
-            return@withNonCancellableContext Result.InternalError(e)
+            return Result.InternalError(e)
         }
 
         sourceTracker.readStateWritten(read, toUpdate.map { ChapterWrite(EntryId.Novel(it.novelId), it.id, it.read) })
         afterWrite(toUpdate)
-        Result.Success
+        return Result.Success
     }
 
     sealed interface Result {

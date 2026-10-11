@@ -13,7 +13,6 @@ import reikai.domain.track.autobind.AutoBindTrackers // RK
 import reikai.domain.track.autobind.bindOnAdd // RK
 import reikai.domain.track.bindBackfill
 import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.history.interactor.GetHistory
 import tachiyomi.domain.manga.model.Manga
@@ -29,54 +28,50 @@ class AddTracks(
 ) {
 
     // TODO: update all trackers based on common data
-    suspend fun bind(tracker: Tracker, item: Track, mangaId: Long) = withNonCancellableContext {
-        withIOContext {
-            val allChapters = getChaptersByMangaId.await(mangaId)
-            val hasReadChapters = allChapters.any { it.read }
-            tracker.bind(item, hasReadChapters)
+    suspend fun bind(tracker: Tracker, item: Track, mangaId: Long) = withIOContext {
+        val allChapters = getChaptersByMangaId.await(mangaId)
+        val hasReadChapters = allChapters.any { it.read }
+        tracker.bind(item, hasReadChapters)
 
-            var track = item.toDomainTrack(idRequired = false) ?: return@withIOContext
+        var track = item.toDomainTrack(idRequired = false) ?: return@withIOContext
 
-            upsertTrack.await(track)
+        upsertTrack.await(track)
 
-            // TODO: merge into [SyncChapterProgressWithTrack]?
-            // Update chapter progress if newer chapters marked read locally
-            // RK --> the rule is a kernel the novel bind calls too
-            val backfill = bindBackfill(
-                allChapters.map { BindChapter(it.chapterNumber, it.read) },
-                track.lastChapterRead,
-                track.startDate,
-                TimeZone.currentSystemDefault(),
-            ) { getHistory.await(mangaId).map { it.readAt } }
-            backfill.lastChapterRead?.let {
-                track = track.copy(lastChapterRead = it)
-                tracker.setRemoteLastChapterRead(track.toDbTrack(), it.toInt())
-            }
-            backfill.startDate?.let {
-                track = track.copy(startDate = it)
-                tracker.setRemoteStartDate(track.toDbTrack(), it.toEpochMilliseconds())
-            }
-            // RK <--
-
-            syncChapterProgressWithTrack.await(mangaId, track, tracker)
+        // TODO: merge into [SyncChapterProgressWithTrack]?
+        // Update chapter progress if newer chapters marked read locally
+        // RK --> the rule is a kernel the novel bind calls too
+        val backfill = bindBackfill(
+            allChapters.map { BindChapter(it.chapterNumber, it.read) },
+            track.lastChapterRead,
+            track.startDate,
+            TimeZone.currentSystemDefault(),
+        ) { getHistory.await(mangaId).map { it.readAt } }
+        backfill.lastChapterRead?.let {
+            track = track.copy(lastChapterRead = it)
+            tracker.setRemoteLastChapterRead(track.toDbTrack(), it.toInt())
         }
+        backfill.startDate?.let {
+            track = track.copy(startDate = it)
+            tracker.setRemoteStartDate(track.toDbTrack(), it.toEpochMilliseconds())
+        }
+        // RK <--
+
+        syncChapterProgressWithTrack.await(mangaId, track, tracker)
     }
 
-    suspend fun bindEnhancedTrackers(manga: Manga, source: Source) = withNonCancellableContext {
-        withIOContext {
-            // RK --> the routine novels bind through too; which trackers take part is the capability's call
-            bindOnAdd(AutoBindEntry.Manga(manga, source), autoBindTrackers.loggedIn()) { candidate, track ->
-                track.manga_id = manga.id
-                candidate.tracker.bind(track)
-                upsertTrack.await(track.toDomainTrack(idRequired = false)!!)
+    suspend fun bindEnhancedTrackers(manga: Manga, source: Source) = withIOContext {
+        // RK --> the routine novels bind through too; which trackers take part is the capability's call
+        bindOnAdd(AutoBindEntry.Manga(manga, source), autoBindTrackers.loggedIn()) { candidate, track ->
+            track.manga_id = manga.id
+            candidate.tracker.bind(track)
+            upsertTrack.await(track.toDomainTrack(idRequired = false)!!)
 
-                syncChapterProgressWithTrack.await(
-                    manga.id,
-                    track.toDomainTrack(idRequired = false)!!,
-                    candidate.tracker,
-                )
-            }
-            // RK <--
+            syncChapterProgressWithTrack.await(
+                manga.id,
+                track.toDomainTrack(idRequired = false)!!,
+                candidate.tracker,
+            )
         }
+        // RK <--
     }
 }

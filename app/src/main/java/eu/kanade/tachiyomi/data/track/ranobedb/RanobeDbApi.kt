@@ -16,6 +16,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.CookieJar
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
+import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.injectLazy
 import java.net.URLEncoder
 import kotlin.time.Duration.Companion.minutes
@@ -45,29 +46,35 @@ class RanobeDbApi(
     /** Search is public; a token is neither required nor sent. */
     suspend fun searchSeries(query: String): List<RDBSeries> {
         val encoded = URLEncoder.encode(query, "UTF-8")
-        return with(json) {
-            rateLimitedClient.newCall(GET("$API_URL/series?q=$encoded&limit=$SEARCH_LIMIT"))
-                .awaitSuccess()
-                .parseAs<RDBSeriesList>()
-                .series
-                .filterNot { it.hidden }
+        return withIOContext {
+            with(json) {
+                rateLimitedClient.newCall(GET("$API_URL/series?q=$encoded&limit=$SEARCH_LIMIT"))
+                    .awaitSuccess()
+                    .parseAs<RDBSeriesList>()
+                    .series
+                    .filterNot { it.hidden }
+            }
         }
     }
 
     suspend fun getSeries(seriesId: Long): RDBSeries {
-        return with(json) {
-            rateLimitedClient.newCall(GET("$API_URL/series/$seriesId"))
-                .awaitSuccess()
-                .parseAs<RDBSeriesOne>()
-                .series
+        return withIOContext {
+            with(json) {
+                rateLimitedClient.newCall(GET("$API_URL/series/$seriesId"))
+                    .awaitSuccess()
+                    .parseAs<RDBSeriesOne>()
+                    .series
+            }
         }
     }
 
     suspend fun getCurrentUser(): RDBUser {
-        return with(json) {
-            authClient.newCall(GET("$API_URL/user/me"))
-                .awaitSuccess()
-                .parseAs<RDBUser>()
+        return withIOContext {
+            with(json) {
+                authClient.newCall(GET("$API_URL/user/me"))
+                    .awaitSuccess()
+                    .parseAs<RDBUser>()
+            }
         }
     }
 

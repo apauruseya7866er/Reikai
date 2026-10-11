@@ -104,10 +104,9 @@ class MangaTitleRenameHalf : TitleRenameHalf {
         val manga = Manga.create().copy(id = 1L, source = 1L, title = "Old")
         val sourceFolder = downloads.findFile("src")!!
         val manager = DownloadManager(
-            scope = testAppScope(),
             context = mockk(relaxed = true),
             provider = mockk {
-                every { findMangaDir("Old", any()) } answers { sourceFolder.findFile("Old") }
+                coEvery { findMangaDir("Old", any()) } answers { sourceFolder.findFile("Old") }
                 every { getMangaDirName(any()) } answers { firstArg() }
             },
             cache = mockk(relaxed = true),

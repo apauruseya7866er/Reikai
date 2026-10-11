@@ -25,6 +25,7 @@ import exh.metadata.metadata.RaisedSearchMetadata
 import exh.source.ExhPreferences
 import exh.source.eHentaiSourceIds
 import exh.source.getMainSource
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,6 +39,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.source.ReikaiSourcePreferences
 import reikai.domain.source.SourceKey
 import reikai.domain.source.filter.genreSearch
@@ -66,6 +68,7 @@ import kotlin.time.Duration.Companion.seconds
 open class BrowseSourceViewModel(
     @Assisted private val sourceId: Long,
     @Assisted listingQuery: String?,
+    @AppCoroutineScope private val appScope: CoroutineScope,
     sourceManager: SourceManager,
     sourcePreferences: SourcePreferences,
     private val libraryPreferences: LibraryPreferences,
@@ -250,7 +253,7 @@ open class BrowseSourceViewModel(
 
     // RK --> upstream's changeMangaFavorite, addFavorite and duplicate lookup moved to the long-press
     //        add flow every browse surface shares, inherited by MangaDexFollowsViewModel.
-    val addFlow = MangaAddFlow(mangaLibraryAdder, viewModelScope)
+    val addFlow = MangaAddFlow(mangaLibraryAdder, viewModelScope, appScope)
     // RK <--
 
     fun openFilterSheet() {

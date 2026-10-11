@@ -20,12 +20,15 @@ import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import mihon.app.di.appGraph
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import reikai.novel.network.NovelImageRequests
 import reikai.presentation.webview.rememberNovelPageActions
 import reikai.presentation.webview.rememberPluginStorageCapture
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
@@ -77,16 +80,18 @@ class WebViewActivity : BaseActivity() {
             val headers by produceState<Map<String, String>?>(initialValue = null) {
                 // RK --> a novel source is found by its text id, which the manga source manager cannot resolve
                 intent.getStringExtra(NOVEL_SOURCE_KEY)?.let {
-                    value = novelImageRequests.webViewHeaders(it)
+                    value = withIOContext { novelImageRequests.webViewHeaders(it) }
                     return@produceState
                 }
                 // RK <--
                 val source = sourceManager.get(intent.extras!!.getLong(SOURCE_KEY)) as? HttpSource
-                value = try {
-                    source?.headers?.toMultimap()?.mapValues { it.value.getOrNull(0) ?: "" }.orEmpty()
-                } catch (e: Exception) {
-                    logcat(LogPriority.ERROR, e) { "Failed to build headers" }
-                    emptyMap()
+                value = withIOContext {
+                    try {
+                        source?.headers?.toMultimap()?.mapValues { it.value.getOrNull(0) ?: "" }.orEmpty()
+                    } catch (e: Exception) {
+                        logcat(LogPriority.ERROR, e) { "Failed to build headers" }
+                        emptyMap()
+                    }
                 }
             }
 
