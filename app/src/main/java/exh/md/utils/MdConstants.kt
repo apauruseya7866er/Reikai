@@ -10,7 +10,6 @@ import kotlin.time.Duration.Companion.minutes
 object MdConstants {
     const val baseUrl = "https://mangadex.org"
     const val cdnUrl = "https://uploads.mangadex.org"
-    const val atHomeReportUrl = "https://api.mangadex.network/report"
 
     // Page size for the follows listing. The request limit and the paging offset step must match, so
     // fetchFollows uses this for both (unlike Komikku, which requested 100 but stepped by 20).

@@ -3,14 +3,6 @@ package exh.md.dto
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class ChapterListDto(
-    override val limit: Int,
-    override val offset: Int,
-    override val total: Int,
-    override val data: List<ChapterDataDto>,
-) : ListCallDto<ChapterDataDto>
-
-@Serializable
 data class ChapterDto(
     val result: String,
     val data: ChapterDataDto,
