@@ -179,6 +179,36 @@ class SchemaChainMigrationTest {
     }
 
     @Test
+    fun `a novel's Last read stamp becomes one history row on its latest-read chapter`() = runTest {
+        // Novel 1: progress decides. 3: read beats number. 4: number decides. 2: cleared history, kept
+        // cleared. 5: no chapters, nothing to carry. 6: no stamp.
+        (1L..6L).forEach { exec(Type.NOVEL.entry(id = it, url = "/n/$it", favorite = true)) }
+        listOf(1L to 1001, 2L to 1002, 3L to 1003, 4L to 1004, 5L to 1005).forEach { (id, stamp) ->
+            exec("UPDATE novels SET last_read_at = $stamp WHERE _id = $id")
+        }
+        listOf(
+            novelChapter(id = 10, novelId = 1, read = true, progress = 0, number = 9),
+            novelChapter(id = 11, novelId = 1, read = false, progress = 40, number = 2),
+            novelChapter(id = 20, novelId = 2, read = true, progress = 0, number = 1),
+            novelChapter(id = 30, novelId = 3, read = false, progress = 0, number = 9),
+            novelChapter(id = 31, novelId = 3, read = true, progress = 0, number = 2),
+            novelChapter(id = 40, novelId = 4, read = true, progress = 0, number = 2),
+            novelChapter(id = 41, novelId = 4, read = true, progress = 0, number = 7),
+            novelChapter(id = 60, novelId = 6, read = true, progress = 0, number = 1),
+        ).forEach { exec(it) }
+        exec("INSERT INTO novel_history(chapter_id, last_read, time_read) VALUES (20, 0, 50)")
+
+        migrate()
+
+        pairs("SELECT chapter_id, last_read FROM novel_history ORDER BY chapter_id") shouldBe listOf(
+            11L to 1001L,
+            20L to null,
+            31L to 1003L,
+            41L to 1004L,
+        )
+    }
+
+    @Test
     fun `the system category still refuses deletion`() = runTest {
         migrate()
 
@@ -297,6 +327,24 @@ class SchemaChainMigrationTest {
         Database.Schema.migrate(driver, 43, Database.Schema.version).await()
         longs("SELECT rowid FROM pragma_foreign_key_check")
     }
+
+    private fun novelChapter(id: Long, novelId: Long, read: Boolean, progress: Long, number: Int) =
+        "INSERT INTO novel_chapters(_id, novel_id, url, name, read, bookmark, last_text_progress, " +
+            "chapter_number, source_order, date_fetch, date_upload) VALUES ($id, $novelId, '/c/$id', 'c', " +
+            "${if (read) 1 else 0}, 0, $progress, $number, 0, 0, 0)"
+
+    private suspend fun pairs(sql: String): List<Pair<Long, Long?>> = driver.executeQuery(
+        null,
+        sql,
+        { cursor ->
+            QueryResult.Value(
+                buildList {
+                    while (cursor.next().value) add(cursor.getLong(0)!! to cursor.getLong(1))
+                },
+            )
+        },
+        0,
+    ).await()
 
     private suspend fun exec(sql: String) {
         driver.execute(null, sql, 0).await()
