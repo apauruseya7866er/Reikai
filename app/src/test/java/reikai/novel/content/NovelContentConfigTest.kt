@@ -36,6 +36,15 @@ class NovelContentConfigTest {
         NovelContentConfig.from(preferences, null, "").target shouldBe RenderTarget.WEB_VIEW
     }
 
+    // The native reader would draw a chapter's embedded styles and scripts as text.
+    @Test
+    fun `the native reader gets content for a text view`() {
+        val preferences = NovelPreferences(EmittingPreferenceStore())
+        preferences.readerRenderingMode().set(NovelRenderingMode.NATIVE)
+
+        NovelContentConfig.from(preferences, null, "").target shouldBe RenderTarget.TEXT_VIEW
+    }
+
     @Test
     fun `flipping hide chapter title reaches the open chapter`() = runTest {
         val preferences = NovelPreferences(EmittingPreferenceStore())
