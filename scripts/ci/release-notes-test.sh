@@ -204,7 +204,8 @@ check "the more line links the same page"              0 in_body "+2 more in the
 
 echo "nightly after a changelog rewrite"
 # The previous nightly, a code commit adding an entry, a Markdown-only rewrite rewording the oldest
-# entry, then a code commit adding another. Only the two code commits' entries are news.
+# entry, a code commit adding another, then a Markdown-only commit that only adds one (a fix noted
+# after it landed). Everything but the rewording is news.
 repo="$work/repo"
 git init -q "$repo"
 commit() {
@@ -223,7 +224,9 @@ echo notes > "$repo/README.md"
 commit rewrite > /dev/null
 echo b > "$repo/src/b.kt"
 printf -- '- **Added after the rewrite.** Detail.\n' >> "$repo/CHANGELOG.md"
-head=$(commit code2)
+commit code2 > /dev/null
+printf -- '- **Noted later.** Detail.\n' >> "$repo/CHANGELOG.md"
+head=$(commit note)
 git -C "$repo" show "$base:CHANGELOG.md" > "$work/base.md"
 parse-changelog "$work/base.md" Unreleased > "$work/base.txt"
 parse-changelog "$repo/CHANGELOG.md" Unreleased > "$work/head.txt"
@@ -233,6 +236,7 @@ in_after() { printf '%s\n' "$after_rewrite" | grep -qxF -- "$1"; }
 check "a reworded entry is not listed as new"          1 in_after "- New wording."
 check "an entry added before the rewrite is listed"    0 in_after "- Added in code."
 check "an entry added after the rewrite is listed"     0 in_after "- Added after the rewrite."
+check "an entry a Markdown-only commit adds is listed"  0 in_after "- Noted later."
 
 rm -rf "$work"
 echo "$pass passed, $broke broke"

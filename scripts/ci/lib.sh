@@ -84,11 +84,12 @@ release_notes() {
   esac
 }
 
-# Entries a Markdown-only commit in <base>..<head> introduced into [Unreleased], as "- headline"
-# lines the nightly counts as already published. Such a commit ships no change, so what it adds is
-# an existing entry reworded or merged (the rewrite before a cut); without this the next nightly
-# would list every reworded headline as new. An entry added earlier in the same range and then
-# reworded by one is left out of that nightly too. Needs parse-changelog.
+# Entries a Markdown-only commit in <base>..<head> introduced into [Unreleased] while also removing
+# one, as "- headline" lines the nightly counts as already published. That is an existing entry
+# reworded or merged (the rewrite before a cut); without this the next nightly would list every
+# reworded headline as new. A Markdown-only commit that removes nothing is an entry noted after its
+# fix landed, which is news. An entry added earlier in the same range and then reworded by one is
+# left out of that nightly too. Needs parse-changelog.
 reworded_entries() {
   local c before after md
   before=$(mktemp)
@@ -98,6 +99,7 @@ reworded_entries() {
     git diff-tree --root --no-commit-id --name-only -r "$c" | grep -qv '\.md$' && continue
     { git show "$c:CHANGELOG.md" > "$md" && parse-changelog "$md" Unreleased > "$after"; } 2>/dev/null || : > "$after"
     { git show "$c^:CHANGELOG.md" > "$md" && parse-changelog "$md" Unreleased > "$before"; } 2>/dev/null || : > "$before"
+    release_notes nightly "$before" "$after" | grep -q '^- ' || continue
     release_notes nightly "$after" "$before" | grep '^- ' || true
   done
   rm -f "$before" "$after" "$md"
