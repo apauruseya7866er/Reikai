@@ -142,6 +142,29 @@ class EntryLibraryRemovalConformanceTest {
 
     @ParameterizedTest
     @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a refused write tells the source's own tracker nothing`(type: ContentType) = runTest {
+        val table = table(type).apply {
+            put(ID)
+            refusedIds += ID
+        }
+
+        table.removal.await(listOf(ID))
+
+        table.toldSourceTracker shouldBe emptyList()
+    }
+
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `an undo tells the source's own tracker the entry is back`(type: ContentType) = runTest {
+        val table = table(type).apply { put(ID) }
+
+        table.removal.restore(table.removal.takeOut(listOf(ID)))
+
+        table.toldSourceTracker shouldBe listOf(table.entryId(ID) to false, table.entryId(ID) to true)
+    }
+
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
     fun `an entry outside the library is not taken out again`(type: ContentType) = runTest {
         val table = table(type).apply { put(ID, joinedAt = null) }
 
