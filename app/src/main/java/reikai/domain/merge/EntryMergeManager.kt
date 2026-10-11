@@ -149,10 +149,13 @@ open class EntryMergeManager(
      * disabled, so nothing collapses while groups are hidden, matching every other resolution path.
      */
     suspend fun groupIdsFor(ids: List<Long>): Map<Long, Long> {
-        if (!preferences.seriesMergingEnabled.get()) return emptyMap()
-        val memberships = repository.getAllMemberships(contentType)
+        val memberships = memberships()
         return ids.mapNotNull { id -> memberships[id]?.let { id to it } }.toMap()
     }
+
+    /** Entry id to group id for every grouped entry; empty while merging is off, so nothing collapses. */
+    suspend fun memberships(): Map<Long, Long> =
+        if (preferences.seriesMergingEnabled.get()) repository.getAllMemberships(contentType) else emptyMap()
 
     /**
      * [items] in the buckets a surface counting merged series once reads (Stats, the library export):

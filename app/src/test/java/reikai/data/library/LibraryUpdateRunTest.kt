@@ -1,6 +1,8 @@
 package reikai.data.library
 
 import io.kotest.matchers.shouldBe
+import io.mockk.coEvery
+import io.mockk.mockk
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -8,7 +10,15 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
+import reikai.domain.library.ContentType
 import reikai.domain.merge.ChapterUnit
+import reikai.domain.merge.MergedChapterUnitRepository
+import reikai.domain.merge.ReconcileMergedChapters
+import reikai.domain.merge.TestMergeManagers
+import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import tachiyomi.domain.library.service.LibraryPreferences
 
 /**
  * One update run's bookkeeping, for both content types: the jobs differ only in what fills the ledger
@@ -150,5 +160,29 @@ class LibraryUpdateRunTest {
         update { it.arrived(second, listOf(Row(20)), listOf(Row(20))) }
 
         announced shouldBe emptyList()
+    }
+
+    /** With merging off every source is its own card, so a stored group collapses nothing. */
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `with series merging off a copy of a chapter the group had is announced`(type: ContentType) = runTest {
+        val managers = TestMergeManagers(mapOf(type to mapOf(1L to 7L, 2L to 7L)), mergingOn = false)
+        val run = LibraryUpdateRun(
+            ReconcileMergedChapters(mockk(), stitchers = emptySet()),
+            managers.manga,
+            managers.novel,
+            mockk<MergedChapterUnitRepository> { coEvery { getStitch(any(), any()) } returns stitch },
+            LibraryPreferences(InMemoryPreferenceStore()),
+        )
+
+        run<Entry, Row>(
+            type,
+            entryId = { it.id },
+            chapterId = { it.id },
+            announce = { announced += it },
+            queueDownloads = {},
+        ) { it.arrived(second, listOf(Row(20)), emptyList()) }
+
+        announced.flatten().flatMap { (_, rows) -> rows.map { it.id } } shouldBe listOf(20L)
     }
 }

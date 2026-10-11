@@ -4,11 +4,12 @@ import dev.zacsweers.metro.Inject
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import reikai.domain.library.ContentType
+import reikai.domain.manga.MangaMergeManager
 import reikai.domain.merge.ChapterUnit
-import reikai.domain.merge.MergeGroupRepository
 import reikai.domain.merge.MergedChapterUnitRepository
 import reikai.domain.merge.ReconcileMergedChapters
 import reikai.domain.merge.collapseNewChapters
+import reikai.domain.novel.NovelMergeManager
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.domain.library.service.LibraryPreferences
 import java.util.concurrent.CopyOnWriteArrayList
@@ -17,7 +18,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 @Inject
 class LibraryUpdateRun(
     private val reconcileMergedChapters: ReconcileMergedChapters,
-    private val mergeGroupRepository: MergeGroupRepository,
+    private val mangaMergeManager: MangaMergeManager,
+    private val novelMergeManager: NovelMergeManager,
     private val mergedChapterUnitRepository: MergedChapterUnitRepository,
     private val libraryPreferences: LibraryPreferences,
 ) {
@@ -32,7 +34,17 @@ class LibraryUpdateRun(
         afterPass = { reconcileMergedChapters.afterPass(it) },
         entryId = entryId,
         chapterId = chapterId,
-        memberships = { mergeGroupRepository.getAllMemberships(contentType) },
+        memberships = {
+            (
+                if (contentType ==
+                    ContentType.NOVELS
+                ) {
+                    novelMergeManager
+                } else {
+                    mangaMergeManager
+                }
+                ).memberships()
+        },
         stitchOf = { mergedChapterUnitRepository.getStitch(contentType, it) },
         announce = announce,
         countArrivals = libraryPreferences::addNewUpdates,
