@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.R
@@ -84,8 +85,13 @@ class DownloadNotifier(
         context.cancelNotification(Notifications.ID_DOWNLOAD_CHAPTER_PAUSED)
     }
 
+    private var lastProgressNotificationTime = 0L
+
     /**
      * Called when download progress changes.
+     *
+     * Called for every downloaded page from parallel downloads, so it shares the builder under a lock and skips
+     * updates that come faster than the system would show them anyway.
      *
      * @param download download object containing download information.
      */
@@ -93,6 +99,11 @@ class DownloadNotifier(
     //     that report from several threads and share the builder take a Mutex where upstream has @Synchronized,
     //     whose monitor does not hold across a suspension
     suspend fun onProgressChange(download: Download) = progressLock.withLock {
+        val now = SystemClock.elapsedRealtime()
+        val isComplete = download.downloadedImages == download.pages?.size
+        if (!isComplete && now - lastProgressNotificationTime < PROGRESS_NOTIFICATION_INTERVAL_MS) return@withLock
+        lastProgressNotificationTime = now
+
         // RK -->
         val hidden = hiddenEntryIds(
             listOf(download.manga),
@@ -285,3 +296,5 @@ class DownloadNotifier(
         isDownloading = false
     }
 }
+
+private const val PROGRESS_NOTIFICATION_INTERVAL_MS = 500L

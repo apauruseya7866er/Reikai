@@ -4,6 +4,7 @@ import android.app.Application
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.notification.Notifications
+import eu.kanade.tachiyomi.source.model.Page
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
 import io.mockk.mockk
@@ -58,5 +59,34 @@ class DownloadNotifierTest {
         notifier.onProgressChange(download)
 
         shade.titleOf(Notifications.ID_DOWNLOAD_CHAPTER_PROGRESS) shouldBe "Mine - Ch 10"
+    }
+
+    /** Every downloaded page reports, faster than the system shows a notice anyway (mihonapp/mihon#4071). */
+    @Test
+    fun `a page's progress within half a second of the last notice is skipped`() = runTest {
+        notifier.onProgressChange(inProgress("Manga - Ch 10"))
+        shade.now += 499
+
+        notifier.onProgressChange(inProgress("Manga - Ch 11"))
+
+        shade.titleOf(Notifications.ID_DOWNLOAD_CHAPTER_PROGRESS) shouldBe "Mine - Ch 10"
+    }
+
+    @Test
+    fun `a finished chapter's notice is never skipped`() = runTest {
+        notifier.onProgressChange(inProgress("Manga - Ch 10"))
+
+        notifier.onProgressChange(
+            inProgress("Manga - Ch 11").apply {
+                pages!!.forEach { it.status = Page.State.Ready }
+            },
+        )
+
+        shade.titleOf(Notifications.ID_DOWNLOAD_CHAPTER_PROGRESS) shouldBe "Mine - Ch 11"
+    }
+
+    private fun inProgress(name: String): Download {
+        val chapter = Chapter.create().copy(id = 10L, mangaId = 1L, name = name)
+        return Download(mockk(), manga, chapter).apply { pages = listOf(Page(0), Page(1)) }
     }
 }

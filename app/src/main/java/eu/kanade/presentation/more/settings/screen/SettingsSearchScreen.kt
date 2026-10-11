@@ -30,6 +30,7 @@ import androidx.compose.runtime.NonRestartableComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withCompositionLocal
 import androidx.compose.ui.Alignment
@@ -51,6 +52,7 @@ import eu.kanade.presentation.components.UpIcon
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.screen.about.AboutScreen
 import eu.kanade.presentation.util.Screen
+import kotlinx.coroutines.flow.collectLatest
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.rounded.Close
 import reikai.presentation.recommendation.SettingsRecommendationsScreen
@@ -145,7 +147,7 @@ class SettingsSearchScreen : Screen() {
             },
         ) { contentPadding ->
             SearchResult(
-                searchKey = textFieldState.text.toString(),
+                searchKey = { textFieldState.text.toString() },
                 listState = listState,
                 contentPadding = contentPadding,
             ) { result ->
@@ -158,7 +160,7 @@ class SettingsSearchScreen : Screen() {
 
 @Composable
 private fun SearchResult(
-    searchKey: String,
+    searchKey: () -> String,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     contentPadding: PaddingValues = PaddingValues(),
@@ -168,64 +170,16 @@ private fun SearchResult(
     val enabledScreens by produceState<List<SearchableSettings>?>(initialValue = null) {
         value = settingScreens.filter { it.isEnabled() }
     }
-    if (searchKey.isEmpty()) return
     val screens = enabledScreens ?: return // RK
 
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
 
     val index = getIndex(screens) // RK
-    val result by produceState<List<SearchResultItem>?>(initialValue = null, searchKey) {
-        value = index.asSequence()
-            .flatMap { settingsData ->
-                // RK: highlightKey is (group, title), so the scroll lands on the exact row
-                fun result(title: String, categoryTitle: String?, highlightKey: HighlightKey) = SearchResultItem(
-                    route = settingsData.route,
-                    title = title,
-                    breadcrumbs = getLocalizedBreadcrumb(
-                        path = settingsData.title,
-                        node = categoryTitle,
-                        isLtr = isLtr,
-                    ),
-                    highlightKey = highlightKey, // RK
-                )
-
-                fun Preference.PreferenceItem<*, *>.matches(): Boolean {
-                    // Don't show info preference
-                    if (this is Preference.PreferenceItem.InfoPreference) return false
-                    val inTitle = title.contains(searchKey, true)
-                    val inSummary = subtitle?.contains(searchKey, true) ?: false
-                    return inTitle || inSummary
-                }
-
-                settingsData.contents.asSequence()
-                    // Only search from enabled prefs and one with valid title
-                    .filter { it.visible && it.title.isNotBlank() }
-                    .flatMap { p ->
-                        when (p) {
-                            is Preference.PreferenceGroup -> {
-                                // A matching heading leads to the group itself, not to one of its items
-                                val heading = if (p.title.contains(searchKey, true)) {
-                                    sequenceOf(result(p.title, null, HighlightKey.heading(p.title))) // RK
-                                } else {
-                                    emptySequence()
-                                }
-                                val items = p.preferenceItems.asSequence()
-                                    .filter { it.visible && it.title.isNotBlank() && it.matches() }
-                                    .map { result(it.title, p.title, HighlightKey(p.title, it.title)) } // RK
-                                heading + items
-                            }
-                            is Preference.PreferenceItem<*, *> -> {
-                                if (p.matches()) {
-                                    sequenceOf(result(p.title, null, HighlightKey(null, p.title))) // RK
-                                } else {
-                                    emptySequence()
-                                }
-                            }
-                        }
-                    }
-            }
-            .take(10) // Just take top 10 result for quicker result
-            .toList()
+    // The query is read here rather than in composition, so typing doesn't rebuild the index on every key
+    val result by produceState<List<SearchResultItem>?>(initialValue = null, index) {
+        snapshotFlow(searchKey).collectLatest { searchKey ->
+            value = if (searchKey.isEmpty()) null else search(index, searchKey, isLtr)
+        }
     }
 
     Crossfade(
@@ -278,6 +232,60 @@ private fun SearchResult(
             }
         }
     }
+}
+
+private fun search(index: List<SettingsData>, searchKey: String, isLtr: Boolean): List<SearchResultItem> {
+    return index.asSequence()
+        .flatMap { settingsData ->
+            // RK: highlightKey is (group, title), so the scroll lands on the exact row
+            fun result(title: String, categoryTitle: String?, highlightKey: HighlightKey) = SearchResultItem(
+                route = settingsData.route,
+                title = title,
+                breadcrumbs = getLocalizedBreadcrumb(
+                    path = settingsData.title,
+                    node = categoryTitle,
+                    isLtr = isLtr,
+                ),
+                highlightKey = highlightKey, // RK
+            )
+
+            fun Preference.PreferenceItem<*, *>.matches(): Boolean {
+                // Don't show info preference
+                if (this is Preference.PreferenceItem.InfoPreference) return false
+                val inTitle = title.contains(searchKey, true)
+                val inSummary = subtitle?.contains(searchKey, true) ?: false
+                return inTitle || inSummary
+            }
+
+            settingsData.contents.asSequence()
+                // Only search from enabled prefs and one with valid title
+                .filter { it.visible && it.title.isNotBlank() }
+                .flatMap { p ->
+                    when (p) {
+                        is Preference.PreferenceGroup -> {
+                            // A matching heading leads to the group itself, not to one of its items
+                            val heading = if (p.title.contains(searchKey, true)) {
+                                sequenceOf(result(p.title, null, HighlightKey.heading(p.title))) // RK
+                            } else {
+                                emptySequence()
+                            }
+                            val items = p.preferenceItems.asSequence()
+                                .filter { it.visible && it.title.isNotBlank() && it.matches() }
+                                .map { result(it.title, p.title, HighlightKey(p.title, it.title)) } // RK
+                            heading + items
+                        }
+                        is Preference.PreferenceItem<*, *> -> {
+                            if (p.matches()) {
+                                sequenceOf(result(p.title, null, HighlightKey(null, p.title))) // RK
+                            } else {
+                                emptySequence()
+                            }
+                        }
+                    }
+                }
+        }
+        .take(10) // Just take top 10 result for quicker result
+        .toList()
 }
 
 @Composable

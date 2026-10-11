@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
 import reikai.data.notification.NovelNewChaptersNotice
+import reikai.data.notification.UpdateProgressThrottle
 import reikai.data.notification.hiddenEntryIds
 import reikai.data.notification.mainActivityPendingIntent
 import reikai.data.notification.newChaptersEntry
@@ -89,7 +90,10 @@ class NovelUpdateNotifier(
             .setProgress(total, current, total == 0)
             .build()
 
+    private val progressThrottle = UpdateProgressThrottle()
+
     suspend fun showProgress(novel: Novel, current: Int, total: Int) {
+        if (!progressThrottle.tryPass(isFinal = current >= total)) return
         val name = listOf(novel).shown().single().title.takeUnless { novel.id in hiddenNovelIds(listOf(novel)) }
         context.notify(Notifications.ID_NOVEL_LIBRARY_PROGRESS, progress(name, current, total))
     }

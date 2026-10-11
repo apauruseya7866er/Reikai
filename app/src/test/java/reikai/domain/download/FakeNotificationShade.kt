@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.work.ForegroundInfo
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
@@ -35,6 +36,9 @@ class FakeNotificationShade : AutoCloseable {
     private val contentTexts = mutableMapOf<NotificationCompat.Builder, CharSequence?>()
 
     private val contentTitles = mutableMapOf<NotificationCompat.Builder, CharSequence?>()
+
+    /** What `SystemClock.elapsedRealtime` reads, well past boot as on a device, for the progress throttles. */
+    var now = 1_000_000L
 
     /** The text the notification shown under [id] carries. */
     fun textOf(id: Int): CharSequence? = shown[id]?.let(contentTexts::get)
@@ -83,6 +87,8 @@ class FakeNotificationShade : AutoCloseable {
         every { any<Context>().stringResource(any(), *anyVararg()) } returns "text"
         mockkStatic(BitmapFactory::class)
         every { BitmapFactory.decodeResource(any(), any()) } returns null
+        mockkStatic(SystemClock::class)
+        every { SystemClock.elapsedRealtime() } answers { now }
         mockkObject(NotificationHandler)
         every { NotificationHandler.openDownloadManagerPendingActivity(any()) } returns mockk()
         mockkObject(NotificationReceiver.Companion)
@@ -100,7 +106,7 @@ class FakeNotificationShade : AutoCloseable {
 
     override fun close() {
         unmockkStatic(NOTIFICATION_EXTENSIONS, LOCALIZE)
-        unmockkStatic(BitmapFactory::class)
+        unmockkStatic(BitmapFactory::class, SystemClock::class)
         unmockkObject(NotificationHandler, NotificationReceiver.Companion)
     }
 

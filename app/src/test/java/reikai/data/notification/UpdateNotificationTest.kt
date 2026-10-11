@@ -43,4 +43,32 @@ class UpdateNotificationTest {
     fun `twenty-nine of a hundred reads 29 percent`() {
         updateProgressPercent(29, 100, Locale.US) shouldBe "29%"
     }
+
+    @Test
+    fun `a progress notice within half a second of the last is skipped`() {
+        var now = 1_000L
+        val throttle = UpdateProgressThrottle { now }
+        throttle.tryPass(isFinal = false)
+        now += 499
+
+        throttle.tryPass(isFinal = false) shouldBe false
+    }
+
+    @Test
+    fun `a progress notice half a second after the last passes`() {
+        var now = 1_000L
+        val throttle = UpdateProgressThrottle { now }
+        throttle.tryPass(isFinal = false)
+        now += 500
+
+        throttle.tryPass(isFinal = false) shouldBe true
+    }
+
+    @Test
+    fun `the final progress notice always passes`() {
+        val throttle = UpdateProgressThrottle { 1_000L }
+        throttle.tryPass(isFinal = false)
+
+        throttle.tryPass(isFinal = true) shouldBe true
+    }
 }

@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.util.lang.chop
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
+import reikai.data.notification.UpdateProgressThrottle
 import reikai.data.notification.hiddenEntryIds
 import reikai.data.notification.mainActivityPendingIntent
 import reikai.data.notification.newChaptersEntry
@@ -106,8 +107,13 @@ class LibraryUpdateNotifier(
         }
     }
 
+    private val progressThrottle = UpdateProgressThrottle() // RK
+
     /**
      * Shows the notification containing the currently updating manga and the progress.
+     *
+     * Called from several update coroutines at once, so it skips updates that come faster than the system would
+     * show them anyway.
      *
      * @param manga the manga that are being updated.
      * @param current the current progress.
@@ -115,6 +121,8 @@ class LibraryUpdateNotifier(
      */
     // RK: suspends for the adult verdict, which keeps adult titles out of the progress text too
     suspend fun showProgressNotification(manga: List<Manga>, current: Int, total: Int) {
+        // RK: upstream's @Synchronized cannot hold across the suspension, so the throttle is an atomic kernel
+        if (!progressThrottle.tryPass(isFinal = current >= total)) return
         progressNotificationBuilder
             .setContentTitle(
                 context.stringResource(

@@ -767,6 +767,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - Manga chapter lists and Updates look up queued and downloaded chapters once per list instead of once per chapter, and download progress no longer polls for a chapter's pages (from Mihon, mihon fb8e640d6, mihon 9a6dea804).
 - Rows that show the same manga or novel cover at once now share one load and decode of it (partly from Mihon, mihon 1f85a5a8d).
 - Manga and novel details pages stop reading their chapters, trackers and filters from the database a few seconds after you leave them, rather than until they close (partly from Mihon, mihon 7ff97761b).
+- Settings search no longer rebuilds its index on every key, and the download and manga and novel library update notifications redraw at most twice a second (partly from Mihon, mihonapp/mihon#4071).
 
 ## [0.3.2]
 

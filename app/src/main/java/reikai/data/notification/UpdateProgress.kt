@@ -1,9 +1,11 @@
 package reikai.data.notification
 
+import android.os.SystemClock
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.NumberFormat
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * How far an update has got, as its progress title shows it ("66%"), rounded down so it never reads
@@ -17,3 +19,21 @@ fun updateProgressPercent(
     val fraction = BigDecimal.valueOf(current.toLong()).divide(BigDecimal.valueOf(total.toLong()), 2, RoundingMode.DOWN)
     return NumberFormat.getPercentInstance(locale).apply { maximumFractionDigits = 0 }.format(fraction)
 }
+
+/**
+ * Lets a library update's progress notice through at most once per 500 ms, faster than the system shows them
+ * anyway; the last one ([isFinal]) always passes so the bar ends full. Safe across concurrent updaters.
+ */
+class UpdateProgressThrottle(private val clock: () -> Long = SystemClock::elapsedRealtime) {
+
+    private val lastShown = AtomicLong(0L)
+
+    fun tryPass(isFinal: Boolean): Boolean {
+        val now = clock()
+        val last = lastShown.get()
+        if (!isFinal && now - last < UPDATE_PROGRESS_INTERVAL_MS) return false
+        return lastShown.compareAndSet(last, now) || isFinal
+    }
+}
+
+private const val UPDATE_PROGRESS_INTERVAL_MS = 500L
