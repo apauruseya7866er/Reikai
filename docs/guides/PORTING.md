@@ -136,9 +136,9 @@ Fixed:
 - **`source-migration.md` described a flow the app no longer has.** Its Reikai tab said "a global
   search of all sources, tap a thumbnail to pick", which has not been true since the migrate rebuild.
   Rewritten from a device walk: the three entry points, the merge-group pick step, the config screen
-  and its search options, the list screen with its per-row actions, and the confirm. **The five other
-  fork tabs stay** (owner, 2026-08-21): they are useful to a reader arriving from one of those apps,
-  and being irrelevant to Reikai is not a reason to delete them.
+  and its search options, the list screen with its per-row actions, and the confirm. **The other
+  apps' tabs are gone**: they buried Reikai's own steps, so the page now covers Reikai only and sends a
+  reader of another app to that app's own docs. Do not restore them.
 
   Two of the entry points were wrong in the first draft, written from the route table rather than the
   screen: **Migrate** is in the overflow on the details screen and in the selection bar's overflow in
