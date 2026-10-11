@@ -12,6 +12,21 @@ class DownloadSpaceTest {
     }
 
     @Test
+    fun `a volume exactly at the floor has room`() {
+        hasRoomToDownload(200L * 1024 * 1024) shouldBe true
+    }
+
+    @Test
+    fun `a volume with room to spare has room`() {
+        hasRoomToDownload(500L * 1024 * 1024) shouldBe true
+    }
+
+    @Test
+    fun `a copy that leaves the volume above the floor has room`() {
+        hasRoomToCopy(availableBytes = 300L * 1024 * 1024, bytes = 99L * 1024 * 1024) shouldBe true
+    }
+
+    @Test
     fun `a volume whose space cannot be read is let through`() {
         hasRoomToDownload(-1L) shouldBe true
     }
