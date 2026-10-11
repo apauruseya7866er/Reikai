@@ -28,6 +28,9 @@
 -keep class eu.kanade.tachiyomi.source.RateLimited { public protected *; }
 -keep class eu.kanade.tachiyomi.source.RateLimited$DefaultImpls { public protected *; }
 -keep class eu.kanade.tachiyomi.source.PagePreviewSource { public protected *; }
+# An implementing extension constructs these two, and only built-in sources do in the app.
+-keep class eu.kanade.tachiyomi.source.PagePreviewPage { public protected *; }
+-keep class eu.kanade.tachiyomi.source.PagePreviewInfo { public protected *; }
 -keep class eu.kanade.tachiyomi.source.online.** { public protected *; }
 # Extensions on older libs call preferenceKey() and sourcePreferences() here, and nothing in the app
 # does, so R8 deletes both classes without this. Upstream's list omits them too.
