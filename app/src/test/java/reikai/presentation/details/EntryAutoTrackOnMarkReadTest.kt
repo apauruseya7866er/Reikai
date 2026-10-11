@@ -90,6 +90,28 @@ class EntryAutoTrackOnMarkReadTest {
     }
 
     @Test
+    fun `a dismissed prompt tells no tracker`() = runTest {
+        step(prompt = SnackbarResult.Dismissed).setRead(entryId = 1L, chapters = listOf(marked), read = true)
+
+        pushed shouldBe emptyList()
+    }
+
+    @Test
+    fun `the Always setting pushes without asking`() = runTest {
+        step(state = AutoTrackState.ALWAYS, prompt = SnackbarResult.Dismissed)
+            .setRead(entryId = 1L, chapters = listOf(marked), read = true)
+
+        pushed shouldBe listOf(10.0)
+    }
+
+    @Test
+    fun `the Never setting tells no tracker`() = runTest {
+        step(state = AutoTrackState.NEVER).setRead(entryId = 1L, chapters = listOf(marked), read = true)
+
+        pushed shouldBe emptyList()
+    }
+
+    @Test
     fun `a push every tracker took shows nothing`() = runTest {
         step(state = AutoTrackState.ALWAYS).setRead(entryId = 1L, chapters = listOf(marked), read = true)
 
