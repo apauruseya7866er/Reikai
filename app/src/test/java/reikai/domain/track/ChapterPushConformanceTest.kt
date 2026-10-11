@@ -37,6 +37,18 @@ class ChapterPushConformanceTest {
                 return { interactor.await(mockk(), ENTRY_ID, CHAPTER, setupJobOnFailure = false) }
             }
 
+            override fun retry(h: Harness): suspend () -> ChapterPushOutcome {
+                val interactor = TrackChapter(
+                    getTracks = mockk {
+                        coEvery { await(ENTRY_ID) } returns listOf(mangaTrack(), mangaTrack().copy(id = OTHER_TRACK_ID))
+                    },
+                    trackerManager = h.trackerManager,
+                    upsertTrack = mockk(relaxed = true),
+                    delayedTrackingStore = h.mangaStore,
+                )
+                return { interactor.retry(mockk(), mangaTrack(), CHAPTER) }
+            }
+
             override fun store(h: Harness): DelayedTrackingStore = h.mangaStore
         },
         NOVEL {
@@ -50,15 +62,32 @@ class ChapterPushConformanceTest {
                 return { interactor.await(mockk(), ENTRY_ID, CHAPTER, setupJobOnFailure = false) }
             }
 
+            override fun retry(h: Harness): suspend () -> ChapterPushOutcome {
+                val interactor = TrackNovelChapter(
+                    getNovelTracks = mockk {
+                        coEvery { awaitGroup(ENTRY_ID) } returns
+                            listOf(novelTrack(), novelTrack().copy(id = OTHER_TRACK_ID))
+                    },
+                    trackerManager = h.trackerManager,
+                    upsertNovelTrack = mockk(relaxed = true),
+                    delayedTrackingStore = h.novelStore,
+                )
+                return { interactor.retry(mockk(), novelTrack(), CHAPTER) }
+            }
+
             override fun store(h: Harness): DelayedTrackingStore = h.novelStore
         },
         ;
 
         abstract fun push(h: Harness): suspend () -> ChapterPushOutcome
+
+        /** Retries the queued [TRACK_ID] while another row of its group, [OTHER_TRACK_ID], is behind too. */
+        abstract fun retry(h: Harness): suspend () -> ChapterPushOutcome
         abstract fun store(h: Harness): DelayedTrackingStore
     }
 
     class Harness(failure: Exception?) {
+        val pushedTrackIds = mutableListOf<Long>()
         val tracker = mockk<BaseTracker> {
             every { id } returns TRACKER_ID
             every { isLoggedIn } returns true
@@ -66,7 +95,7 @@ class ChapterPushConformanceTest {
             coEvery { refresh(any()) } answers { firstArg() }
             coEvery { update(any(), any()) } answers {
                 failure?.let { throw it }
-                firstArg<DbTrack>()
+                firstArg<DbTrack>().also { pushedTrackIds += it.id!! }
             }
         }
         val trackerManager = mockk<TrackerManager> { every { get(TRACKER_ID) } returns tracker }
@@ -111,9 +140,25 @@ class ChapterPushConformanceTest {
         verify { type.store(h).remove(TRACK_ID) }
     }
 
+    /**
+     * The queue keeps only a row and the number read, not which source of a merged series it was read
+     * on, so another row cannot be judged against that number: a server tracker on another source would
+     * take a number from the wrong source's numbering.
+     */
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `a queued retry pushes only the row it queued`(type: Type) = runTest {
+        val h = Harness(failure = null)
+
+        type.retry(h)()
+
+        h.pushedTrackIds shouldBe listOf(TRACK_ID)
+    }
+
     private companion object {
         const val ENTRY_ID = 7L
         const val TRACK_ID = 1L
+        const val OTHER_TRACK_ID = 2L
         const val TRACKER_ID = 3L
         const val CHAPTER = 12.0
         val RATE_LIMITED = HttpException(429)

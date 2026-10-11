@@ -15,6 +15,7 @@ import reikai.domain.manga.GetTracksInGroup
 import reikai.domain.track.ChapterPushOutcome
 import reikai.domain.track.pushChapterProgress
 import tachiyomi.domain.track.interactor.UpsertTrack
+import tachiyomi.domain.track.model.Track
 
 @Inject
 class TrackChapter(
@@ -34,10 +35,25 @@ class TrackChapter(
         mangaId: Long,
         chapterNumber: Double,
         setupJobOnFailure: Boolean = true,
+    ): ChapterPushOutcome = push(context, mangaId, getTracks.await(mangaId), chapterNumber, setupJobOnFailure) // RK
+
+    // RK --> the delayed-tracking drain's push, of the queued row alone. The queue keeps the number read but
+    // not which source of a merged series it was read on, so no other row can be judged against it: a
+    // server tracker on that row's source would take a sibling source's numbering. Upstream retried every
+    // tracker of the row's entry.
+    suspend fun retry(context: Context, track: Track, chapterNumber: Double): ChapterPushOutcome =
+        push(context, track.mangaId, listOf(track), chapterNumber, setupJobOnFailure = false)
+
+    // [mangaId] is the entry the chapter was read on, [tracks] the rows to push to
+    private suspend fun push(
+        context: Context,
+        mangaId: Long,
+        tracks: List<Track>,
+        chapterNumber: Double,
+        setupJobOnFailure: Boolean,
     ): ChapterPushOutcome {
         return coroutineScope {
-            val tracks = getTracks.await(mangaId)
-
+            // RK <--
             tracks.mapNotNull { track ->
                 val service = trackerManager.get(track.trackerId)
                 if (service == null || !service.isLoggedIn || chapterNumber <= track.lastChapterRead) {

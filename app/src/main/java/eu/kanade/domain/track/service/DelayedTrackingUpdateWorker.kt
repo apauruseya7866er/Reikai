@@ -35,7 +35,7 @@ class DelayedTrackingUpdateWorker(private val context: Context, workerParams: Wo
         remove = delayedTrackingStore::remove,
         trackOf = { getTracks.awaitOne(it) },
     ) { track, lastChapterRead ->
-        trackChapter.await(context, track.mangaId, lastChapterRead, setupJobOnFailure = false)
+        trackChapter.retry(context, track, lastChapterRead)
     }
     // RK <--
 

@@ -8,6 +8,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import reikai.domain.novel.interactor.GetNovelTracks
 import reikai.domain.novel.interactor.UpsertNovelTrack
+import reikai.domain.novel.model.NovelTrack
 import reikai.domain.track.ChapterPushOutcome
 import reikai.domain.track.pushChapterProgress
 
@@ -32,10 +33,19 @@ class TrackNovelChapter(
         novelId: Long,
         chapterNumber: Double,
         setupJobOnFailure: Boolean = true,
+    ): ChapterPushOutcome = push(context, getNovelTracks.awaitGroup(novelId), chapterNumber, setupJobOnFailure)
+
+    /** The delayed-tracking drain's push, of the queued row alone, as `TrackChapter.retry` does. */
+    suspend fun retry(context: Context, track: NovelTrack, chapterNumber: Double): ChapterPushOutcome =
+        push(context, listOf(track), chapterNumber, setupJobOnFailure = false)
+
+    private suspend fun push(
+        context: Context,
+        tracks: List<NovelTrack>,
+        chapterNumber: Double,
+        setupJobOnFailure: Boolean,
     ): ChapterPushOutcome {
         return coroutineScope {
-            val tracks = getNovelTracks.awaitGroup(novelId)
-
             tracks.mapNotNull { track ->
                 val service = trackerManager.get(track.trackerId)
                 if (service == null || !service.isLoggedIn || chapterNumber <= track.lastChapterRead) {
