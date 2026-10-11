@@ -598,6 +598,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **A novel chapter that fails while off Wi-Fi with Settings -> Downloads -> Only on Wi-Fi turned on now waits for Wi-Fi instead of retrying over mobile data.**
 - **Retrying a failed manga chapter, from the download queue or the reader's chapter list, now puts it back in the queue instead of leaving it failed, even while other chapters are downloading.**
 - **Extensions from a store that cannot be reached no longer show as Orphaned or lose their update badges.**
+- **Light-novel plugin update badges and the update notice now stay while a plugin repo cannot be reached, including when the app opens offline.**
 - **Marking a chapter read with delete-after-read on no longer deletes its download in a category excluded from removal, and a queued novel chapter marked read now leaves the queue (partly from Komikku).**
 - **With Downloaded only on, a novel's chapter list and reader now show only downloaded chapters, as manga's do.**
 - **Sorting or reordering the download queue no longer brings back a chapter that just finished or drops one just queued.**

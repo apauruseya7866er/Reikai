@@ -102,8 +102,8 @@ class NovelPreferences(
      */
     fun addedRepoUrls() = preferenceStore.getStringSet("novel_added_repo_urls", emptySet())
 
-    /** Count of installed plugins whose stored version is older than the latest registry version. */
-    fun pluginUpdatesCount() = preferenceStore.getInt("ln_plugin_updates_count", 0)
+    /** Ids of the installed plugins a repo offers a newer version of; the Browse badge counts them. */
+    fun pendingPluginUpdates() = preferenceStore.getStringSet("ln_plugin_updates_pending", emptySet())
 
     /** Last successful update-check timestamp (millis); gates the on-launch path to skip if recent. */
     fun lastLnPluginCheck() = preferenceStore.getLong("ln_plugin_last_check", 0L)

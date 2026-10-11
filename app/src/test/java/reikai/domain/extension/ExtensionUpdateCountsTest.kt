@@ -19,7 +19,7 @@ class ExtensionUpdateCountsTest {
             every { extensionUpdatesCount.changes() } returns MutableStateFlow(1)
         },
         novelPreferences = mockk<NovelPreferences> {
-            every { pluginUpdatesCount().changes() } returns MutableStateFlow(2)
+            every { pendingPluginUpdates().changes() } returns MutableStateFlow(setOf("a", "b"))
         },
         extensionManager = mockk<ExtensionManager> {
             every { novelUpdatesCount } returns MutableStateFlow(4)

@@ -20,9 +20,9 @@ class ExtensionUpdateCounts(
     val manga: Flow<Int> = sourcePreferences.extensionUpdatesCount.changes()
 
     val novel: Flow<Int> = combine(
-        novelPreferences.pluginUpdatesCount().changes(),
+        novelPreferences.pendingPluginUpdates().changes(),
         extensionManager.novelUpdatesCount,
-    ) { plugins, apks -> plugins + apks }
+    ) { plugins, apks -> plugins.size + apks }
 
     val total: Flow<Int> = combine(manga, novel) { manga, novel -> manga + novel }
 }

@@ -36,8 +36,10 @@ class LnPluginUpdateNotifier(
     }
 
     /** Every writer of the Browse badge's plugin count goes through here, so none leaves a stale notice. */
-    fun setPendingCount(count: Int) {
-        novelPreferences.pluginUpdatesCount().set(count)
-        if (count == 0) context.cancelNotification(Notifications.ID_LN_PLUGIN_UPDATES)
+    fun setPending(found: LnPluginUpdates) {
+        val pending = novelPreferences.pendingPluginUpdates()
+        val ids = found.pendingIds(pending.get())
+        pending.set(ids)
+        if (ids.isEmpty()) context.cancelNotification(Notifications.ID_LN_PLUGIN_UPDATES)
     }
 }

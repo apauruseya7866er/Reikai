@@ -18,8 +18,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Detects light-novel plugin updates by diffing each [NovelPreferences.addedRepoUrls] registry's
  * latest `version` against the one each installed plugin last reported when it loaded, stored on its
- * [NovelPreferences.installedPluginMetadata] record, through a single comparator ([LnPluginVersion.compare]). `check` is the pure diff;
- * [runIfStale] wraps it with a 6-hour cache for app launch and Browse open, while the WorkManager job bypasses
+ * [NovelPreferences.installedPluginMetadata] record, through a single comparator ([LnPluginVersion.compare]).
+ * [runIfStale] wraps [checkAndRecord] with a 6-hour cache for app launch and Browse open, while the WorkManager job bypasses
  * the cache on its own schedule. Individual repo fetch failures do not fail the batch, so a typo'd or
  * temporarily-down registry cannot hide updates from the working ones.
  */
@@ -31,27 +31,23 @@ class LnPluginUpdateChecker(
     private val notifier: LnPluginUpdateNotifier,
 ) {
 
-    suspend fun check(): List<LnPluginUpdate> {
+    /** Checks every added repo, then records the Browse badge and the stamp [runIfStale] gates on. */
+    suspend fun checkAndRecord(): List<LnPluginUpdate> {
         val repos = prefs.addedRepoUrls().get()
         val installedUrls = prefs.installedPluginUrls().get()
-        val metadata = prefs.installedPluginMetadata().get()
-        if (repos.isEmpty() || installedUrls.isEmpty()) return emptyList()
-
-        val fetched = fetcher.fetchEach(repos).values
-        return findPluginUpdates(
+        val fetched = if (repos.isEmpty() || installedUrls.isEmpty()) emptyMap() else fetcher.fetchEach(repos)
+        val found = findPluginUpdates(
             installedUrls,
-            metadata,
-            fetched.flatMap { (it as? LnRepoResult.Reached)?.entries.orEmpty() },
-            everyRepoReached = fetched.all { it is LnRepoResult.Reached },
+            prefs.installedPluginMetadata().get(),
+            fetched.values.flatMap { (it as? LnRepoResult.Reached)?.entries.orEmpty() },
+            everyRepoReached = fetched.values.all { it is LnRepoResult.Reached },
         )
-    }
-
-    /** [check], then the Browse badge count and the stamp [runIfStale] gates on, for every caller. */
-    suspend fun checkAndRecord(): List<LnPluginUpdate> {
-        val updates = check()
-        notifier.setPendingCount(updates.size)
-        prefs.lastLnPluginCheck().set(System.currentTimeMillis())
-        return updates
+        notifier.setPending(found)
+        // With no repo answering nothing was learned, so the next launch or Browse open checks again.
+        if (fetched.isEmpty() || fetched.values.any { it is LnRepoResult.Reached }) {
+            prefs.lastLnPluginCheck().set(System.currentTimeMillis())
+        }
+        return found.updates
     }
 
     /**
@@ -77,6 +73,20 @@ data class LnPluginUpdate(
 )
 
 /**
+ * What one check found: the [updates] to offer, and the [undecided] plugin ids that no answering repo
+ * settles while another repo is down. An undecided plugin keeps the badge it had ([pendingIds]), as an
+ * extension app keeps its statuses through a store outage (KindListing).
+ */
+data class LnPluginUpdates(
+    val updates: List<LnPluginUpdate>,
+    val undecided: Set<String>,
+) {
+    /** The plugin ids pending after this check, given those pending before it. */
+    fun pendingIds(previous: Set<String>): Set<String> =
+        updates.mapTo(HashSet()) { it.entry.id } + (previous intersect undecided)
+}
+
+/**
  * The installed plugins a repo offers a newer version of, matched by plugin id since a repo can publish
  * a new version at a new URL. Where several repos list the id, the listing at the installed URL decides,
  * because accepting another repo's entry replaces the installed script with that repo's. With no such
@@ -88,17 +98,21 @@ fun findPluginUpdates(
     metadata: Map<String, LnInstalledPluginMetadata>,
     entries: List<LnRegistryEntry>,
     everyRepoReached: Boolean,
-): List<LnPluginUpdate> {
+): LnPluginUpdates {
     val byId = entries.groupBy { it.id }
-    return installedUrls
+    val undecided = HashSet<String>()
+    val updates = installedUrls
         .mapNotNull { url ->
             val record = metadata[url] ?: return@mapNotNull null
             val installedVersion = record.version ?: return@mapNotNull null
-            val listings = byId[record.pluginId] ?: return@mapNotNull null
+            val listings = byId[record.pluginId].orEmpty()
             val entry = listings.firstOrNull { canonicalizePluginUrl(it.url) == url }
-                ?: listings.takeIf {
-                    everyRepoReached
-                }?.maxWith { a, b -> LnPluginVersion.compare(a.version, b.version) }
+                ?: if (everyRepoReached) {
+                    listings.maxWithOrNull { a, b -> LnPluginVersion.compare(a.version, b.version) }
+                } else {
+                    undecided += record.pluginId
+                    null
+                }
                 ?: return@mapNotNull null
             if (LnPluginVersion.compare(entry.version, installedVersion) > 0) {
                 LnPluginUpdate(entry = entry, installedVersion = installedVersion)
@@ -107,4 +121,5 @@ fun findPluginUpdates(
             }
         }
         .distinctBy { it.entry.id }
+    return LnPluginUpdates(updates, undecided)
 }

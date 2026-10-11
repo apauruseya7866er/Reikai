@@ -36,6 +36,7 @@ import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
 import reikai.novel.update.LnPluginUpdate
 import reikai.novel.update.LnPluginUpdateNotifier
+import reikai.novel.update.LnPluginUpdates
 import reikai.novel.update.findPluginUpdates
 import tachiyomi.core.common.util.lang.launchIO
 import kotlin.time.Duration.Companion.seconds
@@ -73,7 +74,7 @@ class LnPluginManagerViewModel(
         ::repoFetch,
     )
         // Keep the Browse badge in sync with what the user is looking at.
-        .onEach { updateNotifier.setPendingCount(it.updates.size) }
+        .onEach { updateNotifier.setPending(it.found) }
         .onStart<RepoFetch?> { emit(null) }
 
     val state: StateFlow<State> = combine(
@@ -93,7 +94,7 @@ class LnPluginManagerViewModel(
             repoNames = fetched?.repoNames.orEmpty(),
             installedRepoNames = fetched?.installedRepoNames.orEmpty(),
             available = fetched?.available.orEmpty(),
-            updates = fetched?.updates.orEmpty(),
+            updates = fetched?.found?.updates.orEmpty(),
             inProgress = installs.inProgress,
             errors = installs.errors,
         )
@@ -116,7 +117,7 @@ class LnPluginManagerViewModel(
         return RepoFetch(
             hasRepos = results.isNotEmpty(),
             available = byUrl.filterKeys { it !in installedUrls }.values.toList(),
-            updates = findPluginUpdates(
+            found = findPluginUpdates(
                 installedUrls,
                 metadata,
                 registries.flatten(),
@@ -209,7 +210,7 @@ class LnPluginManagerViewModel(
     private class RepoFetch(
         val hasRepos: Boolean,
         val available: List<LnRegistryEntry>,
-        val updates: List<LnPluginUpdate>,
+        val found: LnPluginUpdates,
         val installedVersions: Map<String, String>,
         val repoNames: Map<String, String>,
         val installedRepoNames: Map<String, String>,
