@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import eu.kanade.domain.manga.model.downloadedFilter
+import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.model.SManga
@@ -21,6 +22,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
 import kotlinx.coroutines.test.TestScope
@@ -38,6 +40,7 @@ import org.junit.jupiter.params.provider.EnumSource
 import reikai.domain.library.ContentType
 import reikai.domain.merge.ChapterUnit
 import reikai.domain.novel.model.NovelChapter
+import reikai.novel.download.NovelDownload
 import reikai.presentation.reader.FakeNovelSource
 import reikai.presentation.reader.NovelReaderViewModelHarness
 import tachiyomi.core.common.preference.TriState
@@ -107,6 +110,15 @@ class MergedDownloadCopyConformanceTest {
         group(type) { it.download(Copy.A_ONLY, ChapterDownloadAction.START) } shouldBe setOf(Copy.A_ONLY)
     }
 
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a toolbar next-chapters download skips a row whose fetched copy is already queued`(type: ContentType) =
+        runTest {
+            // M_SHARED's fetched copy is queued, and only M holds M_ONLY and M_LAST, so A_ONLY is all to fetch.
+            group(type, alreadyQueued = Copy.A_SHARED) { it.runAction(DownloadAction.NEXT_5_CHAPTERS) } shouldBe
+                setOf(Copy.A_ONLY)
+        }
+
     /** The copies the group holds, by role; each type maps them to its own ids. M holds the most, so it
      *  is the stitch's first-ranked source and its copy of the shared chapter is the one shown. */
     private enum class Copy { M_SHARED, M_ONLY, M_LAST, A_SHARED, A_ONLY }
@@ -126,8 +138,13 @@ class MergedDownloadCopyConformanceTest {
         fun offersDownload(copy: Copy): Boolean =
             loaded.rowOffersDownload(ids.getValue(copy), rows.first { it.id == ids.getValue(copy) }.downloadState)
 
-        suspend fun download(copy: Copy, action: ChapterDownloadAction): Set<Copy> {
-            behavior.onChapterDownloadAction(ids.getValue(copy), action)
+        suspend fun download(copy: Copy, action: ChapterDownloadAction): Set<Copy> =
+            queuedAfter { behavior.onChapterDownloadAction(ids.getValue(copy), action) }
+
+        suspend fun runAction(action: DownloadAction): Set<Copy> = queuedAfter { behavior.runDownloadAction(action) }
+
+        private suspend fun queuedAfter(start: () -> Unit): Set<Copy> {
+            start()
             withContext(Dispatchers.Default) {
                 withTimeoutOrNull(10_000) { while (queued.isEmpty()) delay(20) }
                 // Anything else a wrong rule would queue lands in the same pass.
@@ -137,12 +154,16 @@ class MergedDownloadCopyConformanceTest {
         }
     }
 
-    private suspend fun <T> TestScope.group(type: ContentType, probe: suspend (Group) -> T): T = when (type) {
-        ContentType.MANGA -> mangaGroup(probe)
-        else -> novelGroup(probe)
+    private suspend fun <T> TestScope.group(
+        type: ContentType,
+        alreadyQueued: Copy? = null,
+        probe: suspend (Group) -> T,
+    ): T = when (type) {
+        ContentType.MANGA -> mangaGroup(alreadyQueued, probe)
+        else -> novelGroup(alreadyQueued, probe)
     }
 
-    private suspend fun <T> mangaGroup(probe: suspend (Group) -> T): T {
+    private suspend fun <T> mangaGroup(alreadyQueued: Copy?, probe: suspend (Group) -> T): T {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         Database.Schema.create(driver).await()
         val database = DatabaseBindings.providesDatabase(driver)
@@ -170,6 +191,10 @@ class MergedDownloadCopyConformanceTest {
             coEvery { downloadChapters(any(), any(), any()) } answers
                 { secondArg<List<Chapter>>().forEach { queued += it.id } }
             coEvery { startDownloadNow(any()) } answers { queued += firstArg<Long>() }
+            alreadyQueued?.let { copy ->
+                val download = mockk<Download>(relaxed = true) { every { status } returns Download.State.QUEUE }
+                every { getQueuedDownloadsByChapterId() } returns mapOf(ids.getValue(copy) to download)
+            }
         }
         val sources = mockk<SourceManager>(relaxed = true) {
             coEvery { getOrStub(any()) } answers {
@@ -199,7 +224,7 @@ class MergedDownloadCopyConformanceTest {
         }
     }
 
-    private suspend fun <T> TestScope.novelGroup(probe: suspend (Group) -> T): T =
+    private suspend fun <T> TestScope.novelGroup(alreadyQueued: Copy?, probe: suspend (Group) -> T): T =
         NovelReaderViewModelHarness.create(testScheduler).use { harness ->
             val m = harness.novel(FakeNovelSource("gone", "unregistered"))
             val a = harness.novel(harness.source("alpha"))
@@ -217,6 +242,10 @@ class MergedDownloadCopyConformanceTest {
                 firstArg<List<NovelChapter>>().forEach { queued += it.id }
             }
             every { harness.downloadManager.startDownloadNow(any()) } answers { queued += firstArg<Long>() }
+            alreadyQueued?.let { copy ->
+                every { harness.downloadManager.queueState } returns
+                    MutableStateFlow(listOf(NovelDownload(a, ids.getValue(copy), "/queued")))
+            }
             val behavior = NovelEntryAdapter(harness.openDetails(m), mockk(relaxed = true))
             probe(Group(behavior, behavior.settled(rows = 4), ids, queued))
         }
