@@ -10,6 +10,7 @@ import dev.zacsweers.metro.AssistedInject
 import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactory
 import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactoryKey
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.WhileSubscribed
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.extension.repoNameFromAddress
 import reikai.domain.novel.LnInstalledPluginMetadata
 import reikai.domain.novel.NovelPreferences
@@ -39,6 +41,7 @@ class NovelPluginDetailsViewModel(
     registries: LnRepoRegistries,
     prefs: NovelPreferences,
     private val installer: LnPluginInstaller,
+    @AppCoroutineScope private val appScope: CoroutineScope,
 ) : ViewModel() {
 
     @AssistedFactory
@@ -60,7 +63,8 @@ class NovelPluginDetailsViewModel(
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State.Loading)
 
     fun uninstall() {
-        viewModelScope.launchIO { installer.uninstall(pluginId) }
+        // A delete: the page closing, or the user leaving it while this waits on an update, must not cut it off.
+        appScope.launchIO { installer.uninstall(pluginId) }
     }
 
     sealed interface State {

@@ -29,6 +29,7 @@ import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
 import reikai.presentation.MainDispatcherExtension
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
 import java.util.concurrent.atomic.AtomicInteger
 
 /** The plugin manager downloads the repos only while a screen watches it, and once per reason to. */
@@ -43,6 +44,7 @@ class LnPluginManagerViewModelTest {
     }
     private val manager = mockk<NovelSourceManager> { every { loadedSources() } returns flowOf(emptyList()) }
     private val registries = LnRepoRegistries(installer, prefs)
+    private val appScope = testAppScope()
 
     // Every model is tracked: its fetches run on IO under a stop timeout and otherwise outlive the test.
     @JvmField
@@ -50,7 +52,9 @@ class LnPluginManagerViewModelTest {
     val main = MainDispatcherExtension { dispatcher }
 
     private fun model() =
-        main.track(LnPluginManagerViewModel(manager, installer, registries, prefs, mockk(relaxed = true)))
+        main.track(
+            LnPluginManagerViewModel(manager, installer, registries, prefs, mockk(relaxed = true), appScope),
+        )
 
     @BeforeEach
     fun setUp() {
@@ -155,16 +159,16 @@ class LnPluginManagerViewModelTest {
         coVerify(exactly = 1) { installer.fetchRepo(REPO) }
     }
 
-    /** The uninstall runs on the IO dispatcher, so the test joins the jobs it started, as the install test does. */
+    /** The uninstall runs on the app scope's IO dispatcher, so the test joins the job it started there. */
     @Test
     fun `an uninstall downloads no registry`() = runTest(dispatcher) {
         val model = model()
         val watching = launch { model.state.collect {} }
         advanceUntilIdle()
-        val before = model.viewModelScope.coroutineContext.job.children.toSet()
+        val before = appScope.coroutineContext.job.children.toSet()
 
         model.uninstall(mockk<NovelSource> { every { id } returns ENTRY.id })
-        (model.viewModelScope.coroutineContext.job.children.toSet() - before).joinAll()
+        (appScope.coroutineContext.job.children.toSet() - before).joinAll()
         advanceUntilIdle()
         watching.cancel()
 

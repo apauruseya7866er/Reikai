@@ -9,6 +9,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.binding
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
 import eu.kanade.tachiyomi.extension.model.InstallStep
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import mihon.core.metro.AppCoroutineScope
 import reikai.domain.extension.repoNameFromAddress
 import reikai.domain.novel.LnInstalledPluginMetadata
 import reikai.domain.novel.NovelPreferences
@@ -57,6 +59,8 @@ class LnPluginManagerViewModel(
     private val registries: LnRepoRegistries,
     private val prefs: NovelPreferences,
     private val updateNotifier: LnPluginUpdateNotifier,
+    // Uninstalls are deletes, which closing the Extensions screen must not cut off.
+    @AppCoroutineScope private val appScope: CoroutineScope,
 ) : ViewModel() {
 
     /** Canonical URLs with an install in flight, and the last error per URL. */
@@ -179,7 +183,7 @@ class LnPluginManagerViewModel(
     fun update(update: LnPluginUpdate) = install(update.entry)
 
     fun uninstall(source: NovelSource) {
-        viewModelScope.launchIO {
+        appScope.launchIO {
             // Uninstall by plugin id; the installer resolves the URL(s) from fresh metadata. A cached
             // id->url map lags a same-session install (install registers the source before persisting
             // metadata), which silently no-op'd the trash button until an app restart.
@@ -189,7 +193,7 @@ class LnPluginManagerViewModel(
 
     /** A plugin that never loaded has no source to name it by, so it goes by its record instead. */
     fun uninstall(failure: LnPluginLoadFailure) {
-        viewModelScope.launchIO {
+        appScope.launchIO {
             installer.uninstall(failure.pluginId.orEmpty(), failure.url)
         }
     }
