@@ -42,6 +42,9 @@ class BackupNovelChapter(
             dateUpload = this@BackupNovelChapter.dateUpload.toInstantOrNull(),
             page = this@BackupNovelChapter.page,
             scanlator = this@BackupNovelChapter.scanlator,
+            // A page sync reads a stored raw number as the plugin's, so a corrected chapter starts from
+            // the source's number, never the user's; others from their stored number, as 63.sqm seeds.
+            rawChapterNumber = this@BackupNovelChapter.sourceChapterNumber ?: this@BackupNovelChapter.chapterNumber,
         )
     }
 }

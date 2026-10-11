@@ -89,6 +89,22 @@ class ChapterNumberOverrideBackupTest {
             listOf(ChapterNumberOverride("/c5", 6.0, 5.0))
     }
 
+    @Test
+    fun `a corrected novel chapter restores with the source's number for recognition to start from`() = runTest {
+        // A later page sync reads a stored row's raw number as the plugin's; the corrected one would
+        // pass for the source's number moving. Manga stores no raw number, so this is novels only.
+        driver.execute(null, Type.NOVEL.statements.first(), 0).await()
+
+        Type.NOVEL.restore(database)
+
+        driver.executeQuery(
+            null,
+            "SELECT raw_chapter_number FROM novel_chapters WHERE url = '/c5'",
+            { cursor -> QueryResult.Value(cursor.next().value.let { cursor.getDouble(0) }) },
+            0,
+        ).await() shouldBe 5.0
+    }
+
     /** The fields an app that predates the source number reads, so it skips the new one. */
     @Serializable
     class OlderBackupChapter(@ProtoNumber(1) var url: String, @ProtoNumber(2) var name: String)
