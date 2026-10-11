@@ -7,6 +7,8 @@ sealed interface InstallStep {
     data object Installing : InstallStep
     data object Installed : InstallStep
 
+    // RK --> a message and stack trace where upstream has a bare object (upstream-sync.md)
+
     /**
      * [message] says what went wrong; [stackTrace] is there when an exception did.
      */
@@ -21,8 +23,9 @@ sealed interface InstallStep {
             }
         }
     }
+    // RK <--
 
     fun isCompleted(): Boolean {
-        return this == Installed || this is Error || this == Idle
+        return this == Installed || this is Error || this == Idle // RK
     }
 }

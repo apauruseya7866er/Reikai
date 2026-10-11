@@ -77,7 +77,7 @@ class ExtensionInstallActivity : Activity() {
         val newStep = when (resultCode) {
             RESULT_OK -> InstallStep.Installed
             RESULT_CANCELED -> InstallStep.Idle
-            else -> InstallStep.Error("The installer reported a failure")
+            else -> InstallStep.Error("The installer reported a failure") // RK: carries its message
         }
         extensionManager.updateInstallStep(downloadId, newStep)
     }

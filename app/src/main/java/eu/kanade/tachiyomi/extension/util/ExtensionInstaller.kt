@@ -106,8 +106,10 @@ class ExtensionInstaller(
                 installApk(downloadId, tmpFile, packageInfo, isUpdateForPrivatelyInstalled)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
+                // RK --> the error keeps its message, logged at error level (upstream-sync.md)
                 logcat(LogPriority.ERROR, e)
                 step.value = InstallStep.Error.from(e)
+                // RK <--
             }
         }
 
@@ -170,8 +172,10 @@ class ExtensionInstaller(
             ExtensionLoader.installPrivateExtensionFile(context, tempFile, packageInfo)
             updateInstallStep(downloadId, InstallStep.Installed)
         } catch (e: Exception) {
+            // RK --> the error keeps its message, logged at error level (upstream-sync.md)
             logcat(LogPriority.ERROR, e) { "Failed to install extension privately" }
             updateInstallStep(downloadId, InstallStep.Error.from(e))
+            // RK <--
         }
 
         tempFile.delete()

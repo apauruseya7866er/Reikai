@@ -50,8 +50,10 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
                                 .sanitizeByFiltering(this)
                         }
                     if (userAction == null) {
+                        // RK --> the error keeps its message, logged at error level (upstream-sync.md)
                         logcat(LogPriority.ERROR) { "Fatal error for $intent" }
                         continueQueue(InstallStep.Error("The system installer asked for an action it didn't provide"))
+                        // RK <--
                         return
                     }
                     userAction.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -61,12 +63,14 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
                     continueQueue(InstallStep.Idle)
                 }
                 PackageInstaller.STATUS_SUCCESS -> continueQueue(InstallStep.Installed)
+                // RK --> the error keeps its message, logged at error level (upstream-sync.md)
                 else -> continueQueue(
                     InstallStep.Error(
                         intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
                             ?: "The system installer failed ($status)",
                     ),
                 )
+                // RK <--
             }
         }
     }
@@ -110,12 +114,12 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
                     session.commit(intentSender)
                 }
             } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "Failed to install extension ${entry.downloadId} ${entry.uri}" }
+                logcat(LogPriority.ERROR, e) { "Failed to install extension ${entry.downloadId} ${entry.uri}" } // RK
                 activeSession?.let { (_, sessionId) ->
                     // Already abandoned when the entry was cancelled mid-copy
                     runCatching { packageInstaller.abandonSession(sessionId) }
                 }
-                if (getActiveEntry() == entry) continueQueue(InstallStep.Error.from(e))
+                if (getActiveEntry() == entry) continueQueue(InstallStep.Error.from(e)) // RK
             }
         }
     }
