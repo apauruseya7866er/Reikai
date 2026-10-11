@@ -660,6 +660,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Fixed
 
+- **Restoring a backup no longer sometimes stops part-way with an error.**
 - **Restoring a backup now brings merged series back exactly as the backup grouped them: unrelated series no longer collapse into one card, and a pair you split stays split.**
 - **Restoring a backup no longer changes your extension installer, your FlareSolverr setup or a repo's signing key, or marks any extension trusted.** Your device keeps its own choice for each, so set FlareSolverr up again on a new device.
 - **Opening a backup file from a file manager now opens the Restore screen.** It used to close the app straight away.

@@ -91,6 +91,9 @@ class BackupNotifier(
         }
     }
 
+    // RK: the restorers run in parallel on one builder, and clearActions / addAction racing threw
+    // ConcurrentModificationException and failed the restore (from TachiyomiSY)
+    @Synchronized
     fun showRestoreProgress(
         content: String = "",
         progress: Int = 0,
