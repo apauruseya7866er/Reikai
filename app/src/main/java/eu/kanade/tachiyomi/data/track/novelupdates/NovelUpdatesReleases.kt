@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.track.novelupdates
 
 import org.jsoup.nodes.Document
 import reikai.data.track.NovelTrackerStatuses
+import tachiyomi.domain.chapter.service.ChapterRecognition
 
 /** One release of a series on the site: a translation group's post of one chapter, bookmarked by [id]. */
 data class NovelUpdatesRelease(val id: String, val name: String)
@@ -9,6 +10,8 @@ data class NovelUpdatesRelease(val id: String, val name: String)
 private val RELEASE_LINK = Regex("""(?:^|novelupdates\.com)/?extnu/(\d+)""")
 
 private val SERIES_SLUG = Regex("""series/([^/?#]+)""")
+
+private val VOLUME_BEFORE_CHAPTER = Regex("""(?<=\d)(?=c\d)""")
 
 /**
  * The release id in a chapter link, when the link is one of the site's own release links: absolute
@@ -28,6 +31,13 @@ internal fun parseReleases(document: Document): List<NovelUpdatesRelease> =
         val id = releaseIdOf(link.absUrl("href").ifEmpty { link.attr("href") }) ?: return@mapNotNull null
         NovelUpdatesRelease(id, row.text())
     }
+
+/**
+ * The chapter number of a release as the site names it ("c15", "v3c15"), read as a novel's chapter
+ * names are. The volume is split off first: run into the chapter, "v3c15" reads as sub-chapter 3c.
+ */
+internal fun releaseNumberOf(seriesTitle: String, name: String): Double =
+    ChapterRecognition.parseChapterNumber(seriesTitle, name.replace(VOLUME_BEFORE_CHAPTER, " "))
 
 /**
  * Which release to bookmark for chapter [number]: the one the read chapter links to when that is a single

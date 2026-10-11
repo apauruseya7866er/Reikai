@@ -227,6 +227,12 @@ class NovelUpdatesReleasesTest {
     }
 
     @ParameterizedTest(name = "{0} -> {1}")
+    @MethodSource("releaseNames")
+    fun `a release reads as the number of the chapter it posts`(name: String, expected: Double) {
+        releaseNumberOf("Shadow Slave", name) shouldBe expected
+    }
+
+    @ParameterizedTest(name = "{0} -> {1}")
     @MethodSource("statusesAfterRead")
     fun `a read moves a series to reading unless it is completed or on a list of the user's own`(
         status: Long,
@@ -236,6 +242,18 @@ class NovelUpdatesReleasesTest {
     }
 
     companion object {
+        // As the novel's own chapters read: "Volume 3 Chapter 15" is 15, "Chapter 12 Part 1" is 12.1.
+        @JvmStatic
+        fun releaseNames() = listOf(
+            Arguments.of("c15", 15.0),
+            Arguments.of("v3c15", 15.0),
+            Arguments.of("v3 c15", 15.0),
+            Arguments.of("s2c10", 10.0),
+            Arguments.of("c12 part1", 12.1),
+            Arguments.of("v1c2 part3", 2.3),
+            Arguments.of("c15.5", 15.5),
+        )
+
         @JvmStatic
         fun statusesAfterRead() = listOf(
             Arguments.of(NovelUpdates.PLAN_TO_READ, NovelUpdates.READING),

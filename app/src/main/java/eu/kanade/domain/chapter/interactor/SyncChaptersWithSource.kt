@@ -76,6 +76,7 @@ class SyncChaptersWithSource(
         chapterNumberOverrides.updateSourceNumbers(ContentType.MANGA, manga.id, overridden.moved)
         val sourceChapters = overridden.chapters
         val sourceUrls = sourceChapters.mapTo(mutableSetOf()) { it.url }
+        val sourceNumbers = sourceChapters.associate { it.url to it.chapterNumber }
         // RK <--
 
         val dbChapters = chapterRepository.getChapterByMangaId(manga.id)
@@ -146,7 +147,7 @@ class SyncChaptersWithSource(
         // Sources MUST return the chapters from most to less recent, which the fetch dates rely on.
         val arrivals = chapterArrivals(
             added = newChapters.map { ArrivingChapter(it.chapterNumber, it.read, it.bookmark, it.dateUpload) },
-            stored = dbChapters.map { StoredChapter(it.chapterNumber, it.read) },
+            stored = dbChapters.map { StoredChapter(sourceNumbers[it.url] ?: it.chapterNumber, it.read) },
             removed = removedChapters.map { StoredChapter(it.chapterNumber, it.read, it.bookmark, it.dateFetch) },
             markDuplicateAsRead = markDuplicateAsRead,
             now = nowInstant,

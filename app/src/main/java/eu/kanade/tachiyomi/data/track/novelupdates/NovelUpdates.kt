@@ -22,7 +22,6 @@ import reikai.domain.track.highestStillRead
 import reikai.domain.track.site.OwnedSites
 import reikai.util.runCatchingCancellable
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.chapter.service.ChapterRecognition
 import uy.kohesive.injekt.injectLazy
 import java.io.IOException
 import tachiyomi.domain.track.model.Track as DomainTrack
@@ -285,7 +284,7 @@ class NovelUpdates(id: Long) :
     ) {
         runCatchingCancellable {
             val releaseId = pickRelease(number, readIds, { releases.matching(novelId, it) }) {
-                ChapterRecognition.parseChapterNumber(track.title, it)
+                releaseNumberOf(track.title, it)
             } ?: return
             api.bookmarkRelease(novelId, releaseId)
         }.onFailure { logcat(LogPriority.WARN, it) { "Could not mark a NovelUpdates release" } }

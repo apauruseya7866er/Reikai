@@ -6,15 +6,15 @@ import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.online.HttpSource
+import reikai.domain.chapter.recognizeChapterNumbers
 import tachiyomi.data.chapter.ChapterSanitizer
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.manga.model.Manga
 
 /**
  * A source's chapter list as a sync stores it: one row per url, before and after the source's prepare
- * hook, names without the series title in front, numbers recognized. Anything counting a source's list
- * outside a sync counts this, so its numbers match what a commit stores.
+ * hook, names without the series title in front, numbers recognized from the whole list. Anything
+ * counting a source's list outside a sync counts this, so its numbers match what a commit stores.
  */
 fun List<SChapter>.toSourceChapters(manga: Manga, source: Source): List<Chapter> =
     distinctBy { it.url }
@@ -27,7 +27,11 @@ fun List<SChapter>.toSourceChapters(manga: Manga, source: Source): List<Chapter>
         }
         // The hook may rewrite a url onto another chapter's; the first one listed keeps it.
         .distinctBy { it.url }
-        .map { it.copy(chapterNumber = ChapterRecognition.parseChapterNumber(manga.title, it.name, it.chapterNumber)) }
+        .let { chapters ->
+            recognizeChapterNumbers(manga.title, chapters, { it.name }, { it.chapterNumber }) { chapter, number ->
+                chapter.copy(chapterNumber = number)
+            }
+        }
 
 private fun Chapter.prepared(manga: Manga, source: Source): Chapter {
     if (source !is HttpSource) return this

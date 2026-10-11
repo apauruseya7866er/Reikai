@@ -32,8 +32,9 @@ data class Arrival(
  * Upstream `SyncChaptersWithSource`'s rules for the chapters a sync adds, which the manga and novel syncs
  * both call. Fetch dates count down from [now] in source order, and an undated chapter takes the latest
  * date listed before it, or [now]. With [markDuplicateAsRead], a chapter numbered like a stored read one
- * arrives read. One numbered like a [removed] one takes its state and its earliest fetch date, so a
- * re-listed chapter is not new. An unnumbered chapter (below zero) matches nothing.
+ * arrives read, so [stored] carries the numbers this sync leaves them with, not the ones they had. One
+ * numbered like a [removed] one takes its state and its earliest fetch date, so a re-listed chapter is
+ * not new. An unnumbered chapter (below zero) matches nothing.
  */
 fun chapterArrivals(
     added: List<ArrivingChapter>,

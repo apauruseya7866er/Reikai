@@ -5,6 +5,7 @@ import reikai.domain.chapter.ChapterNumberOverrideRepository
 import reikai.domain.chapter.StoredChapter
 import reikai.domain.chapter.appliedTo
 import reikai.domain.chapter.chapterArrivals
+import reikai.domain.chapter.recognizeChapterNumbers
 import reikai.domain.library.ContentType
 import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.NovelRepository
@@ -15,7 +16,6 @@ import reikai.novel.download.NovelDownloadManager
 import reikai.novel.host.ChapterItem
 import tachiyomi.data.chapter.ChapterSanitizer
 import tachiyomi.domain.chapter.model.NoChaptersException
-import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.library.service.LibraryPreferences
 import kotlin.time.Clock
 
@@ -62,6 +62,7 @@ suspend fun syncChaptersWithNovelSource(
     // A novel stores a url once (51.sqm merged the copies earlier page-scoped syncs left)
     val dbByUrl = dbChapters.associateBy { it.url }
     val sourceUrls = sourceChapters.mapTo(mutableSetOf()) { it.url }
+    val sourceNumbers = sourceChapters.associate { it.url to it.chapterNumber }
     val toDelete = if (page == null) dbChapters.filterNot { it.url in sourceUrls } else emptyList()
 
     val managedUrls = mutableSetOf<String>()
@@ -99,7 +100,7 @@ suspend fun syncChaptersWithNovelSource(
     // Sources list newest first, so the kernel counts fetch dates down from now in that order.
     val arrivals = chapterArrivals(
         added = toAdd.map { ArrivingChapter(it.chapterNumber, it.read, it.bookmark, it.dateUpload) },
-        stored = dbChapters.map { it.toStoredChapter() },
+        stored = dbChapters.map { it.toStoredChapter(sourceNumbers[it.url] ?: it.chapterNumber) },
         removed = toDelete.map { it.toStoredChapter() },
         markDuplicateAsRead = markDuplicateAsRead,
         now = now,
@@ -134,18 +135,26 @@ suspend fun syncChaptersWithNovelSource(
 
 /**
  * A plugin's chapter list as a sync stores it: one row per path, names without the novel's title in
- * front, numbers recognized. Anything counting a plugin's list outside a sync counts this, so its
- * numbers match what a commit stores. [novelId] may be -1 for rows that are only counted.
+ * front, numbers recognized from the whole list. Anything counting a plugin's list outside a sync
+ * counts this, so its numbers match what a commit stores. [novelId] may be -1 for rows that are only
+ * counted.
  */
-fun List<ChapterItem>.toSourceChapters(novelId: Long, novelTitle: String, page: String? = null): List<NovelChapter> =
-    distinctBy { it.path }.mapIndexed { i, item ->
+fun List<ChapterItem>.toSourceChapters(novelId: Long, novelTitle: String, page: String? = null): List<NovelChapter> {
+    val drafts = distinctBy { it.path }.mapIndexed { i, item ->
         val draft = item.toNovelChapter(novelId, sourceOrder = i.toLong())
-        val name = with(ChapterSanitizer) { draft.name.sanitize(novelTitle) }
-        // Recognize a number from the name only when the plugin gave none (lands as 0.0); a
-        // plugin-supplied positive number is trusted as-is.
-        val number = ChapterRecognition.parseChapterNumber(novelTitle, name, draft.chapterNumber.takeIf { it > 0.0 })
         // A paged sync stamps the transport index; otherwise keep the plugin's own page label.
-        draft.copy(name = name, chapterNumber = number, page = page ?: draft.page)
+        draft.copy(name = with(ChapterSanitizer) { draft.name.sanitize(novelTitle) }, page = page ?: draft.page)
     }
+    // Plugins list oldest first and the recognizer reads newest first. A plugin that gives no number lands
+    // as 0.0, so only a positive one is the plugin's; a paged sync numbers each page on its own.
+    return recognizeChapterNumbers(
+        novelTitle,
+        drafts.asReversed(),
+        nameOf = { it.name },
+        numberOf = { it.chapterNumber.takeIf { number -> number > 0.0 } ?: -1.0 },
+        withNumber = { chapter, number -> chapter.copy(chapterNumber = number) },
+    ).asReversed()
+}
 
-private fun NovelChapter.toStoredChapter() = StoredChapter(chapterNumber, read, bookmark, dateFetch)
+private fun NovelChapter.toStoredChapter(number: Double = chapterNumber) =
+    StoredChapter(number, read, bookmark, dateFetch)
