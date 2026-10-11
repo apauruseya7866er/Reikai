@@ -10,8 +10,6 @@ import eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.PreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import eu.kanade.tachiyomi.network.NetworkPreferences
-import eu.kanade.tachiyomi.network.interceptor.FLARESOLVERR_URL_KEY
-import eu.kanade.tachiyomi.network.interceptor.carryFlareSolverrUserInfo
 import reikai.domain.category.DEAD_LAST_USED_NOVEL_CATEGORY_KEY
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.novel.DEAD_PLUGINS_NEED_REVALIDATION_KEY
@@ -43,12 +41,6 @@ class AppPreferenceCarry(
 
     /** Carries the keys it owns, hands the rest to [write], then applies what must follow the write. */
     suspend fun restore(toRestore: List<BackupPreference>, write: suspend (List<BackupPreference>) -> Unit) {
-        // An address carrying user:password@ never authenticated anything and sits in the backup in clear
-        // text. Carried first because a move to another server deletes the saved login, which would
-        // otherwise take any credential key the backup lists with it.
-        toRestore.firstOrNull { it.key == FLARESOLVERR_URL_KEY }?.let { (_, value) ->
-            (value as? StringPreferenceValue)?.let { networkPreferences.carryFlareSolverrUserInfo(it.value) }
-        }
         write(toRestore.filterNot { (key, value) -> carry(key, value) })
         // The retired read-aloud switch still owes the bar its button, and the bar may restore after it.
         val readAloudWasOn = toRestore.any { (key, value) ->
@@ -78,6 +70,12 @@ class AppPreferenceCarry(
             // A backup may be someone else's: it never picks a silent installer for later extension
             // installs, nor lets a chapter's own scripts run.
             basePreferences.extensionInstaller.key(), novelPreferences.readerKeepEmbeddedJs().key() -> Unit
+            // Nor sends the sites' cookies to a solver: the device keeps its own FlareSolverr setup whole.
+            networkPreferences.enableFlareSolverr.key(),
+            networkPreferences.flareSolverrUrl.key(),
+            networkPreferences.flareSolverrUsername.key(),
+            networkPreferences.flareSolverrPassword.key(),
+            -> Unit
             // Nor installs a plugin, whose script the QuickJS host would run on the next load: the restore
             // screen lists the backup's plugins for the user to install, as it lists extension apps.
             novelPreferences.installedPluginUrls().key(), novelPreferences.installedPluginMetadata().key() -> Unit
@@ -89,7 +87,6 @@ class AppPreferenceCarry(
 
     private companion object {
         val SKIPPED_KEYS = setOf(
-            FLARESOLVERR_URL_KEY, // carried ahead of the write
             DEAD_READER_TTS_ENABLED_KEY, // carried after it
             // The retired merge prefs hold ids from the device the backup came from; the restorers rebuild
             // the groups from the backup's own {url, source} refs.

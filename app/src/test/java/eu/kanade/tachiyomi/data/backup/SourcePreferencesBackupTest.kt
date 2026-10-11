@@ -25,6 +25,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import mihon.domain.extension.model.ContentWarning
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
+import org.junit.jupiter.params.provider.ValueSource
 import reikai.data.backup.AppPreferenceCarry
 import reikai.domain.novel.DEAD_READER_AUTO_SCROLL_KEY
 import reikai.domain.novel.DEAD_READER_PADDING_KEY
@@ -196,6 +198,23 @@ class SourcePreferencesBackupTest {
         restoreIntoAnExtension(BackupPreference(key, value))
 
         written(store) shouldBe false
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = ["app.reikai_preferences", "source_", "source_12x", "../shared_prefs/x"])
+    fun `a Source settings entry naming no source's settings file opens no file`(key: String) = runTest {
+        mockkStatic("eu.kanade.tachiyomi.source.ConfigurableSourceKt")
+        try {
+            every { sourcePreferences(any<String>()) } returns mockk<SharedPreferences>(relaxed = true)
+
+            restorer.restoreSource(
+                listOf(BackupSourcePreferences(key, listOf(BackupPreference("k", BooleanPreferenceValue(true))))),
+            )
+
+            verify(exactly = 0) { sourcePreferences(any<String>()) }
+        } finally {
+            unmockkStatic("eu.kanade.tachiyomi.source.ConfigurableSourceKt")
+        }
     }
 
     @Test

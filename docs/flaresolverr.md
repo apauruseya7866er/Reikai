@@ -171,7 +171,7 @@ Usually `http://` in front of a proxy that forces https. The dialog that opens w
 The reverse proxy is up and forwarding, and nothing is listening on the other side. A solver that is still starting does this until it has finished starting (typically about twenty seconds), so wait and test again before changing anything.
 
 **You once put the password in the address field.**
-Reikai moves it into the password field on upgrade, and does the same to an address restored from a backup, so nothing is left to do in the app. It cannot reach backups you already made: those hold the address as you typed it, password included. Rotate that password if any of them left your machine.
+Reikai moves it into the password field on upgrade, so nothing is left to do in the app. Restoring a backup never changes your FlareSolverr setup, so set it up again on a new device. It cannot reach backups you already made: those hold the address as you typed it, password included. Rotate that password if any of them left your machine.
 
 **`FlareSolverr returned HTTP 500` (Byparr answers 408 when it runs out of time).**
 The solver was reached but could not get through the page: it timed out, or the challenge beat it.

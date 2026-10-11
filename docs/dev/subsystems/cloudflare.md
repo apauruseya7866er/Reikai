@@ -73,7 +73,7 @@ Settings live at the end of Advanced's Network group (`bypassPreferenceItems`): 
 - `core/common/src/main/kotlin/eu/kanade/tachiyomi/network/NetworkPreferences.kt`: the bypass server and solver preferences.
 - `core/common/src/main/kotlin/eu/kanade/tachiyomi/util/system/ForegroundActivity.kt`: `current`.
 - `app/src/main/java/reikai/presentation/settings/BypassPreferences.kt`: `bypassPreferenceItems`.
-- `app/src/main/java/mihon/core/migration/migrations/FlareSolverrCredentialsMigration.kt` and `app/src/main/java/reikai/data/backup/AppPreferenceCarry.kt`: credentials moved out of the address.
+- `app/src/main/java/mihon/core/migration/migrations/FlareSolverrCredentialsMigration.kt`: credentials moved out of the address. `app/src/main/java/reikai/data/backup/AppPreferenceCarry.kt`: the setup a restore skips.
 - `app/src/main/java/eu/kanade/tachiyomi/data/library/LibraryUpdateWorker.kt`: `startDelayed`, debug only.
 
 ## Invariants and traps
@@ -104,7 +104,8 @@ Settings live at the end of Advanced's Network group (`bypassPreferenceItems`): 
 - **Press cadence is ported from Byparr and Solverr**: a 4-second cooldown and no press while a token is present, which both measured as restarting verification.
 - **`ForegroundActivity` still returns a backgrounded activity.** The windowed path cleared challenges with the app backgrounded where the no-window path cleared none without a foreground service.
 - **The proxy login is basic auth in UTF-8, in two private preferences, added by an interceptor.** UTF-8 matches a proxy configured through a web interface; private keys keep it out of a default backup; the interceptor covers the banner probe, whose 401 would latch the client sessionless.
-- **Credentials typed into the address are refused, and old ones are moved.** The migration and the backup restorer both run `carryFlareSolverrUserInfo`, since a fresh install marks migrations done without running them; a restored address on another origin clears the saved login rather than inheriting it.
+- **Credentials typed into the address are refused, and old ones are moved.** The upgrade migration runs `carryFlareSolverrUserInfo`.
+- **A restore never touches the FlareSolverr setup.** `AppPreferenceCarry` skips the switch, the address and the sign-in, because a backup may be someone else's and the solver it names would receive the sites' cookies.
 - **The debug rows are permanent.** `forceHeadless`, `forceNoWatch` and `startDelayed` reach paths a current device cannot otherwise enter.
 - Open: on a WebView with no isolated world the event listener is injected at page finish, so an `interactiveBegin` posted before that is lost and the solve runs to its deadline. Injecting at document start changes the solver-off path too.
 

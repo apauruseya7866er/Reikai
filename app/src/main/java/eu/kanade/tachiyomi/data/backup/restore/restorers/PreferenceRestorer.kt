@@ -85,6 +85,9 @@ class PreferenceRestorer(
                 )
                 return@forEach
             }
+            // The key names the file opened below, so only the source_<id> form preferenceKey() writes is
+            // let through: any other name, the app's own settings file included, would be written as is.
+            if (it.sourceKey.removePrefix("source_").toLongOrNull() == null) return@forEach
             // RK <--
             val sourcePrefs = AndroidPreferenceStore(sourcePreferences(it.sourceKey))
             restorePreferences(it.prefs, sourcePrefs)

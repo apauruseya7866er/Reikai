@@ -126,95 +126,36 @@ class PreferenceRestorerTest {
     private suspend fun restoreString(key: String, value: String) =
         restorer.restoreApp(listOf(BackupPreference(key, StringPreferenceValue(value))), backupCategories = null)
 
-    @Test
-    @DisplayName("a restored bypass address does not keep the password that was buried in it")
-    fun restoredAddressIsCleaned() = runTest {
-        restoreString(FLARESOLVERR_URL_KEY, "https://user:secret@solverr.example.com")
-
-        networkPreferences.flareSolverrUrl.get() shouldBe "https://solverr.example.com"
+    private fun savedSetup() = with(networkPreferences) {
+        enableFlareSolverr.set(true)
+        flareSolverrUrl.set("https://mine.example.com")
+        flareSolverrUsername.set("me")
+        flareSolverrPassword.set("pw")
     }
 
-    @Test
-    @DisplayName("credentials buried in a restored address reach the fields that use them")
-    fun restoredAddressCredentialsAreKept() = runTest {
-        restoreString(FLARESOLVERR_URL_KEY, "https://user:secret@solverr.example.com")
-
-        networkPreferences.flareSolverrUsername.get() shouldBe "user"
-        networkPreferences.flareSolverrPassword.get() shouldBe "secret"
+    private fun setup() = with(networkPreferences) {
+        listOf(enableFlareSolverr.get(), flareSolverrUrl.get(), flareSolverrUsername.get(), flareSolverrPassword.get())
     }
 
+    /** A backup may be someone else's, and the solver it names would receive the sites' cookies. */
     @Test
-    @DisplayName("an ordinary bypass address is restored unchanged")
-    fun restoredPlainAddressIsUntouched() = runTest {
-        restoreString(FLARESOLVERR_URL_KEY, "http://192.168.1.10:8191")
-
-        networkPreferences.flareSolverrUrl.get() shouldBe "http://192.168.1.10:8191"
-        networkPreferences.flareSolverrUsername.get() shouldBe ""
-    }
-
-    private fun savedLogin(url: String, username: String, password: String) = with(networkPreferences) {
-        flareSolverrUrl.set(url)
-        flareSolverrUsername.set(username)
-        flareSolverrPassword.set(password)
-    }
-
-    private fun login() = networkPreferences.flareSolverrUsername.get() to networkPreferences.flareSolverrPassword.get()
-
-    @Test
-    @DisplayName("a restored address for another server does not take the saved login with it")
-    fun restoredAddressForAnotherServerDropsTheLogin() = runTest {
-        savedLogin("https://mine.example.com", "me", "pw")
-
-        restoreString(FLARESOLVERR_URL_KEY, "https://solverr.example.net")
-
-        login() shouldBe ("" to "")
-    }
-
-    @Test
-    @DisplayName("a restored address for the same server keeps the saved login")
-    fun restoredAddressForTheSameServerKeepsTheLogin() = runTest {
-        savedLogin("https://mine.example.com", "me", "pw")
-
-        restoreString(FLARESOLVERR_URL_KEY, "https://mine.example.com/")
-
-        login() shouldBe ("me" to "pw")
-    }
-
-    @Test
-    @DisplayName("a saved login wins as a pair over one buried in the restored address")
-    fun savedLoginWinsAsAPair() = runTest {
-        savedLogin("https://mine.example.com", "alice", "")
-
-        restoreString(FLARESOLVERR_URL_KEY, "https://bob:secret@mine.example.com")
-
-        login() shouldBe ("alice" to "")
-    }
-
-    @Test
-    @DisplayName("a restored login survives its address arriving after it in the backup")
-    fun restoredLoginSurvivesKeyOrder() = runTest {
-        savedLogin("https://a.example", "me", "pw")
+    @DisplayName("a restore leaves the device's FlareSolverr setup as it was")
+    fun restoreLeavesTheFlareSolverrSetup() = runTest {
+        savedSetup()
 
         restorer.restoreApp(
-            listOf(
-                BackupPreference(networkPreferences.flareSolverrPassword.key(), StringPreferenceValue("secret")),
-                BackupPreference(FLARESOLVERR_URL_KEY, StringPreferenceValue("https://b.example")),
-                BackupPreference(networkPreferences.flareSolverrUsername.key(), StringPreferenceValue("user")),
-            ),
+            with(networkPreferences) {
+                listOf(
+                    BackupPreference(enableFlareSolverr.key(), BooleanPreferenceValue(false)),
+                    BackupPreference(FLARESOLVERR_URL_KEY, StringPreferenceValue("https://user:pw@elsewhere.example")),
+                    BackupPreference(flareSolverrUsername.key(), StringPreferenceValue("them")),
+                    BackupPreference(flareSolverrPassword.key(), StringPreferenceValue("theirs")),
+                )
+            },
             backupCategories = null,
         )
 
-        login() shouldBe ("user" to "secret")
-    }
-
-    @Test
-    @DisplayName("a restored address the settings field would refuse is not stored")
-    fun restoredUnparseableAddressIsNotStored() = runTest {
-        savedLogin("https://mine.example.com", "me", "pw")
-
-        restoreString(FLARESOLVERR_URL_KEY, "192.168.1.5:8191")
-
-        networkPreferences.flareSolverrUrl.get() shouldBe "https://mine.example.com"
+        setup() shouldBe listOf(true, "https://mine.example.com", "me", "pw")
     }
 
     @Test
