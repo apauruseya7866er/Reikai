@@ -13,10 +13,9 @@ import eu.kanade.tachiyomi.data.backup.models.BackupCustomNovelInfo
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupNovel
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelSource
-import eu.kanade.tachiyomi.data.backup.models.LegacyCustomInfo
 import eu.kanade.tachiyomi.data.backup.models.customInfo
 import eu.kanade.tachiyomi.data.backup.models.toBackupCustomInfo
-import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaRestorer
+import eu.kanade.tachiyomi.data.backup.restore.RestoreOptions
 import eu.kanade.tachiyomi.data.backup.restore.restorers.NovelRestorer
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -255,13 +254,17 @@ fun BackupCustomInfo.toManga(id: Long) =
 fun BackupCustomInfo.toNovel(id: Long) =
     CustomNovelInfo(id, title, author, artist, description, genre, status, thumbnailUrl)
 
+/** Entries only, so the restore runs no category or settings pass these do not wire. */
+private val ENTRIES_ONLY = RestoreOptions(libraryEntries = true, categories = false, appSettings = false)
+
 /** One type's restore of a single entry already on the device under [BackupCustomInfoConformanceTest.LOCAL_ID]. */
 interface CustomInfoRestorer {
 
     /**
      * Restores the entry with [onEntry] on its own fields and [inRootList] in an older backup's root list,
-     * decoded from real bytes, and returns what was written as (local id, custom info). An entry not
-     * [listed] in the backup is only on the device, as a 0.3.x novel out of the library was.
+     * through the real BackupRestorer over the encoded file, and returns what was written as (local id,
+     * custom info). An entry not [listed] in the backup is only on the device, as a 0.3.x novel out of the
+     * library was.
      */
     suspend fun restore(
         onEntry: BackupCustomInfo? = null,
@@ -279,21 +282,14 @@ class MangaCustomInfoRestorer : CustomInfoRestorer {
         inRootList: BackupCustomInfo?,
         listed: Boolean,
     ): List<Pair<Long, BackupCustomInfo>> {
-        val backup = ProtoBuf.decodeFromByteArray(
-            Backup.serializer(),
-            ProtoBuf.encodeToByteArray(
-                Backup.serializer(),
-                Backup(
-                    backupManga = listOf(
-                        BackupManga(source = 1L, url = "u").apply {
-                            customInfo = onEntry
-                        },
-                    ).filter { listed },
-                    backupCustomMangaInfo = listOfNotNull(inRootList?.let { it.toRootEntry() }),
-                ),
-            ),
+        val backup = Backup(
+            backupManga = listOf(
+                BackupManga(source = 1L, url = "u").apply {
+                    customInfo = onEntry
+                },
+            ).filter { listed },
+            backupCustomMangaInfo = listOfNotNull(inRootList?.let { it.toRootEntry() }),
         )
-        val legacy = LegacyCustomInfo(backup.backupCustomMangaInfo, emptyList())
 
         val written = mutableListOf<Pair<Long, BackupCustomInfo>>()
         val repository = mockk<CustomMangaInfoRepository> {
@@ -304,14 +300,7 @@ class MangaCustomInfoRestorer : CustomInfoRestorer {
         }
         MangaRestoreHarness.create().use { harness ->
             harness.insertBare(BackupCustomInfoConformanceTest.LOCAL_ID, url = "u", source = 1L)
-            val restorer = harness.restorer(customInfo = repository)
-            backup.backupManga.forEach {
-                restorer.restore(
-                    listOf(legacy.decodeManga(ProtoBuf, ProtoBuf.encodeToByteArray(BackupManga.serializer(), it))),
-                    emptyList(),
-                )
-            }
-            legacy.unclaimedManga().forEach { (ref, info) -> restorer.restoreCustomInfo(ref.first, ref.second, info) }
+            restoreEncoded(backup, ENTRIES_ONLY, mangaRestorer = harness.restorer(customInfo = repository))
         }
         return written
     }
@@ -329,22 +318,15 @@ class NovelCustomInfoRestorer : CustomInfoRestorer {
         inRootList: BackupCustomInfo?,
         listed: Boolean,
     ): List<Pair<Long, BackupCustomInfo>> {
-        val backup = ProtoBuf.decodeFromByteArray(
-            Backup.serializer(),
-            ProtoBuf.encodeToByteArray(
-                Backup.serializer(),
-                Backup(
-                    backupManga = emptyList(),
-                    backupNovels = listOf(
-                        BackupNovel(source = "s", url = "u").apply {
-                            customInfo = onEntry
-                        },
-                    ).filter { listed },
-                    backupCustomNovelInfo = listOfNotNull(inRootList?.let { it.toRootEntry() }),
-                ),
-            ),
+        val backup = Backup(
+            backupManga = emptyList(),
+            backupNovels = listOf(
+                BackupNovel(source = "s", url = "u").apply {
+                    customInfo = onEntry
+                },
+            ).filter { listed },
+            backupCustomNovelInfo = listOfNotNull(inRootList?.let { it.toRootEntry() }),
         )
-        val legacy = LegacyCustomInfo(emptyList(), backup.backupCustomNovelInfo)
 
         val written = mutableListOf<Pair<Long, BackupCustomInfo>>()
         val repository = mockk<CustomNovelInfoRepository> {
@@ -369,13 +351,7 @@ class NovelCustomInfoRestorer : CustomInfoRestorer {
             novelHistoryRepository = mockk(relaxed = true),
             chapterNumberOverrides = NoChapterNumberOverrides,
         )
-        backup.backupNovels.forEach {
-            restorer.restore(
-                legacy.decodeNovel(ProtoBuf, ProtoBuf.encodeToByteArray(BackupNovel.serializer(), it)),
-                emptyList(),
-            )
-        }
-        legacy.unclaimedNovels().forEach { (ref, info) -> restorer.restoreCustomInfo(ref.first, ref.second, info) }
+        restoreEncoded(backup, ENTRIES_ONLY, novelRestorer = restorer)
         return written
     }
 
