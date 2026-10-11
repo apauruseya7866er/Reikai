@@ -124,6 +124,27 @@ class ClearDatabaseViewModelTest {
     }
 
     @Test
+    fun `a tap on a manga source selects it`() = runTest {
+        val source = Source(id = 1L, lang = "en", name = "Site", supportsLatest = false, isStub = false)
+        val model = readyModel(manga = listOf(SourceWithCount(source, 2L)))
+
+        model.toggleSelection(source)
+        model.viewModelScope.cancel()
+
+        (model.state.value as ClearDatabaseViewModel.State.Ready).selection shouldBe listOf(1L)
+    }
+
+    @Test
+    fun `a tap on a novel source selects it`() = runTest {
+        val model = readyModel(novels = listOf("p1" to 2L))
+
+        model.toggleNovelSelection("p1")
+        model.viewModelScope.cancel()
+
+        (model.state.value as ClearDatabaseViewModel.State.Ready).novelSelection shouldBe listOf("p1")
+    }
+
+    @Test
     fun `a second tap on a manga source deselects it`() = runTest {
         val source = Source(id = 1L, lang = "en", name = "Site", supportsLatest = false, isStub = false)
         val model = readyModel(manga = listOf(SourceWithCount(source, 2L)))
