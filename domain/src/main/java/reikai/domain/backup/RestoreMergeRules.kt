@@ -22,6 +22,14 @@ fun restoredFavoriteAt(device: Instant?, backup: Instant?): Instant? = if (devic
     listOfNotNull(device, backup).filter { it > Manga.UNKNOWN_FAVORITE_AT }.minOrNull() ?: Manga.UNKNOWN_FAVORITE_AT
 }
 
+/**
+ * The next update a restore stores: the one the entry came with (the device's, else the backup's) while it
+ * is still ahead of [window], since it was worked out from the chapters that copy came from, else the
+ * [predicted] one (mihon 292381662). An older backup carries none, so it restores the prediction.
+ */
+fun restoredNextUpdate(carried: Instant?, predicted: Instant?, window: ClosedRange<Instant>): Instant? =
+    carried?.takeIf { it >= window.start } ?: predicted
+
 /** A chapter's user state as a restore merges it; [progress] is the type's own resume position. */
 data class RestoredChapterState(val read: Boolean, val bookmark: Boolean, val progress: Long)
 

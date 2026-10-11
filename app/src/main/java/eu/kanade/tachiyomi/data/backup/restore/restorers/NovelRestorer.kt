@@ -15,8 +15,10 @@ import eu.kanade.tachiyomi.data.backup.models.BackupNovelMergeGroup
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelSourceRef
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelTracking
 import eu.kanade.tachiyomi.data.backup.models.customInfo
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import mihon.core.common.extensions.toInstantOrNull
-import reikai.data.novel.updateNovelFetchInterval
+import reikai.data.novel.novelFetchInterval
 import reikai.domain.backup.RestoredChapterHistory
 import reikai.domain.backup.RestoredChapterState
 import reikai.domain.backup.backupChapterReadAhead
@@ -25,11 +27,13 @@ import reikai.domain.backup.foldBackup
 import reikai.domain.backup.foldChapterCopies
 import reikai.domain.backup.foldHistoryCopies
 import reikai.domain.backup.restoredFavoriteAt
+import reikai.domain.backup.restoredNextUpdate
 import reikai.domain.category.CategoryContentType
 import reikai.domain.category.byNamePreferring
 import reikai.domain.chapter.ChapterNumberOverrideRepository
 import reikai.domain.chapter.backedUpOverrides
 import reikai.domain.library.ContentType
+import reikai.domain.library.ReleaseInterval
 import reikai.domain.merge.PrefEraGrouping
 import reikai.domain.merge.RestoreMergeGroups
 import reikai.domain.novel.NovelChapterRepository
@@ -42,6 +46,7 @@ import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import tachiyomi.domain.category.model.NewCategory
 import tachiyomi.domain.category.repository.CategoryRepository
+import kotlin.time.Clock
 
 @Inject
 class NovelRestorer(
@@ -54,6 +59,10 @@ class NovelRestorer(
     private val novelHistoryRepository: NovelHistoryRepository,
     private val chapterNumberOverrides: ChapterNumberOverrideRepository,
 ) {
+
+    private val timeZone = TimeZone.currentSystemDefault()
+    private val now = Clock.System.now().toLocalDateTime(timeZone)
+    private val currentFetchWindow = ReleaseInterval.window(now.date, timeZone)
 
     /** Create any novel categories the backup has that the device doesn't, matched by name. */
     suspend fun restoreCategories(backupCategories: List<BackupNovelCategory>) {
@@ -72,14 +81,14 @@ class NovelRestorer(
         val dbNovel = novelRepository.getByUrlAndSource(backupNovel.url, backupNovel.source)
         val novel = backupNovel.toNovelImpl()
 
-        val novelId = if (dbNovel == null) {
-            checkNotNull(novelRepository.insert(novel)) { "Failed to insert novel ${novel.url}" }
+        val restored = if (dbNovel == null) {
+            novel.copy(id = checkNotNull(novelRepository.insert(novel)) { "Failed to insert novel ${novel.url}" })
         } else {
-            check(novelRepository.update(mergeNovel(novel, dbNovel))) {
-                "Failed to update novel ${novel.url}"
+            mergeNovel(novel, dbNovel).also {
+                check(novelRepository.update(it)) { "Failed to update novel ${novel.url}" }
             }
-            dbNovel.id
         }
+        val novelId = restored.id
 
         val chapters = restoreChapters(novelId, backupNovel.chapters)
         chapterNumberOverrides.restore(
@@ -87,8 +96,13 @@ class NovelRestorer(
             novelId,
             backedUpOverrides(backupNovel.chapters, { it.url }, { it.chapterNumber }, { it.sourceChapterNumber }),
         )
-        // Predicted from the restored chapters rather than carried in the backup, as manga's restore does.
-        novelRepository.getById(novelId)?.let { updateNovelFetchInterval(it, { chapters }, novelRepository) }
+        // Predicted from the restored chapters, keeping a next update still ahead, as manga's restore does.
+        novelRepository.getById(novelId)?.let { stored ->
+            val update = novelFetchInterval(stored, { chapters }, currentFetchWindow, timeZone, now).apply {
+                nextUpdate = restoredNextUpdate(restored.nextUpdate, nextUpdate, currentFetchWindow)
+            }
+            novelRepository.update(update)
+        }
         restoreCategoryMembership(novelId, backupNovel.categories, backupCategories)
         restoreTracks(novelId, backupNovel.tracking)
         restoreHistory(chapters, backupNovel.history)
@@ -119,6 +133,7 @@ class NovelRestorer(
             thumbnailUrl = details.thumbnailUrl,
             updateStrategy = details.updateStrategy,
             initialized = dbNovel.initialized || novel.initialized,
+            nextUpdate = dbNovel.nextUpdate ?: novel.nextUpdate,
         )
     }
 

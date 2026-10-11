@@ -48,6 +48,7 @@ class BackupManga(
     @ProtoNumber(110) var notes: String = "",
     @ProtoNumber(111) var initialized: Boolean = false,
     @ProtoNumber(112) var memo: ByteArray = JsonObjectEmptyBytes,
+    @ProtoNumber(113) var nextUpdate: Long = 0,
     // RK: captured adult/EXH gallery metadata (700-range stays clear of Mihon's numbers).
     @ProtoNumber(700) var searchMetadata: BackupSearchMetadata? = null,
     // RK --> the user's custom info, on Komikku's and Yōkai's numbers (see BackupCustomInfoFields)
@@ -86,6 +87,7 @@ class BackupManga(
             notes = this@BackupManga.notes,
             initialized = this@BackupManga.initialized,
             memo = this@BackupManga.memo.toJsonObject(),
+            nextUpdate = this@BackupManga.nextUpdate.toInstantOrNull(),
         )
     }
 }

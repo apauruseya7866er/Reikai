@@ -52,13 +52,20 @@ class BackupDatesConformanceTest {
         val startDate: Instant?,
         val finishDate: Instant?,
         val readAt: Instant?,
+        val nextUpdate: Instant?,
         val readAtOnWire: Long? = null,
     )
 
     enum class Type {
         MANGA {
             override suspend fun backUp(dates: Dates): ByteArray {
-                val manga = Manga.create().copy(id = ID, source = 1L, url = "/m", favoriteAt = dates.favoriteAt)
+                val manga = Manga.create().copy(
+                    id = ID,
+                    source = 1L,
+                    url = "/m",
+                    favoriteAt = dates.favoriteAt,
+                    nextUpdate = dates.nextUpdate,
+                )
                 val chapter = Chapter.create().copy(
                     id = CHAPTER_ID,
                     mangaId = ID,
@@ -105,13 +112,20 @@ class BackupDatesConformanceTest {
                     startDate = track.startDate,
                     finishDate = track.finishDate,
                     readAt = backup.history.single().getHistoryImpl().readAt,
+                    nextUpdate = backup.getMangaImpl().nextUpdate,
                     readAtOnWire = backup.history.single().lastRead,
                 )
             }
         },
         NOVEL {
             override suspend fun backUp(dates: Dates): ByteArray {
-                val novel = Novel.create().copy(id = ID, source = "s", url = "/n", favoriteAt = dates.favoriteAt)
+                val novel = Novel.create().copy(
+                    id = ID,
+                    source = "s",
+                    url = "/n",
+                    favoriteAt = dates.favoriteAt,
+                    nextUpdate = dates.nextUpdate,
+                )
                 val chapter = NovelChapter(
                     id = CHAPTER_ID, novelId = ID, url = CHAPTER_URL, name = "c", read = false, bookmark = false,
                     lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L, dateFetch = dates.dateFetch,
@@ -155,6 +169,7 @@ class BackupDatesConformanceTest {
                     finishDate = track.finishDate,
                     // NovelRestorer reads history's time inside its merge, by this same call
                     readAt = backup.history.single().lastRead.toInstantOrNull(),
+                    nextUpdate = backup.toNovelImpl().nextUpdate,
                     readAtOnWire = backup.history.single().lastRead,
                 )
             }
@@ -179,6 +194,7 @@ class BackupDatesConformanceTest {
             startDate = Instant.fromEpochMilliseconds(4_000L),
             finishDate = Instant.fromEpochMilliseconds(5_000L),
             readAt = Instant.fromEpochMilliseconds(KNOWN_READ_AT),
+            nextUpdate = Instant.fromEpochMilliseconds(7_000L),
         )
 
         // In the library with no recorded add date, and every other date unknown
@@ -189,6 +205,7 @@ class BackupDatesConformanceTest {
             startDate = null,
             finishDate = null,
             readAt = null,
+            nextUpdate = null,
         )
     }
 }

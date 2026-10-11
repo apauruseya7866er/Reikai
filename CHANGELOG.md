@@ -62,6 +62,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 #### Changed
 
 - **Upgrading to this version merges any manga or novel you have twice from the same source into one, keeping the library copy with your read chapters, history, categories, tracking, custom cover and downloads (partly from Mihon).** Upstream: mihonapp/mihon#3805.
+- **Smart update now expects a manga or novel on the weekdays or the day of the month it usually releases, ignores chapters dated in the future, and checks less often during a hiatus (from Mihon).** Upstream: mihon 292381662.
 - **Manga and novels now share one library sort, filter set and grouping, and on upgrade your novel library takes on the manga library's.** Set any of them under either chip and both follow; per-category sorts are untouched.
 - **Large manga and novel libraries and Statistics load faster (partly from Mihon).** Upstream: mihon f027de8c2, mihon 179bfaca7, mihon 940272f75.
 - **Library search's `src:` now matches a source's name instead of its id; use `srcid:` for the id, and `id=5` finds an entry by its own id, on manga and novels (partly from Mihon).** Upstream: mihonapp/mihon#3554.
@@ -626,6 +627,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Restoring a backup no longer installs extension apps or light-novel plugins: the Restore screen lists the ones the backup had that you still need to install.**
 - **Details you edit yourself now back up in Komikku and Yōkai's format, so they restore in either app and theirs restore here, but Reikai 0.3.2 and older nightly builds restore a new backup without your edits.** Backups from any earlier Reikai still bring them back.
 - **Restoring a backup over a manga or novel you already have now keeps its details unless only the backup ever loaded them, and keeps the earlier date it was added (from Mihon).** Upstream: mihon c67a33f3d.
+- **Backups now keep each manga and novel's next expected update, so a restored series is checked when it was due (from Mihon).** Older backups restore as before. Upstream: mihon 292381662.
 - **Light-novel plugin settings now back up and restore with Source settings instead of App settings.** Backups made before this update still bring them back with App settings.
 
 #### Fixed

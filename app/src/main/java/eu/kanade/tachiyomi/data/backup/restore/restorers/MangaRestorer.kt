@@ -14,6 +14,7 @@ import exh.metadata.sql.models.SearchTag
 import exh.metadata.sql.models.SearchTitle
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import reikai.domain.backup.restoredNextUpdate
 import reikai.domain.category.CategoryContentType
 import reikai.domain.category.byNamePreferring
 import reikai.domain.chapter.backedUpOverrides
@@ -85,8 +86,11 @@ class MangaRestorer(
             )
         }
 
-        restoreRepository.restoreManga(entries) {
-            fetchInterval.withFetchInterval(it, now, timeZone, currentFetchWindow)
+        restoreRepository.restoreManga(entries) { manga ->
+            fetchInterval.withFetchInterval(manga, now, timeZone, currentFetchWindow).apply {
+                // RK: a next update still ahead is kept by the kernel the novel restore calls too
+                nextUpdate = restoredNextUpdate(manga.nextUpdate, nextUpdate, currentFetchWindow)
+            }
         }
     }
 

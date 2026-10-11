@@ -148,6 +148,7 @@ private fun Novel.toBackupNovel() = BackupNovel(
     favorite = this.favorite,
     notes = this.notes,
     viewerFlags = this.viewerFlags,
+    nextUpdate = this.nextUpdate.toEpochMillisOrZero(),
 )
 
 private fun NovelChapter.toBackupNovelChapter(sourceNumber: Double?) = BackupNovelChapter(

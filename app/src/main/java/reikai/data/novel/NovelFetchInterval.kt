@@ -3,6 +3,7 @@ package reikai.data.novel
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import reikai.domain.library.ChapterDates
 import reikai.domain.library.ReleaseInterval
 import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.NovelRepository
@@ -25,18 +26,35 @@ suspend fun updateNovelFetchInterval(
     zone: TimeZone = TimeZone.currentSystemDefault(),
     now: LocalDateTime = Clock.System.now().toLocalDateTime(zone),
 ) {
-    val interval = ReleaseInterval.userOrPredicted(novel.fetchInterval) {
-        val all = chapters()
-        ReleaseInterval.calculate(all.map { it.dateUpload }, all.map { it.dateFetch }, zone)
-    }
+    novelRepository.update(novelFetchInterval(novel, chapters, window, zone, now))
+}
+
+/**
+ * The update [updateNovelFetchInterval] stores: twin of `FetchInterval.withFetchInterval`, pinned by
+ * ReleasePredictionConformanceTest.
+ */
+suspend fun novelFetchInterval(
+    novel: Novel,
+    chapters: suspend () -> List<NovelChapter>,
+    window: ClosedRange<Instant>? = null,
+    zone: TimeZone = TimeZone.currentSystemDefault(),
+    now: LocalDateTime = Clock.System.now().toLocalDateTime(zone),
+): NovelUpdate {
     val currentWindow = ReleaseInterval.windowOrToday(window, now.date, zone)
-    val nextUpdate = ReleaseInterval.nextUpdate(novel.nextUpdate, novel.lastUpdate, interval, now, zone, currentWindow)
-    novelRepository.update(
-        NovelUpdate(novel.id) {
-            this.nextUpdate = nextUpdate
-            fetchInterval = interval
-        },
-    )
+    val (interval, nextUpdate) = ReleaseInterval.predict(
+        novel.fetchInterval,
+        novel.nextUpdate,
+        novel.lastUpdate,
+        now,
+        zone,
+        currentWindow,
+    ) {
+        chapters().let { all -> ChapterDates(all.map { it.dateUpload }, all.map { it.dateFetch }) }
+    }
+    return NovelUpdate(novel.id) {
+        this.nextUpdate = nextUpdate
+        fetchInterval = interval
+    }
 }
 
 /**
