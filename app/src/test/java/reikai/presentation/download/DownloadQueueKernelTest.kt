@@ -21,7 +21,7 @@ class DownloadQueueKernelTest {
         vararg chapters: QueuedChapter,
         active: Set<Long> = emptySet(),
         completed: Map<Long, Int> = emptyMap(),
-    ) = DownloadQueueSnapshot(chapters.toList(), active, completed, emptyMap())
+    ) = DownloadQueueSnapshot(chapters.toList(), active, completed, emptyMap(), restored = true)
 
     private fun card(type: ContentType, series: Long) = EntryDownloadCardUi(
         contentType = type,

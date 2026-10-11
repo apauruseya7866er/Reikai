@@ -27,16 +27,16 @@ class MangaDownloadQueueProvider(
 
     override val isRunning: Flow<Boolean> get() = downloadManager.isDownloaderRunning
 
-    override suspend fun awaitQueueRestored() = downloadManager.awaitQueueRestored()
-
     override val snapshots: Flow<DownloadQueueSnapshot> = combine(
         downloadManager.queueState,
         downloadManager.isDownloaderRunning,
         downloadPreferences.parallelSourceLimit.changes(),
         downloader.completions.counts,
         downloadManager.queuedDownloadChanges().onStart { emit(Unit) },
-    ) { queue, running, sourceLimit, completed, _ ->
-        snapshotOf(queue, if (running) sourceLimit else 0, completed)
+    ) { _, running, sourceLimit, completed, _ ->
+        // The flag before the queue, and the live queue rather than this emission's, which may predate the restore
+        val restored = downloadManager.isQueueRestored
+        snapshotOf(downloadManager.queueState.value, if (running) sourceLimit else 0, completed, restored)
     }
         // A pass over the whole queue per status change and progress sample, as the novel provider does.
         .flowOn(Dispatchers.Default)
@@ -99,7 +99,12 @@ class MangaDownloadQueueProvider(
  * of the first [sourceLimit] sources in queue order. A chapter's DOWNLOADING flag lags that selection
  * and drops out between chapters, so it is not used. [sourceLimit] is 0 while the downloader is stopped.
  */
-private fun snapshotOf(queue: List<Download>, sourceLimit: Int, completed: Map<Long, Int>): DownloadQueueSnapshot {
+private fun snapshotOf(
+    queue: List<Download>,
+    sourceLimit: Int,
+    completed: Map<Long, Int>,
+    restored: Boolean,
+): DownloadQueueSnapshot {
     val active = queue.asSequence()
         .filter { it.status.value <= Download.State.DOWNLOADING.value }
         .groupBy { it.source.id }
@@ -123,5 +128,6 @@ private fun snapshotOf(queue: List<Download>, sourceLimit: Int, completed: Map<L
         activeSeries = active,
         completed = completed,
         labels = queue.associate { it.manga.id to QueuedSeriesLabel(it.manga.title, it.source.name) },
+        restored = restored,
     )
 }

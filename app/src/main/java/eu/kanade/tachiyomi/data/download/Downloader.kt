@@ -142,6 +142,9 @@ class Downloader(
     // RK: suspends until the startup queue restore has finished.
     suspend fun awaitQueueRestored() = queueRestored.await()
 
+    // RK: true only once the restored queue is in queueState, which is updated before this completes
+    val isQueueRestored: Boolean get() = queueRestored.isCompleted
+
     /**
      * Starts the downloader. It doesn't do anything if it's already running or there isn't anything
      * to download.

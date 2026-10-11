@@ -5,7 +5,10 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
@@ -42,7 +45,44 @@ class EntryDownloadQueueViewModelTest {
         viewModel.state.first { it.cards.isNotEmpty() }.cards.map { it.title } shouldBe listOf("Mine")
     }
 
-    private inline fun <reified T : DownloadQueueProvider> provider(type: ContentType, queued: Boolean): T =
+    @Test
+    fun `a card's saved slot is kept while its downloader's snapshot predates the restore`() = runTest {
+        val order = savedOrderAfterPruning(novelsRestored = false)
+
+        order shouldBe "NOVELS-$SERIES"
+    }
+
+    @Test
+    fun `a card's saved slot is dropped once its downloader's restored queue lacks it`() = runTest {
+        val order = savedOrderAfterPruning(novelsRestored = true)
+
+        order shouldBe ""
+    }
+
+    /**
+     * Saves a manga slot and a novel slot with neither queued, the manga queue restored, and waits for the
+     * manga slot, which nothing can bring back, to be pruned. The saved order left then.
+     */
+    private suspend fun TestScope.savedOrderAfterPruning(novelsRestored: Boolean): String {
+        val preferences = ReikaiSourcePreferences(EmittingPreferenceStore())
+        preferences.downloadQueueOrder.set("MANGA-1,NOVELS-$SERIES")
+        val viewModel = main.track(
+            EntryDownloadQueueViewModel(
+                mangaProvider = provider(ContentType.MANGA, queued = false),
+                novelProvider = provider(ContentType.NOVELS, queued = false, restored = novelsRestored),
+                sourcePreferences = preferences,
+                getEntryCustomInfo = mockk { every { subscribeAll() } returns flowOf(emptyMap()) },
+            ),
+        )
+        backgroundScope.launch { viewModel.state.collect {} }
+        return preferences.downloadQueueOrder.changes().first { "MANGA" !in it }
+    }
+
+    private inline fun <reified T : DownloadQueueProvider> provider(
+        type: ContentType,
+        queued: Boolean,
+        restored: Boolean = true,
+    ): T =
         mockk(relaxed = true) {
             every { contentType } returns type
             every { isRunning } returns flowOf(false)
@@ -56,6 +96,7 @@ class EntryDownloadQueueViewModelTest {
                     activeSeries = emptySet(),
                     completed = emptyMap(),
                     labels = if (queued) mapOf(SERIES to QueuedSeriesLabel("Source title", "Source")) else emptyMap(),
+                    restored = restored,
                 ),
             )
         }

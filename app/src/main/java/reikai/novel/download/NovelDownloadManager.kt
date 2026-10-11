@@ -141,8 +141,8 @@ class NovelDownloadManager(
         }
     }
 
-    /** Returns once the launch restore has landed, as Mihon's Downloader.awaitQueueRestored does for manga. */
-    suspend fun awaitQueueRestored() = restoreJob.join()
+    /** True once the launch restore is in [queueState], which it updates before it completes. */
+    val isQueueRestored: Boolean get() = restoreJob.isCompleted
 
     /** How many chapters of [novel] are on disk, from the same cache the reader consults. */
     fun getDownloadCount(novel: Novel): Int = cache.getDownloadCount(novel)

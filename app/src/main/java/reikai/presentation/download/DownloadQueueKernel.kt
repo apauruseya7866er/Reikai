@@ -54,13 +54,15 @@ fun DownloadQueueSnapshot.withCustomInfo(customOf: (Long) -> EntryCustomInfo?): 
  * Everything one downloader reports to the queue screen. [chapters] is in the downloader's own order,
  * which is the order it downloads in. [activeSeries] are the series it is working on now, by that
  * downloader's own rule, and [completed] counts what it finished per series while the series stayed
- * queued.
+ * queued. [restored] is whether [chapters] was read after the downloader loaded the queue it saved before
+ * the app last stopped, decided in the same read so a stale queue never passes for a restored one.
  */
 data class DownloadQueueSnapshot(
     val chapters: List<QueuedChapter>,
     val activeSeries: Set<Long>,
     val completed: Map<Long, Int>,
     val labels: Map<Long, QueuedSeriesLabel>,
+    val restored: Boolean,
 )
 
 /**

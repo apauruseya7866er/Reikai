@@ -61,8 +61,8 @@ class DownloadManager(
     val queueState
         get() = downloader.queueState
 
-    // RK: lets the download queue wait for the startup queue restore before it reads the queue
-    suspend fun awaitQueueRestored() = downloader.awaitQueueRestored()
+    // RK: lets the download queue tell a queue read before the startup restore landed from one read after
+    val isQueueRestored: Boolean get() = downloader.isQueueRestored
 
     val isDownloaderRunning
         get() = DownloadWorker.isRunningFlow(context)

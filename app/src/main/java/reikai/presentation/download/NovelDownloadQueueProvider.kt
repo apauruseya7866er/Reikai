@@ -30,8 +30,6 @@ class NovelDownloadQueueProvider(
 
     override val isRunning: Flow<Boolean> get() = downloadManager.isDownloaderRunning
 
-    override suspend fun awaitQueueRestored() = downloadManager.awaitQueueRestored()
-
     // Labels and chapter names per novel, so the progress-driven emissions don't re-read the database.
     private val labels = ConcurrentHashMap<Long, QueuedSeriesLabel>()
     private val chapterNames = ConcurrentHashMap<Long, Map<Long, String>>()
@@ -40,8 +38,12 @@ class NovelDownloadQueueProvider(
         downloadManager.queueState,
         downloadManager.downloadingNovelId,
         downloadManager.completions.counts,
-    ) { queue, downloadingId, completed -> Triple(queue, downloadingId, completed) }
-        .mapLatest { (queue, downloadingId, completed) ->
+    ) { _, downloadingId, completed ->
+        // The flag before the queue, and the live queue rather than this emission's, which may predate the restore
+        val restored = downloadManager.isQueueRestored
+        QueueRead(downloadManager.queueState.value, downloadingId, completed, restored)
+    }
+        .mapLatest { (queue, downloadingId, completed, restored) ->
             val queued = queue.mapTo(HashSet()) { it.novelId }
             labels.keys.retainAll(queued)
             chapterNames.keys.retainAll(queued)
@@ -62,6 +64,7 @@ class NovelDownloadQueueProvider(
                 activeSeries = setOfNotNull(downloadingId),
                 completed = completed,
                 labels = queued.associateWith { labelOf(it) },
+                restored = restored,
             )
         }
         .flowOn(Dispatchers.Default)
@@ -129,3 +132,10 @@ class NovelDownloadQueueProvider(
 
     private suspend fun chaptersOf(novelId: Long): List<NovelChapter> = chapterRepo.getByNovelId(novelId)
 }
+
+private data class QueueRead(
+    val queue: List<NovelDownload>,
+    val downloadingId: Long?,
+    val completed: Map<Long, Int>,
+    val restored: Boolean,
+)

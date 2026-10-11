@@ -28,6 +28,7 @@ class NovelDownloadQueueProviderTest {
                     MutableStateFlow(listOf(NovelDownload(novelId = 1L, chapterId = 2L, url = "/c")))
                 every { downloadingNovelId } returns MutableStateFlow(null)
                 every { completions } returns SeriesCompletions()
+                every { isQueueRestored } returns true
             },
             novelRepo = mockk { coEvery { getById(1L) } returns Novel.create().copy(id = 1L, source = "gone") },
             chapterRepo = mockk(),

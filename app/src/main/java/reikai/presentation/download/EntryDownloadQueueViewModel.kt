@@ -21,7 +21,6 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import reikai.domain.entry.EntryId
 import reikai.domain.entry.GetEntryCustomInfo
@@ -49,18 +48,6 @@ class EntryDownloadQueueViewModel(
     private val providers: Map<ContentType, DownloadQueueProvider> =
         listOf(mangaProvider, novelProvider).associateBy { it.contentType }
 
-    // The types whose downloader has loaded its saved queue; the saved card order is pruned only for these.
-    private val restoredTypes = MutableStateFlow<Set<ContentType>>(emptySet())
-
-    init {
-        providers.values.forEach { provider ->
-            viewModelScope.launchIO {
-                provider.awaitQueueRestored()
-                restoredTypes.update { it + provider.contentType }
-            }
-        }
-    }
-
     private val snapshots: Flow<Map<ContentType, DownloadQueueSnapshot>> = combine(
         mangaProvider.snapshots,
         novelProvider.snapshots,
@@ -76,11 +63,13 @@ class EntryDownloadQueueViewModel(
     val state: StateFlow<State> = combine(
         snapshots,
         sourcePreferences.downloadQueueOrder.changes(),
-        restoredTypes,
-    ) { snapshotsByType, savedOrder, restored -> Triple(snapshotsByType, savedOrder, restored) }
-        .mapLatest { (snapshotsByType, savedOrder, restored) ->
+    ) { snapshotsByType, savedOrder -> snapshotsByType to savedOrder }
+        .mapLatest { (snapshotsByType, savedOrder) ->
             val cardsByType = snapshotsByType.mapValues { (type, snapshot) -> snapshot.toCards(type) }
             val saved = savedOrder.toKeys()
+            // Pruned only by a snapshot that itself reflects its saved queue, so a cold start cannot pair a
+            // finished restore with the empty queue read before it and drop the slots of cards still loading
+            val restored = snapshotsByType.filterValues { it.restored }.keys
             val kept = prunedOrder(saved, cardsByType, restored)
             if (kept.size != saved.size) sourcePreferences.downloadQueueOrder.set(kept.joinToString(ORDER_SEPARATOR))
             State(arrangeCards(kept, cardsByType).map { it.withChapterName() })
