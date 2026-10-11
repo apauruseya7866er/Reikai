@@ -16,14 +16,14 @@ class KindListingTest {
 
     @ParameterizedTest
     @EnumSource(Extension.Kind::class)
-    fun `an apk whose store failed keeps its statuses while another store lists its kind`(kind: Extension.Kind) {
+    fun `an apk whose store failed is unknown while another store lists its kind`(kind: Extension.Kind) {
         installed(kind, signedBy = KEY_B).kindListing(listOf(listing(kind, STORE_A)), oneFailed, keyed, KEYS) shouldBe
             KindListing.Unknown
     }
 
     @ParameterizedTest
     @EnumSource(Extension.Kind::class)
-    fun `an apk whose store failed keeps its statuses when no store lists its kind`(kind: Extension.Kind) {
+    fun `an apk whose store failed is unknown when no store lists its kind`(kind: Extension.Kind) {
         installed(kind, signedBy = KEY_B).kindListing(emptyList(), oneFailed, keyed, KEYS) shouldBe
             KindListing.Unknown
     }
@@ -82,6 +82,40 @@ class KindListingTest {
             KindListing.Unlisted
     }
 
+    @ParameterizedTest
+    @EnumSource(Extension.Kind::class)
+    fun `an apk whose store failed keeps its update badge`(kind: Extension.Kind) {
+        val apk = installed(kind, signedBy = KEY_B)
+
+        apk.kindListing(emptyList(), oneFailed, keyed, KEYS).hasUpdate(apk, emptyList(), KEYS) shouldBe true
+    }
+
+    @ParameterizedTest
+    @EnumSource(Extension.Kind::class)
+    fun `an apk its answered stores no longer list loses its update badge`(kind: Extension.Kind) {
+        val apk = installed(kind, signedBy = KEY_A)
+
+        apk.kindListing(emptyList(), oneFailed, keyed, KEYS).hasUpdate(apk, emptyList(), KEYS) shouldBe false
+    }
+
+    @ParameterizedTest
+    @EnumSource(Extension.Kind::class)
+    fun `a listed apk keeps no update badge once its store lists nothing newer`(kind: Extension.Kind) {
+        val apk = installed(kind, signedBy = KEY_A)
+        val available = listOf(listing(kind, STORE_A, pkgName = apk.pkgName, versionCode = 1))
+
+        apk.kindListing(available, oneFailed, keyed, KEYS).hasUpdate(apk, available, KEYS) shouldBe false
+    }
+
+    @ParameterizedTest
+    @EnumSource(Extension.Kind::class)
+    fun `a listed apk gains an update badge from a newer listing`(kind: Extension.Kind) {
+        val apk = installed(kind, signedBy = KEY_A).copy(hasUpdate = false)
+        val available = listOf(listing(kind, STORE_A, pkgName = apk.pkgName, versionCode = 2))
+
+        apk.kindListing(available, oneFailed, keyed, KEYS).hasUpdate(apk, available, KEYS) shouldBe true
+    }
+
     private val keyed = listOf(STORE_A, STORE_B)
     private val oneFailed = mapOf(STORE_A.indexUrl to REACHED, STORE_B.indexUrl to FAILED)
 
@@ -98,11 +132,16 @@ class KindListingTest {
         reason = Extension.NotLoaded.Reason.Filtered,
     )
 
-    private fun listing(kind: Extension.Kind, store: ExtensionStore) = Extension.Available(
+    private fun listing(
+        kind: Extension.Kind,
+        store: ExtensionStore,
+        pkgName: String = "pkg.${kind.name}",
+        versionCode: Long = 1,
+    ) = Extension.Available(
         name = "Entry",
-        pkgName = "pkg.${kind.name}",
+        pkgName = pkgName,
         versionName = "1.6.1",
-        versionCode = 1,
+        versionCode = versionCode,
         libVersion = 1.6,
         lang = "en",
         contentWarning = ContentWarning.SAFE,

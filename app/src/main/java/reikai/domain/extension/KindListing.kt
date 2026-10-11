@@ -33,3 +33,14 @@ fun Extension.Installed.kindListing(
     available.isNotEmpty() -> KindListing.Listed
     else -> KindListing.Unlisted
 }
+
+/**
+ * The update flag [apk] carries after the fetch this listing came from: [KindListing.Unknown] keeps the
+ * one it had, so a store outage cannot clear a badge, and [KindListing.Unlisted] has nothing to update to.
+ */
+fun KindListing.hasUpdate(apk: Extension.Installed, available: List<Extension.Available>, storeKeys: Set<String>) =
+    when (this) {
+        KindListing.Unknown -> apk.hasUpdate
+        KindListing.Unlisted -> false
+        KindListing.Listed -> apk.findUpdate(available, storeKeys) != null
+    }

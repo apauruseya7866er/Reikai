@@ -41,6 +41,7 @@ import mihon.domain.extension.repository.ExtensionStoreRepository
 import reikai.domain.extension.KindListing
 import reikai.domain.extension.RepoStatus
 import reikai.domain.extension.hasSigningKey
+import reikai.domain.extension.hasUpdate
 import reikai.domain.extension.kindListing
 import reikai.domain.extension.signingKeys
 import reikai.domain.extension.toRepoStatus
@@ -570,27 +571,29 @@ class ExtensionManager(
         val statuses = storeStatuses.value
         loaded.update { current ->
             current.mapValues { (_, extension) ->
-                when (extension.kindListing(available, statuses, stores, storeKeys)) {
-                    KindListing.Unknown -> extension
-                    KindListing.Unlisted -> extension.copy(hasUpdate = false)
-                    KindListing.Listed -> {
-                        val listing = extension.findListing(available, storeKeys)
-                        extension.copy(
-                            hasUpdate = extension.findUpdate(available, storeKeys) != null,
-                            isObsolete = listing == null,
-                            store = if (stores.isEmpty()) extension.store else extension.pickStore(available),
-                        )
-                    }
+                val kindListing = extension.kindListing(available, statuses, stores, storeKeys)
+                val hasUpdate = kindListing.hasUpdate(extension, available, storeKeys)
+                if (kindListing != KindListing.Listed) {
+                    extension.copy(hasUpdate = hasUpdate)
+                } else {
+                    val listing = extension.findListing(available, storeKeys)
+                    extension.copy(
+                        hasUpdate = hasUpdate,
+                        isObsolete = listing == null,
+                        store = if (stores.isEmpty()) extension.store else extension.pickStore(available),
+                    )
                 }
             }
         }
         notLoaded.update { current ->
             current.mapValues { (_, extension) ->
-                when (extension.kindListing(available, statuses, stores, storeKeys)) {
-                    KindListing.Unknown -> extension
-                    KindListing.Unlisted -> extension.copy(hasUpdate = false)
-                    KindListing.Listed -> extension.copy(
-                        hasUpdate = extension.findUpdate(available, storeKeys) != null,
+                val kindListing = extension.kindListing(available, statuses, stores, storeKeys)
+                val hasUpdate = kindListing.hasUpdate(extension, available, storeKeys)
+                if (kindListing != KindListing.Listed) {
+                    extension.copy(hasUpdate = hasUpdate)
+                } else {
+                    extension.copy(
+                        hasUpdate = hasUpdate,
                         store = if (stores.isEmpty()) extension.store else extension.pickStore(available),
                     )
                 }
