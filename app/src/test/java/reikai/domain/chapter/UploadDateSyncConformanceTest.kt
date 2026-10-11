@@ -29,9 +29,9 @@ import tachiyomi.domain.manga.model.Manga
 import kotlin.time.Instant
 
 /**
- * A source that gives no upload date means it does not know one, on both types: a stored chapter keeps
- * the date it had, and a new chapter is dated by the sync rather than stored undated. Each type's real
- * sync over a real database.
+ * A source that gives no upload date or group means it does not know one, on both types: a stored
+ * chapter keeps the value it had, and a new chapter is dated by the sync rather than stored undated.
+ * Each type's real sync over a real database.
  */
 class UploadDateSyncConformanceTest {
 
@@ -63,6 +63,17 @@ class UploadDateSyncConformanceTest {
 
     @ParameterizedTest
     @EnumSource(Type::class)
+    fun `a source that stops naming a stored chapter's group leaves its group alone`(type: Type) = runTest {
+        type.seed(driver)
+        type.sync(database, name = "Chapter 1", dated = true, scanlator = "Group")
+
+        type.sync(database, name = "Chapter 1 renamed", dated = true, scanlator = null)
+
+        type.storedScanlator(database) shouldBe "Group"
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
     fun `a new chapter the source gives no date is dated by the sync`(type: Type) = runTest {
         type.seed(driver)
 
@@ -84,7 +95,7 @@ class UploadDateSyncConformanceTest {
                 ).await()
             }
 
-            override suspend fun sync(database: Database, name: String, dated: Boolean) {
+            override suspend fun sync(database: Database, name: String, dated: Boolean, scanlator: String?) {
                 val preferences = LibraryPreferences(InMemoryPreferenceStore())
                 SyncChaptersWithSource(
                     downloadManager = mockk(relaxed = true),
@@ -103,6 +114,7 @@ class UploadDateSyncConformanceTest {
                             chapter_number = 1f
                             // The source API writes 0 for a date it does not know
                             date_upload = if (dated) DATED.toEpochMilliseconds() else 0L
+                            this.scanlator = scanlator
                         },
                     ),
                     Manga.create().copy(id = OWNER, title = "T", source = 1),
@@ -114,6 +126,11 @@ class UploadDateSyncConformanceTest {
                 ChapterRepositoryImpl(
                     database,
                 ).getChapterByMangaId(OWNER, applyScanlatorFilter = false).single().dateUpload
+
+            override suspend fun storedScanlator(database: Database) =
+                ChapterRepositoryImpl(
+                    database,
+                ).getChapterByMangaId(OWNER, applyScanlatorFilter = false).single().scanlator
         },
         NOVEL {
             override suspend fun seed(driver: JdbcSqliteDriver) {
@@ -125,7 +142,7 @@ class UploadDateSyncConformanceTest {
                 ).await()
             }
 
-            override suspend fun sync(database: Database, name: String, dated: Boolean) {
+            override suspend fun sync(database: Database, name: String, dated: Boolean, scanlator: String?) {
                 syncChaptersWithNovelSource(
                     listOf(
                         ChapterItem(
@@ -133,6 +150,7 @@ class UploadDateSyncConformanceTest {
                             path = URL,
                             chapterNumber = 1.0,
                             releaseTime = DATED.toString().takeIf { dated },
+                            scanlator = scanlator,
                         ),
                     ),
                     NovelRepositoryImpl(database).getById(OWNER)!!,
@@ -145,15 +163,20 @@ class UploadDateSyncConformanceTest {
 
             override suspend fun storedDate(database: Database) =
                 NovelChapterRepositoryImpl(database).getByNovelId(OWNER).single().dateUpload
+
+            override suspend fun storedScanlator(database: Database) =
+                NovelChapterRepositoryImpl(database).getByNovelId(OWNER).single().scanlator
         },
         ;
 
         abstract suspend fun seed(driver: JdbcSqliteDriver)
 
-        /** Syncs a source listing one chapter at [URL] named [name], dated [DATED] or undated. */
-        abstract suspend fun sync(database: Database, name: String, dated: Boolean)
+        /** Syncs a source listing one chapter at [URL] named [name], dated [DATED] or undated, by [scanlator]. */
+        abstract suspend fun sync(database: Database, name: String, dated: Boolean, scanlator: String? = null)
 
         abstract suspend fun storedDate(database: Database): Instant?
+
+        abstract suspend fun storedScanlator(database: Database): String?
     }
 
     private companion object {
