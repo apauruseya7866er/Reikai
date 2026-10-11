@@ -320,6 +320,9 @@ object SettingsAdvancedScreen : SearchableSettings {
         val mergeManager = remember { graph.mangaMergeManager }
         val novelMergeManager = remember { graph.novelMergeManager }
         val repairNovelDetails = remember { graph.repairNovelDetails }
+        // Their database work runs off the main thread and finishes if the screen is left
+        val appScope = remember { graph.appCoroutineScope }
+        val appContext = context.applicationContext
         // RK <--
 
         return Preference.PreferenceGroup(
@@ -365,9 +368,9 @@ object SettingsAdvancedScreen : SearchableSettings {
                     title = contentTypedCategory(MR.strings.pref_clear_merges, MR.strings.content_type_manga),
                     subtitle = stringResource(MR.strings.pref_clear_merges_summary),
                     onClick = {
-                        scope.launch {
+                        appScope.launch {
                             mergeManager.clearAllMergesIncludingAuto()
-                            context.toast(MR.strings.merges_cleared)
+                            withUIContext { appContext.toast(MR.strings.merges_cleared) }
                         }
                     },
                 ),
@@ -375,9 +378,9 @@ object SettingsAdvancedScreen : SearchableSettings {
                     title = contentTypedCategory(MR.strings.pref_clear_merges, MR.strings.content_type_novels),
                     subtitle = stringResource(MR.strings.pref_clear_merges_summary),
                     onClick = {
-                        scope.launch {
+                        appScope.launch {
                             novelMergeManager.clearAllMergesIncludingAuto()
-                            context.toast(MR.strings.merges_cleared)
+                            withUIContext { appContext.toast(MR.strings.merges_cleared) }
                         }
                     },
                 ),
@@ -387,18 +390,20 @@ object SettingsAdvancedScreen : SearchableSettings {
                     title = stringResource(MR.strings.pref_repair_novel_details),
                     subtitle = stringResource(MR.strings.pref_repair_novel_details_summary),
                     onClick = {
-                        scope.launch {
+                        appScope.launch {
                             val result = repairNovelDetails.await()
-                            if (result.suspects == 0) {
-                                context.toast(MR.strings.novel_details_repair_none)
-                            } else {
-                                context.toast(
-                                    context.stringResource(
-                                        MR.strings.novel_details_repair_done,
-                                        result.repaired,
-                                        result.suspects,
-                                    ),
-                                )
+                            withUIContext {
+                                if (result.suspects == 0) {
+                                    appContext.toast(MR.strings.novel_details_repair_none)
+                                } else {
+                                    appContext.toast(
+                                        appContext.stringResource(
+                                            MR.strings.novel_details_repair_done,
+                                            result.repaired,
+                                            result.suspects,
+                                        ),
+                                    )
+                                }
                             }
                         }
                     },

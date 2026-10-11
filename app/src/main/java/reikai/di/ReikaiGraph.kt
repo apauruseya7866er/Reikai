@@ -12,6 +12,8 @@ import exh.pref.DelegateSourcePreferences
 import exh.source.ExhPreferences
 import exh.uconfig.EHConfigurator
 import exh.ui.login.EhLoginActivity
+import kotlinx.coroutines.CoroutineScope
+import mihon.core.metro.AppCoroutineScope
 import mihon.core.migration.migrations.MergedDuplicateCarryMigration
 import reikai.data.novel.update.NovelUpdateWorker
 import reikai.data.track.TrackerRefreshWorker
@@ -139,6 +141,10 @@ interface ReikaiGraph {
     val getExhFavoriteMangaWithMetadata: GetExhFavoriteMangaWithMetadata
     val toggleIncognito: ToggleIncognito
     val repairNovelDetails: RepairNovelDetails
+
+    // A settings action whose writes must outlive the screen, and stay off the main thread, runs here
+    @AppCoroutineScope
+    val appCoroutineScope: CoroutineScope
 
     // App retries, at each launch, a download folder merge the upgrade's dedupe left unfinished
     val mergedDuplicateCarryMigration: MergedDuplicateCarryMigration
