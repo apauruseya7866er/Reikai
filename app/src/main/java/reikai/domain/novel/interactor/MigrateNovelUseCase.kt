@@ -126,9 +126,11 @@ class MigrateNovelUseCase(
                 ).forEach { novelHistoryRepository.upsertNovelHistory(it) }
             }
 
-            if (NovelMigrationFlag.CATEGORY in flags) {
-                val categoryIds = getNovelCategories.awaitByNovelId(current.id).map { it.id }
-                setNovelCategories.await(target.id, categoryIds)
+            // Read here, written once the target is in the library, see the group write below
+            val categoryIds = if (NovelMigrationFlag.CATEGORY in flags) {
+                getNovelCategories.awaitByNovelId(current.id).map { it.id }
+            } else {
+                null
             }
 
             // Carry tracker links onto the target, re-pointed to its id (matching manga migration). The
@@ -190,9 +192,7 @@ class MigrateNovelUseCase(
                     "Migration favorite swap failed (${current.id} -> ${target.id})"
                 }
             }
-            // Without the category option the target keeps its own categories, which inside a group
-            // would file one member apart from the rest; it takes the group's instead.
-            if (NovelMigrationFlag.CATEGORY !in flags) groupCategories.takeGroupCategories(target.id, novelMergeManager)
+            groupCategories.fileMigrationTarget(target.id, categoryIds, novelMergeManager)
             sourceTracker.migrated(
                 EntryId.Novel(current.id),
                 EntryId.Novel(target.id),

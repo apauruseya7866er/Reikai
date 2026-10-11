@@ -38,9 +38,17 @@ open class GroupCategories(
     suspend fun groupCategoriesFor(id: Long, mergeManager: EntryMergeManager): List<Long>? =
         mergeManager.groupLibraryMembers(id).firstOrNull { it != id }?.let { categoriesOf(it) }
 
-    /** [id], having entered its group without a category write of its own, takes the group's categories. */
-    suspend fun takeGroupCategories(id: Long, mergeManager: EntryMergeManager) {
-        groupCategoriesFor(id, mergeManager)?.let { write(id, it) }
+    /**
+     * A migration target, once in the library: [carried] (the category option's) across its whole group,
+     * which a target already grouped brings along; without the option it takes the group's categories,
+     * so it is never filed apart from the rest.
+     */
+    suspend fun fileMigrationTarget(id: Long, carried: List<Long>?, mergeManager: EntryMergeManager) {
+        if (carried != null) {
+            set(id, carried, mergeManager)
+        } else {
+            groupCategoriesFor(id, mergeManager)?.let { write(id, it) }
+        }
     }
 
     /** Every group of [mergeManager]'s type takes its first library member's categories. */

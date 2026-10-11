@@ -163,9 +163,13 @@ class MigrateMangaUseCase(
             }
 
             // Update categories
-            if (MigrationFlag.CATEGORY in flags) {
-                val categoryIds = getCategories.await(current.id).map { it.id }
-                setMangaCategories.await(target.id, categoryIds)
+            // RK: read here, written once the target is in the library, see the group write below
+            val categoryIds = if (MigrationFlag.CATEGORY in
+                flags
+            ) {
+                getCategories.await(current.id).map { it.id }
+            } else {
+                null
             }
 
             // Update track
@@ -237,9 +241,7 @@ class MigrateMangaUseCase(
                     "Migration favorite swap failed (${current.id} -> ${target.id})"
                 }
             }
-            // Without the category option the target keeps its own categories, which inside a group
-            // would file one member apart from the rest; it takes the group's instead.
-            if (MigrationFlag.CATEGORY !in flags) groupCategories.takeGroupCategories(target.id, mangaMergeManager)
+            groupCategories.fileMigrationTarget(target.id, categoryIds, mangaMergeManager)
             sourceTracker.migrated(
                 EntryId.Manga(current.id),
                 EntryId.Manga(target.id),

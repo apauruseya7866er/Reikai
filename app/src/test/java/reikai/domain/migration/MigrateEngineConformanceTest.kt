@@ -193,6 +193,29 @@ class MigrateEngineConformanceTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
+    fun `the category option files the target in the source's categories`(engine: MigrateEngine) = runTest {
+        val setup = Setup(group = longArrayOf(SOURCE), categories = mapOf(SOURCE to listOf(5L)))
+
+        engine.migrate(setup, replace = true, flags = setOf(Flag.CATEGORY)).categoryWrites shouldBe
+            mapOf(TARGET to listOf(5L))
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
+    fun `the category option files a target already grouped together with its group`(engine: MigrateEngine) =
+        runTest {
+            val setup = Setup(
+                group = longArrayOf(SOURCE),
+                targetGroup = longArrayOf(TARGET, 7L),
+                categories = mapOf(SOURCE to listOf(5L), TARGET to listOf(9L), 7L to listOf(9L)),
+            )
+
+            engine.migrate(setup, replace = true, flags = setOf(Flag.CATEGORY)).categoryWrites shouldBe
+                mapOf(TARGET to listOf(5L), 7L to listOf(5L))
+        }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
     fun `without the category option an ungrouped target is filed nowhere`(engine: MigrateEngine) = runTest {
         val setup = Setup(group = longArrayOf(SOURCE), categories = mapOf(SOURCE to listOf(5L)))
 
@@ -426,7 +449,7 @@ class MigrateEngineConformanceTest {
 }
 
 /** The migration flags both engines take, named once; each engine maps them onto its own enum. */
-enum class Flag { CHAPTER, COVER, NOTES, REMOVE_DOWNLOAD }
+enum class Flag { CHAPTER, CATEGORY, COVER, NOTES, REMOVE_DOWNLOAD }
 
 /** A chapter in neither type's model: [position] is manga's page or a novel's text offset. */
 data class Ch(
@@ -448,6 +471,8 @@ data class Setup(
     /** Stored history rows, on either entry's chapters. */
     val history: List<Hist> = emptyList(),
     val group: LongArray = longArrayOf(),
+    /** The target's own group of library members, the target included, when it is already in one. */
+    val targetGroup: LongArray = longArrayOf(),
     /** Each entry's stored categories. */
     val categories: Map<Long, List<Long>> = emptyMap(),
     val customCover: String? = null,
@@ -466,8 +491,15 @@ data class Setup(
 private const val UNINSTALLED_SOURCE = 5L
 
 /** The library members of [id]'s group once the migration has run: the group's, with the target added. */
-fun Setup.libraryMembersAfter(id: Long): List<Long> =
-    if (group.size > 1) group.toList() + MigrateEngineConformanceTest.TARGET else listOf(id)
+fun Setup.libraryMembersAfter(id: Long): List<Long> = when {
+    id == MigrateEngineConformanceTest.TARGET && targetGroup.isNotEmpty() -> targetGroup.toList()
+    group.size > 1 -> group.toList() + MigrateEngineConformanceTest.TARGET
+    else -> listOf(id)
+}
+
+/** [id]'s related ids: the source's group as stored, the target's as it stands once the migration has run. */
+fun Setup.relatedIdsOf(id: Long): LongArray =
+    if (id == MigrateEngineConformanceTest.TARGET) libraryMembersAfter(id).toLongArray() else group
 
 private fun category(id: Long) = Category(id = id, name = "c$id", order = 0L, flags = 0L)
 
@@ -666,7 +698,7 @@ class MangaEngine : MigrateEngine {
             }
         }
         val merge = mockk<MangaMergeManager> {
-            coEvery { computeRelatedIds(any()) } returns setup.group
+            coEvery { computeRelatedIds(any()) } answers { setup.relatedIdsOf(firstArg()) }
             coEvery { groupLibraryMembers(any()) } answers { setup.libraryMembersAfter(firstArg()) }
             coEvery { merge(any()) } answers { rec.group("merge ${firstArg<List<Long>>()}") }
             coEvery { replaceInGroup(any(), any()) } answers
@@ -752,6 +784,7 @@ class MangaEngine : MigrateEngine {
         val mangaFlags = flags.map {
             when (it) {
                 Flag.CHAPTER -> MigrationFlag.CHAPTER
+                Flag.CATEGORY -> MigrationFlag.CATEGORY
                 Flag.COVER -> MigrationFlag.CUSTOM_COVER
                 Flag.NOTES -> MigrationFlag.NOTES
                 Flag.REMOVE_DOWNLOAD -> MigrationFlag.REMOVE_DOWNLOAD
@@ -853,7 +886,7 @@ class NovelEngine : MigrateEngine {
             }
         }
         val merge = mockk<NovelMergeManager> {
-            coEvery { computeRelatedIds(any()) } returns setup.group
+            coEvery { computeRelatedIds(any()) } answers { setup.relatedIdsOf(firstArg()) }
             coEvery { groupLibraryMembers(any()) } answers { setup.libraryMembersAfter(firstArg()) }
             coEvery { merge(any()) } answers { rec.group("merge ${firstArg<List<Long>>()}") }
             coEvery { replaceInGroup(any(), any()) } answers
@@ -928,6 +961,7 @@ class NovelEngine : MigrateEngine {
         val novelFlags = flags.map {
             when (it) {
                 Flag.CHAPTER -> NovelMigrationFlag.CHAPTER
+                Flag.CATEGORY -> NovelMigrationFlag.CATEGORY
                 Flag.COVER -> NovelMigrationFlag.COVER
                 Flag.NOTES -> NovelMigrationFlag.NOTES
                 Flag.REMOVE_DOWNLOAD -> NovelMigrationFlag.REMOVE_DOWNLOAD
