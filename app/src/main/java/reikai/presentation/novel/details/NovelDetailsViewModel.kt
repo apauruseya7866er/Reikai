@@ -1083,9 +1083,12 @@ class NovelDetailsViewModel(
         }
     }
 
+    // On the app scope: the removal is several writes, and a page closed between them leaves a member half
+    // removed. Only the downloads prompt needs the page.
     fun removeFromLibrary(novelIds: List<Long>) {
-        viewModelScope.launchIO {
-            promptDeleteDownloadsOnRemoved(removeNovelsFromLibrary.await(novelIds))
+        appScope.launch {
+            val removed = removeNovelsFromLibrary.await(novelIds)
+            viewModelScope.launchIO { promptDeleteDownloadsOnRemoved(removed) }
         }
     }
 
@@ -1112,10 +1115,8 @@ class NovelDetailsViewModel(
      * would fuse distinct series.
      */
     fun addToExistingGroup(selectedIds: List<Long>) {
-        viewModelScope.launchIO {
-            val novel = (state.value as? NovelDetailsState.Loaded)?.novel ?: return@launchIO
-            novelLibraryAdder.addToExistingGroup(novel.id, selectedIds)
-        }
+        val novel = (state.value as? NovelDetailsState.Loaded)?.novel ?: return
+        appScope.launch { novelLibraryAdder.addToExistingGroup(novel.id, selectedIds) }
     }
 
     // A picker defers both writes to applyCategories, so backing out adds nothing.
@@ -1142,11 +1143,9 @@ class NovelDetailsViewModel(
      * leaves alone rather than re-writing.
      */
     fun applyCategories(categoryIds: List<Long>) {
-        viewModelScope.launchIO {
-            val novel = (state.value as? NovelDetailsState.Loaded)?.novel ?: return@launchIO
-            novelLibraryAdder.confirmAddCategories(novel.id, categoryIds)
-            dismissDialog()
-        }
+        val novel = (state.value as? NovelDetailsState.Loaded)?.novel ?: return
+        appScope.launch { novelLibraryAdder.confirmAddCategories(novel.id, categoryIds) }
+        dismissDialog()
     }
 
     fun showEditNovelInfoDialog() {

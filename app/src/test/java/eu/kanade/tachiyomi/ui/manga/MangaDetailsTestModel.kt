@@ -26,6 +26,7 @@ import reikai.domain.manga.MangaChapterSettings
 import reikai.domain.manga.MangaMergeManager
 import reikai.domain.manga.MangaPreferences
 import reikai.domain.manga.MergedChapterProvider
+import reikai.domain.manga.RemoveMangaFromLibrary
 import reikai.domain.merge.ChapterUnit
 import reikai.domain.merge.renderStoredStitch
 import reikai.domain.recommendation.PrepareRecommendationAssembly
@@ -67,6 +68,7 @@ internal fun mangaDetailsModel(
     onMergedRender: () -> Unit = {},
     prefs: PreferenceStore = InMemoryPreferenceStore(),
     editChapterNumber: EditChapterNumber = mockk(relaxed = true),
+    removeMangaFromLibrary: RemoveMangaFromLibrary = mockk(relaxed = true),
     beforeModel: () -> Unit = {},
 ): MangaViewModel {
     // Built ahead of the hook: recording a coEvery reads Dispatchers.Default, which undoes a static stub of it
@@ -116,7 +118,7 @@ internal fun mangaDetailsModel(
         updateMangaFromRemote = updateMangaFromRemote,
         mergeManager = mergeManager,
         mangaLibraryAdder = mockk(relaxed = true),
-        removeMangaFromLibrary = mockk(relaxed = true),
+        removeMangaFromLibrary = removeMangaFromLibrary,
         mergedChapterProvider = mergedChapterProvider,
         mangaPreferences = MangaPreferences(prefs),
         relatedMangasLoader = mockk(relaxed = true),

@@ -746,7 +746,9 @@ class MangaViewModel(
                 dialog.value = Dialog.EhRemoveFavorite(gallery)
                 return@launchIO
             }
-            removeNow(targets)
+            // On the app scope: the removal is several writes, and a page closed between them leaves a member
+            // half removed. Only the downloads prompt needs the page.
+            appScope.launch { removeNow(targets) }
         }
     }
 
@@ -821,7 +823,7 @@ class MangaViewModel(
     // would fuse distinct series.
     fun addToExistingGroup(selectedIds: List<Long>) {
         val manga = successState?.manga ?: return
-        viewModelScope.launchIO {
+        appScope.launch {
             addEntry(
                 resolveCategories = { mangaLibraryAdder.groupCategoryIdsOf(selectedIds) },
                 favorite = { mangaLibraryAdder.joinGroup(manga, selectedIds) },
@@ -929,7 +931,8 @@ class MangaViewModel(
     // RK: the picker's confirm owes both writes the add deferred, in the shared order, so backing out
     // of the picker adds nothing and a failed favorite leaves no categories behind.
     fun moveMangaToCategoriesAndAddToLibrary(manga: Manga, categories: List<Long>) {
-        viewModelScope.launchIO {
+        appScope.launch {
+            // RK: a picker's confirm the screen closing must not cut off
             finishAdd(
                 categoryIds = categories,
                 favorite = { if (manga.favorite) manga.id else mangaLibraryAdder.favoriteForAdd(manga.id) },

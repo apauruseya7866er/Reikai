@@ -55,6 +55,7 @@ import reikai.domain.novel.interactor.DeleteNovelChaptersAfterRead
 import reikai.domain.novel.interactor.DeleteNovelChaptersBehindReader
 import reikai.domain.novel.interactor.FilterNovelChaptersForDownload
 import reikai.domain.novel.interactor.GetNextNovelChapter
+import reikai.domain.novel.interactor.RemoveNovelsFromLibrary
 import reikai.domain.novel.interactor.SetNovelChapterFlags
 import reikai.domain.novel.interactor.SetNovelReadStatus
 import reikai.domain.novel.interactor.SetNovelViewerFlags
@@ -164,6 +165,9 @@ class NovelReaderViewModelHarness private constructor(
         every { queueState } returns MutableStateFlow(emptyList())
         every { getChapterText(any(), any()) } answers { downloaded[secondArg<NovelChapter>().id] }
     }
+
+    /** What a details page's remove from library runs. */
+    var removeNovelsFromLibrary = mockk<RemoveNovelsFromLibrary>(relaxed = true)
 
     /** What a details refresh asks of the new chapters it would download. */
     var filterChaptersForDownload = mockk<FilterNovelChaptersForDownload>(relaxed = true)
@@ -447,7 +451,7 @@ class NovelReaderViewModelHarness private constructor(
             basePreferences = mockk<BasePreferences>(relaxed = true) {
                 every { downloadedOnly } returns this@NovelReaderViewModelHarness.downloadedOnly
             },
-            removeNovelsFromLibrary = mockk(relaxed = true),
+            removeNovelsFromLibrary = removeNovelsFromLibrary,
             trackPorts = mockk(relaxed = true),
             autoBindTrackers = mockk(relaxed = true),
             downloadedTexts = mockk(relaxed = true),
