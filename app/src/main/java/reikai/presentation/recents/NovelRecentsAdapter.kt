@@ -215,7 +215,7 @@ class NovelRecentsAdapter(
                     progress = ChapterProgress.Percent(copy.lastTextProgress),
                 )
             }.toMap()
-        }) { chapterId, copies -> copiesDownloadUi(item.lane, chapterId, copies) { it.ownerSource !in missing } }
+        }) { chapterId, copies -> copiesDownloadUi(chapterId, copies) { it.ownerSource !in missing } }
     }
 
     /** Which of [sources] are not installed, which a lookup answers after the first plugin load. */
@@ -305,23 +305,21 @@ class NovelRecentsAdapter(
     override fun rowUi(item: RecentsItem): RecentsRowUi = novelRowUi(item)
 
     override fun downloadUi(item: RecentsItem): RecentsDownloadUi? = when (val payload = item.payload) {
-        is NovelHistoryWithRelations -> historyDownloadUi(item.lane, payload)
+        is NovelHistoryWithRelations -> historyDownloadUi(payload)
         else -> novelDownloadUi(item)
     }
 
     /** Over the row's copies loaded with the lane ([readCopies]); the Downloaded filter asks this too. */
-    private fun historyDownloadUi(lane: RecentsLane, payload: NovelHistoryWithRelations) =
-        copiesDownloadUi(lane, payload.chapterId, copies = {
+    private fun historyDownloadUi(payload: NovelHistoryWithRelations) =
+        copiesDownloadUi(payload.chapterId, copies = {
             with(payload) { readCopies.copiesOf(chapterId, storedTitle, source, chapterName, null, chapterUrl) }
         }, isInstalled = readCopies::isInstalled)
 
     private fun copiesDownloadUi(
-        lane: RecentsLane,
         chapterId: Long,
         copies: () -> List<ChapterCopyRow>,
         isInstalled: (ChapterCopyRow) -> Boolean,
     ) = recentsCopiesDownloadUi(
-        lane,
         chapterId,
         copies,
         queued = { id ->

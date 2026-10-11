@@ -20,7 +20,7 @@ import reikai.domain.merge.MergeScope
 
 /**
  * Every source's copy of [named], [named] first, resolved once with the row so drawing it probes only
- * these. Which of them count is [recentsRowDownloadState]'s call, by the row's lane.
+ * these. Which of them count is [recentsRowDownloadState]'s call.
  */
 internal fun <T> recentsRowCopies(named: T, stitch: List<ChapterUnit>, pooled: List<T>, id: (T) -> Long): List<T> {
     val ids = MergeScope.Group.copiesOf(setOf(id(named)), stitch)
@@ -31,12 +31,11 @@ internal fun <T> recentsRowCopies(named: T, stitch: List<ChapterUnit>, pooled: L
 internal fun soloUnit(chapterId: Long) = ChapterUnit(chapterId, unit = 0, copyOrder = 0)
 
 /**
- * A recents row's download state, the one rule both adapters draw it by: the named chapter's queue
- * entry first, else whether the copy a tap opens is on disk ([CopyToOpen] in the lane's scope). An
- * Updates row opens its own source, so only its own copy counts there.
+ * A read row's download state, the one rule both adapters draw it by: the named chapter's queue entry
+ * first, else whether the copy a tap opens is on disk ([CopyToOpen] over the merge group, where a read
+ * row opens). Only read rows reach this; an updated row's state comes from its updates model.
  */
 internal fun <T> recentsRowDownloadState(
-    lane: RecentsLane,
     named: T,
     copies: List<T>,
     stitch: List<ChapterUnit>,
@@ -45,18 +44,16 @@ internal fun <T> recentsRowDownloadState(
     isOnDisk: (T) -> Boolean,
 ): Download.State = downloadStateOf(queued) {
     val onDisk = copies.filter(isOnDisk).mapTo(HashSet(), id)
-    CopyToOpen(lane.mergeScope, copies, stitch, id, onDisk).isOnDisk(id(named))
+    CopyToOpen(MergeScope.Group, copies, stitch, id, onDisk).isOnDisk(id(named))
 }
 
 /** [recentsRowDownloadState] over stored copies, [chapterId] being the one the row names. */
 internal fun recentsRowDownloadState(
-    lane: RecentsLane,
     chapterId: Long,
     copies: List<ChapterCopyRow>,
     queued: Download.State?,
     isOnDisk: (ChapterCopyRow) -> Boolean,
 ): Download.State = recentsRowDownloadState(
-    lane,
     copies.first { it.copy.chapterId == chapterId },
     copies,
     copies.map { it.copy },
@@ -69,11 +66,10 @@ internal fun recentsRowDownloadState(
  * A row's download control over [copies] of [chapterId], the shape both adapters hand out: only how a
  * type reads its queue by chapter id ([queued]), reports progress ([progress], null where it cannot),
  * answers whether a copy's source is installed and probes a copy on disk ([isOnDisk]) differs. The row
- * follows the copy its download fetches ([DownloadTargets], in the lane's scope) through the queue, and
+ * follows the copy its download fetches ([DownloadTargets] over the merge group) through the queue, and
  * draws no control for a chapter no installed source holds.
  */
 internal fun recentsCopiesDownloadUi(
-    lane: RecentsLane,
     chapterId: Long,
     copies: () -> List<ChapterCopyRow>,
     queued: (Long) -> Download.State?,
@@ -82,7 +78,7 @@ internal fun recentsCopiesDownloadUi(
     isOnDisk: (ChapterCopyRow) -> Boolean,
 ): RecentsDownloadUi {
     fun targets(rows: List<ChapterCopyRow>) = DownloadTargets.of(
-        lane.mergeScope,
+        MergeScope.Group,
         rows,
         rows.filter { it.copy.chapterId == chapterId },
         rows.map { it.copy },
@@ -91,7 +87,7 @@ internal fun recentsCopiesDownloadUi(
     )
     val state = {
         val rows = copies()
-        recentsRowDownloadState(lane, chapterId, rows, targets(rows).queuedFor(chapterId, queued), isOnDisk)
+        recentsRowDownloadState(chapterId, rows, targets(rows).queuedFor(chapterId, queued), isOnDisk)
     }
     return RecentsDownloadUi(
         state = state,

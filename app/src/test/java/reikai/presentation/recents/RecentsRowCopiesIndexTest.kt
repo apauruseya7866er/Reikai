@@ -53,7 +53,6 @@ class RecentsRowCopiesIndexTest {
         index.lane(lane, flowOf(mapOf(merged to 7L)), ownSource, { it intersect setOf("3") }, query).toList()
 
         recentsCopiesDownloadUi(
-            aloneRow.lane,
             40L,
             { index.copiesOf(40L, "t", "3", "c40", null, "/40") },
             queued = { null },
@@ -84,7 +83,6 @@ class RecentsRowCopiesIndexTest {
             )
         }.toList()
         return recentsCopiesDownloadUi(
-            mergedRow.lane,
             10L,
             { index.copiesOf(10L, "t", "1", "c10", null, "/10") },
             queued = queued::get,
@@ -122,7 +120,7 @@ class RecentsRowCopiesIndexTest {
 
     private fun stateOf(index: RecentsRowCopiesIndex, chapterId: Long, onDisk: Set<Long>): Download.State {
         val copies = index.copiesOf(chapterId, "t", "1", "c$chapterId", null, "/$chapterId")
-        return recentsRowDownloadState(mergedRow.lane, chapterId, copies, null) { it.copy.chapterId in onDisk }
+        return recentsRowDownloadState(chapterId, copies, null) { it.copy.chapterId in onDisk }
     }
 
     @Test

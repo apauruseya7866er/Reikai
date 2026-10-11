@@ -220,7 +220,7 @@ class MangaRecentsAdapter(
                     )
                 }.toMap()
             },
-        ) { chapterId, copies -> copiesDownloadUi(item.lane, chapterId, copies) { it.ownerSource !in missing } }
+        ) { chapterId, copies -> copiesDownloadUi(chapterId, copies) { it.ownerSource !in missing } }
     }
 
     /** Which of [sources], manga source ids as text, are not installed. */
@@ -324,7 +324,7 @@ class MangaRecentsAdapter(
     override fun rowUi(item: RecentsItem): RecentsRowUi = mangaRowUi(item)
 
     override fun downloadUi(item: RecentsItem): RecentsDownloadUi? = when (val payload = item.payload) {
-        is HistoryWithRelations -> historyDownloadUi(item.lane, payload)
+        is HistoryWithRelations -> historyDownloadUi(payload)
         else -> mangaDownloadUi(item)
     }
 
@@ -334,20 +334,18 @@ class MangaRecentsAdapter(
      * the row, because combining the whole feed with the download queue would re-map every row of it
      * on each download tick. The Downloaded filter asks this same state.
      */
-    private fun historyDownloadUi(lane: RecentsLane, payload: HistoryWithRelations) =
-        copiesDownloadUi(lane, payload.chapterId, copies = {
+    private fun historyDownloadUi(payload: HistoryWithRelations) =
+        copiesDownloadUi(payload.chapterId, copies = {
             with(payload) {
                 readCopies.copiesOf(chapterId, storedTitle, sourceId.toString(), chapterName, scanlator, chapterUrl)
             }
         }, isInstalled = readCopies::isInstalled)
 
     private fun copiesDownloadUi(
-        lane: RecentsLane,
         chapterId: Long,
         copies: () -> List<ChapterCopyRow>,
         isInstalled: (ChapterCopyRow) -> Boolean,
     ) = recentsCopiesDownloadUi(
-        lane,
         chapterId,
         copies,
         queued = { id -> downloadManager.getQueuedDownloadOrNull(id)?.status },

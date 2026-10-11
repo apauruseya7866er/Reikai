@@ -63,7 +63,7 @@ class RecentsTargetRowTest {
             }
         },
     ) { chapterId, copies ->
-        recentsCopiesDownloadUi(lane, chapterId, copies, { null }, null, { true }) {
+        recentsCopiesDownloadUi(chapterId, copies, { null }, null, { true }) {
             it.copy.chapterId in onDisk
         }
     }
