@@ -73,6 +73,18 @@ class EntryAddFlowConformanceTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("probes")
+    fun `a group add puts the pressed entry in the library`(probe: AddFlowProbe) = runTest {
+        val duplicate = probe.storeDuplicate()
+        probe.storeEntry(inLibrary = false)
+        probe.pressEntry()
+
+        probe.act { flow.addToGroup(listOf(duplicate)) }
+
+        probe.entryInLibrary() shouldBe true
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
     fun `migrating from a duplicate asks to move it onto the pressed entry`(probe: AddFlowProbe) = runTest {
         val duplicate = probe.storeDuplicate()
         probe.storeEntry(inLibrary = false)
@@ -223,8 +235,10 @@ class NovelAddFlowProbe : AddFlowProbe() {
     private val entry = NovelItem(name = "entry", path = "/entry", cover = null)
     private val other = NovelItem(name = "other", path = "/other", cover = null)
 
+    // Unfiled, as the manga probe's insert leaves it, so a case reading its categories sees only what the add wrote.
     override fun storeEntry(inLibrary: Boolean) {
         library.put(ENTRY, entry.path, favorite = inLibrary)
+        library.filed.remove(ENTRY)
     }
 
     override fun storeOther(inLibrary: Boolean) {
