@@ -15,18 +15,17 @@ import reikai.data.novel.NovelChapterRepositoryImpl
 import reikai.data.novel.NovelRepositoryImpl
 import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
-import reikai.domain.manga.ChapterAggregation
 import reikai.domain.manga.MangaGroupStitcher
 import reikai.domain.manga.MangaMergeManager
 import reikai.domain.merge.MergedGroupStitcher
 import reikai.domain.merge.ReconcileMergedChapters
-import reikai.domain.novel.NovelChapterAggregation
 import reikai.domain.novel.NovelGroupStitcher
 import reikai.domain.novel.NovelMergeManager
 import reikai.presentation.library.LibraryBadgePrefs
 import reikai.presentation.library.MangaMergeCollapse
 import reikai.presentation.library.novels.NovelMergeCollapse
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.Novels
@@ -74,7 +73,7 @@ class MergedTrunkConformanceTest {
         side.entry(id = SMALLER, source = 200L, chapters = 5)
         groups.createGroup(type, listOf(LARGER, SMALLER))
 
-        side.libraryPrimary(preferred = emptyList()) shouldBe side.stitchTrunk(preferred = emptyList())
+        side.libraryPrimary(preferred = emptyList()) shouldBe side.storedLead(preferred = emptyList())
     }
 
     @ParameterizedTest
@@ -85,7 +84,7 @@ class MergedTrunkConformanceTest {
         side.entry(id = SMALLER, source = 200L, chapters = 5)
         groups.createGroup(type, listOf(LARGER, SMALLER))
 
-        side.libraryPrimary(preferred = listOf(200L)) shouldBe side.stitchTrunk(preferred = listOf(200L))
+        side.libraryPrimary(preferred = listOf(200L)) shouldBe side.storedLead(preferred = listOf(200L))
     }
 
     @ParameterizedTest
@@ -97,11 +96,11 @@ class MergedTrunkConformanceTest {
         side.entry(id = LARGER, source = 100L, chapters = 10)
         side.entry(id = SMALLER, source = 200L, chapters = 5)
         groups.createGroup(type, listOf(LARGER, SMALLER))
-        side.storedLead()
+        side.storedLead(preferred = emptyList())
 
         exec("DELETE FROM ${side.chapterTable} WHERE ${side.ownerColumn} = $LARGER AND ${side.numberColumn} > 2")
 
-        side.libraryPrimary(preferred = emptyList()) shouldBe side.storedLead()
+        side.libraryPrimary(preferred = emptyList()) shouldBe side.storedLead(preferred = emptyList())
     }
 
     private fun side(type: ContentType): Side = if (type == ContentType.NOVELS) NovelSide() else MangaSide()
@@ -117,10 +116,9 @@ class MergedTrunkConformanceTest {
 
         suspend fun libraryPrimary(preferred: List<Long>): Long
 
-        suspend fun stitchTrunk(preferred: List<Long>): Long
-
-        /** Reconciles the stored stitch, then names the member whose copy it shows first. */
-        suspend fun storedLead(): Long
+        /** Reconciles the stored stitch through the real stitcher, then names the member whose copy it
+         *  shows first. */
+        suspend fun storedLead(preferred: List<Long>): Long
     }
 
     private suspend fun storedLead(stitcher: MergedGroupStitcher, ownerOf: suspend (Long) -> Long): Long {
@@ -136,16 +134,19 @@ class MergedTrunkConformanceTest {
 
     private val preferences = ReikaiLibraryPreferences(InMemoryPreferenceStore())
 
-    private inner class MangaSide : Side {
-        private val members = mutableMapOf<Long, Long>()
+    /** The library preferences with [preferred] first in a source ranking stored under [key]. */
+    private fun preferring(key: String, preferred: List<Any>) = ReikaiLibraryPreferences(
+        InMemoryPreferenceStore(sequenceOf(InMemoryPreference(key, preferred, emptyList<Any>()))),
+    )
 
+    private inner class MangaSide : Side {
         override val chapterTable = "chapter"
 
         override val ownerColumn = "manga_id"
 
         override val numberColumn = "remote_chapter_number"
 
-        override suspend fun storedLead(): Long {
+        override suspend fun storedLead(preferred: List<Long>): Long {
             val chapters = ChapterRepositoryImpl(database)
             val sourceManager = mockk<SourceManager> { coEvery { get(any<Long>()) } returns null }
             val stitcher = MangaGroupStitcher(
@@ -153,13 +154,12 @@ class MergedTrunkConformanceTest {
                 GetMangaWithChapters(MangaRepositoryImpl(database), chapters),
                 MangaMergeManager(groups, preferences, onMerged = {}) {},
                 sourceManager,
-                preferences,
+                preferring("preferred_manga_sources", preferred),
             )
             return storedLead(stitcher) { chapters.getChapterById(it)!!.mangaId }
         }
 
         override suspend fun entry(id: Long, source: Long, chapters: Int, hidden: Int) {
-            members[id] = source
             exec(
                 "INSERT INTO manga(id, source_id, remote_url, remote_title, remote_status, " +
                     "state_initialized, user_reader_flags, user_chapter_flags, " +
@@ -207,41 +207,28 @@ class MergedTrunkConformanceTest {
                     .getRecognizedChapterCountsAsFlow().first(),
             ).single().libraryManga.manga.id
         }
-
-        // The stitcher loads chapters without the scanlator filter; see MangaGroupStitcher.
-        override suspend fun stitchTrunk(preferred: List<Long>): Long {
-            val chapters = ChapterRepositoryImpl(database)
-            return ChapterAggregation.rankedMemberIds(
-                chaptersBySource = members.keys.associateWith { chapters.getChapterByMangaId(it, false) },
-                sourceIdByManga = members,
-                preferredSourceIds = preferred,
-            ).first()
-        }
     }
 
     private inner class NovelSide : Side {
-        private val members = mutableMapOf<Long, String>()
-
         override val chapterTable = "novel_chapters"
 
         override val ownerColumn = "novel_id"
 
         override val numberColumn = "chapter_number"
 
-        override suspend fun storedLead(): Long {
+        override suspend fun storedLead(preferred: List<Long>): Long {
             val chapters = NovelChapterRepositoryImpl(database)
             val stitcher = NovelGroupStitcher(
                 groups,
                 NovelRepositoryImpl(database),
                 chapters,
                 NovelMergeManager(groups, preferences, onMerged = {}) {},
-                preferences,
+                preferring("preferred_novel_sources", preferred.map(Long::toString)),
             )
             return storedLead(stitcher) { chapters.getById(it)!!.novelId }
         }
 
         override suspend fun entry(id: Long, source: Long, chapters: Int, hidden: Int) {
-            members[id] = source.toString()
             exec(
                 "INSERT INTO novels(_id, source, url, title, status, initialized, chapter_flags, " +
                     "favorite_at) VALUES ($id, '$source', 'n$id', 'title', 0, 0, 0, 0)",
@@ -262,15 +249,6 @@ class MergedTrunkConformanceTest {
                 mergingEnabled = true,
                 preferredSourceIds = preferred.map(Long::toString),
             ).single().representative.novel.id
-
-        override suspend fun stitchTrunk(preferred: List<Long>): Long {
-            val chapters = NovelChapterRepositoryImpl(database)
-            return NovelChapterAggregation.rankedMemberIds(
-                chaptersByNovel = members.keys.associateWith { chapters.getByNovelId(it) },
-                sourceIdByNovel = members,
-                preferredSourceIds = preferred.map(Long::toString),
-            ).first()
-        }
     }
 
     private suspend fun exec(sql: String) {
