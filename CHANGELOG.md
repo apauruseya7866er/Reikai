@@ -62,7 +62,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 #### Changed
 
 - **Upgrading to this version merges any manga or novel you have twice from the same source into one, keeping the library copy with your read chapters, history, categories, tracking, custom cover and downloads (partly from Mihon).** Upstream: mihonapp/mihon#3805.
-- **Smart update now expects a manga or novel on the weekdays or the day of the month it usually releases, ignores chapters dated in the future, and checks less often during a hiatus (from Mihon).** Upstream: mihon 292381662.
+- **Smart update now follows the weekdays, days of the month or batches a manga or novel releases on, keeps that schedule after an early, late or backdated release, and checks less often during a hiatus (from Mihon).** Chapters dated in the future no longer pull it ahead. Upstream: mihon 292381662, mihon ba4481525.
 - **Manga and novels now share one library sort, filter set and grouping, and on upgrade your novel library takes on the manga library's.** Set any of them under either chip and both follow; per-category sorts are untouched.
 - **Large manga and novel libraries and Statistics load faster (partly from Mihon).** Upstream: mihon f027de8c2, mihon 179bfaca7, mihon 940272f75.
 - **Library search's `src:` now matches a source's name instead of its id; use `srcid:` for the id, and `id=5` finds an entry by its own id, on manga and novels (partly from Mihon).** Upstream: mihonapp/mihon#3554.

@@ -77,7 +77,7 @@ class ReleaseIntervalTest {
         val days = listOf("2019-09-15", "2019-10-15", "2019-11-14", "2019-12-15", "2020-01-16")
 
         schedule(days.map(LocalDate::parse), today = "2020-01-20", perDay = 2).pattern shouldBe
-            ReleasePattern.DayOfMonth(15)
+            ReleasePattern.DaysOfMonth(setOf(15))
     }
 
     @Test
@@ -85,26 +85,29 @@ class ReleaseIntervalTest {
         val days = listOf("2019-09-30", "2019-10-31", "2019-11-30", "2019-12-31", "2020-01-31")
 
         schedule(days.map(LocalDate::parse), today = "2020-02-05", perDay = 2).pattern shouldBe
-            ReleasePattern.DayOfMonth(31)
+            ReleasePattern.DaysOfMonth(setOf(31))
     }
 
     @Test
     fun `releases spread over most of the week keep a plain interval`() {
         val days = listOf("01", "03", "04", "09", "11", "13", "14", "19", "21", "24").map { "2020-01-$it" }
 
-        schedule(days.map(LocalDate::parse), today = "2020-01-25").pattern shouldBe ReleasePattern.EveryDays(2)
+        schedule(days.map(LocalDate::parse), today = "2020-01-25").pattern shouldBe
+            ReleasePattern.EveryDays(2, onSchedule = LocalDate.parse("2020-01-21"))
     }
 
     @Test
     fun `too few releases keep a plain interval`() {
         val days = listOf("2020-01-06", "2020-01-09", "2020-01-13")
 
-        schedule(days.map(LocalDate::parse), today = "2020-01-14").pattern shouldBe ReleasePattern.EveryDays(3)
+        schedule(days.map(LocalDate::parse), today = "2020-01-14").pattern shouldBe
+            ReleasePattern.EveryDays(3, onSchedule = LocalDate.parse("2020-01-09"))
     }
 
     @Test
     fun `a day of the month moves to the end of a shorter month`() {
-        ReleasePattern.DayOfMonth(31).nextAfter(LocalDate.parse("2020-01-31")) shouldBe LocalDate.parse("2020-02-29")
+        ReleasePattern.DaysOfMonth(setOf(31)).nextAfter(LocalDate.parse("2020-01-31")) shouldBe
+            LocalDate.parse("2020-02-29")
     }
 
     @Test
@@ -187,7 +190,7 @@ class ReleaseIntervalTest {
             .nextUpdate.toLocalDateTime(zone).date
 
     private fun schedule(days: List<LocalDate>, today: String, perDay: Int = 1) =
-        ReleaseInterval.schedule(datesOn(days, perDay), zone, LocalDate.parse(today))
+        ReleaseSchedule.estimate(datesOn(days, perDay), zone, LocalDate.parse(today))
 
     private fun everyDays(from: String, to: String, days: Int) =
         generateSequence(LocalDate.parse(from)) { it.plus(DatePeriod(days = days)) }

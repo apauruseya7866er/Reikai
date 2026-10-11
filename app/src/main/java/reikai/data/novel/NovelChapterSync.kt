@@ -5,6 +5,7 @@ import reikai.domain.chapter.ChapterNumberOverrideRepository
 import reikai.domain.chapter.StoredChapter
 import reikai.domain.chapter.appliedTo
 import reikai.domain.chapter.chapterArrivals
+import reikai.domain.chapter.foundRelease
 import reikai.domain.chapter.recognizeChapterNumbers
 import reikai.domain.library.ContentType
 import reikai.domain.novel.NovelChapterRepository
@@ -114,7 +115,10 @@ suspend fun syncChaptersWithNovelSource(
         }
     }
 
-    if (toAdd.isEmpty() && toDelete.isEmpty() && toChange.isEmpty()) return NovelChapterSyncResult.UNCHANGED
+    val hadChapters = dbChapters.isNotEmpty()
+    if (toAdd.isEmpty() && toDelete.isEmpty() && toChange.isEmpty()) {
+        return NovelChapterSyncResult(emptyList(), changed = false, hadChapters, foundRelease = false)
+    }
 
     val now = Clock.System.now()
     val markDuplicateAsRead = libraryPreferences.markDuplicateReadChapterAsRead.get()
@@ -152,7 +156,12 @@ suspend fun syncChaptersWithNovelSource(
     // cancels them too (RemovedChapterQueueConformanceTest).
     novelDownloadManager?.cancelDownloads(toDelete.map { it.id })
 
-    return NovelChapterSyncResult(insertedChapters.filterNot { it.url in changedOrDuplicateReadUrls }, changed = true)
+    return NovelChapterSyncResult(
+        insertedChapters.filterNot { it.url in changedOrDuplicateReadUrls },
+        changed = true,
+        hadChapters,
+        foundRelease(hadChapters, arrivals),
+    )
 }
 
 /**

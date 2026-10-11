@@ -15,7 +15,7 @@ import tachiyomi.domain.library.service.LibraryPreferences
  * previously-last page is re-fetched too, surfacing chapters appended to it before a new page opened.
  * Page 1 is the caller's responsibility, coming from `parseNovel` rather than `parsePage`. A page that
  * throws or returns nothing is skipped rather than fatal, so one flaky page cannot abort the rest.
- * Returns the pages' sync results added together.
+ * Returns the pages' sync results added together, or null when no page synced.
  */
 suspend fun walkNovelPages(
     novel: Novel,
@@ -27,9 +27,9 @@ suspend fun walkNovelPages(
     libraryPreferences: LibraryPreferences,
     numberOverrides: ChapterNumberOverrideRepository,
     novelDownloadManager: NovelDownloadManager? = null,
-): NovelChapterSyncResult {
-    var walked = NovelChapterSyncResult.UNCHANGED
-    if (toPage <= 1L) return walked
+): NovelChapterSyncResult? {
+    var walked: NovelChapterSyncResult? = null
+    if (toPage <= 1L) return null
     for (p in maxOf(fromPage, 1L)..toPage) {
         val key = p.toString()
         val chapters = runCatchingCancellable { source.parsePage(novel.url, key)?.chapters }.getOrNull().orEmpty()
@@ -45,7 +45,7 @@ suspend fun walkNovelPages(
                     page = key,
                     novelDownloadManager = novelDownloadManager,
                 )
-            }.onSuccess { walked += it }
+            }.onSuccess { walked = walked?.plus(it) ?: it }
         }
     }
     return walked

@@ -45,7 +45,8 @@ class ReleasePredictionConformanceTest {
             nextUpdate = case.nextUpdate,
             lastUpdate = case.lastUpdate,
         )
-        val update = FetchInterval(getChapters).withFetchInterval(manga, case.today.atTime(10, 0), ZONE, case.window)
+        val update = FetchInterval(getChapters)
+            .withFetchInterval(manga, case.today.atTime(10, 0), ZONE, case.window, case.foundRelease)
         return update.fetchInterval to update.nextUpdate
     }
 
@@ -62,7 +63,8 @@ class ReleasePredictionConformanceTest {
             nextUpdate = case.nextUpdate,
             lastUpdate = case.lastUpdate,
         )
-        val update = novelFetchInterval(novel, { chapters }, case.window, ZONE, case.today.atTime(10, 0))
+        val update =
+            novelFetchInterval(novel, { chapters }, case.window, ZONE, case.today.atTime(10, 0), case.foundRelease)
         return update.fetchInterval to update.nextUpdate
     }
 
@@ -76,6 +78,7 @@ class ReleasePredictionConformanceTest {
         // the other way round predicts differently.
         val fetchDays: List<LocalDate> = days,
         val undatedUploads: Boolean = false,
+        val foundRelease: Boolean = false,
     ) {
         WEEKDAYS(
             everyDays("2019-12-02", "2020-01-20", 1)
@@ -123,6 +126,53 @@ class ReleasePredictionConformanceTest {
             LocalDate.parse("2020-01-01"),
             fetchDays = everyDays("2019-12-04", "2019-12-25", 7),
             undatedUploads = true,
+        ),
+
+        // A release found before, after and on the day after the day it was due.
+        EARLY_RELEASE(
+            everyDays("2019-10-02", "2019-12-25", 7) + LocalDate.parse("2019-12-30"),
+            LocalDate.parse("2019-12-30"),
+            nextUpdate = LocalDate.parse("2020-01-01").atStartOfDayIn(ZONE),
+            foundRelease = true,
+        ),
+        LATE_RELEASE(
+            everyDays("2019-12-04", "2019-12-25", 7) + LocalDate.parse("2020-01-03"),
+            LocalDate.parse("2020-01-03"),
+            nextUpdate = LocalDate.parse("2020-01-01").atStartOfDayIn(ZONE),
+            foundRelease = true,
+        ),
+        BACKDATED_RELEASE(
+            everyDays("2019-10-02", "2019-12-25", 7) + LocalDate.parse("2019-12-31"),
+            LocalDate.parse("2020-01-01"),
+            nextUpdate = LocalDate.parse("2020-01-01").atStartOfDayIn(ZONE),
+            foundRelease = true,
+        ),
+
+        // Three days of releases every three weeks, found on a batch's second day.
+        BATCHES(
+            everyDays("2019-09-02", "2019-12-16", 21)
+                .flatMap { start -> (0..2).map { start.plus(DatePeriod(days = it)) } }
+                .filter { it <= LocalDate.parse("2019-12-17") },
+            LocalDate.parse("2019-12-17"),
+            foundRelease = true,
+        ),
+
+        // A season, a 98 day break, another season, and checks near when the break ended last time.
+        BREAK(
+            everyDays("2019-01-02", "2019-03-27", 7) + everyDays("2019-07-03", "2019-09-25", 7),
+            LocalDate.parse("2019-12-20"),
+        ),
+        TWO_DAYS_A_MONTH(
+            listOf("10-01", "10-15", "11-01", "11-16", "12-01", "12-15").map { LocalDate.parse("2019-$it") } +
+                listOf("2020-01-01", "2020-01-15").map(LocalDate::parse),
+            LocalDate.parse("2020-01-20"),
+        ),
+        USER_SET_FOUND_RELEASE(
+            emptyList(),
+            LocalDate.parse("2019-12-31"),
+            fetchInterval = -7,
+            nextUpdate = LocalDate.parse("2020-01-01").atStartOfDayIn(ZONE),
+            foundRelease = true,
         ),
         ;
 

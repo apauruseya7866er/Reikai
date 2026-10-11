@@ -7,9 +7,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import reikai.domain.library.ChapterDates
 import reikai.domain.library.ReleaseInterval
-import reikai.domain.library.ReleaseSchedule
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
-import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import kotlin.time.Clock
@@ -20,11 +18,17 @@ class FetchInterval(
     private val getChaptersByMangaId: GetChaptersByMangaId,
 ) {
 
+    /**
+     * Works out the entry's fetch interval and the next day to check it for new chapters.
+     *
+     * @param foundRelease whether the check that led here found new chapters.
+     */
     suspend fun withFetchInterval(
         manga: Manga,
         dateTime: LocalDateTime,
         timeZone: TimeZone,
         window: ClosedRange<Instant>?,
+        foundRelease: Boolean = false,
     ): MangaUpdate {
         // RK --> the prediction lives in reikai.domain.library.ReleaseInterval, which novels call too
         val currentWindow =
@@ -36,8 +40,10 @@ class FetchInterval(
             dateTime,
             timeZone,
             currentWindow,
+            foundRelease,
         ) {
-            getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true).toChapterDates()
+            getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true)
+                .let { chapters -> ChapterDates(chapters.map { it.dateUpload }, chapters.map { it.dateFetch }) }
         }
         // RK <--
 
@@ -52,20 +58,9 @@ class FetchInterval(
         ReleaseInterval.window(localDateTime, timeZone)
     // RK <--
 
-    internal fun calculateInterval(chapters: List<Chapter>, zone: TimeZone): Int {
-        return estimateSchedule(chapters, zone, Clock.System.now().toLocalDateTime(zone).date).interval
-    }
-
-    // RK --> the date math lives in reikai.domain.library.ReleaseInterval, which novels call too
-    internal fun estimateSchedule(chapters: List<Chapter>, zone: TimeZone, today: LocalDate): ReleaseSchedule =
-        ReleaseInterval.schedule(chapters.toChapterDates(), zone, today)
-
-    private fun List<Chapter>.toChapterDates() = ChapterDates(map { it.dateUpload }, map { it.dateFetch })
-    // RK <--
-
     companion object {
         const val MAX_INTERVAL = ReleaseInterval.MAX_INTERVAL // RK
     }
 }
 
-// RK: ReleaseSchedule and ReleasePattern moved to reikai.domain.library (ReleasePattern.kt), shared with novels
+// RK: ReleaseSchedule.kt and ReleasePattern.kt moved to reikai.domain.library, shared with novels

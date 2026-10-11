@@ -172,12 +172,15 @@ suspend fun refreshNovelFromSource(
             numberOverrides,
             novelDownloadManager = novelDownloadManager,
         )
-        synced = synced?.plus(walked) ?: walked
+        // The first page goes first, so it decides whether this is the novel's first fetch
+        synced = listOfNotNull(synced, walked).reduceOrNull(NovelChapterSyncResult::plus)
+            ?: NovelChapterSyncResult.UNCHANGED
     }
     if (synced != null) {
         predictNovelFetchInterval(
             merged,
             synced.changed,
+            synced.foundRelease,
             manualFetch,
             novelChapterRepository,
             novelRepository,
@@ -237,7 +240,14 @@ suspend fun syncOpenedChapters(
         numberOverrides,
         novelDownloadManager,
     ) ?: return
-    predictNovelFetchInterval(target, synced.changed, manualFetch = false, novelChapterRepository, novelRepository)
+    predictNovelFetchInterval(
+        target,
+        synced.changed,
+        synced.foundRelease,
+        manualFetch = false,
+        novelChapterRepository,
+        novelRepository,
+    )
 }
 
 /** Syncs the chapters [sourceNovel] parsed with [novel], or returns null when it parsed none. */

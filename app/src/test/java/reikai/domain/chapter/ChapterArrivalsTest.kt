@@ -41,7 +41,36 @@ class ChapterArrivalsTest {
         )
 
         arrive(ArrivingChapter(5.0), removed = removed) shouldBe
-            Arrival(read = true, bookmark = true, dateFetch = at(1_000L), dateUpload = NOW, isChangedOrDuplicate = true)
+            Arrival(
+                read = true,
+                bookmark = true,
+                dateFetch = at(1_000L),
+                dateUpload = NOW,
+                isChangedOrDuplicate = true,
+                isRelisted = true,
+            )
+    }
+
+    @Test
+    fun `a first fetch finds no release`() {
+        foundRelease(hadChapters = false, listOf(arrive(ArrivingChapter(1.0)))) shouldBe false
+    }
+
+    @Test
+    fun `a new chapter on an entry that had chapters is a release`() {
+        foundRelease(hadChapters = true, listOf(arrive(ArrivingChapter(6.0)))) shouldBe true
+    }
+
+    @Test
+    fun `a chapter re-listed under a removed number is not a release`() {
+        val relisted = arrive(ArrivingChapter(5.0), removed = listOf(StoredChapter(5.0, read = false)))
+
+        foundRelease(hadChapters = true, listOf(relisted)) shouldBe false
+    }
+
+    @Test
+    fun `a sync that added nothing finds no release`() {
+        foundRelease(hadChapters = true, emptyList()) shouldBe false
     }
 
     @Test
@@ -49,13 +78,13 @@ class ChapterArrivalsTest {
         val removed = listOf(StoredChapter(-1.0, read = true, bookmark = true, dateFetch = at(1_000L)))
 
         arrive(ArrivingChapter(-1.0), removed = removed) shouldBe
-            Arrival(read = false, bookmark = false, dateFetch = NOW + 1.milliseconds, dateUpload = NOW, false)
+            Arrival(read = false, bookmark = false, dateFetch = NOW + 1.milliseconds, dateUpload = NOW, false, false)
     }
 
     @Test
     fun `a genuinely new chapter keeps its own state and is not held back`() {
         arrive(ArrivingChapter(1.0, read = false, bookmark = true)) shouldBe
-            Arrival(read = false, bookmark = true, dateFetch = NOW + 1.milliseconds, dateUpload = NOW, false)
+            Arrival(read = false, bookmark = true, dateFetch = NOW + 1.milliseconds, dateUpload = NOW, false, false)
     }
 
     @Test

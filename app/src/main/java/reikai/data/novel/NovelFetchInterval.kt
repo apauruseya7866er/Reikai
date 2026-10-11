@@ -16,7 +16,7 @@ import kotlin.time.Instant
 /**
  * Predicts when [novel] is next due from all of its [chapters] and stores it, the novel side of manga's
  * `UpdateManga.awaitUpdateFetchInterval`. An interval the user set is kept, and then [chapters] is never
- * read; no [window] means today's.
+ * read; no [window] means today's. [foundRelease] is whether the sync that led here found new chapters.
  */
 suspend fun updateNovelFetchInterval(
     novel: Novel,
@@ -25,8 +25,9 @@ suspend fun updateNovelFetchInterval(
     window: ClosedRange<Instant>? = null,
     zone: TimeZone = TimeZone.currentSystemDefault(),
     now: LocalDateTime = Clock.System.now().toLocalDateTime(zone),
+    foundRelease: Boolean = false,
 ) {
-    novelRepository.update(novelFetchInterval(novel, chapters, window, zone, now))
+    novelRepository.update(novelFetchInterval(novel, chapters, window, zone, now, foundRelease))
 }
 
 /**
@@ -39,6 +40,7 @@ suspend fun novelFetchInterval(
     window: ClosedRange<Instant>? = null,
     zone: TimeZone = TimeZone.currentSystemDefault(),
     now: LocalDateTime = Clock.System.now().toLocalDateTime(zone),
+    foundRelease: Boolean = false,
 ): NovelUpdate {
     val currentWindow = ReleaseInterval.windowOrToday(window, now.date, zone)
     val (interval, nextUpdate) = ReleaseInterval.predict(
@@ -48,6 +50,7 @@ suspend fun novelFetchInterval(
         now,
         zone,
         currentWindow,
+        foundRelease,
     ) {
         chapters().let { all -> ChapterDates(all.map { it.dateUpload }, all.map { it.dateFetch }) }
     }
@@ -60,18 +63,26 @@ suspend fun novelFetchInterval(
 /**
  * Manga's sync-time prediction rule, run once after a whole-novel sync. [novel] is the snapshot from
  * before the sync, whose `lastUpdate` the prediction counts from. As manga's sync, an unchanged list
- * still moves a prediction that was forced, never made, or has fallen behind [window].
+ * still moves a prediction that was forced, never made, or has fallen behind [window]. [foundRelease]
+ * is the sync's own (see [NovelChapterSyncResult.plus] for a page walk's).
  */
 suspend fun predictNovelFetchInterval(
     novel: Novel,
     listChanged: Boolean,
+    foundRelease: Boolean,
     manualFetch: Boolean,
     novelChapterRepository: NovelChapterRepository,
     novelRepository: NovelRepository,
     window: ClosedRange<Instant>? = null,
 ) {
     if (listChanged || ReleaseInterval.needsPrediction(manualFetch, novel.fetchInterval, novel.nextUpdate, window)) {
-        updateNovelFetchInterval(novel, { novelChapterRepository.getByNovelId(novel.id) }, novelRepository, window)
+        updateNovelFetchInterval(
+            novel,
+            { novelChapterRepository.getByNovelId(novel.id) },
+            novelRepository,
+            window,
+            foundRelease = foundRelease,
+        )
     }
 }
 

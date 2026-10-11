@@ -16,6 +16,7 @@ import reikai.domain.chapter.ChapterNumberOverrideRepository
 import reikai.domain.chapter.StoredChapter
 import reikai.domain.chapter.appliedTo
 import reikai.domain.chapter.chapterArrivals
+import reikai.domain.chapter.foundRelease
 import reikai.domain.library.ContentType
 import reikai.domain.library.ReleaseInterval
 import tachiyomi.domain.chapter.interactor.ShouldUpdateDbChapter
@@ -171,11 +172,18 @@ class SyncChaptersWithSource(
             updated = updatedChapters,
         )
 
+        val excludedScanlators = getExcludedScanlators.await(manga.id).toHashSet()
+
+        // RK: the found-release rule is ChapterArrivals' foundRelease, which the novel sync calls too
+        val foundRelease = foundRelease(
+            hadChapters = dbChapters.isNotEmpty(),
+            arrivals = newChapters.zip(arrivals).filter { (chapter, _) -> chapter.scanlator !in excludedScanlators }
+                .map { (_, arrival) -> arrival },
+        )
+
         // Set this manga as updated since chapters were changed
         // Note that last_update actually represents last time the chapter list changed at all
-        updateManga.awaitUpdateFetchIntervalAndLastUpdate(manga, timeZone, now, fetchWindow)
-
-        val excludedScanlators = getExcludedScanlators.await(manga.id).toHashSet()
+        updateManga.awaitUpdateFetchIntervalAndLastUpdate(manga, timeZone, now, fetchWindow, foundRelease)
 
         return added.filterNot { it.url in changedOrDuplicateReadUrls || it.scanlator in excludedScanlators }
     }

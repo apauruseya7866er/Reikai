@@ -72,7 +72,14 @@ class NovelPageFetcher(
             chapterNumberOverrides,
             novelDownloadManager = novelDownloadManager(),
         )
-        predictNovelFetchInterval(novel, synced.changed, manualFetch = true, chapterRepo, novelRepo)
+        predictNovelFetchInterval(
+            novel,
+            synced.changed,
+            synced.foundRelease,
+            manualFetch = true,
+            chapterRepo,
+            novelRepo,
+        )
         chapters.size
     }
 

@@ -9,6 +9,9 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.daysUntil
+import kotlinx.datetime.toLocalDateTime
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -30,6 +33,8 @@ import tachiyomi.data.DatabaseBindings
 import tachiyomi.domain.chapter.model.NoChaptersException
 import tachiyomi.domain.library.service.LibraryPreferences
 import java.io.File
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Instant
 
 /** A library refresh over the real SQL, with the plugin host faked by [PagedSource]. */
@@ -281,6 +286,49 @@ class NovelRefreshTest {
         refresh(storedNovel(nextUpdate = Instant.fromEpochMilliseconds(1L)), source, manualFetch = true)
 
         novels.predictions shouldBe 1
+    }
+
+    /**
+     * A weekly interval the user set, last updated three days ago: due in four days, unless the refresh
+     * found a release, which the next check then counts a whole week from.
+     */
+    private suspend fun weeklyNovelUpdatedThreeDaysAgo(): Novel {
+        val novel = storedNovel()
+        novels.update(
+            NovelUpdate(novel.id) {
+                fetchInterval = -7
+                lastUpdate = Clock.System.now() - 3.days
+            },
+        )
+        return novels.getById(novel.id)!!
+    }
+
+    private suspend fun daysUntilNextUpdate(novel: Novel): Int {
+        val zone = TimeZone.currentSystemDefault()
+        val today = Clock.System.now().toLocalDateTime(zone).date
+        return today.daysUntil(novels.getById(novel.id)!!.nextUpdate!!.toLocalDateTime(zone).date)
+    }
+
+    private val twoPages get() = PagedSource(listOf(chapter("/c/2", 2.0)), mapOf("2" to listOf(chapter("/c/1", 1.0))))
+
+    // Page 2 syncs against the page 1 this refresh just stored, so on its own it would read as a release.
+    @Test
+    fun `a paged novel's first fetch is not counted as a release`() = runTest {
+        val novel = weeklyNovelUpdatedThreeDaysAgo()
+
+        refresh(novel, twoPages)
+
+        daysUntilNextUpdate(novel) shouldBe 4
+    }
+
+    @Test
+    fun `a chapter found on a later page of a stored novel is counted as a release`() = runTest {
+        val novel = weeklyNovelUpdatedThreeDaysAgo()
+        storedChapter(novel, "/c/2", 2.0, read = false, page = "1")
+
+        refresh(novel, twoPages)
+
+        daysUntilNextUpdate(novel) shouldBe 7
     }
 
     /**

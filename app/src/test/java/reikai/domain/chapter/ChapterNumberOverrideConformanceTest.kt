@@ -154,7 +154,15 @@ class ChapterNumberOverrideConformanceTest {
                 )
                 return runCatching {
                     coVerify(exactly = 1) {
-                        updateManga.awaitUpdateFetchIntervalAndLastUpdate(match { it.id == OWNER }, any(), any(), any())
+                        updateManga.awaitUpdateFetchIntervalAndLastUpdate(
+                            match {
+                                it.id == OWNER
+                            },
+                            any(),
+                            any(),
+                            any(),
+                            any(),
+                        )
                     }
                 }.isSuccess
             }

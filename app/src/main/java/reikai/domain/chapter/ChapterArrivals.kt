@@ -19,14 +19,27 @@ data class StoredChapter(
     val dateFetch: Instant = Instant.fromEpochMilliseconds(0),
 )
 
-/** What an added chapter is stored as. [isChangedOrDuplicate] keeps it out of the new-chapter results. */
+/**
+ * What an added chapter is stored as. [isChangedOrDuplicate] keeps it out of the new-chapter results;
+ * [isRelisted] marks one re-listed under a number the sync removed, which was out already.
+ */
 data class Arrival(
     val read: Boolean,
     val bookmark: Boolean,
     val dateFetch: Instant,
     val dateUpload: Instant,
     val isChangedOrDuplicate: Boolean,
+    val isRelisted: Boolean,
 )
+
+/**
+ * Whether a sync's [arrivals] are a release the next update is counted from, upstream
+ * `SyncChaptersWithSource`'s rule both syncs call. A first fetch ([hadChapters] false) lists the back
+ * catalogue, and a re-listed chapter was out already. The manga sync passes only the arrivals whose
+ * scanlator the user has not excluded.
+ */
+fun foundRelease(hadChapters: Boolean, arrivals: List<Arrival>): Boolean =
+    hadChapters && arrivals.any { !it.isRelisted }
 
 /**
  * Upstream `SyncChaptersWithSource`'s rules for the chapters a sync adds, which the manga and novel syncs
@@ -56,7 +69,7 @@ fun chapterArrivals(
         val twins = removedByNumber[chapter.number].takeIf { isRecognizedChapterNumber(chapter.number) }
         if (twins == null) {
             val dateFetch = now + (added.size - index).milliseconds
-            Arrival(chapter.read || duplicate, chapter.bookmark, dateFetch, dateUpload, duplicate)
+            Arrival(chapter.read || duplicate, chapter.bookmark, dateFetch, dateUpload, duplicate, isRelisted = false)
         } else {
             Arrival(
                 read = twins.any { it.read },
@@ -64,6 +77,7 @@ fun chapterArrivals(
                 dateFetch = twins.minOf { it.dateFetch },
                 dateUpload = dateUpload,
                 isChangedOrDuplicate = true,
+                isRelisted = true,
             )
         }
     }
