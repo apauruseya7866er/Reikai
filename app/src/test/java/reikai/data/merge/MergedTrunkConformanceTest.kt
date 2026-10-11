@@ -1,5 +1,6 @@
 package reikai.data.merge
 
+import app.cash.sqldelight.db.QueryResult
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import io.kotest.matchers.shouldBe
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
 import reikai.data.novel.NovelChapterRepositoryImpl
@@ -38,8 +40,8 @@ import tachiyomi.domain.source.service.SourceManager
  * The collapsed library row leads on the member the stitch makes the trunk, for both content types:
  * its cover, title and badge are that member's, and the details list opens on the stitch. Each type
  * ranks through the same source-priority kernel, then a chapter count, and the library has to read
- * the count the stitch ranks on. Runs the library's own rows and counts from real SQL, with no stitch
- * stored, which is how every group starts.
+ * the count the stitch ranks on. Runs the library's own rows and counts from real SQL, both before any
+ * stitch is stored, which is how every group starts, and after a reconcile has saved the stitch's counts.
  */
 class MergedTrunkConformanceTest {
 
@@ -100,8 +102,112 @@ class MergedTrunkConformanceTest {
 
         exec("DELETE FROM ${side.chapterTable} WHERE ${side.ownerColumn} = $LARGER AND ${side.numberColumn} > 2")
 
-        side.libraryPrimary(preferred = emptyList()) shouldBe side.storedLead(preferred = emptyList())
+        // The library reads what the stitch saved, so it moves once the reconcile after a write has run.
+        val lead = side.storedLead(preferred = emptyList())
+        side.libraryPrimary(preferred = emptyList()) shouldBe lead
     }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `after a reconcile the library leads on the stitch's trunk`(type: ContentType) = runTest {
+        val side = side(type)
+        // The smaller member lists each chapter twice, so a count of rows rather than chapters would
+        // make it lead on manga, where the stitch collapses the second copy.
+        side.entry(id = LARGER, source = 100L, chapters = 10)
+        side.entry(id = SMALLER, source = 200L, chapters = 6, listedTwice = 6)
+        groups.createGroup(type, listOf(LARGER, SMALLER))
+
+        val lead = side.storedLead(preferred = emptyList())
+        side.libraryPrimary(preferred = emptyList()) shouldBe lead
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a chapter write followed by a reconcile moves the library lead with the stitch`(type: ContentType) =
+        runTest {
+            val side = side(type)
+            side.entry(id = LARGER, source = 100L, chapters = 10)
+            side.entry(id = SMALLER, source = 200L, chapters = 5)
+            groups.createGroup(type, listOf(LARGER, SMALLER))
+            side.storedLead(preferred = emptyList())
+
+            side.addChapters(id = SMALLER, numbers = 6..15)
+
+            val lead = side.storedLead(preferred = emptyList())
+            side.libraryPrimary(preferred = emptyList()) shouldBe lead
+        }
+
+    // The tests below are manga only: novels rank on the library row's own chapter count, which counts
+    // rows as the novel stitch does, so the novel stitch saves no count to test.
+
+    @Test
+    fun `the stitch saves each member's count the way it ranks the trunk`() = runTest {
+        val side = MangaSide()
+        // Chapter 1 twice under two scanlators, and one chapter with no recognized number.
+        side.entryWithNumbers(id = SMALLER, source = 100L, numbers = listOf(1.0, 1.0, 2.0, 3.0, -1.0))
+        // 1.1 as a source reports it (a float widened to double) and as a parser reads it: one chapter.
+        side.entryWithNumbers(id = LARGER, source = 200L, numbers = listOf(1.1f.toDouble(), 1.1, 2.0))
+        groups.createGroup(ContentType.MANGA, listOf(LARGER, SMALLER))
+
+        side.storedLead(preferred = emptyList())
+
+        savedCounts() shouldBe mapOf(SMALLER to 3L, LARGER to 2L)
+    }
+
+    @Test
+    fun `a chapter write followed by a reconcile updates the saved count`() = runTest {
+        val side = MangaSide()
+        side.entry(id = LARGER, source = 100L, chapters = 10)
+        side.entry(id = SMALLER, source = 200L, chapters = 5)
+        groups.createGroup(ContentType.MANGA, listOf(LARGER, SMALLER))
+        side.storedLead(preferred = emptyList())
+
+        side.addChapters(id = SMALLER, numbers = 6..15)
+        side.storedLead(preferred = emptyList())
+
+        savedCounts() shouldBe mapOf(LARGER to 10L, SMALLER to 15L)
+    }
+
+    @Test
+    fun `a member leaving the library takes its saved count with it at the next reconcile`() = runTest {
+        val side = MangaSide()
+        side.entry(id = LARGER, source = 100L, chapters = 10)
+        side.entry(id = SMALLER, source = 200L, chapters = 5)
+        side.entry(id = LEAVING, source = 300L, chapters = 3)
+        groups.createGroup(ContentType.MANGA, listOf(LARGER, SMALLER, LEAVING))
+        side.storedLead(preferred = emptyList())
+
+        exec("UPDATE manga SET user_favorite_at = NULL WHERE id = $LEAVING")
+        side.storedLead(preferred = emptyList())
+
+        savedCounts() shouldBe mapOf(LARGER to 10L, SMALLER to 5L)
+    }
+
+    @Test
+    fun `a group not stitched yet ranks exactly beside one that is`() = runTest {
+        val side = MangaSide()
+        side.entry(id = LARGER, source = 100L, chapters = 10)
+        side.entry(id = SMALLER, source = 200L, chapters = 5)
+        groups.createGroup(ContentType.MANGA, listOf(LARGER, SMALLER))
+        side.storedLead(preferred = emptyList())
+        side.entry(id = UNSTITCHED_LARGER, source = 100L, chapters = 10)
+        side.entry(id = UNSTITCHED_SMALLER, source = 200L, chapters = 5)
+        groups.createGroup(ContentType.MANGA, listOf(UNSTITCHED_LARGER, UNSTITCHED_SMALLER))
+
+        side.libraryLeads(preferred = emptyList()) shouldBe setOf(LARGER, UNSTITCHED_LARGER)
+    }
+
+    private fun savedCounts(): Map<Long, Long> =
+        driver.executeQuery(
+            null,
+            "SELECT manga_id, recognized_count FROM merged_member_count",
+            { cursor ->
+                val rows = mutableMapOf<Long, Long>()
+                while (cursor.next().value) rows[cursor.getLong(0)!!] = cursor.getLong(1)!!
+                QueryResult.Value(rows)
+            },
+            0,
+        ).value
 
     private fun side(type: ContentType): Side = if (type == ContentType.NOVELS) NovelSide() else MangaSide()
 
@@ -112,7 +218,10 @@ class MergedTrunkConformanceTest {
 
         val numberColumn: String
 
-        suspend fun entry(id: Long, source: Long, chapters: Int, hidden: Int = 0)
+        /** [listedTwice] of the chapters get a second row under the same number, as a second scanlator's. */
+        suspend fun entry(id: Long, source: Long, chapters: Int, hidden: Int = 0, listedTwice: Int = 0)
+
+        suspend fun addChapters(id: Long, numbers: IntRange)
 
         suspend fun libraryPrimary(preferred: List<Long>): Long
 
@@ -159,7 +268,25 @@ class MergedTrunkConformanceTest {
             return storedLead(stitcher) { chapters.getChapterById(it)!!.mangaId }
         }
 
-        override suspend fun entry(id: Long, source: Long, chapters: Int, hidden: Int) {
+        override suspend fun entry(id: Long, source: Long, chapters: Int, hidden: Int, listedTwice: Int) {
+            manga(id, source)
+            (1..chapters).forEach { number ->
+                chapter(id, number.toDouble(), url = "/$id/$number", scanlator = "hidden".takeIf { number <= hidden })
+                if (number <= listedTwice) chapter(id, number.toDouble(), url = "/$id/$number/b", scanlator = "b")
+            }
+            if (hidden > 0) exec("INSERT INTO excluded_scanlator(manga_id, scanlator) VALUES ($id, 'hidden')")
+        }
+
+        override suspend fun addChapters(id: Long, numbers: IntRange) {
+            numbers.forEach { chapter(id, it.toDouble(), url = "/$id/$it", scanlator = null) }
+        }
+
+        suspend fun entryWithNumbers(id: Long, source: Long, numbers: List<Double>) {
+            manga(id, source)
+            numbers.forEachIndexed { index, number -> chapter(id, number, url = "/$id/$index", scanlator = "s$index") }
+        }
+
+        private suspend fun manga(id: Long, source: Long) {
             exec(
                 "INSERT INTO manga(id, source_id, remote_url, remote_title, remote_status, " +
                     "state_initialized, user_reader_flags, user_chapter_flags, " +
@@ -167,20 +294,22 @@ class MergedTrunkConformanceTest {
                     "state_chapter_fetch_interval, user_notes, remote_memo) VALUES ($id, $source, " +
                     "'m$id', 'title', 0, 0, 0, 0, 0, 0, 0, 0, '', '{}')",
             )
-            (1..chapters).forEach { number ->
-                val scanlator = if (number <= hidden) "'hidden'" else "NULL"
-                exec(
-                    "INSERT INTO chapter(manga_id, remote_url, remote_name, remote_scanlator, " +
-                        "user_read, user_bookmark, user_last_page_read, remote_chapter_number, " +
-                        "remote_order, state_date_fetch, remote_date_upload, remote_memo) VALUES ($id, " +
-                        "'/$id/$number', 'Chapter $number', $scanlator, 0, 0, 0, $number, $number, 0, 0, " +
-                        "'{}')",
-                )
-            }
-            if (hidden > 0) exec("INSERT INTO excluded_scanlator(manga_id, scanlator) VALUES ($id, 'hidden')")
         }
 
-        override suspend fun libraryPrimary(preferred: List<Long>): Long {
+        private suspend fun chapter(id: Long, number: Double, url: String, scanlator: String?) {
+            exec(
+                "INSERT INTO chapter(manga_id, remote_url, remote_name, remote_scanlator, " +
+                    "user_read, user_bookmark, user_last_page_read, remote_chapter_number, " +
+                    "remote_order, state_date_fetch, remote_date_upload, remote_memo) VALUES ($id, " +
+                    "'$url', 'Chapter $number', ${scanlator?.let { "'$it'" } ?: "NULL"}, 0, 0, 0, $number, " +
+                    "${number.toLong()}, 0, 0, '{}')",
+            )
+        }
+
+        override suspend fun libraryPrimary(preferred: List<Long>): Long = libraryLeads(preferred).single()
+
+        /** The member each collapsed library row leads on. */
+        suspend fun libraryLeads(preferred: List<Long>): Set<Long> {
             val items = MangaRepositoryImpl(database).getLibraryManga().map { row ->
                 LibraryItem(
                     libraryManga = row,
@@ -205,7 +334,7 @@ class MergedTrunkConformanceTest {
                 preferredSourceIds = preferred,
                 recognizedChapterCounts = MergedChapterUnitRepositoryImpl(database)
                     .getRecognizedChapterCountsAsFlow().first(),
-            ).single().libraryManga.manga.id
+            ).mapTo(HashSet()) { it.libraryManga.manga.id }
         }
     }
 
@@ -228,18 +357,25 @@ class MergedTrunkConformanceTest {
             return storedLead(stitcher) { chapters.getById(it)!!.novelId }
         }
 
-        override suspend fun entry(id: Long, source: Long, chapters: Int, hidden: Int) {
+        override suspend fun entry(id: Long, source: Long, chapters: Int, hidden: Int, listedTwice: Int) {
             exec(
                 "INSERT INTO novels(_id, source, url, title, status, initialized, chapter_flags, " +
                     "favorite_at) VALUES ($id, '$source', 'n$id', 'title', 0, 0, 0, 0)",
             )
-            (1..chapters).forEach { number ->
-                exec(
-                    "INSERT INTO novel_chapters(novel_id, url, name, read, bookmark, chapter_number, " +
-                        "source_order, date_fetch, date_upload) " +
-                        "VALUES ($id, '/$id/$number', 'Chapter $number', 0, 0, $number, $number, 0, 0)",
-                )
-            }
+            addChapters(id, 1..chapters)
+            (1..listedTwice).forEach { chapter(id, it, url = "/$id/$it/b") }
+        }
+
+        override suspend fun addChapters(id: Long, numbers: IntRange) {
+            numbers.forEach { chapter(id, it, url = "/$id/$it") }
+        }
+
+        private suspend fun chapter(id: Long, number: Int, url: String) {
+            exec(
+                "INSERT INTO novel_chapters(novel_id, url, name, read, bookmark, chapter_number, " +
+                    "source_order, date_fetch, date_upload) " +
+                    "VALUES ($id, '$url', 'Chapter $number', 0, 0, $number, $number, 0, 0)",
+            )
         }
 
         override suspend fun libraryPrimary(preferred: List<Long>): Long =
@@ -259,5 +395,8 @@ class MergedTrunkConformanceTest {
         // The larger member has the higher id, so the id tiebreak alone would pick the wrong one.
         const val LARGER = 2L
         const val SMALLER = 1L
+        const val UNSTITCHED_LARGER = 4L
+        const val UNSTITCHED_SMALLER = 3L
+        const val LEAVING = 5L
     }
 }

@@ -76,6 +76,22 @@ CREATE TABLE merged_group_ranking (
     ON DELETE CASCADE
 );
 
+-- The count each manga member was ranked on when its group was last stitched (distinct recognized
+-- numbers, ChapterAggregation.recognizedChapterCount), so the library ranks members the way the stitch
+-- did without reading every member chapter on each chapter write. Written in the same transaction as
+-- the units, so it is as current as the stitch. Its own table rather than a merge_group_manga column:
+-- a write there re-runs the membership flow that starts a reconcile. Novels need none, since the novel
+-- library row carries the row count the novel stitch ranks on.
+CREATE TABLE merged_member_count (
+    manga_id INTEGER NOT NULL PRIMARY KEY,
+    group_id INTEGER NOT NULL,
+    recognized_count INTEGER NOT NULL,
+    FOREIGN KEY(manga_id) REFERENCES manga (id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(group_id) REFERENCES merge_group (_id)
+    ON DELETE CASCADE
+);
+
 -- Every group whose stored stitch no longer describes the chapters behind it, once per stale row: a
 -- member chapter with no row or with changed inputs, a row for a chapter that is no longer a library
 -- member's, and a group left with fewer rows than it was stitched with, which is a deleted chapter or
@@ -306,21 +322,47 @@ SELECT
 FROM mergedNovelUnitCopiesView
 GROUP BY groupId;
 
--- The distinct recognized chapter numbers each grouped library entry lists, for the count the stitch
--- ranks the trunk on after the source ranking (ChapterAggregation.rank), so the collapsed library row
--- leads on the same member the stitch does. The caller counts them as the stitch does, narrowed to
--- Float, which SQL cannot. Excluded scanlators are included, so it needs no stitch and holds before one
--- exists. A row count cannot stand in: a source listing one chapter under several scanlators wins on
--- rows while covering no more of the series. A member absent from the result lists no recognized number.
-recognizedChapterNumbersByManga:
+-- The count each grouped member was ranked on at its group's last stitch, for the collapsed library row
+-- to lead on the member the stitch does. Only rows for the group the member is in now.
+savedRecognizedCounts:
+SELECT S.manga_id AS mangaId, S.recognized_count AS recognizedCount
+FROM merged_member_count S
+JOIN merge_group_manga MGM
+ON MGM.manga_id = S.manga_id
+AND MGM.group_id = S.group_id;
+
+-- The distinct recognized chapter numbers of each grouped library member with no saved count, which is
+-- one its group has not been stitched with yet, so the library ranks it exactly before that stitch.
+-- The caller counts them as the stitch does, narrowed to Float, which SQL cannot. Excluded scanlators
+-- are included, as the stitch reads them. A row count cannot stand in: a source listing one chapter
+-- under several scanlators wins on rows while covering no more of the series. Costs one saved-count
+-- lookup per member once every group is stitched, rather than a pass over every member chapter.
+unsavedRecognizedChapterNumbers:
 SELECT DISTINCT C.manga_id AS mangaId, C.remote_chapter_number AS chapterNumber
-FROM merge_group_manga MGM
-JOIN manga M
-ON M.id = MGM.manga_id
-AND M.user_favorite_at IS NOT NULL
-JOIN chapter C
-ON C.manga_id = MGM.manga_id
-WHERE C.remote_chapter_number >= 0;
+FROM chapter C
+WHERE C.remote_chapter_number >= 0
+AND C.manga_id IN (
+    SELECT MGM.manga_id
+    FROM merge_group_manga MGM
+    JOIN manga M
+    ON M.id = MGM.manga_id
+    AND M.user_favorite_at IS NOT NULL
+    WHERE NOT EXISTS (
+        SELECT 1 FROM merged_member_count S
+        WHERE S.manga_id = MGM.manga_id AND S.group_id = MGM.group_id
+    )
+);
+
+-- Guarded like insert above, for a group dissolved or a member removed while it was being stitched.
+insertMemberCount:
+INSERT OR REPLACE INTO merged_member_count(manga_id, group_id, recognized_count)
+SELECT :mangaId, :groupId, :recognizedCount
+WHERE EXISTS (SELECT 1 FROM manga WHERE id = :mangaId)
+AND EXISTS (SELECT 1 FROM merge_group WHERE _id = :groupId);
+
+deleteMemberCounts:
+DELETE FROM merged_member_count
+WHERE group_id = :groupId;
 
 -- Every merged group's member chapters, with what a download probe needs to find the file. Whether a
 -- chapter is on disk is not in this database, so the count itself cannot be a query: the caller probes

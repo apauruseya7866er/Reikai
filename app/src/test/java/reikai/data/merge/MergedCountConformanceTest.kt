@@ -12,6 +12,7 @@ import org.junit.jupiter.params.provider.EnumSource
 import reikai.domain.library.ContentType
 import reikai.domain.manga.ChapterAggregation
 import reikai.domain.merge.GroupMarks
+import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
 import reikai.domain.merge.MergedGroupCounts
 import reikai.domain.merge.storedUnitsOf
 import reikai.domain.novel.NovelChapterAggregation
@@ -244,7 +245,10 @@ class MergedCountConformanceTest {
         units.replaceGroup(
             ContentType.NOVELS,
             group,
-            storedUnitsOf(chapters, merged, { it.id }, { it.name }, { it.chapterNumber }, { it.sourceOrder }),
+            GroupStitch(
+                storedUnitsOf(chapters, merged, { it.id }, { it.name }, { it.chapterNumber }, { it.sourceOrder }),
+                recognizedCounts = emptyMap(),
+            ),
             ranking = null,
         )
         return units.getGroupCounts(ContentType.NOVELS)[group]
@@ -260,7 +264,10 @@ class MergedCountConformanceTest {
         units.replaceGroup(
             ContentType.MANGA,
             group,
-            storedUnitsOf(chapters, merged, { it.id }, { it.name }, { it.chapterNumber }, { it.sourceOrder }),
+            GroupStitch(
+                storedUnitsOf(chapters, merged, { it.id }, { it.name }, { it.chapterNumber }, { it.sourceOrder }),
+                recognizedCounts = emptyMap(),
+            ),
             ranking = null,
         )
         return units.getGroupCounts(ContentType.MANGA)[group]

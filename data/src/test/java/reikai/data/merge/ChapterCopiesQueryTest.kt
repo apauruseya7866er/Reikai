@@ -13,6 +13,7 @@ import org.junit.jupiter.params.provider.EnumSource
 import reikai.data.RecordingDriver
 import reikai.data.queryPlan
 import reikai.domain.library.ContentType
+import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
 import reikai.domain.merge.MergedChapterUnitRepository.StoredUnit
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
@@ -155,12 +156,22 @@ class ChapterCopiesQueryTest {
         units.replaceGroup(
             type,
             group,
-            listOf(
-                StoredUnit(10L, unit = 0, copyOrder = 0, chapterName = "c10", chapterNumber = 1.0, sourceOrder = 0),
-                StoredUnit(20L, unit = 0, copyOrder = 1, chapterName = "c20", chapterNumber = 1.0, sourceOrder = 0),
-                StoredUnit(30L, unit = 0, copyOrder = 2, chapterName = "c30", chapterNumber = 1.0, sourceOrder = 0),
-                StoredUnit(11L, unit = 1, copyOrder = 0, chapterName = "c11", chapterNumber = 2.0, sourceOrder = 0),
-                StoredUnit(12L, unit = null, copyOrder = 0, chapterName = "c12", chapterNumber = 3.0, sourceOrder = 0),
+            GroupStitch(
+                listOf(
+                    StoredUnit(10L, unit = 0, copyOrder = 0, chapterName = "c10", chapterNumber = 1.0, sourceOrder = 0),
+                    StoredUnit(20L, unit = 0, copyOrder = 1, chapterName = "c20", chapterNumber = 1.0, sourceOrder = 0),
+                    StoredUnit(30L, unit = 0, copyOrder = 2, chapterName = "c30", chapterNumber = 1.0, sourceOrder = 0),
+                    StoredUnit(11L, unit = 1, copyOrder = 0, chapterName = "c11", chapterNumber = 2.0, sourceOrder = 0),
+                    StoredUnit(
+                        12L,
+                        unit = null,
+                        copyOrder = 0,
+                        chapterName = "c12",
+                        chapterNumber = 3.0,
+                        sourceOrder = 0,
+                    ),
+                ),
+                recognizedCounts = emptyMap(),
             ),
             ranking = null,
         )

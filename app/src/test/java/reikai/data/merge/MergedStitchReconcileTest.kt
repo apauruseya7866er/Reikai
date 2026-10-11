@@ -24,7 +24,7 @@ import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.manga.MangaGroupStitcher
 import reikai.domain.manga.MangaMergeManager
-import reikai.domain.merge.MergedChapterUnitRepository.StoredUnit
+import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
 import reikai.domain.merge.MergedGroupStitcher
 import reikai.domain.merge.ReconcileMergedChapters
 import reikai.domain.novel.NovelChapterRepository
@@ -317,7 +317,7 @@ class MergedStitchReconcileTest {
     ) : MergedGroupStitcher by inner {
         private var held = false
 
-        override suspend fun stitch(groupId: Long): List<StoredUnit> {
+        override suspend fun stitch(groupId: Long): GroupStitch {
             val stitched = inner.stitch(groupId)
             if (!held) {
                 held = true
@@ -329,7 +329,7 @@ class MergedStitchReconcileTest {
 
     /** Suspends before each stitch, as a real database read does, so a cancelled caller is noticed there. */
     private class SuspendingStitcher(private val inner: MergedGroupStitcher) : MergedGroupStitcher by inner {
-        override suspend fun stitch(groupId: Long): List<StoredUnit> {
+        override suspend fun stitch(groupId: Long): GroupStitch {
             yield()
             return inner.stitch(groupId)
         }
@@ -339,7 +339,7 @@ class MergedStitchReconcileTest {
     private class CountingStitcher(private val inner: MergedGroupStitcher) : MergedGroupStitcher by inner {
         val stitched = mutableListOf<Long>()
 
-        override suspend fun stitch(groupId: Long): List<StoredUnit> {
+        override suspend fun stitch(groupId: Long): GroupStitch {
             stitched += groupId
             return inner.stitch(groupId)
         }

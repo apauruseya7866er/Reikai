@@ -12,7 +12,7 @@ interface MergedGroupStitcher {
     val contentType: ContentType
 
     /** [groupId]'s stitch, as rows to store. Empty when the group has nothing left to stitch. */
-    suspend fun stitch(groupId: Long): List<MergedChapterUnitRepository.StoredUnit>
+    suspend fun stitch(groupId: Long): MergedChapterUnitRepository.GroupStitch
 
     /** The ranking stamp every group of [contentType] would be stitched under now, keyed by group; a
      *  group with no library member is absent. See [rankingStamps]. */

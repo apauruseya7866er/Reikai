@@ -7,6 +7,7 @@ import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import reikai.domain.library.ContentType
@@ -15,7 +16,7 @@ import reikai.domain.merge.ChapterCopyRow
 import reikai.domain.merge.ChapterUnit
 import reikai.domain.merge.DownloadUnitRow
 import reikai.domain.merge.MergedChapterUnitRepository
-import reikai.domain.merge.MergedChapterUnitRepository.StoredUnit
+import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
 import reikai.domain.merge.MergedGroupCounts
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
@@ -131,21 +132,31 @@ class MergedChapterUnitRepositoryImpl(
         }.subscribeToList().map { rows -> rows.groupBy { it.namedId } }
 
     override fun getRecognizedChapterCountsAsFlow(): Flow<Map<Long, Long>> =
-        queries.recognizedChapterNumbersByManga().subscribeToList().map { rows ->
-            rows.groupBy({ it.mangaId }, { it.chapterNumber })
-                .mapValues { (_, numbers) -> ChapterAggregation.distinctChapterNumberCount(numbers).toLong() }
+        combine(
+            queries.savedRecognizedCounts().subscribeToList(),
+            queries.unsavedRecognizedChapterNumbers().subscribeToList(),
+        ) { saved, unsaved ->
+            saved.associate { it.mangaId to it.recognizedCount } +
+                unsaved.groupBy({ it.mangaId }, { it.chapterNumber })
+                    .mapValues { (_, numbers) -> ChapterAggregation.distinctChapterNumberCount(numbers).toLong() }
         }.distinctUntilChanged()
 
     override suspend fun replaceGroup(
         contentType: ContentType,
         groupId: Long,
-        units: List<StoredUnit>,
+        stitch: GroupStitch,
         ranking: String?,
     ) {
         val novels = contentType == ContentType.NOVELS
         database.transaction {
             if (novels) queries.deleteNovelGroup(groupId) else queries.deleteGroup(groupId)
-            units.forEach {
+            if (!novels) {
+                queries.deleteMemberCounts(groupId)
+                stitch.recognizedCounts.forEach { (mangaId, count) ->
+                    queries.insertMemberCount(mangaId, groupId, count)
+                }
+            }
+            stitch.units.forEach {
                 val unit = it.unit?.toLong()
                 val copyOrder = it.copyOrder.toLong()
                 if (novels) {

@@ -110,14 +110,13 @@ object ChapterAggregation {
     ): List<RankedSource> = chaptersBySource.entries
         .map { (mangaId, chapters) ->
             val prefRank = sourcePriority(mangaId, sourceIdByManga[mangaId], preferredSourceIds, memberRanking)
-            RankedSource(
-                mangaId,
-                chapters,
-                distinctChapterNumberCount(chapters.filter { it.isRecognizedNumber }.map { it.chapterNumber }),
-                prefRank,
-            )
+            RankedSource(mangaId, chapters, recognizedChapterCount(chapters), prefRank)
         }
         .sortedWith(trunkOrder({ it.prefRank }, { it.distinctCount.toLong() }, { it.mangaId }))
+
+    /** The count [rank] orders a source by: its distinct recognized chapter numbers. */
+    fun recognizedChapterCount(chapters: List<Chapter>): Int =
+        distinctChapterNumberCount(chapters.filter { it.isRecognizedNumber }.map { it.chapterNumber })
 
     /** How many chapters [numbers] name, each narrowed to Float as the stitch keys them. */
     fun distinctChapterNumberCount(numbers: List<Double>): Int = numbers.distinctBy { it.toFloat() }.size

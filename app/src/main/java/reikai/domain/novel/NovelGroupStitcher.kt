@@ -7,7 +7,7 @@ import dev.zacsweers.metro.SingleIn
 import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.merge.MergeGroupRepository
-import reikai.domain.merge.MergedChapterUnitRepository.StoredUnit
+import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
 import reikai.domain.merge.MergedGroupStitcher
 import reikai.domain.merge.rankingStamps
 import reikai.domain.merge.storedUnitsOf
@@ -31,9 +31,9 @@ class NovelGroupStitcher(
 
     override val contentType = ContentType.NOVELS
 
-    override suspend fun stitch(groupId: Long): List<StoredUnit> {
+    override suspend fun stitch(groupId: Long): GroupStitch {
         val members = mergeGroupRepository.getFavoriteMembers(contentType, groupId)
-        if (members.isEmpty()) return emptyList()
+        if (members.isEmpty()) return GroupStitch(emptyList(), emptyMap())
         val chaptersByNovel = members.associateWith { chapterRepository.getByNovelId(it) }
         val sourceIdByNovel = members.associateWith { novelRepository.getById(it)?.source.orEmpty() }
         // Any member resolves the group for its per-group ranking override (empty = none).
@@ -44,7 +44,7 @@ class NovelGroupStitcher(
             reikaiLibraryPreferences.preferredNovelSources.get(),
             memberRanking,
         )
-        return storedUnitsOf(
+        val units = storedUnitsOf(
             chapters = chaptersByNovel.values.flatten(),
             merged = merged,
             id = { it.id },
@@ -52,6 +52,8 @@ class NovelGroupStitcher(
             number = { it.chapterNumber },
             order = { it.sourceOrder },
         )
+        // No counts: the novel stitch ranks members on row count, which the library row already carries.
+        return GroupStitch(units, recognizedCounts = emptyMap())
     }
 
     override suspend fun rankings(): Map<Long, String> =

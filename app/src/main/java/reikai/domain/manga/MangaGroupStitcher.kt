@@ -7,7 +7,7 @@ import dev.zacsweers.metro.SingleIn
 import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.merge.MergeGroupRepository
-import reikai.domain.merge.MergedChapterUnitRepository.StoredUnit
+import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
 import reikai.domain.merge.MergedGroupStitcher
 import reikai.domain.merge.rankingStamps
 import reikai.domain.merge.storedUnitsOf
@@ -33,9 +33,9 @@ class MangaGroupStitcher(
 
     override val contentType = ContentType.MANGA
 
-    override suspend fun stitch(groupId: Long): List<StoredUnit> {
+    override suspend fun stitch(groupId: Long): GroupStitch {
         val members = mergeGroupRepository.getFavoriteMembers(contentType, groupId)
-        if (members.isEmpty()) return emptyList()
+        if (members.isEmpty()) return GroupStitch(emptyList(), emptyMap())
         val chaptersBySource = members.associateWith { getMangaWithChapters.awaitChapters(it) }
         val sourceIdByManga = members.associateWith { getMangaWithChapters.awaitManga(it).source }
         // True gallery sources (E-Hentai / ExHentai / nhentai / Pururin / 8Muses / HentaiFox / AsmHentai)
@@ -53,7 +53,7 @@ class MangaGroupStitcher(
             gallerySourceMangaIds,
             mergeManager.overrideRankingMemberIds(members.first()),
         )
-        return storedUnitsOf(
+        val units = storedUnitsOf(
             chapters = chaptersBySource.values.flatten(),
             merged = merged,
             id = { it.id },
@@ -61,6 +61,11 @@ class MangaGroupStitcher(
             number = { it.chapterNumber },
             order = { it.sourceOrder },
         )
+        // Saved so the library ranks members without re-reading every member chapter on each write.
+        val counts = chaptersBySource.mapValues { (_, chapters) ->
+            ChapterAggregation.recognizedChapterCount(chapters).toLong()
+        }
+        return GroupStitch(units, counts)
     }
 
     override suspend fun rankings(): Map<Long, String> =

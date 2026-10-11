@@ -7,6 +7,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import reikai.domain.library.ContentType
+import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 
@@ -42,7 +43,7 @@ class MergedGroupRankingTest {
     fun `a group records the ranking it was stitched under`() = runTest {
         val group = twoMemberGroup()
 
-        units.replaceGroup(ContentType.MANGA, group, emptyList(), ranking = "2;1")
+        units.replaceGroup(ContentType.MANGA, group, GroupStitch(emptyList(), emptyMap()), ranking = "2;1")
 
         units.getRankings() shouldBe mapOf(group to "2;1")
     }

@@ -731,6 +731,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - The Migrate tab and its per-source list no longer re-read the whole novel library every time a chapter changes.
 - A series' page no longer rebuilds its chapter list when another series updates, redraws only the chapter row that changed, and on a merged manga no longer re-reads every source's chapters each time a download finishes or the queue moves.
 - A chapter change that leaves every merged series' counts as they were no longer makes the library rebuild once per count.
+- The manga library no longer re-reads every merged member's chapters on each chapter change to pick which source a merged series leads on; it reads the count saved when the series was last matched up.
 - Deleting many downloaded novel chapters now does its disk, index and saved-queue work once per batch.
 - The novel updates feed reads its newest chapters through an index instead of reading and sorting every library chapter on each refresh.
 - Checking adult content sources for newer gallery versions finds chapters through an index instead of reading every stored chapter.

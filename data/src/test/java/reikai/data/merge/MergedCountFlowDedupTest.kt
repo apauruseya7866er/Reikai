@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import reikai.domain.library.ContentType
+import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
 import reikai.domain.merge.MergedChapterUnitRepository.StoredUnit
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
@@ -102,16 +103,19 @@ class MergedCountFlowDedupTest {
         units.replaceGroup(
             type,
             group,
-            listOf(10L, 20L).mapIndexed { copyOrder, chapter ->
-                StoredUnit(
-                    chapter,
-                    unit = 0,
-                    copyOrder,
-                    chapterName = "c$chapter",
-                    chapterNumber = 1.0,
-                    sourceOrder = 0,
-                )
-            },
+            GroupStitch(
+                listOf(10L, 20L).mapIndexed { copyOrder, chapter ->
+                    StoredUnit(
+                        chapter,
+                        unit = 0,
+                        copyOrder,
+                        chapterName = "c$chapter",
+                        chapterNumber = 1.0,
+                        sourceOrder = 0,
+                    )
+                },
+                recognizedCounts = emptyMap(),
+            ),
             ranking = null,
         )
     }

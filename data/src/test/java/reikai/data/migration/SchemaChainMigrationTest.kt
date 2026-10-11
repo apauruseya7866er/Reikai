@@ -146,14 +146,23 @@ class SchemaChainMigrationTest {
         migrate().shouldBeEmpty()
     }
 
-    @ParameterizedTest
-    @EnumSource(Type::class)
-    fun `a merge group the dedupe did not touch keeps its stitch`(type: Type) = runTest {
-        stitchedGroup(type)
+    // Novel only: migration 65 clears every manga stitch, so the chain end cannot show a manga one kept.
+    @Test
+    fun `a novel merge group the dedupe did not touch keeps its stitch`() = runTest {
+        stitchedGroup(Type.NOVEL)
 
         migrate()
 
-        longs("SELECT chapter_id FROM ${type.unitTable}") shouldBe listOf(10L)
+        longs("SELECT chapter_id FROM ${Type.NOVEL.unitTable}") shouldBe listOf(10L)
+    }
+
+    @Test
+    fun `every manga stitch is cleared so its group restitches and saves its member counts`() = runTest {
+        stitchedGroup(Type.MANGA)
+
+        migrate()
+
+        longs("SELECT chapter_id FROM ${Type.MANGA.unitTable}").shouldBeEmpty()
     }
 
     @ParameterizedTest

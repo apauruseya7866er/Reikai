@@ -11,6 +11,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
 import reikai.data.recents.RecentsUnreadRepositoryImpl
 import reikai.domain.library.ContentType
+import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
 import reikai.domain.merge.MergedChapterUnitRepository.StoredUnit
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
@@ -125,16 +126,19 @@ class MergedUnitSetConformanceTest {
         units.replaceGroup(
             type,
             group,
-            listOf(
-                StoredUnit(10L, unit = 0, copyOrder = 0, chapterName = "c10", chapterNumber = 1.0, sourceOrder = 0),
-                StoredUnit(
-                    otherCopy,
-                    unit = 0,
-                    copyOrder = 1,
-                    chapterName = "c$otherCopy",
-                    chapterNumber = 1.0,
-                    sourceOrder = 0,
+            GroupStitch(
+                listOf(
+                    StoredUnit(10L, unit = 0, copyOrder = 0, chapterName = "c10", chapterNumber = 1.0, sourceOrder = 0),
+                    StoredUnit(
+                        otherCopy,
+                        unit = 0,
+                        copyOrder = 1,
+                        chapterName = "c$otherCopy",
+                        chapterNumber = 1.0,
+                        sourceOrder = 0,
+                    ),
                 ),
+                recognizedCounts = emptyMap(),
             ),
             ranking = null,
         )

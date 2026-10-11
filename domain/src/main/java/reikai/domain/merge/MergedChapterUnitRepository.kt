@@ -26,11 +26,11 @@ interface MergedChapterUnitRepository {
     suspend fun getStitch(contentType: ContentType, groupId: Long): List<ChapterUnit>
 
     /**
-     * Replace [groupId]'s stored stitch with [units] and the [ranking] stamp it was built under,
-     * clearing what was there first, in one transaction. Passing no units clears the group, which is
-     * what a group with too few library members left to stitch comes to; a null [ranking] records none.
+     * Replace [groupId]'s stored stitch with [stitch] and the [ranking] stamp it was built under,
+     * clearing what was there first, in one transaction. A stitch with no units clears the group, which
+     * is what a group with too few library members left to stitch comes to; a null [ranking] records none.
      */
-    suspend fun replaceGroup(contentType: ContentType, groupId: Long, units: List<StoredUnit>, ranking: String?)
+    suspend fun replaceGroup(contentType: ContentType, groupId: Long, stitch: GroupStitch, ranking: String?)
 
     /**
      * Chapter counts per merge group, keyed by group. Every stitched group has an entry, zeros included.
@@ -66,11 +66,22 @@ interface MergedChapterUnitRepository {
     /**
      * How many distinct recognized chapter numbers each grouped library manga lists, keyed by manga id:
      * the count the stitch ranks the trunk on, so the collapsed library row leads on the same source the
-     * details chapter list does. Read from the chapter rows, so a group not yet stitched has it too. A
-     * manga absent from the map lists no recognized number, which ranks as zero. Emits only when a count
-     * changed, like [getGroupCountsAsFlow].
+     * details chapter list does. The count the last stitch saved, so it moves when a reconcile does; a
+     * member its group has not been stitched with yet is counted from its chapter rows. A manga absent
+     * from the map lists no recognized number, which ranks as zero. Emits only when a count changed,
+     * like [getGroupCountsAsFlow].
      */
     fun getRecognizedChapterCountsAsFlow(): Flow<Map<Long, Long>>
+
+    /**
+     * What one stitch of a group stores: every chapter's place in it, and [recognizedCounts], each manga
+     * member's id to the count the stitch ranked it on, which the library ranks the same members by.
+     * Always empty for novels, whose library row already carries the row count the novel stitch ranks on.
+     */
+    data class GroupStitch(
+        val units: List<StoredUnit>,
+        val recognizedCounts: Map<Long, Long>,
+    )
 
     /**
      * One chapter's place in its group's stitch. [unit] is its position in the merged list, null when
