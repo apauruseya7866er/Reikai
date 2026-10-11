@@ -16,6 +16,7 @@ import ireader.core.source.CatalogSource
 import ireader.core.source.Dependencies
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.first
 import logcat.LogPriority
 import mihon.app.di.appGraph
 import mihon.data.dalvik.DelegateLastClassLoaderCompat
@@ -119,7 +120,7 @@ internal object ExtensionLoader {
     ): List<Extension.Installed> {
         val trustExtension = context.appGraph.trustExtension
         val sourcePreferences = context.appGraph.sourcePreferences
-        val stores = context.appGraph.extensionStoreRepository.getAll()
+        val stores = context.appGraph.extensionStoreRepository.getAllAsFlow().first()
         val enabledContentWarnings = sourcePreferences.enabledContentWarnings.get()
         val applyContentWarningsToInstalled = sourcePreferences.applyContentWarningsToInstalled.get()
 
@@ -378,7 +379,7 @@ internal object ExtensionLoader {
         if (signatures.isEmpty()) {
             logcat(LogPriority.WARN) { "Package $pkgName isn't signed" }
             return notLoaded(Extension.NotLoaded.Reason.Unsigned, libVersion)
-        } else if (!trustExtension.isTrusted(pkgInfo, signatures)) {
+        } else if (!trustExtension.isTrusted(pkgInfo, signatures, stores)) {
             logcat(LogPriority.WARN) { "Extension $pkgName isn't trusted" }
             return notLoaded(Extension.NotLoaded.Reason.Untrusted(signatures.last()), libVersion)
         }

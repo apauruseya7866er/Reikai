@@ -15,8 +15,9 @@ import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 
 /**
- * A store removed while its index is still being fetched stays removed (mihon fc5592ff7). The service is
- * the network boundary, so it is the one mock.
+ * Refreshing fetches every store first and then writes them together (mihon 8066b8dfc), and a store removed
+ * while its index is still being fetched stays removed (mihon fc5592ff7). The service is the network
+ * boundary, so it is the one mock.
  */
 class ExtensionStoreRefreshTest {
 
@@ -40,10 +41,10 @@ class ExtensionStoreRefreshTest {
         val service = mockk<ExtensionStoreService> {
             coEvery { fetch(URL) } coAnswers {
                 database.extension_storeQueries.delete(URL)
-                Result.success(store)
+                Result.success(store(URL, "Store"))
             }
         }
-        val repository = ExtensionStoreRepositoryImpl(service, database)
+        val repository = ExtensionStoreRepositoryImpl(backgroundScope, service, database)
         repository.insertFromPreference(URL, "Store")
 
         repository.refreshAll()
@@ -51,13 +52,50 @@ class ExtensionStoreRefreshTest {
         database.extension_storeQueries.getAll().awaitAsList() shouldBe emptyList()
     }
 
+    @Test
+    fun `every store is fetched before any of them is written`() = runTest {
+        val namesSeenWhileFetching = mutableSetOf<String>()
+        val service = mockk<ExtensionStoreService> {
+            coEvery { fetch(any()) } coAnswers {
+                namesSeenWhileFetching += database.extension_storeQueries.getAll().awaitAsList().map { it.name }
+                Result.success(store(firstArg(), "Renamed"))
+            }
+        }
+        val repository = ExtensionStoreRepositoryImpl(backgroundScope, service, database)
+        repository.insertFromPreference(URL, "Store")
+        repository.insertFromPreference(OTHER_URL, "Other")
+
+        repository.refreshAll()
+
+        namesSeenWhileFetching shouldBe setOf("Store", "Other")
+    }
+
+    @Test
+    fun `a store whose fetch fails keeps its row while the others refresh`() = runTest {
+        val service = mockk<ExtensionStoreService> {
+            coEvery { fetch(URL) } returns Result.failure(IllegalStateException("offline"))
+            coEvery { fetch(OTHER_URL) } returns Result.success(store(OTHER_URL, "Renamed"))
+        }
+        val repository = ExtensionStoreRepositoryImpl(backgroundScope, service, database)
+        repository.insertFromPreference(URL, "Store")
+        repository.insertFromPreference(OTHER_URL, "Other")
+
+        repository.refreshAll()
+
+        listOf(nameOf(URL), nameOf(OTHER_URL)) shouldBe listOf("Store", "Renamed")
+    }
+
+    private suspend fun nameOf(indexUrl: String): String? =
+        database.extension_storeQueries.getAll().awaitAsList().firstOrNull { it.index_url == indexUrl }?.name
+
     private companion object {
         const val URL = "https://example.org/index.min.json"
+        const val OTHER_URL = "https://example.com/index.min.json"
 
-        val store = ExtensionStore(
-            indexUrl = URL,
-            name = "Store",
-            badgeLabel = "Store",
+        fun store(indexUrl: String, name: String) = ExtensionStore(
+            indexUrl = indexUrl,
+            name = name,
+            badgeLabel = name,
             signingKey = "key",
             contact = ExtensionStore.Contact(website = "https://example.org", discord = null),
             isLegacy = false,

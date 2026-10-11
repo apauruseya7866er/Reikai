@@ -61,12 +61,12 @@ internal fun partitionExtensions(
 
     val updates = (loadedUpdates + notLoadedUpdates).sortedWith(byName)
 
+    val installedSignatures = (installed + failed).groupBy({ it.pkgName }, { it.signatures })
     val available = offered
         .filter { extension ->
-            (installed + failed).none {
-                it.pkgName == extension.pkgName &&
-                    // RK: a keyless store's listing has no key to tell apart, so it hides behind any install
-                    (extension.store.signingKey in it.signatures || !extension.store.hasSigningKey)
+            installedSignatures[extension.pkgName].orEmpty().none {
+                // A keyless store's listing has no key to tell apart, so it hides behind any install
+                extension.store.signingKey in it || !extension.store.hasSigningKey
             } &&
                 extension.contentWarning in enabledContentWarnings
         }
