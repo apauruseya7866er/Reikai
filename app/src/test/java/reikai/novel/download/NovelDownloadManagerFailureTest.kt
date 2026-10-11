@@ -155,7 +155,8 @@ internal class FakeSharedPreferences : SharedPreferences {
     var writes = 0
         private set
 
-    override fun getAll(): Map<String, *> = values.toMap()
+    // Reversed: the real one is a HashMap and promises no order, so a reader relying on insertion order must fail
+    override fun getAll(): Map<String, *> = values.entries.reversed().associate { it.key to it.value }
     override fun getString(key: String, defValue: String?): String? = values[key] as? String ?: defValue
     override fun getStringSet(key: String, defValues: Set<String>?): Set<String>? = defValues
     override fun getInt(key: String, defValue: Int): Int = defValue
