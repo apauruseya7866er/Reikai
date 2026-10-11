@@ -76,7 +76,7 @@ against them: a preference summary averages **7 words**, ends without a period, 
 **The failure mode is the second sentence.** It arrives carrying a caveat ("Off shows each source
 separately"), the rationale behind the implementation ("because the site offers no way to read them
 back first"), or a restatement of the switch itself ("Turn this off to track each source
-separately"). All three belong in the plan doc, not under a toggle. A 2026-09-07 audit found Reikai's
+separately"). All three belong in the subsystem doc, not under a toggle. A 2026-09-07 audit found Reikai's
 own summaries at double Mihon's length with 27% running to two sentences; twenty-one were rewritten.
 
 Two sentences are right when the second one is a warning the user cannot recover from or a setup step

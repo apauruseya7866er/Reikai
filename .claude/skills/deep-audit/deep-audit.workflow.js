@@ -61,9 +61,9 @@ const LENS_BRIEFS = {
   rules: { brief: 'Audit against the rule files named below. Read each one first and turn it into a checklist, then walk the code the range changed. Each finding quotes a few words of the exact rule it breaks. Rules a hook already enforces (comment length cap, em dashes, dates in comments, plan codenames) are findings only where the hook cannot see them.' },
   docs: { agentType: 'doc-reviewer', brief: 'Check every claim in the docs in this slice against current code: files, symbols, counts, behaviour. Re-derive any stated count rather than trusting it. Also check CLAUDE.md and .claude/rules claims about code the range changed.' },
   tests: { brief: 'Audit the tests: tests that cannot fail (assertTrue(true), asserting a mock was called without checking arguments, asserting the value just set), names that claim more than the body checks, twin tests that .claude/rules/testing.md says should be one conformance test, and a rule for both content types pinned on only one. For up to five new tests, do a reasoned mutation: name the production clause the test pins and say whether deleting it would turn the test red. If it would not, that is a finding, labelled traced.' },
-  parity: { brief: 'For each user-visible change below, check that manga and novels both got it in this range, per the write-once rule in .claude/rules/content-layer.md. A gap is a finding unless a named mechanism makes the type unable to support it and the surface plan doc records that, or ROADMAP.md labels the gap gated. Also report any "twin of" marker in the range that names no pin (a shared kernel, a typed capability or a conformance test).' },
+  parity: { brief: 'For each user-visible change below, check that manga and novels both got it in this range, per the write-once rule in .claude/rules/content-layer.md. A gap is a finding unless a named mechanism makes the type unable to support it and the Decisions of the surface's subsystem doc record that, or ROADMAP.md labels the gap gated. Also report any "twin of" marker in the range that names no pin (a shared kernel, a typed capability or a conformance test).' },
   sibling: { brief: 'Each commit below fixed a defect. For each one, read its diff, state the defect as a pattern, then search the whole tree for other sites with the same pattern: the other content type\'s twin, the other rendering mode, the other viewer, the same call shape elsewhere. Report every site that still carries the defect. A site the commit message deliberately left, with a reason, is not a finding.' },
-  upstream: { brief: 'This surface was taken over, or code on it was deleted. Walk the replaced code\'s behaviour end to end, starting from theirs rather than ours: for a Mihon takeover read ../refs/mihon (docs/dev/off-path-manifest.md lists the replaced files); for Reikai code the range deleted read it with git show at the range base. Mark each behaviour present (cite ours), deliberately dropped (cite the plan doc) or missing. Report only the missing ones as findings.' },
+  upstream: { brief: 'This surface was taken over, or code on it was deleted. Walk the replaced code\'s behaviour end to end, starting from theirs rather than ours: for a Mihon takeover read ../refs/mihon (docs/dev/off-path-manifest.md lists the replaced files); for Reikai code the range deleted read it with git show at the range base. Mark each behaviour present (cite ours), deliberately dropped (cite the subsystem doc's Decisions) or missing. Report only the missing ones as findings.' },
 }
 
 const WIRING_TASKS = [
@@ -179,7 +179,7 @@ function planTasks(map, lenses) {
     if (on.has('docs') && docs.length) add('docs', 'all docs slices', findingsPrompt(LENS_BRIEFS.docs.brief, docs.map(sliceText).join('\n')), LENS_BRIEFS.docs.agentType)
     if (on.has('upstream') && map.surfaces.length) {
       add('upstream', 'all taken-over or deleted surfaces', findingsPrompt(LENS_BRIEFS.upstream.brief,
-        map.surfaces.map(s => `Surface: ${s.surface}. Plan doc: ${s.planDoc}. Replaced files: ${s.replacedFiles.join(', ')}`).join('\n')))
+        map.surfaces.map(s => `Surface: ${s.surface}. Subsystem doc: ${s.subsystemDoc}. Replaced files: ${s.replacedFiles.join(', ')}`).join('\n')))
     }
     if (on.has('twoends')) for (const p of map.pairs.slice(0, MAX_PAIRS)) tasks.push({ lens: 'twoends', target: p.id, pair: p })
     return tasks
@@ -212,7 +212,7 @@ function planTasks(map, lenses) {
   }
   if (on.has('upstream')) {
     for (const s of map.surfaces) {
-      add('upstream', s.surface, findingsPrompt(LENS_BRIEFS.upstream.brief, `Surface: ${s.surface}. Plan doc: ${s.planDoc}. Replaced files: ${s.replacedFiles.join(', ')}`))
+      add('upstream', s.surface, findingsPrompt(LENS_BRIEFS.upstream.brief, `Surface: ${s.surface}. Subsystem doc: ${s.subsystemDoc}. Replaced files: ${s.replacedFiles.join(', ')}`))
     }
   }
   if (on.has('twoends')) for (const p of map.pairs.slice(0, MAX_PAIRS)) tasks.push({ lens: 'twoends', target: p.id, pair: p })
@@ -254,14 +254,14 @@ const COMMITS_PROPS = {
 }
 const SURFACES_PROPS = {
   surfaces: { type: 'array', items: { type: 'object', properties: {
-    surface: { type: 'string' }, planDoc: { type: 'string' }, replacedFiles: { type: 'array', items: { type: 'string' } },
-  }, required: ['surface', 'planDoc', 'replacedFiles'] } },
+    surface: { type: 'string' }, subsystemDoc: { type: 'string' }, replacedFiles: { type: 'array', items: { type: 'string' } },
+  }, required: ['surface', 'subsystemDoc', 'replacedFiles'] } },
 }
 
 const SLICES_ASK = `Split the files changed in ${SCOPE} (git diff --name-only ${RANGE}${A.pathFilter ? ' -- ' + A.pathFilter : ''}) into cohesive slices of about 8 to 15 files that belong together (one feature, one surface, one subsystem). Kind is code, docs or tests. Tag each slice with what applies: untrusted (source or extension input, network, WebView, JavaScript bridges, file paths from input), hotpath (library-sized lists, reader rendering, update jobs, recomposition-heavy screens), screens (Compose screens or Voyager navigation), tests (test sources), sql (.sq, .sqm, repositories). Exclude, and list under excluded with the reason: translation files outside i18n/src/commonMain/moko-resources/base/, and files whose only changes in the range come from "chore: sync Mihon" commits (check with git log --format=%s ${RANGE} -- <file>); a synced file that also carries // RK changes stays in.`
 const PAIRS_ASK = `Find the write/read pairs this range touches where a value crosses a boundary and could disagree: stored values first (preferences and their migrations, database columns, backup fields, intent extras), then host/guest messages (a WebView bridge). Rank by risk and return at most ${MAX_PAIRS}.`
 const COMMITS_ASK = `Classify commits in ${SCOPE}. "fixCommits": every commit that fixed a defect (usually a "fix" subject; exclude "chore: sync Mihon"). "userVisibleChanges": what a user could notice, from CHANGELOG.md [Unreleased] entries added in the range (git diff ${RANGE} -- CHANGELOG.md) or commit subjects, with the content types each affects.`
-const SURFACES_ASK = `List the surfaces this range took over from Mihon (the seam-depth table in .claude/rules/content-layer.md; docs/dev/off-path-manifest.md names replaced Mihon files) or on which it deleted Reikai code with behaviour of its own (git diff --diff-filter=D --name-only ${RANGE}). For each, the plan doc and the replaced or deleted files.`
+const SURFACES_ASK = `List the surfaces this range took over from Mihon (the seam-depth table in .claude/rules/content-layer.md; docs/dev/off-path-manifest.md names replaced Mihon files) or on which it deleted Reikai code with behaviour of its own (git diff --diff-filter=D --name-only ${RANGE}). For each, its subsystem doc (the Doc column of that table) and the replaced or deleted files.`
 
 if (A.mode === 'map') {
   phase('Map')

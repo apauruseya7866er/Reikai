@@ -50,11 +50,11 @@ CODENAME='(Phase[[:space:]]*[0-9]|\b[Ss]tage[[:space:]]*[0-9]|Active[[:space:]]*
 # in comments are spared too: "2..20 step 6" and a fractional "step 0.5".
 CODENAME_SPARED='(\b[Ss]t(ep|age)[[:space:]]*[0-9]:|[0-9]\.\.[0-9]+[[:space:]]+step[[:space:]]|[Ss]tep[[:space:]]*[0-9]+\.[0-9])'
 
-# Comment words that narrate history, which git and the plan docs already hold (a warning, not a block).
+# Comment words that narrate history, which git already holds (a warning, not a block).
 HISTORY_WORDS="used to (be|sit|have|always)|previously|was found by|found by an audit|owner('s)? ruling|\\(owner"
 
 # What a docs/dev/subsystems/ page must not carry: it describes the subsystem as it is, so dates,
-# commit SHAs, plan steps, rounds, phases, rulings and a Status section belong in docs/dev/plans/.
+# commit SHAs, plan steps, rounds, phases, rulings and a Status section belong in git history.
 SUBSYSTEM_HISTORY='\b20[0-9]{2}-[0-9]{2}-[0-9]{2}\b|`[0-9a-f]{7,40}`|\bstep[[:space:]]+[0-9]|\bround[[:space:]]+(one|two|[0-9])|\bphase[[:space:]]+[0-9]|\(owner,|^#+[[:space:]]+status\b'
 SUBSYSTEM_MAX_LINES=300
 
@@ -386,7 +386,7 @@ case "$cmd" in
 
   history-words)
     # A comment states the durable fact; how it came to be (what something used to do, who ruled, which
-    # audit found it) is history that git and the feature's plan doc already hold. Read on the lines a
+    # audit found it) is history that git already holds. Read on the lines a
     # unified diff adds: comments under reikai/ or exh/, and RK lines in Mihon's files. Warns, never
     # blocks, since a word like "previously" is sometimes the plain fact.
     hits=$(HIST="$HISTORY_WORDS" awk -v tree=0 "$COMMENT_SPLIT"'
@@ -400,7 +400,7 @@ case "$cmd" in
       }')
     if [ -n "$hits" ]; then
       echo "history-words (warning): a comment narrates history; state the fact as it stands and leave"
-      echo "how it got there to git and the plan doc. See code-quality.md \"Comments\"."
+      echo "how it got there to git. See code-quality.md \"Comments\"."
       printf '%s\n' "$hits"
     fi
     ;;
