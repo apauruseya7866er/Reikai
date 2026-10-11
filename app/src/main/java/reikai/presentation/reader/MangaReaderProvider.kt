@@ -66,7 +66,7 @@ class MangaReaderProvider(
         val chapter = state.visibleChapter?.chapter
         ReaderChromeState(
             state.manga?.title,
-            chapter?.let { format.chapterTitle(it.name, it.chapter_number.toDouble(), titleWords) },
+            chapter?.let { format.chapterTitle(it.name, it.chapterNumber, titleWords) },
             state.manga?.let { EntryId.Manga(it.id) },
         )
     }
@@ -221,7 +221,7 @@ class MangaReaderProvider(
             .flatMapLatest { queue ->
                 val pageCounts = viewModel.sheetPageCounts()
                 val chapters = viewModel.getChapters()
-                    .map { it.copy(chapter = it.chapter.copy(pageCount = pageCounts[it.chapter.id] ?: 0L)) }
+                    .map { it.copy(chapter = it.chapter.copy(pageCount = pageCounts[it.chapter.id] ?: 0)) }
                 val queued = queue.associateBy { it.chapter.id }
                 val flags = viewModel.sheetFlags(chapters.map { it.chapter })
                 val numberOnly = viewModel.chapterSettings?.displayMode == Manga.CHAPTER_DISPLAY_NUMBER

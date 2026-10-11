@@ -698,6 +698,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 - Manga and novels now run on one shared implementation in the library, details, browse, migrate, recents, downloads, reader, backup and restore, library updates and tracking, so a change reaches both. Categories for both now live in one table, and custom novel cover files are renamed once on upgrade.
 - Every date in the database is stored as an instant with unknown dates left empty, on manga and novels alike (from Mihon, mihon 44c1e1915).
+- The manga reader works on the stored chapter directly instead of a legacy copy, and a backup's page position out of range is clamped on restore (from Mihon, mihon e21414b22).
 - From Mihon: list screens stop querying a few seconds after you leave them (mihonapp/mihon#3716 through mihonapp/mihon#3762), and installed extensions are read off the main thread during a cold start (mihonapp/mihon#3788).
 - Novel plugin settings load and save off the main thread, and Updates, History and Recents no longer start the novel downloader while they show only manga.
 - Opening a source while the app is still starting now waits for the extension list instead of reading a half-built one, for manga and novels (partly from Mihon, mihonapp/mihon#3841, mihonapp/mihon#3869).

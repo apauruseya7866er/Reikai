@@ -65,7 +65,7 @@ class RecentsStartedConformanceTest {
         private val probes = listOf(
             StartedConformanceProbe(
                 label = "manga",
-                progress = { ChapterProgress.Pages(it, pageCount = 20) },
+                progress = { ChapterProgress.Pages(it.toInt(), pageCount = 20) },
                 seed = { _, driver, read, progress ->
                     driver.execute(
                         null,

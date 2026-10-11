@@ -1,7 +1,6 @@
 package reikai.presentation.reader
 
 import eu.kanade.tachiyomi.data.cache.ChapterCache
-import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 
 /**
@@ -17,6 +16,6 @@ fun ReaderChapter.unloadForReload(fromSource: Boolean, cache: ChapterCache) {
     pageLoader = null
     if (fromSource) {
         oldPages?.forEach { page -> page.imageUrl?.let(cache::removeImage) }
-        chapter.toDomainChapter()?.let(cache::removePageList)
+        cache.removePageList(chapter)
     }
 }

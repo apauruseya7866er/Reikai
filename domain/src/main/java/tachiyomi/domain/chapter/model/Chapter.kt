@@ -10,7 +10,7 @@ data class Chapter(
     val mangaId: Long,
     val read: Boolean,
     val bookmark: Boolean,
-    val lastPageRead: Long,
+    val lastPageRead: Int,
     val dateFetch: Instant,
     val sourceOrder: Long,
     val url: String,
@@ -20,7 +20,7 @@ data class Chapter(
     val scanlator: String?,
     val memo: JsonObject,
     // RK: pages in the chapter, 0 where the reader has never loaded it. Unknown, not empty.
-    val pageCount: Long,
+    val pageCount: Int,
 ) {
     val isRecognizedNumber: Boolean
         get() = isRecognizedChapterNumber(chapterNumber) // RK: the one rule novels read too

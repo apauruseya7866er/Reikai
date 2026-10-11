@@ -41,7 +41,7 @@ class EHentaiUpdateHelperTest {
         sourceOrder = 0L,
     )
 
-    private val discarded = stored.copy(id = 20L, mangaId = 2L, read = true, bookmark = true, lastPageRead = 7L)
+    private val discarded = stored.copy(id = 20L, mangaId = 2L, read = true, bookmark = true, lastPageRead = 7)
 
     private fun changesFor(accepted: Chapter) =
         getChapterList(chain(1L, accepted), listOf(chain(2L, discarded)), listOf(accepted, discarded))

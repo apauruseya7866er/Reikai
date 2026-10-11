@@ -1,3 +1,5 @@
+import kotlin.Int;
+
 CREATE VIEW historyView AS
 SELECT
     history.id AS id,

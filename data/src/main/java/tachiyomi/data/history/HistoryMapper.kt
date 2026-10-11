@@ -34,8 +34,8 @@ object HistoryMapper {
         chapterUrl: String,
         read: Boolean,
         bookmark: Boolean,
-        lastPageRead: Long,
-        pageCount: Long,
+        lastPageRead: Int,
+        pageCount: Int,
         readAt: Instant?,
         readDuration: Long,
     ): HistoryWithRelations = HistoryWithRelations(

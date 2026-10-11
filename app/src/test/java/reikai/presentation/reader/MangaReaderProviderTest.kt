@@ -1,6 +1,5 @@
 package reikai.presentation.reader
 
-import eu.kanade.domain.chapter.model.toDbChapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.model.Page
@@ -64,7 +63,7 @@ class MangaReaderProviderTest {
         }
         val state = ReaderViewModel.State(
             viewerChapters = ViewerChapters(
-                ReaderChapter(onScreen.toDbChapter()),
+                ReaderChapter(onScreen),
                 prevChapter = null,
                 nextChapter = null,
             ),
@@ -93,7 +92,7 @@ class MangaReaderProviderTest {
         }
         val state = ReaderViewModel.State(
             viewerChapters = ViewerChapters(
-                ReaderChapter(Chapter.create().copy(id = 7L).toDbChapter()),
+                ReaderChapter(Chapter.create().copy(id = 7L)),
                 prevChapter = null,
                 nextChapter = null,
             ),
@@ -131,7 +130,7 @@ class MangaReaderProviderTest {
      */
     @Test
     fun `a reloaded chapter is a new page`() = runTest {
-        val chapter = ReaderChapter(Chapter.create().copy(id = 7L).toDbChapter())
+        val chapter = ReaderChapter(Chapter.create().copy(id = 7L))
         val state = MutableStateFlow(showing(ReaderPage(0, "/7/0", "https://img/0"), chapter))
         val seen = mutableListOf<ShownPage>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
@@ -176,12 +175,12 @@ class MangaReaderProviderTest {
 
     private fun showing(
         page: ReaderPage,
-        chapter: ReaderChapter = ReaderChapter(Chapter.create().copy(id = 7L).toDbChapter()),
+        chapter: ReaderChapter = ReaderChapter(Chapter.create().copy(id = 7L)),
     ): ReaderViewModel.State {
         chapter.state = ReaderChapter.State.Loaded(listOf(page))
         return ReaderViewModel.State(
             viewerChapters = ViewerChapters(chapter, prevChapter = null, nextChapter = null),
-            position = ReaderPosition(7L, ChapterProgress.Pages(lastPageRead = 0L, pageCount = 1L)),
+            position = ReaderPosition(7L, ChapterProgress.Pages(lastPageRead = 0, pageCount = 1)),
         )
     }
 

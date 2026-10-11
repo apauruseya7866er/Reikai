@@ -1,6 +1,5 @@
 package reikai.presentation.reader
 
-import eu.kanade.domain.chapter.model.toDbChapter
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
@@ -217,7 +216,7 @@ class MangaChapterTitleProbe : ReaderChapterTitleProbe {
         val chapter = Chapter.create().copy(id = 1L, mangaId = 1L, name = name, chapterNumber = number)
         val state = ReaderViewModel.State(
             manga = Manga.create().copy(id = 1L, title = "Series"),
-            viewerChapters = ViewerChapters(ReaderChapter(chapter.toDbChapter()), null, null),
+            viewerChapters = ViewerChapters(ReaderChapter(chapter), null, null),
         )
         val preferences = ReaderPreferences(EmittingPreferenceStore()).apply { chapterTitleFormat.set(format) }
         return MangaReaderProvider(

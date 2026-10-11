@@ -30,7 +30,6 @@ import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
-import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.viewer.calculateChapterGap
@@ -57,8 +56,8 @@ fun ChapterTransition(
     currChapterDownloaded: Boolean,
     goingToChapterDownloaded: Boolean,
 ) {
-    val currChapter = transition.from.chapter.toDomainChapter()
-    val goingToChapter = transition.to?.chapter?.toDomainChapter()
+    val currChapter = transition.from.chapter
+    val goingToChapter = transition.to?.chapter
 
     ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
         when (transition) {
@@ -69,7 +68,7 @@ fun ChapterTransition(
                     topChapter = goingToChapter?.toTransitionChapter(),
                     topChapterDownloaded = goingToChapterDownloaded,
                     bottomLabel = stringResource(MR.strings.transition_current),
-                    bottomChapter = currChapter?.toTransitionChapter(),
+                    bottomChapter = currChapter.toTransitionChapter(),
                     bottomChapterDownloaded = currChapterDownloaded,
                     fallbackLabel = stringResource(MR.strings.transition_no_previous),
                     chapterGap = calculateChapterGap(transition.from, transition.to),
@@ -80,7 +79,7 @@ fun ChapterTransition(
                 TransitionText(
                     topLabel = stringResource(MR.strings.transition_finished),
                     // RK --> named sides, and the gap by the chapter list's rule (MissingChapters.calculateChapterGap)
-                    topChapter = currChapter?.toTransitionChapter(),
+                    topChapter = currChapter.toTransitionChapter(),
                     topChapterDownloaded = currChapterDownloaded,
                     bottomLabel = stringResource(MR.strings.transition_next),
                     bottomChapter = goingToChapter?.toTransitionChapter(),

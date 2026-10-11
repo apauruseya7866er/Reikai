@@ -63,7 +63,7 @@ class ReadStatusHandOffConformanceTest {
                             id = it.id,
                             mangaId = 1L,
                             read = it.read,
-                            lastPageRead = if (it.started) 5L else 0L,
+                            lastPageRead = if (it.started) 5 else 0,
                         )
                     }.toTypedArray(),
                 )

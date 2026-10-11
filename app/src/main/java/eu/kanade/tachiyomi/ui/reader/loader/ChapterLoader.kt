@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
 import android.content.Context
+import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
@@ -64,7 +65,7 @@ class ChapterLoader(
                 // otherwise use the requested page.
                 // RK: optionally resume read chapters at the last position too, on the rule both types share
                 if (ReaderResume.keepsPosition(chapter.chapter.read, readerPreferences.preserveReadingPosition.get())) {
-                    chapter.requestedPage = chapter.chapter.last_page_read
+                    chapter.requestedPage = chapter.chapter.lastPageRead
                 }
 
                 chapter.state = ReaderChapter.State.Loaded(pages)
@@ -102,7 +103,7 @@ class ChapterLoader(
                 downloadManager,
                 downloadProvider,
             )
-            source is LocalSource -> source.getFormat(chapter.chapter).let { format ->
+            source is LocalSource -> source.getFormat(chapter.chapter.toSChapter()).let { format ->
                 when (format) {
                     is Format.Directory -> DirectoryPageLoader(format.file)
                     is Format.Archive -> ArchivePageLoader(format.file.archiveReader(context))

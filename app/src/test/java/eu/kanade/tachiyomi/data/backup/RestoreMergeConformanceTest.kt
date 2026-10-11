@@ -206,7 +206,9 @@ class MangaMergeRestorer : MergeRestorer {
                 listOf(BackupManga(source = 1L, url = "u", chapters = backupChapters)),
                 emptyList(),
             )
-            harness.chapters.getChapterByMangaId(id).map { ChapterState(it.read, it.bookmark, it.lastPageRead) }
+            harness.chapters.getChapterByMangaId(id).map {
+                ChapterState(it.read, it.bookmark, it.lastPageRead.toLong())
+            }
         }
 
     override suspend fun chapter(device: ChapterState, backup: ChapterState): ChapterState =
@@ -219,7 +221,7 @@ class MangaMergeRestorer : MergeRestorer {
                     name = "C",
                     read = device.read,
                     bookmark = device.bookmark,
-                    lastPageRead = device.progress,
+                    lastPageRead = device.progress.toInt(),
                 ),
             )
             val backupChapter = BackupChapter(
@@ -234,7 +236,7 @@ class MangaMergeRestorer : MergeRestorer {
                 emptyList(),
             )
             val stored = harness.chapters.getChapterByMangaId(id).single()
-            ChapterState(stored.read, stored.bookmark, stored.lastPageRead)
+            ChapterState(stored.read, stored.bookmark, stored.lastPageRead.toLong())
         }
 
     override suspend fun track(device: TrackState, backup: TrackState): TrackState? =

@@ -1,6 +1,5 @@
 package reikai.presentation.reader
 
-import eu.kanade.domain.chapter.model.toDbChapter
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
@@ -16,7 +15,7 @@ class ReaderChapterReloadTest {
     private val cache = mockk<ChapterCache>(relaxed = true)
 
     private fun loadedChapter(): ReaderChapter =
-        ReaderChapter(Chapter.create().copy(id = 1L, url = "/1").toDbChapter()).apply {
+        ReaderChapter(Chapter.create().copy(id = 1L, url = "/1")).apply {
             state = ReaderChapter.State.Loaded(listOf(ReaderPage(0, "/1/0", "https://img/0")))
         }
 

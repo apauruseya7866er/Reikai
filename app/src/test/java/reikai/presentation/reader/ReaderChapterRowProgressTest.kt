@@ -94,8 +94,8 @@ class MangaRowProgressProbe : ChapterRowProgressProbe {
             mangaId = 1L,
             name = "The Duel",
             chapterNumber = number,
-            lastPageRead = if (started) 5L else 0L,
-            pageCount = 38L,
+            lastPageRead = if (started) 5 else 0,
+            pageCount = 38,
         )
         return ReaderChapterItem(chapter)
             .toReaderChapterRow(emptyMap(), flagsOf(chapter) { it.id }, numberOnly, EnglishChapterTitleWords)

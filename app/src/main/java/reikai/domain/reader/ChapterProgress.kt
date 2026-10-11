@@ -17,8 +17,8 @@ sealed interface ChapterProgress {
     val hasStarted: Boolean
 
     /** [pageCount] is 0 where the reader has never loaded the chapter, so the row leaves it off. */
-    data class Pages(val lastPageRead: Long, val pageCount: Long) : ChapterProgress {
-        override val hasStarted: Boolean get() = lastPageRead > 0L
+    data class Pages(val lastPageRead: Int, val pageCount: Int) : ChapterProgress {
+        override val hasStarted: Boolean get() = lastPageRead > 0
     }
 
     /** Hundredths of a percent, the unit the novel reader stores. */

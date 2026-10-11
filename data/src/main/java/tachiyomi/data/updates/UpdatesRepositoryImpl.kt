@@ -91,8 +91,8 @@ class UpdatesRepositoryImpl(
         chapterUrl: String,
         read: Boolean,
         bookmark: Boolean,
-        lastPageRead: Long,
-        pageCount: Long, // RK: for the progress line's how-far-through
+        lastPageRead: Int,
+        pageCount: Int, // RK: for the progress line's how-far-through
         sourceId: Long,
         favorite: Boolean,
         thumbnailUrl: String?,

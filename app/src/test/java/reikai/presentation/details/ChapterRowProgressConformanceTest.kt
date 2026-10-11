@@ -59,10 +59,10 @@ object MangaDetailsRowProbe : DetailsRowProbe {
 
     override fun toString() = "manga"
 
-    override val started = ChapterProgress.Pages(lastPageRead = 5L, pageCount = 38L)
+    override val started = ChapterProgress.Pages(lastPageRead = 5, pageCount = 38)
 
     override fun row(readHere: Boolean, readElsewhere: Boolean): EntryChapterListItem.Chapter {
-        val chapter = Chapter.create().copy(id = 1L, mangaId = 1L, read = readHere, lastPageRead = 5L, pageCount = 38L)
+        val chapter = Chapter.create().copy(id = 1L, mangaId = 1L, read = readHere, lastPageRead = 5, pageCount = 38)
         return ChapterList.Item(
             chapter = chapter,
             downloadState = Download.State.NOT_DOWNLOADED,

@@ -352,11 +352,11 @@ class ReaderEngineTest {
         val engine = engine(provider)
         val viewport = FakeViewport()
         engine.installViewport(viewport)
-        provider.navigator.value = ReaderNavigatorState(progress = ChapterProgress.Pages(7L, 20L))
+        provider.navigator.value = ReaderNavigatorState(progress = ChapterProgress.Pages(7, 20))
 
         engine.seekToStart()
 
-        viewport.sought shouldBe ChapterProgress.Pages(0L, 20L)
+        viewport.sought shouldBe ChapterProgress.Pages(0, 20)
     }
 
     @Test

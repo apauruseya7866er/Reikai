@@ -740,7 +740,8 @@ class MangaEngine : MigrateEngine {
         val targetChapters = chapters.values.filter { it.mangaId == MigrateEngineConformanceTest.TARGET }
             .sortedBy { it.id }
             .map {
-                Ch(it.id, it.chapterNumber, it.read, it.bookmark, it.dateFetch.toEpochMilliseconds(), it.lastPageRead)
+                val fetched = it.dateFetch.toEpochMilliseconds()
+                Ch(it.id, it.chapterNumber, it.read, it.bookmark, fetched, it.lastPageRead.toLong())
             }
         return rec.outcome(error, targetChapters)
     }
@@ -752,7 +753,7 @@ class MangaEngine : MigrateEngine {
         read = read,
         bookmark = bookmark,
         dateFetch = Instant.fromEpochMilliseconds(dateFetch),
-        lastPageRead = position,
+        lastPageRead = position.toInt(),
     )
 
     private fun mangaTrack(id: Long) = Track(

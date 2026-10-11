@@ -154,11 +154,11 @@ class MangaDownloadProbe : ReaderDownloadProbe {
 
     override suspend fun opened(scope: TestScope, row: ReaderCopy, alsoOnDisk: ReaderCopy?): ReaderCopy =
         open(chapter = row, alsoOnDisk = alsoOnDisk) { _, state, _, _ ->
-            roleOf.getValue(state.viewerChapters!!.currChapter.chapter.id!!)
+            roleOf.getValue(state.viewerChapters!!.currChapter.chapter.id)
         }
 
     override suspend fun nextAfter(scope: TestScope, row: ReaderCopy): ReaderCopy =
-        open(chapter = row) { _, state, _, _ -> roleOf.getValue(state.viewerChapters!!.nextChapter!!.chapter.id!!) }
+        open(chapter = row) { _, state, _, _ -> roleOf.getValue(state.viewerChapters!!.nextChapter!!.chapter.id) }
 
     override suspend fun sheetStart(scope: TestScope, row: ReaderCopy): Set<ReaderCopy> = open {
             model,

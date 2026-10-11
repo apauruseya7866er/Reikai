@@ -48,7 +48,7 @@ fun <T> List<T>.duplicatesOfRead(
 ): List<T> {
     val readId = idOf(read)
     val readOwner = ownerOf(read)
-    // Narrowed to Float as upstream compares: a source-reported number is a float, a parsed one a double.
+    // Narrowed to Float: a source-reported number is a float, a parsed one a double, and both must match.
     val readNumber = numberOf(read).toFloat()
     val readIsNumbered = isRecognizedChapterNumber(numberOf(read))
     return filter {

@@ -1,6 +1,5 @@
 package reikai.presentation.reader
 
-import eu.kanade.tachiyomi.data.database.models.ChapterImpl
 import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
 import eu.kanade.tachiyomi.ui.reader.model.DownloadStream
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
@@ -8,6 +7,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test
+import tachiyomi.domain.chapter.model.Chapter
 
 class WebGpuRetryRulesTest {
 
@@ -96,10 +96,6 @@ class WebGpuRetryRulesTest {
     }
 
     private fun chapter(id: Long, state: ReaderChapter.State): ReaderChapter {
-        val chapter = ChapterImpl()
-        chapter.id = id
-        chapter.url = ""
-        chapter.name = ""
-        return ReaderChapter(chapter).also { it.state = state }
+        return ReaderChapter(Chapter.create().copy(id = id)).also { it.state = state }
     }
 }

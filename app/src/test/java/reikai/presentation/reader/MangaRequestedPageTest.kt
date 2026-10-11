@@ -1,6 +1,5 @@
 package reikai.presentation.reader
 
-import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import io.kotest.matchers.shouldBe
@@ -44,7 +43,7 @@ class MangaRequestedPageTest {
         onFinishedChapter { model, finished ->
             // The page it ended on, which every save of the session wrote here.
             finished.requestedPage = 9
-            model.loadNewChapterFromDialog(finished.chapter.toDomainChapter()!!)
+            model.loadNewChapterFromDialog(finished.chapter)
             becameCurrent(model, finished)
             finished.requestedPage
         } shouldBe 0

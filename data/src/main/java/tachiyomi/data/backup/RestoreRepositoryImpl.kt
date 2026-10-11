@@ -169,9 +169,9 @@ class RestoreRepositoryImpl(
             // RK: the copies fold through the kernel the novel restore calls too
             .foldChapterCopies(
                 url = { it.url },
-                state = { RestoredChapterState(it.read, it.bookmark, it.lastPageRead) },
+                state = { RestoredChapterState(it.read, it.bookmark, it.lastPageRead.toLong()) },
                 withState = { kept, state ->
-                    kept.copy(read = state.read, bookmark = state.bookmark, lastPageRead = state.progress)
+                    kept.copy(read = state.read, bookmark = state.bookmark, lastPageRead = state.progress.toInt())
                 },
             )
             .mapNotNull {
@@ -187,15 +187,19 @@ class RestoreRepositoryImpl(
                 }
 
                 // RK: read state folds through the kernel novels share
-                val readState = RestoredChapterState(dbChapter.read, dbChapter.bookmark, dbChapter.lastPageRead)
-                    .foldBackup(RestoredChapterState(chapter.read, chapter.bookmark, chapter.lastPageRead))
+                val readState = RestoredChapterState(
+                    dbChapter.read,
+                    dbChapter.bookmark,
+                    dbChapter.lastPageRead.toLong(),
+                )
+                    .foldBackup(RestoredChapterState(chapter.read, chapter.bookmark, chapter.lastPageRead.toLong()))
                 chapter
                     .copyFrom(dbChapter)
                     .copy(
                         id = dbChapter.id,
                         read = readState.read, // RK
                         bookmark = readState.bookmark, // RK
-                        lastPageRead = readState.progress, // RK
+                        lastPageRead = readState.progress.toInt(), // RK: the larger of two pages, so it fits
                         dateFetch = dbChapter.dateFetch,
                         sourceOrder = dbChapter.sourceOrder,
                         // Merge both backup and local data with local winning
@@ -240,7 +244,7 @@ class RestoreRepositoryImpl(
     // RK: pageCount is excluded because it is derived rather than user state. Comparing it would make
     // every restore from a backup predating the column rewrite the whole chapter list to no effect.
     private fun Chapter.forComparison() =
-        this.copy(id = 0L, mangaId = 0L, dateFetch = Instant.DISTANT_PAST, dateUpload = null, pageCount = 0L)
+        this.copy(id = 0L, mangaId = 0L, dateFetch = Instant.DISTANT_PAST, dateUpload = null, pageCount = 0)
 
     private suspend fun restoreHistory(manga: Manga, restoredHistory: List<RestoredHistory>) {
         if (restoredHistory.isEmpty()) return

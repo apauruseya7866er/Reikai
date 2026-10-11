@@ -138,7 +138,7 @@ class RecentsMappingTest {
 
     @Test
     fun `a page count reads one-based, because it is stored zero-based`() {
-        pageProgressLabel(lastPageRead = 5, pageCount = 0).pageArgs() shouldBe listOf(6L)
+        pageProgressLabel(lastPageRead = 5, pageCount = 0).pageArgs() shouldBe listOf(6)
     }
 
     @Test
@@ -148,7 +148,7 @@ class RecentsMappingTest {
 
     @Test
     fun `a known length is written out alongside the page`() {
-        pageProgressLabel(lastPageRead = 5, pageCount = 38).pageArgs() shouldBe listOf(6L, 38L)
+        pageProgressLabel(lastPageRead = 5, pageCount = 38).pageArgs() shouldBe listOf(6, 38)
     }
 
     @Test
@@ -302,7 +302,7 @@ class MangaRecentsMappingProbe : RecentsMappingProbe {
             chapterUrl = "u",
             read = read,
             bookmark = bookmark,
-            lastPageRead = if (started) 5L else 0L,
+            lastPageRead = if (started) 5 else 0,
             pageCount = 38,
             sourceId = 1,
             dateFetch = Instant.fromEpochMilliseconds(1000),
@@ -332,7 +332,7 @@ class MangaRecentsMappingProbe : RecentsMappingProbe {
             chapterUrl = "u",
             read = read,
             bookmark = bookmark,
-            lastPageRead = if (started) 5L else 0L,
+            lastPageRead = if (started) 5 else 0,
             pageCount = 38,
             sourceId = 1,
             storedTitle = "t",
@@ -360,7 +360,7 @@ class MangaRecentsMappingProbe : RecentsMappingProbe {
 
     override fun coverUrl(row: RecentsRowUi) = (row.cover as MangaCover).url
 
-    override fun startedProgress() = ChapterProgress.Pages(5L, 38L)
+    override fun startedProgress() = ChapterProgress.Pages(5, 38)
 }
 
 class NovelRecentsMappingProbe : RecentsMappingProbe {

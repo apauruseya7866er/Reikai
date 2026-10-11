@@ -15,7 +15,7 @@ import tachiyomi.domain.manga.model.Manga
 class MangaRestoreChaptersTest {
 
     /** Restores [backup] over the device's [device] chapter and returns the page count stored after. */
-    private suspend fun restoredPageCount(backup: BackupChapter, device: Chapter): Long =
+    private suspend fun restoredPageCount(backup: BackupChapter, device: Chapter): Int =
         MangaRestoreHarness.create().use { harness ->
             val mangaId = harness.insert(Manga.create().copy(url = "u", source = 1L, title = "T"))
             harness.insert(device.copy(mangaId = mangaId))
@@ -32,7 +32,7 @@ class MangaRestoreChaptersTest {
         val backup = BackupChapter(url = "c1", name = "C1", read = false, lastPageRead = 0)
         val device = Chapter.create().copy(url = "c1", name = "C1", read = false, lastPageRead = 30, pageCount = 38)
 
-        restoredPageCount(backup, device) shouldBe 38L
+        restoredPageCount(backup, device) shouldBe 38
     }
 
     @Test
@@ -40,6 +40,6 @@ class MangaRestoreChaptersTest {
         val backup = BackupChapter(url = "c1", name = "C1", read = true, lastPageRead = 37, pageCount = 38)
         val device = Chapter.create().copy(url = "c1", name = "C1", read = false, lastPageRead = 0)
 
-        restoredPageCount(backup, device) shouldBe 38L
+        restoredPageCount(backup, device) shouldBe 38
     }
 }

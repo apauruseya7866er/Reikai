@@ -3,7 +3,6 @@ package reikai.presentation.reader
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import eu.kanade.tachiyomi.data.database.models.ChapterImpl
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
@@ -17,6 +16,7 @@ import kotlinx.coroutines.flow.flowOf
 import org.junit.jupiter.api.Test
 import reikai.domain.reader.ChapterProgress
 import reikai.presentation.recents.EmittingPreferenceStore
+import tachiyomi.domain.chapter.model.Chapter
 
 /**
  * The adapter is all delegation, and a member that silently stops delegating breaks the reader in a
@@ -73,7 +73,7 @@ class MangaViewportTest {
         val pages = pages(4)
 
         viewport(viewer, visible = chapterOf(pages))
-            .seekTo(ChapterProgress.Pages(lastPageRead = 3L, pageCount = 4L))
+            .seekTo(ChapterProgress.Pages(lastPageRead = 3, pageCount = 4))
 
         viewer.movedTo shouldBe pages[3]
     }
@@ -83,7 +83,7 @@ class MangaViewportTest {
         val viewer = RecordingViewer()
 
         viewport(viewer, visible = chapterOf(pages(4)))
-            .seekTo(ChapterProgress.Pages(lastPageRead = 99L, pageCount = 4L))
+            .seekTo(ChapterProgress.Pages(lastPageRead = 99, pageCount = 4))
 
         viewer.movedTo shouldBe null
     }
@@ -109,7 +109,7 @@ class MangaViewportTest {
         val visiblePages = pages(4)
 
         viewport(viewer, visible = chapterOf(visiblePages), active = chapterOf(pages(40)))
-            .seekTo(ChapterProgress.Pages(lastPageRead = 2L, pageCount = 4L))
+            .seekTo(ChapterProgress.Pages(lastPageRead = 2, pageCount = 4))
 
         viewer.movedTo shouldBe visiblePages[2]
     }
@@ -206,11 +206,7 @@ private fun viewport(
 private fun pages(count: Int): List<ReaderPage> = List(count) { mockk() }
 
 private fun chapterOf(pages: List<ReaderPage>, requestedPage: Int = 0): ReaderChapter {
-    val chapter = ChapterImpl()
-    chapter.id = 1L
-    chapter.url = ""
-    chapter.name = ""
-    return ReaderChapter(chapter).also {
+    return ReaderChapter(Chapter.create().copy(id = 1L)).also {
         it.state = ReaderChapter.State.Loaded(pages)
         it.requestedPage = requestedPage
     }

@@ -1,6 +1,7 @@
 package reikai.domain.reader
 
 import androidx.compose.runtime.Immutable
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 /**
@@ -35,7 +36,7 @@ val ChapterProgress.isChapterComplete: Boolean
 
 /** [isChapterComplete] with a continuous chapter read from [continuousPercent], a whole percent. */
 fun ChapterProgress.isChapterComplete(continuousPercent: Int): Boolean = when (this) {
-    is ChapterProgress.Pages -> lastPageRead == pageCount - 1L
+    is ChapterProgress.Pages -> lastPageRead == pageCount - 1
     is ChapterProgress.Percent -> hundredths >= ChapterProgress.Percent.ofWhole(continuousPercent).hundredths
 }
 
@@ -43,7 +44,7 @@ fun ChapterProgress.isChapterComplete(continuousPercent: Int): Boolean = when (t
 val ChapterProgress.fraction: Float
     get() = when (this) {
         is ChapterProgress.Pages ->
-            if (pageCount <= 1L) 0f else (lastPageRead.toFloat() / (pageCount - 1L)).coerceIn(0f, 1f)
+            if (pageCount <= 1) 0f else (lastPageRead.toFloat() / (pageCount - 1)).coerceIn(0f, 1f)
         is ChapterProgress.Percent ->
             (hundredths.toFloat() / HUNDREDTHS_FULL).coerceIn(0f, 1f)
     }
@@ -54,7 +55,7 @@ val ChapterProgress.fraction: Float
  */
 val ChapterProgress.stepCount: Int
     get() = when (this) {
-        is ChapterProgress.Pages -> (pageCount - 2L).coerceAtLeast(0L).toInt()
+        is ChapterProgress.Pages -> (pageCount - 2).coerceAtLeast(0)
         // A percentage has no natural unit to detent on, so it keeps the count the novel rail has
         // always drawn. Scrubbing freely instead loses the marks that say the rail is a progress bar.
         is ChapterProgress.Percent -> CONTINUOUS_DETENTS
@@ -63,14 +64,14 @@ val ChapterProgress.stepCount: Int
 /** Whether a chapter can be scrubbed at all. A single page has nowhere to scrub to. */
 val ChapterProgress.isSeekable: Boolean
     get() = when (this) {
-        is ChapterProgress.Pages -> pageCount > 1L
+        is ChapterProgress.Pages -> pageCount > 1
         is ChapterProgress.Percent -> true
     }
 
 /** The label at the reading end of the navigator. A page is stored zero-based and reads one-based. */
 val ChapterProgress.leadingLabel: String
     get() = when (this) {
-        is ChapterProgress.Pages -> (lastPageRead + 1L).toString()
+        is ChapterProgress.Pages -> (lastPageRead + 1).toString()
         is ChapterProgress.Percent -> "$wholePercent%"
     }
 
@@ -87,15 +88,15 @@ val ChapterProgress.trailingLabel: String
  */
 val ChapterProgress.pageIndex: Int?
     get() = when (this) {
-        is ChapterProgress.Pages -> lastPageRead.toInt()
+        is ChapterProgress.Pages -> lastPageRead
         is ChapterProgress.Percent -> null
     }
 
 /** The inverse of [fraction]: where a scrub lands, in the medium's own unit. */
 fun ChapterProgress.seekTo(fraction: Float): ChapterProgress = when (this) {
     is ChapterProgress.Pages -> {
-        val lastIndex = (pageCount - 1L).coerceAtLeast(0L)
-        copy(lastPageRead = (fraction * lastIndex).roundToLong().coerceIn(0L, lastIndex))
+        val lastIndex = (pageCount - 1).coerceAtLeast(0)
+        copy(lastPageRead = (fraction * lastIndex).roundToInt().coerceIn(0, lastIndex))
     }
     is ChapterProgress.Percent ->
         copy(hundredths = (fraction * HUNDREDTHS_FULL).roundToLong().coerceIn(0L, HUNDREDTHS_FULL))

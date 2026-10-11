@@ -1,6 +1,5 @@
 package reikai.presentation.reader
 
-import eu.kanade.domain.chapter.model.toDbChapter
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
@@ -90,7 +89,7 @@ class MangaLoadFailureProbe : ReaderLoadFailureProbe {
         )
 
     override suspend fun failedLoad(scope: TestScope, chapterOnScreen: Boolean): ReaderLoadState {
-        val onScreen = ReaderChapter(Chapter.create().copy(id = 4L).toDbChapter())
+        val onScreen = ReaderChapter(Chapter.create().copy(id = 4L))
         val state = ReaderViewModel.State(
             viewerChapters = ViewerChapters(onScreen, prevChapter = null, nextChapter = null)
                 .takeIf { chapterOnScreen },

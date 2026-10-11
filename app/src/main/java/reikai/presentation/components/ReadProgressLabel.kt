@@ -25,10 +25,10 @@ fun readProgressLabel(progress: ChapterProgress?): String? = when (progress) {
  * loaded that chapter, so the total is left off rather than shown as a bare 0: nothing backfills it,
  * and it arrives the next time that chapter is opened.
  */
-fun pageProgressLabel(lastPageRead: Long, pageCount: Long): Pair<StringResource, Array<Any>>? {
-    val page = lastPageRead.takeIf { it > 0L }?.let { it + 1 } ?: return null
+fun pageProgressLabel(lastPageRead: Int, pageCount: Int): Pair<StringResource, Array<Any>>? {
+    val page = lastPageRead.takeIf { it > 0 }?.let { it + 1 } ?: return null
     return when {
-        pageCount > 0L -> MR.strings.chapter_progress_of_total to arrayOf<Any>(page, pageCount)
+        pageCount > 0 -> MR.strings.chapter_progress_of_total to arrayOf<Any>(page, pageCount)
         else -> MR.strings.chapter_progress to arrayOf<Any>(page)
     }
 }

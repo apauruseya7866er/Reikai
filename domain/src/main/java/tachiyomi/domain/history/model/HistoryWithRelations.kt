@@ -20,8 +20,8 @@ data class HistoryWithRelations(
     val chapterUrl: String,
     val read: Boolean,
     val bookmark: Boolean,
-    val lastPageRead: Long,
-    val pageCount: Long,
+    val lastPageRead: Int,
+    val pageCount: Int,
     val sourceId: Long,
     /**
      * The title as stored, which the display-only custom-title overlay does not rewrite. A download
