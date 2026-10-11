@@ -134,10 +134,11 @@ class NovelUpdatesApi(client: OkHttpClient) {
         fun seriesUrl(slug: String): String = "$BASE_URL/series/$slug/"
 
         // Form encoding keeps a space as '+', the form the site has always been sent, where
-        // addQueryParameter would send %20.
+        // addQueryParameter would send %20. The charset is named as a String: the Charset overload is
+        // API 33, and nothing desugars it below that.
         internal fun searchUrl(query: String): HttpUrl = "$BASE_URL/series-finder/".toHttpUrl().newBuilder()
             .addQueryParameter("sf", "1")
-            .addEncodedQueryParameter("sh", URLEncoder.encode(query, Charsets.UTF_8))
+            .addEncodedQueryParameter("sh", URLEncoder.encode(query, "UTF-8"))
             .addQueryParameter("sort", "sdate")
             .addQueryParameter("order", "desc")
             .build()
