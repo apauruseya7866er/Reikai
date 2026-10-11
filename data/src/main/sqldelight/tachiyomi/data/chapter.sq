@@ -31,6 +31,8 @@ CREATE INDEX chapter_state_date_fetch_index ON chapter(state_date_fetch);
 CREATE INDEX chapter_unread_state_date_fetch_index ON chapter(state_date_fetch) WHERE user_read = 0;
 -- RK: getChapterByUrl looks chapters up by url alone, which UNIQUE(manga_id, remote_url) cannot serve (56.sqm)
 CREATE INDEX chapter_remote_url_index ON chapter(remote_url);
+-- RK: the recents caught-up filter (recentsUnread.sq) reads every unread chapter with its scanlator (64.sqm)
+CREATE INDEX chapter_unread_by_manga_index ON chapter(manga_id, remote_scanlator) WHERE user_read = 0;
 
 -- RK: every chapter read below carries page_count last
 getChapterById:
