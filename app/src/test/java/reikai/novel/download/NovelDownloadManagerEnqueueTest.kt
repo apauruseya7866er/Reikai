@@ -41,6 +41,7 @@ class NovelDownloadManagerEnqueueTest {
     private val onDisk = chapter(10L)
     private val missing = chapter(11L)
     private val saved = chapter(12L)
+    private val later = chapter(13L)
 
     /** Holds the launch restore where it reads the saved chapter's row. */
     private val restoreGate = CompletableDeferred<Unit>()
@@ -55,6 +56,7 @@ class NovelDownloadManagerEnqueueTest {
     private val novelRepository = mockk<NovelRepository> { coEvery { getById(1L) } returns novel }
     private val chapterRepo = mockk<NovelChapterRepository> {
         coEvery { getById(missing.id) } returns missing
+        coEvery { getById(later.id) } returns later
         coEvery { getById(saved.id) } coAnswers {
             restoreGate.await()
             saved
@@ -124,6 +126,17 @@ class NovelDownloadManagerEnqueueTest {
 
         store.persisted().map { it.chapterId }.sorted() shouldBe listOf(11L, 12L)
         restoreGate.complete(Unit)
+    }
+
+    @Test
+    fun `queueing a queued chapter again keeps its place in the saved queue`() = runTest(io) {
+        launchManager()
+        manager.downloadChapters(listOf(missing, later))
+
+        manager.downloadChapters(listOf(missing))
+        advanceUntilIdle()
+
+        store.restore().map { it.chapterId } shouldBe listOf(11L, 13L)
     }
 
     @Test

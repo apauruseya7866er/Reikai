@@ -159,8 +159,12 @@ class NovelDownloadManager(
             .filterNot { it.id in onDisk }
             .map { ch -> NovelDownload(novelId = ch.novelId, chapterId = ch.id, url = ch.url) }
         if (targets.isEmpty()) return
+        // Only what was not queued is saved, as Mihon's Downloader stores only its toAdd: saving a queued row
+        // again gives it a new order, so a restart would move it last. A failed row is already saved.
+        var added = emptyList<NovelDownload>()
         _queueState.update { current ->
             val byId = current.associateByTo(LinkedHashMap()) { it.chapterId }
+            added = targets.filter { it.chapterId !in byId }
             targets.forEach { t ->
                 val existing = byId[t.chapterId]
                 // Re-queue an errored entry, add a brand-new one, leave a queued/active one alone.
@@ -170,7 +174,7 @@ class NovelDownloadManager(
             }
             byId.values.toList()
         }
-        synchronized(storeLock) { store.addAll(targets) }
+        synchronized(storeLock) { store.addAll(added) }
         // Adding downloads implies wanting them, so clear any user pause and (re)start the drain.
         sourcePreferences.novelDownloadsPaused.set(false)
         dismissPausedNotification()
