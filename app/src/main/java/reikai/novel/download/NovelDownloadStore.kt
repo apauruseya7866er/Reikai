@@ -25,11 +25,10 @@ class NovelDownloadStore(
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    // Seed from the highest persisted order so a new enqueue after a process restart can't reuse
-    // order values that collide with the restored queue (which would make the resume order arbitrary).
-    private var counter = preferences.all.values
-        .mapNotNull { (it as? String)?.let(::deserialize)?.order }
-        .maxOrNull()?.plus(1) ?: 0
+    // Seeded from the highest persisted order so a new enqueue after a process restart can't reuse order
+    // values that collide with the restored queue (which would make the resume order arbitrary). Seeded on
+    // the first save rather than at construction, which would read the file wherever the store is built.
+    private var counter: Int? = null
 
     fun addAll(downloads: List<NovelDownload>) {
         preferences.edit {
@@ -91,8 +90,11 @@ class NovelDownloadStore(
         }
     }
 
-    private fun serialize(d: NovelDownload): String =
-        json.encodeToString(DownloadObject(d.novelId, d.chapterId, counter++))
+    private fun serialize(d: NovelDownload): String {
+        val order = counter ?: (persisted().maxOfOrNull { it.order }?.plus(1) ?: 0)
+        counter = order + 1
+        return json.encodeToString(DownloadObject(d.novelId, d.chapterId, order))
+    }
 
     private fun deserialize(string: String): DownloadObject? = try {
         json.decodeFromString<DownloadObject>(string)

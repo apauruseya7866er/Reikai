@@ -18,6 +18,33 @@ class NovelDownloadStoreTest {
     private val saved = (1L..4L).map { NovelDownload(novelId = 1L, chapterId = it, url = "/c/$it") }
 
     @Test
+    fun `building the store does not read the saved queue`() {
+        var opened = false
+        NovelDownloadStore(
+            mockk<Context> {
+                every { getSharedPreferences(any(), any()) } answers {
+                    opened = true
+                    prefs
+                }
+            },
+            mockk(),
+        )
+
+        opened shouldBe false
+    }
+
+    @Test
+    fun `a row saved by a store built after a restart is ordered after the saved rows`() {
+        store.addAll(saved.take(2))
+        val restarted =
+            NovelDownloadStore(mockk<Context> { every { getSharedPreferences(any(), any()) } returns prefs }, mockk())
+
+        restarted.addAll(saved.drop(2).take(1))
+
+        restarted.persisted().sortedBy { it.order }.map { it.chapterId } shouldBe listOf(1L, 2L, 3L)
+    }
+
+    @Test
     fun `removing rows keeps the rows left out`() {
         store.addAll(saved)
 
