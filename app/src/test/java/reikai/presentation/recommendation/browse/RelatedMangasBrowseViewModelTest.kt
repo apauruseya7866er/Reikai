@@ -246,6 +246,31 @@ class RelatedMangasBrowseViewModelTest {
         settle { viewModel.state.first { it.items.isNotEmpty() } }.items.single().inLibrary shouldBe true
     }
 
+    /** The badge already calls it in the library, so adding it would file the series twice. */
+    @Test
+    fun `a bulk add leaves out a title marked in the library under another url`() = runTest {
+        library.insert(
+            Manga.create().copy(
+                id = 26L,
+                url = "/series/1/Slug",
+                source = SOURCE_ID,
+                title = "Series",
+                favoriteAt = Instant.fromEpochMilliseconds(1L),
+            ),
+        )
+        val cache = RelatedMangaCache().apply {
+            put(MANGA_ID, RelatedPool(listOf(candidate("/series/1", SOURCE_ID, title = "Series")), emptyMap()))
+        }
+        val viewModel = viewModel(cache = cache, assembly = assemblyFromLibrary())
+        settle { viewModel.state.first { it.items.isNotEmpty() } }
+        viewModel.toggleSelection("/series/1")
+
+        viewModel.addSelectedToLibrary()
+        settle { viewModel.state.first { it.selectedUrls.isEmpty() } }
+
+        library.rows.values.filter { it.favorite }.map { it.id } shouldBe listOf(26L)
+    }
+
     @Test
     fun `with the library filter on a library title under another url is hidden`() = runTest {
         ReikaiRecommendationPreferences(store).hideInLibraryRecommendations.set(true)

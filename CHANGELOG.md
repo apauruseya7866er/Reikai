@@ -243,7 +243,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Removing an adult-source series from your library and your account favorites now keeps it in the library if the account removal fails.** A message says why, so you can try again.
 - **The Related row on a manga you don't track no longer shows a light novel's recommendations from AniList, MyAnimeList or MangaUpdates.**
 - **Related-manga suggestions no longer shrink while they refresh, or disappear when a refresh fails offline.**
-- **A related-manga suggestion already in your library is now dimmed and badged even when its source lists it under a different link.**
+- **A related-manga suggestion already in your library is now dimmed, badged and left out of a bulk Add to library, even when its source lists it under a different link.**
 - **Related-manga suggestions now rank more fairly: tracker picks keep up to 12 places in the row, and a series tracked on several services or a title listing a genre twice no longer counts double.**
 - **The related-manga Hide dropped, Hide on-hold and Hide plan-to-read filters now work with every manga tracker.**
 - **Turning off tracker recommendations or the taste suggestions in Settings -> Recommendations now removes them from a related row you already opened.**

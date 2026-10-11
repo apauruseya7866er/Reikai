@@ -165,10 +165,11 @@ class RelatedMangasBrowseViewModel(
 
     fun addSelectedToLibrary() {
         val current = state.value
-        val selected = current.items
-            .filter { it.candidate.manga.url in current.selectedUrls }
-            .map { it.candidate }
-        if (selected.isEmpty()) return
+        val picked = current.items.filter { it.candidate.manga.url in current.selectedUrls }
+        if (picked.isEmpty()) return
+        // A card badged as in the library is left out by that same answer: a source can list a library
+        // series under another url, which would resolve to a second row and file the series twice.
+        val selected = picked.filterNot { it.inLibrary }.map { it.candidate }
 
         viewModelScope.launchIO {
             // Tracker-origin candidates resolve to no installed source, so they can't be favorited.
