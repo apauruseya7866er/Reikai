@@ -12,8 +12,10 @@ import tachiyomi.domain.manga.model.Manga
 /** A tapped recommendation opens a local manga, except a tracker's, which no installed source owns. */
 class RelatedMangaLocalIdTest {
 
+    // Answers only the candidate's own url under its own source, so a wrong conversion fails the call.
     private val networkToLocalManga = mockk<NetworkToLocalManga> {
-        coEvery { this@mockk.invoke(any<Manga>()) } answers { firstArg<Manga>().copy(id = 42L) }
+        coEvery { this@mockk.invoke(match<Manga> { it.source == 1L && it.url == "/m" }) } answers
+            { firstArg<Manga>().copy(id = 42L) }
     }
 
     @Test
