@@ -86,28 +86,27 @@ class RecentsTargetTest {
         isHidden = { false },
     )
 
-    // Chapters 1 and 2 unread, projected the way both providers project theirs, with [hidden] hidden.
-    private fun unreadPair(vararg hidden: Long) = recentsChapters(
-        chapters = listOf(Copy(1, false), Copy(2, false)),
-        marks = GroupMarks.NONE,
-        id = { it.id },
-        read = { it.read },
-        isHidden = { it.id in hidden },
-    )
+    // Chapters 1 and 2 unread, resolved the way both providers resolve a row, with [hidden] hidden.
+    private val unreadPair = listOf(Copy(1, false), Copy(2, false))
+
+    private suspend fun resolveHiding(lane: RecentsLane, group: List<Copy>, vararg hidden: Long) =
+        resolve(lane, group = group, pooled = group, isHidden = { it.id in hidden })?.chapterId
 
     @Test
     fun `a newly added row passes over a hidden chapter`() = runTest {
-        addedTarget(unreadPair(1)) { emptyList() } shouldBe 2L
+        resolveHiding(RecentsLane.Added, unreadPair, 1) shouldBe 2L
     }
 
     @Test
     fun `a finished recorded chapter moves on past a hidden one`() = runTest {
-        resumeTarget(listOf(chapter(0, read = true)) + unreadPair(1), recordedId = 0) { emptyList() } shouldBe 2L
+        val read = RecentsLane.Read(ChapterRef(EntryId.Manga(1), 0))
+
+        resolveHiding(read, listOf(Copy(0, true)) + unreadPair, 1) shouldBe 2L
     }
 
     @Test
     fun `a hidden chapter still opens when every unread chapter is hidden`() = runTest {
-        addedTarget(unreadPair(1, 2)) { emptyList() } shouldBe 1L
+        resolveHiding(RecentsLane.Added, unreadPair, 1, 2) shouldBe 1L
     }
 
     @Test
@@ -138,6 +137,7 @@ class RecentsTargetTest {
         group: List<Copy>,
         pooled: List<Copy> = this.pooled,
         ownSource: List<Copy> = emptyList(),
+        isHidden: (Copy) -> Boolean = { false },
     ) = resolveRecentsTarget(
         lane = lane,
         group = group,
@@ -147,7 +147,7 @@ class RecentsTargetTest {
         id = { it.id },
         read = { it.read },
         bookmark = { it.bookmark },
-        isHidden = { false },
+        isHidden = isHidden,
     )
 
     private fun updated(chapterId: Long) = RecentsLane.Updated(ChapterRef(EntryId.Manga(1), chapterId))
