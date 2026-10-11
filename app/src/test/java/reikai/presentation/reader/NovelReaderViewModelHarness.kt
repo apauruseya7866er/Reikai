@@ -117,6 +117,7 @@ class NovelReaderViewModelHarness private constructor(
     private val store = EmittingPreferenceStore()
     val novelPreferences = NovelPreferences(store)
     val libraryPreferences = LibraryPreferences(store)
+    val reikaiLibraryPreferences = ReikaiLibraryPreferences(store)
 
     private val database = DatabaseBindings.providesDatabase(driver)
     private val novelRepo = NovelRepositoryImpl(database)

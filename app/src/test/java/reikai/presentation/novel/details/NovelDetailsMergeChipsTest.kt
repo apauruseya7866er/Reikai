@@ -43,4 +43,32 @@ class NovelDetailsMergeChipsTest {
 
         names.toSet() shouldBe setOf("alpha", "Old Site")
     }
+
+    /** The stitch ranks a member by its stored source, so the dialog must too, installed or not. */
+    @Test
+    fun `Manage sources ranks an uninstalled preferred member first`() = runTest {
+        val top = NovelReaderViewModelHarness.create(testScheduler).use { harness ->
+            harness.reikaiLibraryPreferences.preferredNovelSources.set(listOf("gone"))
+            val leading = harness.novel(harness.source("alpha"))
+            val preferred = harness.novel(FakeNovelSource("gone", "unregistered"))
+            // The installed member holds more chapters, so chapter count alone would put it first.
+            harness.chapter(leading, 1.0)
+            harness.chapter(leading, 2.0)
+            harness.chapter(preferred, 1.0)
+            harness.merge(leading, preferred)
+            val model = harness.openDetails(leading)
+            withContext(Dispatchers.Default) {
+                withTimeout(30_000) {
+                    model.state.first { it is NovelDetailsState.Loaded && it.mergeSources.size == 2 }
+                    model.showManageSourcesDialog()
+                    val dialog = model.state.first {
+                        (it as? NovelDetailsState.Loaded)?.dialog is NovelDetailsDialog.ManageSources
+                    }
+                    ((dialog as NovelDetailsState.Loaded).dialog as NovelDetailsDialog.ManageSources)
+                }
+            } to preferred
+        }
+
+        top.first.sources.first().id shouldBe top.second
+    }
 }

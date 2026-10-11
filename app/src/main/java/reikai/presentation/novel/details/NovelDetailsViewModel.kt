@@ -954,11 +954,10 @@ class NovelDetailsViewModel(
             // Order the rows by the same ranking aggregation uses, so the primary source opens on top even
             // under the global order (no override). memberRanking non-empty == override on.
             val memberRanking = mergeManager.overrideRankingMemberIds(anchorNovelId)
-            val siblings = siblingSources.value
-            val sourceIdByNovel = chaptersByNovel.keys.associateWith { siblings[it]?.id.orEmpty() }
+            // The stored source, installed or not, as the stitch ranks it (NovelGroupStitcher).
             val ranked = NovelChapterAggregation.rankedMemberIds(
                 chaptersByNovel,
-                sourceIdByNovel,
+                chaptersByNovel.keys.associateWith { memberSources[it].orEmpty() },
                 reikaiLibraryPreferences.preferredNovelSources.get(),
                 memberRanking,
             )
