@@ -21,4 +21,4 @@ What it does do is allow users of Reikai to visually plot their upcoming smart u
 In order to reduce strain on sources and save user bandwidth, Reikai tries to estimate when chapter updates will be available, and only once that time has passed, include that series in automatic updates.
 
 ## Why are my chapter updates on the wrong day?
-Smart updates determine time of chapter updates based on the time between currently released chapters. Sources that provide incorrect update dates, periods of hiatus, or update in batches may result in the estimate seeming off. As more chapters are released, the schedule should become more accurate.
+Smart updates determine time of chapter updates based on the time between currently released chapters and, once a series has a few releases, the weekdays or day of the month it usually releases on. Sources that provide incorrect update dates, periods of hiatus, or update in batches may result in the estimate seeming off. As more chapters are released, the schedule should become more accurate.
