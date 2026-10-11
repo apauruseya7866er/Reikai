@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
 import mihon.domain.chapter.interactor.FilterChaptersForDownload
 import mihon.domain.source.interactor.UpdateMangaFromRemote
+import reikai.domain.chapter.EditChapterNumber
 import reikai.domain.manga.MangaChapterSettings
 import reikai.domain.manga.MangaMergeManager
 import reikai.domain.manga.MangaPreferences
@@ -35,6 +36,7 @@ import reikai.domain.track.EntryTrackPort
 import reikai.domain.track.EntryTrackPorts
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetCustomMangaInfo
@@ -63,9 +65,10 @@ internal fun mangaDetailsModel(
     relatedLibraryKeys: RelatedLibraryKeys = mockk(relaxed = true),
     prepareRecommendationAssembly: PrepareRecommendationAssembly = mockk(relaxed = true),
     onMergedRender: () -> Unit = {},
+    prefs: PreferenceStore = InMemoryPreferenceStore(),
+    editChapterNumber: EditChapterNumber = mockk(relaxed = true),
     beforeModel: () -> Unit = {},
 ): MangaViewModel {
-    val prefs = InMemoryPreferenceStore()
     // Built ahead of the hook: recording a coEvery reads Dispatchers.Default, which undoes a static stub of it
     val mergeManager = mockk<MangaMergeManager> {
         coEvery { computeRelatedIds(any()) } returns group
@@ -138,7 +141,7 @@ internal fun mangaDetailsModel(
         },
         autoBindTrackers = mockk(relaxed = true),
         remoteFirstRemoval = mockk(relaxed = true),
-        editChapterNumber = mockk(relaxed = true),
+        editChapterNumber = editChapterNumber,
         chapterSettings = MangaChapterSettings(mangas),
     )
 }
