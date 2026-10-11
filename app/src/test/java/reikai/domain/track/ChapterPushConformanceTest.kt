@@ -21,7 +21,7 @@ import eu.kanade.tachiyomi.data.database.models.Track as DbTrack
 
 /**
  * Both chapter interactors report the trackers a push failed at, which the details mark-read toast
- * reads, and a refused push still queues its retry. One case per rule over both types.
+ * reads, a refused push still queues its retry, and a landed one clears it. One case per rule over both types.
  */
 class ChapterPushConformanceTest {
 
@@ -98,6 +98,17 @@ class ChapterPushConformanceTest {
         val h = Harness(failure = null)
 
         type.push(h)() shouldBe ChapterPushOutcome(failed = emptyList())
+    }
+
+    /** The delayed-tracking drain never removes an item itself, so a landed push must, or it retries forever. */
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `a push that lands clears its queued retry`(type: Type) = runTest {
+        val h = Harness(failure = null)
+
+        type.push(h)()
+
+        verify { type.store(h).remove(TRACK_ID) }
     }
 
     private companion object {
