@@ -121,7 +121,6 @@ class PartitionExtensionsTest {
         kind = Extension.Kind.MANGA,
         pkgFactory = null,
         sources = emptyList(),
-        icon = null,
         hasUpdate = hasUpdate,
     )
 

@@ -1,10 +1,8 @@
 package reikai.data.coil
 
 import android.graphics.Bitmap
-import androidx.core.graphics.drawable.toBitmap
 import coil3.ImageLoader
 import coil3.Uri
-import coil3.asImage
 import coil3.decode.DataSource
 import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
@@ -12,8 +10,8 @@ import coil3.fetch.ImageFetchResult
 import coil3.request.ImageRequest
 import coil3.request.Options
 import coil3.request.SuccessResult
+import eu.kanade.tachiyomi.data.coil.ExtensionIconFetcher
 import eu.kanade.tachiyomi.extension.ExtensionManager
-import eu.kanade.tachiyomi.extension.util.ExtensionLoader
 import reikai.domain.novel.NovelPreferences
 import reikai.domain.source.NovelIconHints
 import reikai.domain.source.siteUrls
@@ -40,30 +38,14 @@ internal fun borrowableIcons(hints: NovelIconHints, pkgName: String, siteUrls: L
     hints.candidatesFor(pkgName, siteUrls).filterNot { it.startsWith("$EXTENSION_ICON_SCHEME:") }
 
 /**
- * Draws the icon an [extensionIconUrl] names, from the app installed privately or on the system. One that
- * shows nothing is replaced by an icon its store or another listing gives for its site, if any loads.
+ * Finds a stand-in for an app whose own icon shows nothing: an icon its store or another listing gives for
+ * its site, the first that loads. Only a novel extension names its sites, so a manga one finds none.
  */
-class ExtensionIconFetcher(
-    private val pkgName: String,
-    private val options: Options,
-    private val imageLoader: ImageLoader,
+class ExtensionIconBorrower(
     private val extensionManager: Lazy<ExtensionManager>,
     private val novelPreferences: Lazy<NovelPreferences>,
-) : Fetcher {
-
-    override suspend fun fetch(): FetchResult {
-        val context = options.context
-        val icon = ExtensionLoader.getExtensionPackageInfoFromPkgName(context, pkgName)
-            ?.applicationInfo
-            ?.loadIcon(context.packageManager)
-            ?: error("Extension $pkgName is not installed")
-        if (!icon.toBitmap().isInvisible()) {
-            return ImageFetchResult(icon.asImage(), isSampled = false, dataSource = DataSource.DISK)
-        }
-        return borrowedIcon() ?: error("Extension $pkgName has no icon to show")
-    }
-
-    private suspend fun borrowedIcon(): FetchResult? {
+) {
+    suspend fun borrow(pkgName: String, options: Options, imageLoader: ImageLoader): FetchResult? {
         val sites = extensionManager.value.getLoadedNovelExtensions()
             .firstOrNull { it.pkgName == pkgName }
             ?.sources.orEmpty()
@@ -76,13 +58,17 @@ class ExtensionIconFetcher(
         }
         return null
     }
+}
 
-    class Factory(
-        private val extensionManager: Lazy<ExtensionManager>,
-        private val novelPreferences: Lazy<NovelPreferences>,
-    ) : Fetcher.Factory<Uri> {
-        override fun create(data: Uri, options: Options, imageLoader: ImageLoader): Fetcher? =
-            data.authority?.takeIf { data.scheme == EXTENSION_ICON_SCHEME }
-                ?.let { ExtensionIconFetcher(it, options, imageLoader, extensionManager, novelPreferences) }
-    }
+/** Draws the icon an [extensionIconUrl] names through the installed extension icon fetcher. */
+class ExtensionIconUrlFactory(private val borrower: ExtensionIconBorrower) : Fetcher.Factory<Uri> {
+    override fun create(data: Uri, options: Options, imageLoader: ImageLoader): Fetcher? =
+        data.authority?.takeIf { data.scheme == EXTENSION_ICON_SCHEME }?.let { pkgName ->
+            ExtensionIconFetcher(
+                context = options.context,
+                getPkgName = { pkgName },
+                density = null,
+                borrowIcon = { borrower.borrow(it, options, imageLoader) },
+            )
+        }
 }

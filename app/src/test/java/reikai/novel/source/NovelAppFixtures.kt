@@ -22,7 +22,6 @@ internal fun novelApp(vararg sources: Source) = Extension.Loaded(
     kind = Extension.Kind.TACHIYOMI_NOVEL,
     pkgFactory = null,
     sources = sources.toList(),
-    icon = null,
 )
 
 /** One catalogue of a [novelApp], registered as `tachiyomi:<sourceId>`. */

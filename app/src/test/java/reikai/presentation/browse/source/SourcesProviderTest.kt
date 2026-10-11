@@ -68,7 +68,6 @@ class SourcesProviderTest {
         kind = kind,
         pkgFactory = null,
         sources = sources,
-        icon = null,
     )
 
     private companion object {

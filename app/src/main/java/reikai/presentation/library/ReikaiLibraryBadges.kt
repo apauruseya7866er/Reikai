@@ -13,7 +13,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -21,17 +20,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
-import eu.kanade.domain.source.model.icon
 import eu.kanade.presentation.library.components.DownloadsBadge
 import eu.kanade.presentation.library.components.LanguageBadge
 import eu.kanade.presentation.library.components.UnreadBadge
+import eu.kanade.tachiyomi.data.coil.InstalledSourceIcon
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import exh.assets.BuiltInSourceLogo
 import exh.assets.builtInSourceLogo
@@ -62,7 +60,7 @@ private const val MAX_MERGE_ICONS = 3
 fun SourceIconBadge(badge: SourceBadge) {
     when (badge) {
         is SourceBadge.Manga -> MangaSourceIconBadge(badge.source)
-        is SourceBadge.Icon -> UrlSourceIconBadge(badge.url)
+        is SourceBadge.Icon -> LoadedSourceIconBadge(badge.url) { GenericSourceBadge() }
         SourceBadge.Generic -> GenericSourceBadge()
         SourceBadge.Missing -> MissingSourceBadge()
     }
@@ -70,23 +68,18 @@ fun SourceIconBadge(badge: SourceBadge) {
 
 @Composable
 private fun MangaSourceIconBadge(source: Source) {
-    val icon = produceState<ImageBitmap?>(initialValue = null, source.id) { value = source.icon() }.value
     val builtInLogo = builtInSourceLogo(source.id)
     when {
-        source.isStub && icon == null -> MissingSourceBadge()
-        icon != null -> Badge(
-            imageBitmap = icon,
-            modifier = Modifier
-                .scale(1.3f)
-                .height(18.dp),
-        )
+        source.isStub -> MissingSourceBadge()
         source.id == LocalSource.ID -> Badge(
             imageVector = MaterialSymbols.Rounded.Folder,
             color = MaterialTheme.colorScheme.tertiary,
             iconColor = MaterialTheme.colorScheme.onTertiary,
         )
-        builtInLogo != null -> BuiltInSourceLogoBadge(builtInLogo)
-        else -> GenericSourceBadge()
+        // An installed extension's icon wins over a built-in source's bundled logo
+        else -> LoadedSourceIconBadge(InstalledSourceIcon(source.id)) {
+            if (builtInLogo != null) BuiltInSourceLogoBadge(builtInLogo) else GenericSourceBadge()
+        }
     }
 }
 
@@ -100,7 +93,7 @@ private fun GenericSourceBadge() {
     )
 }
 
-/** A built-in source's logo at the bitmap badge's footprint, the same logo the browse SourceIcon draws. */
+/** A built-in source's logo at the icon badge's footprint, the same logo the browse SourceIcon draws. */
 @Composable
 private fun BuiltInSourceLogoBadge(logo: BuiltInSourceLogo) {
     val square = Modifier
@@ -126,14 +119,13 @@ private fun MissingSourceBadge() {
     )
 }
 
-/** A source icon given as an address, coil-loaded into the same [Badge] geometry the bitmap path draws
- *  (a secondary-backed rectangle with the icon scaled to fill an 18dp square). One that fails to load
- *  draws the generic badge, as a manga source whose icon cannot load does. */
+/** A source icon, coil-loaded into a secondary-backed rectangle with the icon scaled to fill an 18dp
+ *  square. One that fails to load draws [fallback] instead. */
 @Composable
-private fun UrlSourceIconBadge(iconUrl: String) {
-    var failed by remember(iconUrl) { mutableStateOf(false) }
+private fun LoadedSourceIconBadge(model: Any, fallback: @Composable () -> Unit) {
+    var failed by remember(model) { mutableStateOf(false) }
     if (failed) {
-        GenericSourceBadge()
+        fallback()
         return
     }
     Box(
@@ -143,7 +135,7 @@ private fun UrlSourceIconBadge(iconUrl: String) {
             .background(MaterialTheme.colorScheme.secondary),
     ) {
         AsyncImage(
-            model = iconUrl,
+            model = model,
             contentDescription = null,
             onError = { failed = true },
             modifier = Modifier

@@ -380,7 +380,6 @@ class NovelSourceConformanceTest {
         kind = kind,
         pkgFactory = null,
         sources = emptyList(),
-        icon = null,
     )
 
     private companion object {

@@ -152,7 +152,6 @@ class TachiyomiNovelSourceTest {
         kind = Extension.Kind.TACHIYOMI_NOVEL,
         pkgFactory = null,
         sources = emptyList(),
-        icon = null,
     )
 
     /** A catalogue that declares a least delay when [minimumDelay] is given, as a library 1.6 app can. */

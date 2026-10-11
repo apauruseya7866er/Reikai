@@ -35,7 +35,10 @@ import eu.kanade.tachiyomi.crash.CrashActivity
 import eu.kanade.tachiyomi.crash.GlobalExceptionHandler
 import eu.kanade.tachiyomi.data.coil.BufferedSourceFetcher
 import eu.kanade.tachiyomi.data.coil.CoverRequestInterceptor
+import eu.kanade.tachiyomi.data.coil.ExtensionIconFetcher
 import eu.kanade.tachiyomi.data.coil.ImageDecoder
+import eu.kanade.tachiyomi.data.coil.InstalledExtensionIconKeyer
+import eu.kanade.tachiyomi.data.coil.InstalledSourceIconKeyer
 import eu.kanade.tachiyomi.data.coil.MangaCoverFetcher
 import eu.kanade.tachiyomi.data.coil.MangaCoverKeyer
 import eu.kanade.tachiyomi.data.coil.MangaKeyer
@@ -68,7 +71,8 @@ import mihon.core.metro.GraphProvider
 import mihon.core.migration.Migrator
 import mihon.telemetry.TelemetryConfig
 import org.conscrypt.Conscrypt
-import reikai.data.coil.ExtensionIconFetcher
+import reikai.data.coil.ExtensionIconBorrower
+import reikai.data.coil.ExtensionIconUrlFactory
 import reikai.data.coil.GroupCoverInterceptor
 import reikai.data.coil.NovelCoverFactory
 import reikai.data.coil.NovelCoverKeyer
@@ -316,12 +320,18 @@ class App :
                 // RK: the last argument is Reikai's cover-colour extraction
                 add(MangaCoverFetcher.MangaCoverFactory(callFactoryLazy, coverCache, sourceManager, mangaCoverMetadata))
                 add(MangaCoverFetcher.MangaFactory(callFactoryLazy, coverCache, sourceManager, mangaCoverMetadata))
+                // RK --> off the graph like the rest; an app with a blank icon may borrow one
+                val extensionManager = lazy { graph.extensionManager }
+                val iconBorrower = ExtensionIconBorrower(extensionManager, lazy { graph.novelPreferences })
+                add(ExtensionIconFetcher.ExtensionFactory(context, iconBorrower))
+                // RK <--
+                add(ExtensionIconFetcher.SourceFactory(context, extensionManager))
                 // RK: light-novel covers and chapter pictures, each with its source's image headers
                 val novelImageRequests = lazy { graph.novelImageRequests }
                 add(NovelCoverFactory(novelImageRequests, coverCache, mangaCoverMetadata))
                 add(NovelImageFetcher.Factory(novelImageRequests))
                 // RK: a novel extension app's icon, named as an address
-                add(ExtensionIconFetcher.Factory(lazy { graph.extensionManager }, lazy { graph.novelPreferences }))
+                add(ExtensionIconUrlFactory(iconBorrower))
                 // RK: adult-source gallery page-preview thumbnails
                 add(PagePreviewFetcher.Factory(callFactoryLazy, lazy { graph.pagePreviewCache }, sourceManager))
                 // RK: MDList tracker-search covers, fetched via the MangaDex source client so the
@@ -339,6 +349,8 @@ class App :
                 // Keyer
                 add(MangaCoverKeyer(coverCache))
                 add(MangaKeyer())
+                add(InstalledExtensionIconKeyer())
+                add(InstalledSourceIconKeyer())
                 add(NovelCoverKeyer(coverCache)) // RK
                 add(NovelImageKeyer()) // RK
                 add(PagePreviewKeyer()) // RK

@@ -63,7 +63,6 @@ class SourcePreferencesBackupTest {
         kind = Extension.Kind.TACHIYOMI_NOVEL,
         pkgFactory = null,
         sources = sources.toList(),
-        icon = null,
     )
 
     @Test

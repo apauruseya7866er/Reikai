@@ -438,6 +438,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **A light-novel source now offers Latest only when it can really list latest, instead of quietly repeating Popular.** About half the plugins cannot.
 - **Opening an adult-source series whose older version is already in your library now opens that library copy.**
 - **Manga and novel extensions load faster at startup, and refreshing extension repos now updates them all at once (from Mihon).** Upstream: mihon 8066b8dfc, mihonapp/mihon#4071.
+- **Extension and source icons are now cached, so lists and library badges show them faster, and a manga extension whose icon is blank shows the default icon, as novel ones already did (from Mihon).** Upstream: mihon b15af71b9.
 
 #### Fixed
 

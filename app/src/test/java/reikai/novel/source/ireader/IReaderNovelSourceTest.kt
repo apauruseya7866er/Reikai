@@ -143,7 +143,6 @@ class IReaderNovelSourceTest {
         kind = Extension.Kind.IREADER,
         pkgFactory = null,
         sources = emptyList(),
-        icon = null,
     )
 
     private companion object {

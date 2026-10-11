@@ -461,7 +461,6 @@ internal object ExtensionLoader {
             sources = sources,
             // RK: kind-keyed
             pkgFactory = metaData.getString(kind.metadataKey(METADATA_SOURCE_FACTORY)),
-            icon = runCatching { appInfo.loadIcon(pkgManager) }.getOrNull(),
             isShared = extensionInfo.isShared,
             signatures = signatures,
             store = store,

@@ -111,7 +111,6 @@ class GetExtensionsByTypeTest {
         kind = kind,
         pkgFactory = null,
         sources = emptyList(),
-        icon = null,
     )
 
     private fun available(
