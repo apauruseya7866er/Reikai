@@ -31,6 +31,7 @@ import reikai.novel.host.SourceNovel
 import reikai.novel.source.NovelItemsPage
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
+import reikai.presentation.recents.EmittingPreferenceStore
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
@@ -317,10 +318,8 @@ object NovelProbe : Probe {
             extensionManager = mockk<ExtensionManager> {
                 every { loadedNovelExtensionsFlow } returns MutableStateFlow(emptyList())
             },
-            prefs = mockk<NovelPreferences> {
-                every { seenNovelSources() } returns mockk(relaxed = true) {
-                    every { get() } returns mapOf("old" to LnSourceIdentity(MigrationAdapterConformanceTest.OLD_NAME))
-                }
+            prefs = NovelPreferences(EmittingPreferenceStore()).apply {
+                seenNovelSources().set(mapOf("old" to LnSourceIdentity(MigrationAdapterConformanceTest.OLD_NAME)))
             },
         ).also { it.register(targetSource) }
         return NovelMigrationFlowAdapter(

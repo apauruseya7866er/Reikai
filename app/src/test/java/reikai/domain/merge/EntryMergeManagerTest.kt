@@ -6,7 +6,6 @@ import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.params.ParameterizedTest
@@ -16,7 +15,7 @@ import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.manga.MangaMergeManager
 import reikai.domain.merge.model.MergeGroup
 import reikai.domain.novel.NovelMergeManager
-import tachiyomi.core.common.preference.Preference
+import reikai.presentation.recents.EmittingPreferenceStore
 
 /**
  * One suite over both content types, each built through its own subclass so the type it fixes is
@@ -38,10 +37,10 @@ class EntryMergeManagerTest {
         mangaSameTitle: Boolean = false,
         novelSameTitle: Boolean = false,
     ): EntryMergeManager {
-        val preferences = mockk<ReikaiLibraryPreferences> {
-            every { seriesMergingEnabled } returns preference(mergingEnabled)
-            every { autoMergeSameTitle } returns preference(mangaSameTitle)
-            every { novelAutoMergeSameTitle } returns preference(novelSameTitle)
+        val preferences = ReikaiLibraryPreferences(EmittingPreferenceStore()).apply {
+            seriesMergingEnabled.set(mergingEnabled)
+            autoMergeSameTitle.set(mangaSameTitle)
+            novelAutoMergeSameTitle.set(novelSameTitle)
         }
         val onMerged: suspend (List<Long>) -> Unit = { merged += it }
         val onBeforeDissolve: suspend (List<Long>) -> Unit = { dissolved += it }
@@ -51,8 +50,6 @@ class EntryMergeManagerTest {
             ContentType.ALL -> error("not a merge-group type")
         }
     }
-
-    private fun preference(value: Boolean) = mockk<Preference<Boolean>> { every { get() } returns value }
 
     @ParameterizedTest
     @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])

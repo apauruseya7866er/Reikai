@@ -12,18 +12,13 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import reikai.domain.library.ReikaiLibraryPreferences
-import tachiyomi.core.common.preference.Preference
+import reikai.presentation.recents.EmittingPreferenceStore
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.track.model.Track
 
 class GetTracksInGroupTest {
 
-    private val sharingPref = mockk<Preference<Boolean>> {
-        every { get() } returns true
-    }
-    private val preferences = mockk<ReikaiLibraryPreferences> {
-        every { syncTrackerLinksGrouped } returns sharingPref
-    }
+    private val preferences = ReikaiLibraryPreferences(EmittingPreferenceStore())
     private val getTracks = mockk<GetTracks>()
     private val mergeManager = mockk<MangaMergeManager> {
         every { relatedIdsChanges() } returns flowOf(Unit)
@@ -71,7 +66,7 @@ class GetTracksInGroupTest {
 
     @Test
     fun `sharing turned off reads the entry's own tracks only`() = runTest {
-        every { sharingPref.get() } returns false
+        preferences.syncTrackerLinksGrouped.set(false)
         group(1L, 2L)
         coEvery { getTracks.await(1L) } returns listOf(track(1L, trackerId = 10L))
 

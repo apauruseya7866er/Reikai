@@ -11,6 +11,7 @@ import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.merge.ChapterUnit
 import reikai.domain.merge.MergeGroupRepository
+import reikai.presentation.recents.EmittingPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 
@@ -52,9 +53,7 @@ class MergedChapterProviderTest {
     @Test
     @DisplayName("an anchor that left the library loads on its own, so the reader can find it")
     fun anchorOutsideLibraryLoadsStandalone() = runTest {
-        val preferences = mockk<ReikaiLibraryPreferences>(relaxed = true) {
-            every { seriesMergingEnabled } returns mockk(relaxed = true) { every { get() } returns true }
-        }
+        val preferences = ReikaiLibraryPreferences(EmittingPreferenceStore())
         val repository = mockk<MergeGroupRepository>(relaxed = true) {
             coEvery { getGroupId(ContentType.MANGA, 1L) } returns 7L
             coEvery { getFavoriteMembers(ContentType.MANGA, 7L) } returns listOf(2L, 3L)

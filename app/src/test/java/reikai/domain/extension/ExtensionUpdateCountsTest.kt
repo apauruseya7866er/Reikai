@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.NovelPreferences
+import reikai.presentation.recents.EmittingPreferenceStore
 
 /** Every Browse badge counts both kinds of novel extension, the plugins and the apks. */
 class ExtensionUpdateCountsTest {
@@ -18,8 +19,8 @@ class ExtensionUpdateCountsTest {
         sourcePreferences = mockk<SourcePreferences> {
             every { extensionUpdatesCount.changes() } returns MutableStateFlow(1)
         },
-        novelPreferences = mockk<NovelPreferences> {
-            every { pendingPluginUpdates().changes() } returns MutableStateFlow(setOf("a", "b"))
+        novelPreferences = NovelPreferences(EmittingPreferenceStore()).apply {
+            pendingPluginUpdates().set(setOf("a", "b"))
         },
         extensionManager = mockk<ExtensionManager> {
             every { novelUpdatesCount } returns MutableStateFlow(4)

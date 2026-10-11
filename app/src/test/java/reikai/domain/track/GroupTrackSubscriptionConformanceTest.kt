@@ -25,6 +25,7 @@ import reikai.domain.novel.NovelMergeManager
 import reikai.domain.novel.NovelTrackRepository
 import reikai.domain.novel.interactor.GetNovelTracks
 import reikai.domain.novel.model.NovelTrack
+import reikai.presentation.recents.EmittingPreferenceStore
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.track.model.Track
 
@@ -44,15 +45,7 @@ class GroupTrackSubscriptionConformanceTest {
     /** The entries in the library. */
     private val library = MutableStateFlow(setOf(OPEN, SIBLING))
 
-    private val mergingEnabled = MutableStateFlow(true)
-
-    private val preferences = mockk<ReikaiLibraryPreferences>(relaxed = true) {
-        every { syncTrackerLinksGrouped } returns mockk { every { get() } returns true }
-        every { seriesMergingEnabled } returns mockk {
-            every { get() } answers { mergingEnabled.value }
-            every { changes() } returns mergingEnabled
-        }
-    }
+    private val preferences = ReikaiLibraryPreferences(EmittingPreferenceStore())
 
     private fun repository(type: ContentType) = mockk<MergeGroupRepository> {
         every { getAllMembershipsAsFlow(type) } returns memberships
@@ -130,7 +123,7 @@ class GroupTrackSubscriptionConformanceTest {
         val seen = mutableListOf<List<Long>>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { trackerIds(type).toList(seen) }
 
-        mergingEnabled.value = false
+        preferences.seriesMergingEnabled.set(false)
 
         seen.last() shouldContainExactly emptyList()
     }

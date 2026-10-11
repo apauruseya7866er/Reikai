@@ -2,7 +2,6 @@ package reikai.domain.merge
 
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
-import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.params.ParameterizedTest
@@ -11,6 +10,7 @@ import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.manga.MangaMergeManager
 import reikai.domain.novel.NovelMergeManager
+import reikai.presentation.recents.EmittingPreferenceStore
 
 /**
  * An entry that left the library while its group stays resolves on its own, for both content types.
@@ -20,12 +20,7 @@ import reikai.domain.novel.NovelMergeManager
 class StandaloneResolutionConformanceTest {
 
     private fun manager(type: ContentType, repository: MergeGroupRepository): EntryMergeManager {
-        val preferences = mockk<ReikaiLibraryPreferences> {
-            every { seriesMergingEnabled } returns mockk(relaxed = true) { every { get() } returns true }
-            // Each subclass hands its own same-title switch to the base, which no case here reads.
-            every { autoMergeSameTitle } returns mockk()
-            every { novelAutoMergeSameTitle } returns mockk()
-        }
+        val preferences = ReikaiLibraryPreferences(EmittingPreferenceStore())
         return when (type) {
             ContentType.MANGA -> MangaMergeManager(repository, preferences, onMerged = {}) {}
             else -> NovelMergeManager(repository, preferences, onMerged = {}) {}

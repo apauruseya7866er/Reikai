@@ -23,8 +23,8 @@ import reikai.domain.novel.NovelPreferences
 import reikai.domain.novel.NovelRepository
 import reikai.novel.install.LnPluginInstaller
 import reikai.novel.source.NovelSourceManager
+import reikai.presentation.recents.EmittingPreferenceStore
 import reikai.util.testAppScope
-import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.source.interactor.GetSourcesWithNonLibraryManga
 import tachiyomi.domain.source.model.Source
 import tachiyomi.domain.source.model.SourceWithCount
@@ -186,10 +186,6 @@ class ClearDatabaseViewModelTest {
             every { loadedNovelExtensionsFlow } returns
                 MutableStateFlow(emptyList())
         },
-        prefs = mockk<NovelPreferences> {
-            every { seenNovelSources() } returns mockk<Preference<Map<String, LnSourceIdentity>>> {
-                every { get() } returns seen
-            }
-        },
+        prefs = NovelPreferences(EmittingPreferenceStore()).apply { seenNovelSources().set(seen) },
     )
 }

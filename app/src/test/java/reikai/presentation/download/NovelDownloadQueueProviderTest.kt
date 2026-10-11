@@ -16,6 +16,7 @@ import reikai.domain.novel.model.Novel
 import reikai.novel.download.NovelDownload
 import reikai.novel.download.NovelDownloadManager
 import reikai.novel.source.NovelSourceManager
+import reikai.presentation.recents.EmittingPreferenceStore
 import reikai.util.testAppScope
 
 class NovelDownloadQueueProviderTest {
@@ -38,10 +39,8 @@ class NovelDownloadQueueProviderTest {
                 extensionManager = mockk<ExtensionManager> {
                     every { loadedNovelExtensionsFlow } returns MutableStateFlow(emptyList())
                 },
-                prefs = mockk<NovelPreferences> {
-                    every { seenNovelSources() } returns mockk(relaxed = true) {
-                        every { get() } returns mapOf("gone" to LnSourceIdentity("Removed plugin"))
-                    }
+                prefs = NovelPreferences(EmittingPreferenceStore()).apply {
+                    seenNovelSources().set(mapOf("gone" to LnSourceIdentity("Removed plugin")))
                 },
             ),
         )

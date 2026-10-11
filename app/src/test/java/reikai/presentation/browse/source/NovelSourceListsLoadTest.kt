@@ -17,7 +17,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
-import reikai.domain.novel.LnSourceIdentity
 import reikai.domain.novel.NovelPreferences
 import reikai.domain.source.ReikaiSourcePreferences
 import reikai.domain.source.ToggleNovelSource
@@ -28,16 +27,12 @@ import reikai.novel.source.novelCatalogue
 import reikai.presentation.MainDispatcherExtension
 import reikai.presentation.recents.EmittingPreferenceStore
 import reikai.util.testAppScope
-import tachiyomi.core.common.preference.Preference
 import kotlin.time.Duration.Companion.seconds
 
 /** Both novel source lists open with the installed apps' catalogues, not empty until the app scan lands. */
 class NovelSourceListsLoadTest {
 
     private val scanned = CompletableDeferred<Unit>()
-    private val seen = mockk<Preference<Map<String, LnSourceIdentity>>>(relaxed = true) {
-        every { get() } returns emptyMap()
-    }
     private val manager = NovelSourceManager(
         scope = testAppScope(),
         installer = { mockk<LnPluginInstaller>(relaxed = true) },
@@ -47,7 +42,7 @@ class NovelSourceListsLoadTest {
                 emit(listOf(novelApp(novelCatalogue(7L))))
             }
         },
-        prefs = mockk<NovelPreferences> { every { seenNovelSources() } returns seen },
+        prefs = NovelPreferences(EmittingPreferenceStore()),
     )
     private val preferences = ReikaiSourcePreferences(EmittingPreferenceStore())
 

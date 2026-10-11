@@ -15,6 +15,7 @@ import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.CustomNovelInfo
 import reikai.domain.novel.model.LibraryNovel
 import reikai.domain.novel.model.Novel
+import reikai.presentation.recents.EmittingPreferenceStore
 import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.model.Manga
@@ -110,12 +111,9 @@ class LibraryExportRowsTest {
             ),
             mergingOn = mergingOn,
         )
-        // Seeded through the mock: an in-memory store never hands back what was set on it.
-        val preferences = mockk<ReikaiLibraryPreferences> {
-            every { preferredMangaSources.get() } returns
-                listOfNotNull(SECOND_MANGA_SOURCE.takeIf { preferSecondSources })
-            every { preferredNovelSources.get() } returns
-                listOfNotNull(SECOND_NOVEL_SOURCE.takeIf { preferSecondSources })
+        val preferences = ReikaiLibraryPreferences(EmittingPreferenceStore()).apply {
+            preferredMangaSources.set(listOfNotNull(SECOND_MANGA_SOURCE.takeIf { preferSecondSources }))
+            preferredNovelSources.set(listOfNotNull(SECOND_NOVEL_SOURCE.takeIf { preferSecondSources }))
         }
         return GetLibraryExportRows(
             getFavorites = mockk<GetFavorites> {

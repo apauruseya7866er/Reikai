@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.manga.GetTracksInGroup
 import reikai.domain.manga.MangaMergeManager
-import tachiyomi.core.common.preference.Preference
+import reikai.presentation.recents.EmittingPreferenceStore
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
@@ -34,9 +34,7 @@ class RefreshTracksTest {
     }
 
     private val getTracksInGroup = GetTracksInGroup(
-        preferences = mockk<ReikaiLibraryPreferences> {
-            every { syncTrackerLinksGrouped } returns mockk<Preference<Boolean>> { every { get() } returns true }
-        },
+        preferences = ReikaiLibraryPreferences(EmittingPreferenceStore()),
         getTracks = mockk<GetTracks> {
             coEvery { await(VIEWED) } returns emptyList()
             coEvery { await(SERVER_COPY) } returns listOf(serverRow())
