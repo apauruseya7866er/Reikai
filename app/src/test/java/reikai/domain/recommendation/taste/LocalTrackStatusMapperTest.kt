@@ -17,7 +17,6 @@ import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkClass
-import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
@@ -43,20 +42,17 @@ class LocalTrackStatusMapperTest {
         (mapped != TrackStatus.UNKNOWN) shouldBe meaningful
     }
 
-    @Test
-    fun `a MangaUpdates Unfinished list entry counts as dropped`() {
-        val tracker = bareTrackers.getValue(MangaUpdates::class)
+    // Statuses only these trackers use, so no fetcher test reaches their meaning.
+    @ParameterizedTest(name = "{0} status {1} means {2}")
+    @MethodSource("labelOnly")
+    fun `a status only a fetcher-less tracker uses reaches its own meaning`(
+        type: KClass<*>,
+        status: Long,
+        meaning: TrackStatus,
+    ) {
+        val tracker = bareTrackers.getValue(type)
 
-        LocalTrackStatusMapper(trackerManager).map(track(tracker.id, MangaUpdates.UNFINISHED_LIST)) shouldBe
-            TrackStatus.DROPPED
-    }
-
-    @Test
-    fun `a MangaBaka Considering entry counts as plan to read`() {
-        val tracker = bareTrackers.getValue(MangaBaka::class)
-
-        LocalTrackStatusMapper(trackerManager).map(track(tracker.id, MangaBaka.CONSIDERING)) shouldBe
-            TrackStatus.PLAN_TO_READ
+        LocalTrackStatusMapper(trackerManager).map(track(tracker.id, status)) shouldBe meaning
     }
 
     private fun track(trackerId: Long, status: Long) = Track(
@@ -101,6 +97,15 @@ class LocalTrackStatusMapperTest {
             every { getRereadingStatus() } answers { callOriginal() }
             every { getCompletionStatus() } answers { callOriginal() }
         }
+
+        @JvmStatic
+        fun labelOnly() = listOf(
+            Arguments.of(MangaUpdates::class, MangaUpdates.UNFINISHED_LIST, TrackStatus.DROPPED),
+            Arguments.of(MangaUpdates::class, MangaUpdates.ON_HOLD_LIST, TrackStatus.ON_HOLD),
+            Arguments.of(MangaUpdates::class, MangaUpdates.WISH_LIST, TrackStatus.PLAN_TO_READ),
+            Arguments.of(MangaBaka::class, MangaBaka.PAUSED, TrackStatus.ON_HOLD),
+            Arguments.of(MangaBaka::class, MangaBaka.CONSIDERING, TrackStatus.PLAN_TO_READ),
+        )
 
         @JvmStatic
         fun statuses() = bareTrackers
