@@ -79,6 +79,7 @@ import reikai.domain.library.ChapterSwipeActions
 import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.library.chapterSwipeActions
+import reikai.domain.merge.ChapterGap
 import reikai.domain.merge.ChapterUnit
 import reikai.domain.merge.DetailsRemoval
 import reikai.domain.merge.DownloadTargets
@@ -604,6 +605,7 @@ class NovelDetailsViewModel(
                 flags.marks,
                 // Off each source's own list: [ordered] is restamped and keeps one copy per chapter.
                 pooled.numberHints(),
+                ordered.gapPresent(),
             ).copy(
                 downloadTargets = DownloadTargets.of(group.mergeScope, pooled, ordered, stitch, { it.id }) {
                     it.novelId in installed
@@ -646,11 +648,17 @@ class NovelDetailsViewModel(
             return emptyFlow()
         }
         val pageKey = pages.getOrNull(idx)
-        val chapterFlow = if (pageKey == null) {
-            chapterRepo.getByNovelIdAsFlow(viewNovel.id)
+        val allChapters = chapterRepo.getByNovelIdAsFlow(viewNovel.id)
+        val chapterFlow = if (pageKey ==
+            null
+        ) {
+            allChapters
         } else {
             chapterRepo.getByNovelIdAndPageAsFlow(viewNovel.id, pageKey)
         }
+        // A page's gaps are counted against every page stored, as the reader counts them; an unpaged
+        // list already holds them all, and its query is not opened twice.
+        val otherPages = if (pageKey == null) flowOf(null) else allChapters
         // The siblings' rows are not shown here, but a chapter read on one of them still reads as read
         // on this chip, so they are watched too rather than read once: reading elsewhere has to reach
         // this list the same way it reaches the unified one.
@@ -666,30 +674,33 @@ class NovelDetailsViewModel(
         // answer so a page shown before it loaded is still fetched once it has.
         return combine(
             chapterFlow,
+            otherPages,
             novelDownloadCache.changes,
             siblingChapters,
             anchorSource,
-        ) { chapters, _, siblings, _ -> chapters to siblings }.mapLatest { (chapters, siblings) ->
-            val stitch = mergedChapterProvider.stitchOf(viewNovel.id)
-            val flags = group.novelRowFlags(chapters + siblings, chapters, stitch)
-            buildLoaded(
-                group,
-                anchor,
-                viewNovel,
-                chapters,
-                pages,
-                idx,
-                flags.downloadedIds,
-                downloadFolderOwnerOf(viewNovel, listOf(viewNovel), anchor),
-                flags.marks,
-                chapters.numberHints(),
-            )
-        }.onEach { loaded ->
-            // Part of the shown list, so a page is fetched only while the page is on screen.
-            if (pageKey != null && isAnchorView && loaded.storedRows.isEmpty()) {
-                maybeFetchPage(viewNovel, pageKey, loaded.chapterFilters)
+        ) { chapters, allPages, _, siblings, _ -> Triple(chapters, allPages ?: chapters, siblings) }
+            .mapLatest { (chapters, gapRows, siblings) ->
+                val stitch = mergedChapterProvider.stitchOf(viewNovel.id)
+                val flags = group.novelRowFlags(chapters + siblings, chapters, stitch)
+                buildLoaded(
+                    group,
+                    anchor,
+                    viewNovel,
+                    chapters,
+                    pages,
+                    idx,
+                    flags.downloadedIds,
+                    downloadFolderOwnerOf(viewNovel, listOf(viewNovel), anchor),
+                    flags.marks,
+                    chapters.numberHints(),
+                    gapRows.gapPresent(),
+                )
+            }.onEach { loaded ->
+                // Part of the shown list, so a page is fetched only while the page is on screen.
+                if (pageKey != null && isAnchorView && loaded.storedRows.isEmpty()) {
+                    maybeFetchPage(viewNovel, pageKey, loaded.chapterFilters)
+                }
             }
-        }
     }
 
     /** Page keys for the selector: "1".."N" for a `parsePage` source, distinct volume labels for a
@@ -715,6 +726,8 @@ class NovelDetailsViewModel(
         downloadFolderOwner: Novel?,
         marks: GroupMarks,
         numberHints: Map<Long, ChapterNumberHint.Hint>,
+        // Every stored chapter of the view, filtered out, hidden or on another page, so none of them is a gap.
+        present: ChapterGap.Present,
     ): NovelDetailsState.Loaded {
         val hidden = hiddenChaptersPref.get()
         val rows = shownRows(anchor, chapters, hidden, downloadedChapterIds, marks)
@@ -723,8 +736,6 @@ class NovelDetailsViewModel(
         val sortDescending = anchor.effectiveSortDescending(novelPreferences)
         // When showing hidden, mark which displayed rows are hidden (dimmed + drives Hide/Unhide).
         val hiddenChapterIds = hiddenChapterIdsIn(display, hidden, view.showHidden, ::hiddenKey) { it.id }
-        // Counted against every chapter, filtered out or hidden, so hiding one never makes a gap.
-        val present = chapters.gapPresent()
         val isHiddenRow = { chapter: NovelChapter -> chapter.id in hiddenChapterIds }
         // A paged list holds one page, so its ends border the other pages, not chapters that are missing.
         val paged = pages.isNotEmpty()

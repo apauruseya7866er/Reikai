@@ -20,6 +20,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import reikai.domain.chapter.hiddenChapterKey
@@ -96,6 +97,31 @@ class DetailsGapConformanceTest {
     fun `hiding missing chapters drops the list's marker and the header's count`(probe: Probe) = runTest {
         probe.elevenMissing(this, hideMarkers = true) shouldBe (emptyList<Int>() to 0)
     }
+
+    // Novels only: paging is the novel transport alone, a manga list is always whole.
+    @Test
+    fun `a chapter stored on another page of a paged novel is not counted missing`() = runTest {
+        val counts = NovelReaderViewModelHarness.create(testScheduler).use { harness ->
+            val novelId = harness.novel(harness.source(SOURCE), totalPages = 3L)
+            listOf(9, 10, 12).forEach { harness.chapter(novelId, it.toDouble(), page = "2") }
+            harness.chapter(novelId, 11.0, page = "3")
+            val model = harness.openDetails(novelId)
+            loadedWhere(model) { it.pages.size == 3 && it.sourceName == SOURCE }
+            model.selectPage(1)
+            val page = loadedWhere(model) { it.pageIndex == 1 && it.chapters.size == 3 }
+            page.chapterListEntries.filterIsInstance<NovelChapterListEntry.Missing>().map { it.count } to
+                page.missingChapterCount
+        }
+
+        counts shouldBe (emptyList<Int>() to 0)
+    }
+
+    private suspend fun loadedWhere(
+        model: NovelDetailsViewModel,
+        ready: (NovelDetailsState.Loaded) -> Boolean,
+    ): NovelDetailsState.Loaded = withContext(Dispatchers.Default) {
+        withTimeout(10_000) { model.state.first { it is NovelDetailsState.Loaded && ready(it) } }
+    } as NovelDetailsState.Loaded
 
     companion object {
         private const val DOWNLOADED_FILTER_FILE = "eu.kanade.domain.manga.model.MangaKt"

@@ -392,7 +392,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Hiding chapter titles on a novel no longer changes its chapter order, and sorting its chapters no longer changes how their titles show.** Each follows your global default until you change it on that novel.
 - **Novel chapter dates now hold: a refresh keeps a date the source stops giving, an undated new chapter gets one as on manga, and a date like 12/25/2024 that can only be month-first now reads correctly.** An ambiguous date like 03/04/2024 still reads day-first.
 - **A paged novel's page bar now names the same page as the page picker, and volumes list in the source's order.** Before, "Volume 10" sorted ahead of "Volume 2".
-- **A later page of a paged novel no longer counts the chapters on earlier pages as missing.** Gaps inside the page are still marked.
+- **A page of a paged novel no longer counts a chapter as missing when another page holds it, at the page's edges or inside it.** A chapter no page holds is still marked.
 - **A paged novel's chapters no longer mix across pages when you read on, mark earlier chapters read or download the next ones, once the novel has been refreshed.** A library update refreshes it too.
 - **Novel chapter names no longer repeat the novel's title in front.**
 - **Light novel names in Browse and search results no longer show raw codes like &amp;.** Before, these codes showed in result rows until the novel was opened.
