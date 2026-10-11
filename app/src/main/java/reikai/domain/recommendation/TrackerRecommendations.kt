@@ -6,8 +6,8 @@ import kotlinx.serialization.json.Json
 
 /**
  * Base contract for a tracker-backed recommendation provider: given a manga the user is viewing,
- * return titles that tracker considers similar. Dispatch prefers an id lookup when the user already
- * tracks the manga, else resolving the id through ONE title search, never a fan-out. Providers hit a
+ * return titles that tracker considers similar: by remote id for a manga the user tracks there (the
+ * media context and taste seeds), else through ONE title search, never a fan-out. Providers hit a
  * public endpoint over the shared client from [RecommendationProviders], never the tracker's
  * authenticated client, which would throw for a logged-out user. Candidates are tagged
  * [RECOMMENDS_SOURCE]: their URL fits no installed extension, so a tap routes through global search.
@@ -26,9 +26,6 @@ abstract class TrackerRecommendations(private val tracker: Tracker) {
     abstract suspend fun getRecsById(remoteId: Long): List<RelatedMangaCandidate>
 
     abstract suspend fun getRecsBySearch(title: String): List<RelatedMangaCandidate>
-
-    suspend fun fetch(remoteId: Long?, title: String): List<RelatedMangaCandidate> =
-        if (remoteId != null) getRecsById(remoteId) else getRecsBySearch(title)
 
     /**
      * The tracker's view of one media the user already tracks: recommendations plus genres, for the

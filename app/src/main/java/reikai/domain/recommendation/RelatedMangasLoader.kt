@@ -92,7 +92,6 @@ class RelatedMangasLoader(
             launch {
                 fetcher.fetch(
                     title = manga.title,
-                    tracks = tracks,
                     skipTrackerIds = handledTrackerIds,
                     pushResults = { candidates -> accumulator.add(candidates)?.let { onUpdate(it) } },
                 )
