@@ -176,6 +176,21 @@ Newest first. "Base" is the `refs/mihon` SHA Reikai is synced through; "Reikai" 
 
 | Base (mihon) | Reikai | Date | Ported |
 |---|---|---|---|
+| `3e5d593e2` | `chore: sync Mihon parallel page loading (mihon 3e5d593e2)` | 2026-10-11 | Parallel page loading and preloading in the manga reader (mihonapp/mihon#2986), with the off-Wi-Fi window on `preloadSize` and a "load ahead only over Wi-Fi" switch; novels keep fetching the next chapter by owner ruling |
+| `c0c090999` | (declined) | 2026-10-11 | Kitsu search filtering out novels (mihonapp/mihon#4069) declined, premise: Reikai tracks novels on Kitsu, so the filter would hide every novel result; revisit if novel tracking leaves Kitsu |
+| `c46317f09` | `chore: sync Mihon main-thread and race fixes (mihon c46317f09)` | 2026-10-11 | Blocking work off the main thread and threading races (mihonapp/mihon#4068), novel halves included (progress writes, cover cache index, tracker token locks) |
+| `f921ec07a`, `f9c5fa901` | `chore: sync Mihon app scope (mihon f921ec07a, f9c5fa901)` | 2026-10-11 | App scoped `CoroutineScope`, logging failures outside debug builds; `launchIO` / `launchUI` / `withIOContext` kept (Deliberate divergences) |
+| `e21414b22` | `chore: sync Mihon legacy chapter model drop (mihon e21414b22)` | 2026-10-11 | Legacy chapter model dropped, last page read narrowed to `Int`; duplicate matching keeps `Float` |
+| `e42e01049` | `chore: sync Mihon list-wide chapter numbers (mihon e42e01049)` | 2026-10-11 | Volume recognition and neighbouring-chapter numbers, shared with novels through `recognizeChapterNumbers` |
+| `6c1b0702b` | `chore: sync Mihon beta Compose BOM` | 2026-10-11 | Beta Compose BOM |
+| `292381662` | `chore: sync Mihon release patterns in next update (mihon 292381662)` | 2026-10-11 | Weekday and monthly release patterns in next-update prediction, backed up (`BackupManga` 113, `BackupNovel` 27), novels included |
+| `44c1e1915` | `chore: sync Mihon Instant dates (mihon 44c1e1915)` | 2026-10-11 | Every database date stored as an `Instant` (`62.sqm`, novel tables included) |
+| `a82d27c3a`, `611578313` | `chore: sync Mihon kept refresh selection`, `chore: sync Mihon finished download on disk` | 2026-10-11 | Chapter selection kept across a refresh; a finished download found on disk is indexed instead of fetched again |
+| `8972882a3` | `chore: sync Mihon extension icon buttons (mihon 8972882a3)` | 2026-10-11 | Plain icon buttons for extension actions |
+| `adc9ee74e`, `e9234f205` | `chore: sync Mihon hidden gaps`, `chore: sync Mihon heading search` | 2026-10-11 | Hidden missing-chapter indicators respected in headers (mihonapp/mihon#4039); settings search matches group headings (mihonapp/mihon#4044) |
+| `36ec043a5`..`be44a81fb` | `chore: sync Mihon delete read duplicates` through `chore: sync Mihon local archive` (nine commits) | 2026-10-11 | Fixes batch (mihonapp/mihon#3030, mihonapp/mihon#3179, mihonapp/mihon#3308, mihonapp/mihon#3558, mihonapp/mihon#3784, mihonapp/mihon#3790, mihonapp/mihon#3845, mihonapp/mihon#3968, mihonapp/mihon#3997), each with its novel half where one applies |
+| `0c1be369b` | (declined) | 2026-10-11 | Asking to add an entry before editing its cover (mihonapp/mihon#2265) declined, premise: Reikai hides Edit cover for an entry outside the library; revisit if that changes |
+| `e998904fb`..`157679bba` | `chore: sync Mihon upload-artifact v7.0.2`, `chore: sync Mihon toolchain and dependency bumps` | 2026-10-11 | GitHub Actions, paging 3.5.2, firebase-bom 35, Gradle 9.8.1, Kotlin 2.4.21, sqldelight 2.4.1, spotless 8.10.4 |
 | `d1e71ab58` | `chore: sync Mihon webgpuviewer 52` | 2026-10-09 | webgpuviewer 52 and wide-page zoom matching a decoded neighbour (mihonapp/mihon#4051) |
 | `a80027ff3` | `chore: sync Mihon Material Symbols icons` | 2026-10-09 | Remaining icons moved to Material Symbols, notification drawables generated (mihonapp/mihon#4057); MangaBaka-first tracker order (mihon `dd46413e1`) declined by owner ruling, premise: Reikai keeps its own tracker order, revisit only if the owner asks; its fastlane text N/A |
 | `ab7ee00c4` | `chore: sync Mihon R8 shrinking of app code` | 2026-10-08 | R8 shrinks app code (mihon `06d612811`) |
