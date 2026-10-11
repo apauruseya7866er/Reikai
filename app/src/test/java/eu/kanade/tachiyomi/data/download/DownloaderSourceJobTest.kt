@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.mockIoDispatcher
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
@@ -111,8 +112,7 @@ class DownloaderSourceJobTest {
     private fun TestScope.downloader(): Downloader {
         // The downloader restores its saved queue on Main as it is built and downloads on IO, both the test's clock.
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
-        mockkStatic(Dispatchers::class)
-        every { Dispatchers.IO } returns StandardTestDispatcher(testScheduler)
+        mockIoDispatcher(StandardTestDispatcher(testScheduler))
         return Downloader(
             scope = testAppScope(),
             context = context,

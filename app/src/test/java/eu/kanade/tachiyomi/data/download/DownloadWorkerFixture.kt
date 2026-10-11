@@ -30,6 +30,7 @@ import kotlinx.coroutines.test.setMain
 import mihon.app.di.AppGraph
 import mihon.core.metro.GraphProvider
 import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.mockIoDispatcher
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
@@ -86,8 +87,7 @@ class DownloadWorkerFixture(
         // Mihon's Downloader restores its saved queue on the main dispatcher as it is built, and runs
         // its downloads on IO, which here is the test's own clock.
         Dispatchers.setMain(UnconfinedTestDispatcher(test.testScheduler))
-        mockkStatic(Dispatchers::class)
-        every { Dispatchers.IO } returns StandardTestDispatcher(test.testScheduler)
+        mockIoDispatcher(StandardTestDispatcher(test.testScheduler))
         mockkObject(DownloadWorker.Companion)
         every { DownloadWorker.start(any()) } answers { events += "enqueued" }
         mockkStatic(Context::activeNetworkState)

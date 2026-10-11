@@ -16,6 +16,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import reikai.presentation.reader.NovelReaderViewModelHarness
+import reikai.util.mockIoDispatcher
 
 /**
  * A merged novel's details list follows its siblings' chapter rows live. The subscription window itself is
@@ -30,8 +31,7 @@ class NovelDetailsViewModelSubscriptionTest {
     @BeforeEach
     fun setUp() {
         Dispatchers.setMain(dispatcher)
-        mockkStatic(Dispatchers::class)
-        every { Dispatchers.IO } returns dispatcher
+        mockIoDispatcher(dispatcher)
     }
 
     @AfterEach

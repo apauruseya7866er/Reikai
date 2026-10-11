@@ -39,6 +39,7 @@ import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.NovelDownloadWorker
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
+import reikai.util.mockIoDispatcher
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
@@ -221,8 +222,7 @@ class NovelNetworkWaitHalf : NetworkWaitHalf {
         mockkStatic(Context::activeNetworkState)
         every { any<Context>().activeNetworkState() } answers { network }
         // The launch restore runs on IO, which here is the test's own clock.
-        mockkStatic(Dispatchers::class)
-        every { Dispatchers.IO } returns StandardTestDispatcher(test.testScheduler)
+        mockIoDispatcher(StandardTestDispatcher(test.testScheduler))
         val downloadPreferences = DownloadPreferences(InMemoryPreferenceStore())
         downloadPreferences.downloadOnlyOverWifi.set(wifiOnly)
         val manager = NovelDownloadManager(

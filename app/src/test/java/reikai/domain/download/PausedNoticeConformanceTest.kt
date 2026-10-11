@@ -47,6 +47,7 @@ import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.NovelDownloadWorker
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
+import reikai.util.mockIoDispatcher
 import reikai.util.testAppScope
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
@@ -334,8 +335,7 @@ class NovelPausedNoticeHalf : PausedNoticeHalf {
         mockkStatic(Context::activeNetworkState)
         every { any<Context>().activeNetworkState() } answers { network }
         // The launch restore runs on IO, which here is the test's own clock.
-        mockkStatic(Dispatchers::class)
-        every { Dispatchers.IO } returns StandardTestDispatcher(test.testScheduler)
+        mockIoDispatcher(StandardTestDispatcher(test.testScheduler))
         mockkStatic(WORKER_EXTENSIONS)
         coEvery { any<CoroutineWorker>().setForegroundSafely() } coAnswers {
             foregroundRequests += firstArg<CoroutineWorker>().getForegroundInfo()

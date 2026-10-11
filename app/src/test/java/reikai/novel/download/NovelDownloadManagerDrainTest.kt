@@ -36,6 +36,7 @@ import reikai.domain.novel.model.NovelChapter
 import reikai.domain.source.ReikaiSourcePreferences
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
+import reikai.util.mockIoDispatcher
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
@@ -106,8 +107,7 @@ class NovelDownloadManagerDrainTest {
         every { NovelDownloadWorker.start(any()) } just runs
         mockkStatic(Context::activeNetworkState)
         every { any<Context>().activeNetworkState() } returns NetworkState(true, true, true)
-        mockkStatic(Dispatchers::class)
-        every { Dispatchers.IO } returns io
+        mockIoDispatcher(io)
         manager = NovelDownloadManager(
             scope = testAppScope(),
             context = context,

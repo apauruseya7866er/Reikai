@@ -31,6 +31,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import reikai.presentation.reader.NovelReaderViewModelHarness
+import reikai.util.mockIoDispatcher
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
@@ -65,8 +66,7 @@ class DetailsStateSubscriptionConformanceTest {
     @BeforeEach
     fun setUp() {
         Dispatchers.setMain(dispatcher)
-        mockkStatic(Dispatchers::class)
-        every { Dispatchers.IO } returns dispatcher
+        mockIoDispatcher(dispatcher)
         // Both read through Injekt in production; held at their shipped defaults.
         mockkStatic(DOWNLOADED_FILTER_FILE)
         every { any<Manga>().downloadedFilter } returns TriState.DISABLED

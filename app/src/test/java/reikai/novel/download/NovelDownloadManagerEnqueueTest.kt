@@ -25,6 +25,7 @@ import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.source.ReikaiSourcePreferences
+import reikai.util.mockIoDispatcher
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import kotlin.time.Instant
@@ -77,8 +78,7 @@ class NovelDownloadManagerEnqueueTest {
         mockkObject(NovelDownloadWorker.Companion)
         every { NovelDownloadWorker.start(any()) } just runs
         every { NovelDownloadWorker.stop(any()) } just runs
-        mockkStatic(Dispatchers::class)
-        every { Dispatchers.IO } returns io
+        mockIoDispatcher(io)
     }
 
     @AfterEach

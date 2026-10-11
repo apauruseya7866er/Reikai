@@ -37,6 +37,7 @@ import reikai.domain.source.ReikaiSourcePreferences
 import reikai.novel.download.FakeSharedPreferences
 import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.NovelDownloadWorker
+import reikai.util.mockIoDispatcher
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
@@ -237,12 +238,11 @@ class NovelEmptiedQueueHalf : EmptiedQueueHalf {
         val onWifi = pause == EmptiedPausedQueueConformanceTest.Pause.USER
         mockkObject(NovelDownloadWorker.Companion)
         mockkStatic(Context::activeNetworkState)
-        mockkStatic(Dispatchers::class)
         try {
             every { NovelDownloadWorker.start(any()) } just runs
             every { NovelDownloadWorker.stop(any()) } just runs
             every { any<Context>().activeNetworkState() } returns NetworkState(online, online, onWifi)
-            every { Dispatchers.IO } returns StandardTestDispatcher(test.testScheduler)
+            mockIoDispatcher(StandardTestDispatcher(test.testScheduler))
             val manager = NovelDownloadManager(
                 scope = testAppScope(),
                 context = context,

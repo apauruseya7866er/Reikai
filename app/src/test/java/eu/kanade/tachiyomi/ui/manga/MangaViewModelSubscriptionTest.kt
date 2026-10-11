@@ -25,6 +25,7 @@ import kotlinx.coroutines.test.setMain
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import reikai.util.mockIoDispatcher
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
@@ -46,8 +47,7 @@ class MangaViewModelSubscriptionTest {
     @BeforeEach
     fun setUp() {
         Dispatchers.setMain(dispatcher)
-        mockkStatic(Dispatchers::class)
-        every { Dispatchers.IO } returns dispatcher
+        mockIoDispatcher(dispatcher)
         // Both read through Injekt in production; held at their shipped defaults.
         mockkStatic(DOWNLOADED_FILTER_FILE)
         every { any<Manga>().downloadedFilter } returns TriState.DISABLED
