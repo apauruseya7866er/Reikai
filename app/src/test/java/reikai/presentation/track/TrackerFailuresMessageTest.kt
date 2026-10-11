@@ -12,7 +12,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.net.UnknownHostException
 
-/** Several trackers failing one call for the same reason, offline being the usual one, read as one line. */
+/** Several trackers failing one call for the same reason, offline being the usual one, read as one line; none, no toast. */
 class TrackerFailuresMessageTest {
 
     private val context = mockk<Context>()
@@ -30,6 +30,11 @@ class TrackerFailuresMessageTest {
     fun `trackers failing for one reason are told once`() {
         val failed = listOf(tracker("AniList"), tracker("Kitsu")).map { it to UnknownHostException() }
         context.trackerFailuresMessage(failed) shouldBe "No Internet connection"
+    }
+
+    @Test
+    fun `no failed tracker says nothing`() {
+        context.trackerFailuresMessage(emptyList()) shouldBe null
     }
 
     private fun tracker(name: String) = mockk<Tracker> { every { this@mockk.name } returns name }
