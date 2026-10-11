@@ -15,7 +15,7 @@ The tracker half is what catches a different-romanization duplicate (for example
 
 ## Where it surfaces
 
-`MangaLibraryAdder` is the shared add-to-library helper used by both per-source Browse and global search (it returns plain results, not a screen-specific dialog, so one implementation serves both). When `getDuplicates` returns matches, the add flow shows the duplicate confirmation ("add anyway" / cancel) before favoriting. `NovelLibraryAdder` is the novel twin, used the same way.
+`MangaLibraryAdder` is the shared add-to-library helper used by both per-source Browse and global search (it returns plain results, not a screen-specific dialog, so one implementation serves both). When `findDuplicates` returns matches, the add flow shows the duplicate confirmation ("add anyway" / cancel) before favoriting. `NovelLibraryAdder` is the novel twin, used the same way.
 
 ## Precondition and caveat
 
@@ -30,7 +30,7 @@ The tracker half only fires when the manga being added already has `manga_track`
 - `data/src/main/sqldelight/tachiyomi/data/manga.sq`: the `getDuplicateLibraryManga` query with the `track_dupes` CTE.
 - `data/src/main/sqldelight/tachiyomi/data/manga_track.sq`: the `manga_track` schema and the `(tracker_id, remote_id)` index the self-join reads.
 - `domain/src/main/java/tachiyomi/domain/manga/interactor/GetDuplicateLibraryManga.kt`: the interactor.
-- `app/src/main/java/reikai/presentation/browse/MangaLibraryAdder.kt`: `getDuplicates` and `resolveAddFavorite`, the shared add-to-library path.
+- `app/src/main/java/reikai/presentation/browse/MangaLibraryAdder.kt`: `findDuplicates` and `resolveAddFavorite`, the shared add-to-library path.
 
 ## Provenance
 
