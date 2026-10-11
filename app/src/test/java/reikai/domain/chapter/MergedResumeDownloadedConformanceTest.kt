@@ -85,9 +85,12 @@ class MergedResumeDownloadedConformanceTest {
                 stitch = stitch,
                 pooledChapters = pooled,
             )
+            // A copy is on disk only in its own source's folder, as the download cache answers it.
+            val folders = mapOf(other to onDisk)
             val downloadManager = mockk<DownloadManager> {
                 every { getDownloadedChapterIds(any(), any()) } answers {
-                    firstArg<List<Chapter>>().map { it.id }.filterTo(HashSet()) { it in onDisk }
+                    val inFolder = folders[secondArg<Manga>()].orEmpty()
+                    firstArg<List<Chapter>>().map { it.id }.filterTo(HashSet()) { it in inFolder }
                 }
             }
             // As LibraryViewModel.getNextUnreadChapter calls it.
