@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.NovelChapter
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
+import kotlin.time.Instant
 
 /** A source sync's removals, inserts and updates land together or not at all, over the real SQL. */
 class NovelChapterUpdateFromRemoteTest {
@@ -49,8 +50,8 @@ class NovelChapterUpdateFromRemoteTest {
 
     private fun added(url: String) = NovelChapter(
         id = -1L, novelId = 1L, url = url, name = "new", read = false, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = 3.0, sourceOrder = 0L, dateFetch = 2000L,
-        dateUpload = 2000L, page = "",
+        lastTextProgress = 0L, chapterNumber = 3.0, sourceOrder = 0L, dateFetch = Instant.fromEpochMilliseconds(2000L),
+        dateUpload = Instant.fromEpochMilliseconds(2000L), page = "",
     )
 
     @Test

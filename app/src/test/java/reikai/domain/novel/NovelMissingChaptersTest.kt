@@ -3,6 +3,7 @@ package reikai.domain.novel
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.NovelChapter
+import kotlin.time.Instant
 
 class NovelMissingChaptersTest {
 
@@ -19,8 +20,8 @@ class NovelMissingChaptersTest {
             lastTextProgress = 0,
             chapterNumber = number,
             sourceOrder = nextId,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = "",
         )
 

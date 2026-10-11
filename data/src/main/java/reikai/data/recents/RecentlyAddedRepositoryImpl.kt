@@ -12,6 +12,7 @@ import reikai.domain.recents.RecentlyAddedRepository
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
 import tachiyomi.domain.manga.model.MangaCover
+import kotlin.time.Instant
 
 @Inject
 @SingleIn(AppScope::class)
@@ -21,7 +22,7 @@ class RecentlyAddedRepositoryImpl(
 ) : RecentlyAddedRepository {
 
     override fun subscribeManga(
-        after: Long,
+        after: Instant,
         limit: Long,
         includedCategories: List<Long>,
         excludedCategories: List<Long>,
@@ -37,7 +38,7 @@ class RecentlyAddedRepositoryImpl(
         ).subscribeToList()
 
     override fun subscribeNovels(
-        after: Long,
+        after: Instant,
         limit: Long,
         includedCategories: List<Long>,
         excludedCategories: List<Long>,
@@ -53,18 +54,19 @@ class RecentlyAddedRepositoryImpl(
         ).subscribeToList()
 }
 
-// Both queries select only favorited entries, so the cover's favourite flag is true by construction.
+// Both queries select only favorited entries, so the cover's favourite flag is true by construction. The
+// date added arrives as millis because the coalesce that makes the column non-null drops its adapter.
 private fun mapRecentlyAddedManga(
     mangaId: Long,
     title: String,
     source: Long,
     thumbnailUrl: String?,
-    coverLastModified: Long,
+    coverLastModified: Instant?,
     dateAdded: Long,
 ): RecentlyAddedManga = RecentlyAddedManga(
     mangaId = mangaId,
     title = title,
-    dateAdded = dateAdded,
+    dateAdded = Instant.fromEpochMilliseconds(dateAdded),
     coverData = MangaCover(
         mangaId = mangaId,
         sourceId = source,
@@ -79,12 +81,12 @@ private fun mapRecentlyAddedNovel(
     title: String,
     source: String,
     thumbnailUrl: String?,
-    coverLastModified: Long,
+    coverLastModified: Instant?,
     dateAdded: Long,
 ): RecentlyAddedNovel = RecentlyAddedNovel(
     novelId = novelId,
     title = title,
-    dateAdded = dateAdded,
+    dateAdded = Instant.fromEpochMilliseconds(dateAdded),
     coverData = NovelCover(
         url = thumbnailUrl,
         sourceId = source,

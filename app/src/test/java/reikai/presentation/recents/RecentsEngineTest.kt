@@ -55,6 +55,7 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.updates.service.UpdatesPreferences
 import tachiyomi.i18n.MR
 import kotlin.coroutines.ContinuationInterceptor
+import kotlin.time.Instant
 
 /**
  * The engine over hand-built providers. The real adapters need their surface's live models and cannot run
@@ -134,7 +135,7 @@ class RecentsEngineTest {
     }
 
     private fun item(entryId: EntryId, at: Long, lane: RecentsLane = RecentsLane.Added) =
-        RecentsItem(entryId = entryId, timestamp = at, lane = lane, payload = Unit)
+        RecentsItem(entryId = entryId, timestamp = Instant.fromEpochMilliseconds(at), lane = lane, payload = Unit)
 
     private val manga1 = EntryId.Manga(1)
     private val manga2 = EntryId.Manga(2)
@@ -1467,7 +1468,7 @@ class RecentsEngineTest {
         val engine = resolvedFeed(fake, row)
 
         fake.readLaneRows.value = rows(readRow(manga1, chapterId = 5, at = 200))
-        engine.assemblyWhere { assembly -> assembly.items.any { it.timestamp == 200L } }
+        engine.assemblyWhere { assembly -> assembly.items.any { it.timestamp == Instant.fromEpochMilliseconds(200L) } }
 
         engine.targets.value shouldBe mapOf(row.lane to target)
     }

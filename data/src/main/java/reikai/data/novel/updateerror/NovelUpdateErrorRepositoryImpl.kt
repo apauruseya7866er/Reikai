@@ -9,6 +9,7 @@ import reikai.domain.novel.updateerror.NovelUpdateError
 import reikai.domain.novel.updateerror.NovelUpdateErrorRepository
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
+import kotlin.time.Instant
 
 @Inject
 @SingleIn(AppScope::class)
@@ -47,7 +48,7 @@ class NovelUpdateErrorRepositoryImpl(
         source: String,
         url: String,
         thumbnailUrl: String?,
-        coverLastModified: Long,
+        coverLastModified: Instant?,
         errorId: Long,
         message: String,
         lastUpdate: Long,

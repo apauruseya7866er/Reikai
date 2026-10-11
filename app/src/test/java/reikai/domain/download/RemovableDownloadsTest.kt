@@ -6,6 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import reikai.domain.novel.model.NovelChapter
 import tachiyomi.domain.chapter.model.Chapter
+import kotlin.time.Instant
 
 /**
  * The downloads automatic removal may take, pinned once over both chapter models: either type's runs
@@ -89,8 +90,8 @@ class RemovableDownloadsTest {
             lastTextProgress = 0L,
             chapterNumber = 1.0,
             sourceOrder = 0L,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = "",
         )
 

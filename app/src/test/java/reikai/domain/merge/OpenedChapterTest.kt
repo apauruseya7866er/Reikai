@@ -4,6 +4,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.NovelChapter
 import tachiyomi.domain.chapter.model.Chapter
+import kotlin.time.Instant
 
 /**
  * Where a reader puts a chapter it opens that the merged list does not show. Each reader then sorts on
@@ -21,8 +22,8 @@ class OpenedChapterTest {
         lastTextProgress = 0L,
         chapterNumber = number,
         sourceOrder = order,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 

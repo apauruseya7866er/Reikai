@@ -18,6 +18,7 @@ import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.model.NovelUpdate
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
+import kotlin.time.Instant
 
 /**
  * SQLite tells a query only that its table was written, so a write to one novel re-runs every other
@@ -86,8 +87,8 @@ class NovelFlowDedupTest {
 
         private fun chapter(novelId: Long, url: String) = NovelChapter(
             id = -1L, novelId = novelId, url = url, name = url, read = false, bookmark = false,
-            lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L, dateFetch = 0L,
-            dateUpload = 0L, page = PAGE,
+            lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L, dateFetch = Instant.fromEpochMilliseconds(0),
+            dateUpload = null, page = PAGE,
         )
 
         private val addChapter: suspend (NovelRepositoryImpl, NovelChapterRepositoryImpl, Long) -> Unit =

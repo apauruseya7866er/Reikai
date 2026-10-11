@@ -16,6 +16,7 @@ import reikai.domain.novel.model.NovelCover
 import reikai.domain.novel.model.novelResultCover
 import tachiyomi.domain.manga.model.MangaCover
 import java.io.File
+import kotlin.time.Instant
 
 /**
  * Manga and novel covers are keyed by one rule, `coverCacheKey`, and Coil caches a cover under that key
@@ -38,7 +39,7 @@ class CoverCacheKeyTest {
 
     @Test
     fun `a browsed novel keeps its cover key once it is stored`() {
-        novelKey(novelResultCover(null, URL, SOURCE)) shouldBe novelKey(novel(id = 7L, lastModified = 0L))
+        novelKey(novelResultCover(null, URL, SOURCE)) shouldBe novelKey(novel(id = 7L, lastModified = null))
     }
 
     @Test
@@ -60,12 +61,12 @@ class CoverCacheKeyTest {
     fun `a manga's custom cover keeps Mihon's key`() {
         customCover(EntryId.Manga(7L))
 
-        mangaKey(manga(id = 7L)) shouldBe "7;42"
+        mangaKey(manga(id = 7L)) shouldBe "7;1970-01-01T00:00:00.042Z"
     }
 
     @Test
     fun `a manga's source cover keeps Mihon's key`() {
-        mangaKey(manga(id = 7L)) shouldBe "$URL;42"
+        mangaKey(manga(id = 7L)) shouldBe "$URL;1970-01-01T00:00:00.042Z"
     }
 
     private fun customCover(owner: EntryId) {
@@ -76,14 +77,15 @@ class CoverCacheKeyTest {
 
     private fun mangaKey(cover: MangaCover) = MangaCoverKeyer(coverCache).key(cover, options)
 
-    private fun novel(id: Long, url: String = URL, lastModified: Long = 42L) =
+    private fun novel(id: Long, url: String = URL, lastModified: Instant? = LAST_MODIFIED) =
         NovelCover(url = url, sourceId = SOURCE, isNovelFavorite = true, lastModified = lastModified, novelId = id)
 
     private fun manga(id: Long) =
-        MangaCover(mangaId = id, sourceId = 1L, isMangaFavorite = true, url = URL, lastModified = 42L)
+        MangaCover(mangaId = id, sourceId = 1L, isMangaFavorite = true, url = URL, lastModified = LAST_MODIFIED)
 
     private companion object {
         const val URL = "https://example.org/cover.jpg"
         const val SOURCE = "plugin"
+        val LAST_MODIFIED = Instant.fromEpochMilliseconds(42L)
     }
 }

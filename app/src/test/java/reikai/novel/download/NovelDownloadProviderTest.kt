@@ -22,6 +22,7 @@ import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.storage.service.StorageManager
 import java.io.File
+import kotlin.time.Instant
 
 /** A novel's downloads on a real disk, named as the manga provider names them. */
 class NovelDownloadProviderTest {
@@ -58,7 +59,11 @@ class NovelDownloadProviderTest {
     private val novel = Novel.create().copy(id = 1L, source = "src", url = "/n", title = "Old Title")
     private val chapter = NovelChapter(
         id = 7L, novelId = 1L, url = "/c/1", name = "Chapter 1", read = false, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L, dateFetch = 0L, dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(
+            0L,
+        ),
+        dateUpload = null, page = "",
     )
 
     @Test

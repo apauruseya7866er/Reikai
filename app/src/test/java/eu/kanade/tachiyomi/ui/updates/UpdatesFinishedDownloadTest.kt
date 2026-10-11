@@ -30,6 +30,7 @@ import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.updates.interactor.GetUpdates
 import tachiyomi.domain.updates.model.UpdatesWithRelations
 import tachiyomi.domain.updates.service.UpdatesPreferences
+import kotlin.time.Instant
 
 /**
  * A finished chapter leaves the queue, and a status tick can arrive after it has, so the queue clearing
@@ -130,7 +131,7 @@ class UpdatesFinishedDownloadTest {
         lastPageRead = 0L,
         pageCount = 0L,
         sourceId = 1L,
-        dateFetch = 0L,
-        coverData = MangaCover(1L, 1L, true, null, 0L),
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        coverData = MangaCover(1L, 1L, true, null, null),
     )
 }

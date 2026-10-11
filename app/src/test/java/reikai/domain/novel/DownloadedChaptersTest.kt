@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.novel.download.NovelDownloadCache
+import kotlin.time.Instant
 
 /** A merged list pools several novels' chapters, and each is on disk under its own novel's folder. */
 class DownloadedChaptersTest {
@@ -46,8 +47,8 @@ class DownloadedChaptersTest {
         lastTextProgress = 0L,
         chapterNumber = id.toDouble(),
         sourceOrder = id,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 }

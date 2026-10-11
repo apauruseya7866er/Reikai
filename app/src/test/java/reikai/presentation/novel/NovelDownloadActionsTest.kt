@@ -5,6 +5,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.merge.GroupMarks
 import reikai.domain.novel.model.NovelChapter
+import kotlin.time.Instant
 
 class NovelDownloadActionsTest {
 
@@ -12,7 +13,7 @@ class NovelDownloadActionsTest {
         NovelChapter(
             id = id, novelId = 1L, url = "u$id", name = "c$id", read = read, bookmark = bookmark,
             lastTextProgress = 0L, chapterNumber = id.toDouble(), sourceOrder = order,
-            dateFetch = 0L, dateUpload = 0L, page = "",
+            dateFetch = Instant.fromEpochMilliseconds(0L), dateUpload = null, page = "",
         )
 
     // The rows as the chapter list shows them, sourceOrder deliberately disagreeing with that order:

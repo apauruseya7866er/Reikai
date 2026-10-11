@@ -1,16 +1,15 @@
+import kotlin.time.Instant;
+
 -- Novel twin of history.sq: per-chapter read records backing the History tab's novel feed. Written
--- from the reader on chapter switch / exit (mirrors Mihon's ReaderViewModel.updateHistory). Two
--- divergences from the manga table, both deliberate:
--- 1. `last_read` is a plain epoch-millis INTEGER (not Mihon's `AS Date`), so no column adapter is
---    needed.
--- 2. Novels offer no scanlator filter, so per-scanlator queries are omitted; the
---    read-duration total (getTotalReadDuration) backs the novel Stats screen.
--- resetById / resetByNovelId soft-delete (last_read = 0, hidden by the feed's readAt > 0 filter, so a
--- re-read re-surfaces the row); removeAll hard-clears, mirroring Mihon.
+-- from the reader on chapter switch / exit (mirrors Mihon's ReaderViewModel.updateHistory). Novels
+-- offer no scanlator filter, so per-scanlator queries are omitted; the read-duration total
+-- (getTotalReadDuration) backs the novel Stats screen.
+-- resetById / resetByNovelId soft-delete (last_read = NULL, hidden by the feed's readAt IS NOT NULL
+-- filter, so a re-read re-surfaces the row); removeAll hard-clears, mirroring Mihon.
 CREATE TABLE novel_history(
     _id INTEGER NOT NULL PRIMARY KEY,
     chapter_id INTEGER NOT NULL UNIQUE,
-    last_read INTEGER,
+    last_read INTEGER AS Instant,
     time_read INTEGER NOT NULL,
     FOREIGN KEY(chapter_id) REFERENCES novel_chapters (_id)
     ON DELETE CASCADE
@@ -21,12 +20,12 @@ CREATE INDEX idx_novel_history_last_read ON novel_history(last_read);
 
 resetById:
 UPDATE novel_history
-SET last_read = 0
+SET last_read = NULL
 WHERE _id = :historyId;
 
 resetByNovelId:
 UPDATE novel_history
-SET last_read = 0
+SET last_read = NULL
 WHERE _id IN (
     SELECT H._id
     FROM novels N
@@ -57,7 +56,7 @@ SET
 WHERE chapter_id = :chapterId;
 
 -- Every history row of one novel's chapters, twin of history.sq getHistoryByMangaId (the migrate carry).
--- Soft-deleted rows (last_read = 0) are included, as manga's read includes them: they keep the
+-- Soft-deleted rows (last_read NULL) are included, as manga's read includes them: they keep the
 -- time_read the Stats total counts.
 getHistoryByNovelId:
 SELECT H.chapter_id, H.last_read, H.time_read
@@ -74,14 +73,15 @@ INNER JOIN novel_history H ON C._id = H.chapter_id
 WHERE C.novel_id = :novelId;
 
 -- Backup restore. Idempotent upsert (MAX, not accumulate) so re-restoring the same backup doesn't
--- double-count time_read or rewind last_read.
+-- double-count time_read or rewind last_read. A NULL last_read on either side is history the user
+-- removed, which a known time replaces.
 restoreUpsert:
 INSERT INTO novel_history(chapter_id, last_read, time_read)
 VALUES (:chapterId, :readAt, :timeRead)
 ON CONFLICT(chapter_id)
 DO UPDATE
 SET
-    last_read = MAX(COALESCE(last_read, 0), :readAt),
+    last_read = MAX(COALESCE(last_read, :readAt), COALESCE(:readAt, last_read)),
     time_read = MAX(time_read, :timeRead)
 WHERE chapter_id = :chapterId;
 

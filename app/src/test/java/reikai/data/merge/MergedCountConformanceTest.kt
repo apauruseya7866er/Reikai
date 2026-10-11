@@ -19,6 +19,7 @@ import reikai.domain.novel.model.NovelChapter
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.domain.chapter.model.Chapter
+import kotlin.time.Instant
 
 /**
  * The library badge and the merged chapter list must report the same chapters. Each case stitches one
@@ -275,8 +276,8 @@ class MergedCountConformanceTest {
         lastTextProgress = 0,
         chapterNumber = number,
         sourceOrder = id,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 

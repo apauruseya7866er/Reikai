@@ -26,8 +26,8 @@ class NovelListIdentityTest {
         status = 1L,
         score = 0.0,
         remoteUrl = url,
-        startDate = 0L,
-        finishDate = 0L,
+        startDate = null,
+        finishDate = null,
         private = false,
     )
 

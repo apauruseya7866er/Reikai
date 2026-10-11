@@ -115,6 +115,7 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.time.Clock
 
 /**
  * The light-novel provider model under the shared reader host: reader display settings, and the raw
@@ -813,7 +814,7 @@ class NovelReaderViewModel(
         updateHistory()
         currentChapterId = target
         currentNovelId = owner
-        chapterReadSession.start(System.currentTimeMillis())
+        chapterReadSession.start(Clock.System.now())
         this.bookmarked.value = bookmarked
         chapter.value = arriving
         // Its own first report usually beat this here, and was not the current chapter's when it came.
@@ -919,7 +920,7 @@ class NovelReaderViewModel(
         // A reload of the chapter already open, after a chapter-text setting changed, keeps its timer
         // and its place: restarting either lost what the reader had done since it opened.
         val reloading = row.id == currentChapterId && chapter.value != null
-        if (!reloading || !chapterReadSession.isRunning) chapterReadSession.start(System.currentTimeMillis())
+        if (!reloading || !chapterReadSession.isRunning) chapterReadSession.start(Clock.System.now())
         currentChapterId = row.id
         currentNovelId = row.novelId
         this.bookmarked.value = bookmarked
@@ -1013,7 +1014,7 @@ class NovelReaderViewModel(
         val chapter = this.chapter.value ?: return
         if (incognito.of(chapter.novelId)) return
         val id = chapter.chapterId
-        val now = System.currentTimeMillis()
+        val now = Clock.System.now()
         val duration = chapterReadSession.take(now)
         upsertNovelHistory.await(NovelHistoryUpdate(id, now, duration))
     }
@@ -1021,7 +1022,7 @@ class NovelReaderViewModel(
     /** Called through [ReaderProvider.restartReadTimer] on resume, since leaving the reader stamped
      *  [updateHistory] and stopped the clock. */
     fun restartReadTimer() {
-        chapterReadSession.start(System.currentTimeMillis())
+        chapterReadSession.start(Clock.System.now())
     }
 
     /** Called through [ReaderProvider.onActivityFinish] on leaving the reader, which is when the

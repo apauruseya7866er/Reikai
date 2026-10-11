@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
+import kotlin.time.Instant
 
 class NetworkToLocalMangaTest {
 
@@ -23,7 +24,7 @@ class NetworkToLocalMangaTest {
 
     @Test
     fun `a favourite stuck on a placeholder takes the listing cover`() = runTest {
-        stored = Manga.create().copy(id = 1, favoriteAt = 0L, thumbnailUrl = PLACEHOLDER)
+        stored = Manga.create().copy(id = 1, favoriteAt = Instant.fromEpochMilliseconds(0L), thumbnailUrl = PLACEHOLDER)
 
         networkToLocalManga(Manga.create().copy(thumbnailUrl = COVER)).thumbnailUrl shouldBe COVER
     }

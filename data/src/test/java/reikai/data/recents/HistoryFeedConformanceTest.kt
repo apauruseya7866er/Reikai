@@ -14,7 +14,7 @@ import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.history.HistoryRepositoryImpl
 import tachiyomi.domain.history.model.HistoryUpdate
-import java.util.Date
+import kotlin.time.Instant
 
 /**
  * The History tab's two feeds answer alike over the real SQL: one row per entry at its latest read, a
@@ -144,7 +144,9 @@ class HistoryFeedConformanceTest {
                 HistoryRepositoryImpl(database).resetHistoryByMangaId(entryId)
 
             override suspend fun read(database: Database, chapterId: Long, at: Long, duration: Long) =
-                HistoryRepositoryImpl(database).upsertHistory(HistoryUpdate(chapterId, Date(at), duration))
+                HistoryRepositoryImpl(
+                    database,
+                ).upsertHistory(HistoryUpdate(chapterId, Instant.fromEpochMilliseconds(at), duration))
 
             override suspend fun readDuration(database: Database, entryId: Long) =
                 HistoryRepositoryImpl(database).getHistoryByMangaId(entryId).single().readDuration
@@ -178,7 +180,9 @@ class HistoryFeedConformanceTest {
                 NovelHistoryRepositoryImpl(database).resetNovelHistoryByNovelId(entryId)
 
             override suspend fun read(database: Database, chapterId: Long, at: Long, duration: Long) =
-                NovelHistoryRepositoryImpl(database).upsertNovelHistory(NovelHistoryUpdate(chapterId, at, duration))
+                NovelHistoryRepositoryImpl(
+                    database,
+                ).upsertNovelHistory(NovelHistoryUpdate(chapterId, Instant.fromEpochMilliseconds(at), duration))
 
             override suspend fun readDuration(database: Database, entryId: Long) =
                 NovelHistoryRepositoryImpl(database).getHistoryByNovelId(entryId).single().readDuration

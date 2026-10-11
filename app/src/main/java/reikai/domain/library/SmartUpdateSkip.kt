@@ -11,6 +11,7 @@ import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_C
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_READ
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_OUTSIDE_RELEASE_PERIOD
 import tachiyomi.i18n.MR
+import kotlin.time.Instant
 
 /** Why a library update leaves an entry out, one per Smart update rule. */
 enum class SmartUpdateSkip(val reason: StringResource) {
@@ -28,7 +29,7 @@ data class SmartUpdateFacts(
     val totalChapters: Long,
     val unreadCount: Long,
     val hasStarted: Boolean,
-    val nextUpdate: Long,
+    val nextUpdate: Instant?,
     // An entry added without opening it has no details yet, so it is always fetched
     val initialized: Boolean,
 )
@@ -37,13 +38,14 @@ data class SmartUpdateFacts(
  * The first rule that skips an entry, in the order upstream's manga job checks them, or null when it is
  * fetched. Both library update jobs call this, so an upstream change to that job's `when` lands here.
  */
-fun smartUpdateSkip(facts: SmartUpdateFacts, restrictions: Set<String>, fetchWindowEnd: Long): SmartUpdateSkip? =
+fun smartUpdateSkip(facts: SmartUpdateFacts, restrictions: Set<String>, fetchWindowEnd: Instant): SmartUpdateSkip? =
     when {
         !facts.initialized -> null
         facts.fetchesOnce && facts.totalChapters > 0L -> SmartUpdateSkip.NOT_ALWAYS_UPDATE
         else -> smartUpdateProgressSkip(facts, restrictions)
             ?: SmartUpdateSkip.NOT_IN_RELEASE_PERIOD.takeIf {
-                MANGA_OUTSIDE_RELEASE_PERIOD in restrictions && facts.nextUpdate > fetchWindowEnd
+                MANGA_OUTSIDE_RELEASE_PERIOD in restrictions &&
+                    facts.nextUpdate.let { next -> next != null && next > fetchWindowEnd }
             }
     }
 

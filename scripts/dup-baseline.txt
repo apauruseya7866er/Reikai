@@ -5,7 +5,6 @@
 app/src/main/java/eu/kanade/tachiyomi/data/backup/create/creators/MangaBackupCreator.kt	app/src/main/java/eu/kanade/tachiyomi/data/backup/create/creators/NovelBackupCreator.kt	c7dbc2f375ec0b4d
 app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupCustomMangaInfo.kt	app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupCustomNovelInfo.kt	3f25b0ac5f1f9294
 app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupManga.kt	app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupNovel.kt	eb95fab0158a498f
-app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupNovelChapter.kt	app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupNovelTracking.kt	e2a3c11f39df2e9a
 app/src/main/java/eu/kanade/tachiyomi/data/download/DownloadStore.kt	app/src/main/java/reikai/novel/download/NovelDownloadStore.kt	165a5301275c7653
 app/src/main/java/eu/kanade/tachiyomi/data/track/novellist/NovelListApi.kt	app/src/main/java/eu/kanade/tachiyomi/data/track/ranobedb/RanobeDbApi.kt	6bea7d2c0ea7cd5a
 app/src/main/java/eu/kanade/tachiyomi/source/online/all/AsmHentai.kt	app/src/main/java/eu/kanade/tachiyomi/source/online/all/HentaiFox.kt	da31f098f34d149c
@@ -48,8 +47,8 @@ app/src/main/java/reikai/presentation/novel/details/NovelDetailsViewModel.kt	app
 app/src/main/java/reikai/presentation/recents/MangaRecentsAdapter.kt	app/src/main/java/reikai/presentation/recents/NovelRecentsAdapter.kt	1c9db79c12a122b5
 app/src/main/java/reikai/presentation/recents/MangaRecentsAdapter.kt	app/src/main/java/reikai/presentation/recents/NovelRecentsAdapter.kt	539f14a99e1aa122
 app/src/main/java/reikai/presentation/recents/MangaRecentsAdapter.kt	app/src/main/java/reikai/presentation/recents/NovelRecentsAdapter.kt	750aff36b6561528
+app/src/main/java/reikai/presentation/recents/MangaRecentsAdapter.kt	app/src/main/java/reikai/presentation/recents/NovelRecentsAdapter.kt	880892cb7cac9418
 app/src/main/java/reikai/presentation/recents/MangaRecentsAdapter.kt	app/src/main/java/reikai/presentation/recents/NovelRecentsAdapter.kt	cd58c15112625b8b
-app/src/main/java/reikai/presentation/recents/MangaRecentsAdapter.kt	app/src/main/java/reikai/presentation/recents/NovelRecentsAdapter.kt	efd92a29b7840909
 app/src/main/java/reikai/presentation/recents/MangaRecentsAdapter.kt	app/src/main/java/reikai/presentation/recents/NovelRecentsAdapter.kt	f15210d87539d1e3
 data/src/main/java/reikai/data/library/updateerror/LibraryUpdateErrorRepositoryImpl.kt	data/src/main/java/reikai/data/novel/updateerror/NovelUpdateErrorRepositoryImpl.kt	2167c4310ae02d35
 data/src/main/java/reikai/data/novel/CustomNovelInfoRepositoryImpl.kt	data/src/main/java/tachiyomi/data/manga/CustomMangaInfoRepositoryImpl.kt	7e211102b55d97e7

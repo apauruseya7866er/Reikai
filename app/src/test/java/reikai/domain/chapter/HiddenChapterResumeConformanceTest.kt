@@ -30,6 +30,7 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /** Where one content type's resume opens, on one surface, given which chapter urls the user hid. */
 class ResumeCase(private val label: String, val resume: suspend (hiddenUrls: Set<String>) -> Long?) {
@@ -99,8 +100,8 @@ class HiddenChapterResumeConformanceTest {
                 lastTextProgress = 0L,
                 chapterNumber = it.toDouble(),
                 sourceOrder = it,
-                dateFetch = 0L,
-                dateUpload = 0L,
+                dateFetch = Instant.fromEpochMilliseconds(0L),
+                dateUpload = null,
                 page = "",
             )
         }

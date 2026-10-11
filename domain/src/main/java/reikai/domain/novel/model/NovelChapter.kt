@@ -2,6 +2,7 @@ package reikai.domain.novel.model
 
 import androidx.compose.runtime.Immutable
 import java.io.Serializable
+import kotlin.time.Instant
 
 /**
  * Domain mirror of the `novel_chapters` table. [lastTextProgress] replaces the manga side's
@@ -19,8 +20,8 @@ data class NovelChapter(
     val lastTextProgress: Long,
     val chapterNumber: Double,
     val sourceOrder: Long,
-    val dateFetch: Long,
-    val dateUpload: Long,
+    val dateFetch: Instant,
+    val dateUpload: Instant?,
     /**
      * Volume / section / arc label this chapter belongs to (e.g. "Volume 3"). Populated for
      * paged sources; empty string when the source doesn't expose it.

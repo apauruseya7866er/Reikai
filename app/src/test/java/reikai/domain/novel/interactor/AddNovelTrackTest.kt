@@ -14,6 +14,7 @@ import reikai.domain.novel.NovelHistoryRepository
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.model.NovelHistory
 import reikai.domain.novel.track.NovelTrackUpdater
+import kotlin.time.Instant
 
 /** What binding a tracker to a novel sends the site from the novel's own reading. */
 class AddNovelTrackTest {
@@ -27,13 +28,15 @@ class AddNovelTrackTest {
 
     private fun chapter(number: Double, read: Boolean) = NovelChapter(
         id = number.toLong(), novelId = NOVEL_ID, url = "c$number", name = "Chapter $number", read = read,
-        bookmark = false, lastTextProgress = 0, chapterNumber = number, sourceOrder = 0, dateFetch = 0,
-        dateUpload = 0, page = "",
+        bookmark = false, lastTextProgress = 0, chapterNumber = number, sourceOrder = 0,
+        dateFetch = Instant.fromEpochMilliseconds(0),
+        dateUpload = null, page = "",
     )
 
     private suspend fun bindAfterReading(vararg read: Boolean) {
         coEvery { chapters.getByNovelId(NOVEL_ID) } returns read.mapIndexed { i, r -> chapter(i + 1.0, r) }
-        coEvery { history.getHistoryByNovelId(NOVEL_ID) } returns listOf(NovelHistory(1L, FIRST_READ_AT, 0L))
+        coEvery { history.getHistoryByNovelId(NOVEL_ID) } returns
+            listOf(NovelHistory(1L, Instant.fromEpochMilliseconds(FIRST_READ_AT), 0L))
         addNovelTrack.bind(tracker, Track.create(1L).apply { title = "A novel" }, NOVEL_ID)
     }
 

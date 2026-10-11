@@ -24,6 +24,7 @@ import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
 import java.io.File
+import kotlin.time.Instant
 
 /** Merging a discarded gallery version's reading state into the accepted one's chapters. */
 class EHentaiUpdateHelperTest {
@@ -98,7 +99,7 @@ class EHentaiUpdateHelperTest {
         }
         val mangaRepository = mockk<MangaRepository>(relaxed = true) {
             coEvery { getMangaById(any()) } answers {
-                Manga.create().copy(id = firstArg(), source = SOURCE_ID, favoriteAt = 1L)
+                Manga.create().copy(id = firstArg(), source = SOURCE_ID, favoriteAt = Instant.fromEpochMilliseconds(1L))
             }
         }
         val historyRepository = mockk<HistoryRepository>(relaxed = true) {

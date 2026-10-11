@@ -40,6 +40,7 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /** Both library updaters name an entry by its Edit info title, over each updater's real notifier. */
 class UpdateNoticeTitleConformanceTest {
@@ -206,8 +207,8 @@ class NovelUpdateNoticeHalf : UpdateNoticeHalf() {
             lastTextProgress = 0L,
             chapterNumber = 10.0,
             sourceOrder = 10L,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = "",
         )
     }

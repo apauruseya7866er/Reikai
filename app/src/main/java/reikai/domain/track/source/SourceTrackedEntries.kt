@@ -6,6 +6,7 @@ import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.tachiyomi.source.SourceTracker
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import mihon.core.common.extensions.toEpochMillisOrZero
 import reikai.domain.category.GetNovelCategories
 import reikai.domain.entry.EntryId
 import reikai.domain.novel.NovelChapterRepository
@@ -82,7 +83,7 @@ class SourceTrackedEntries(
                     url = it.url
                     name = it.name
                     chapter_number = it.chapterNumber.toFloat()
-                    date_upload = it.dateUpload
+                    date_upload = it.dateUpload.toEpochMillisOrZero()
                 }
                 TrackedChapter(it.id, chapter, it.read, it.chapterNumber)
             },

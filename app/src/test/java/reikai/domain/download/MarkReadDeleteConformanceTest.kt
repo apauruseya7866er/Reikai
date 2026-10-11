@@ -23,6 +23,7 @@ import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /**
  * Marking a chapter read by hand with "delete after marked as read" on, through both content types'
@@ -154,8 +155,8 @@ class NovelMarkReadHalf : MarkReadHalf {
         lastTextProgress = 0L,
         chapterNumber = 1.0,
         sourceOrder = 0L,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 }

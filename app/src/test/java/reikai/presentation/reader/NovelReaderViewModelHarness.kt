@@ -83,6 +83,7 @@ import java.io.IOException
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.time.Instant
 
 /**
  * A real [NovelReaderViewModel] over an in-memory database, the real repositories, interactors and
@@ -196,7 +197,7 @@ class NovelReaderViewModelHarness private constructor(
         totalPages: Long = 1L,
     ): Long {
         val url = "/novel/${source.id}/$title"
-        val favoriteAt = 0L.takeIf { inLibrary }
+        val favoriteAt = Instant.fromEpochMilliseconds(0L).takeIf { inLibrary }
         return novelRepo.insert(
             Novel.create().copy(
                 source = source.id,
@@ -244,8 +245,8 @@ class NovelReaderViewModelHarness private constructor(
             lastTextProgress = progressPercent * 100L,
             chapterNumber = number,
             sourceOrder = sourceOrder,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = page,
             scanlator = scanlator,
         )

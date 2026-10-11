@@ -1,6 +1,7 @@
 package reikai.domain.chapter
 
 import io.kotest.matchers.shouldBe
+import mihon.core.common.extensions.toInstantOrNull
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
@@ -31,7 +32,7 @@ class ChapterNumberHintTest {
         sourceOrder = { it.order },
         number = { it.number },
         name = { it.name },
-        dateUpload = { it.date },
+        dateUpload = { it.date.toInstantOrNull() },
         isHidden = { it.hidden },
     )
 

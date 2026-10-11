@@ -29,6 +29,7 @@ import tachiyomi.data.DatabaseBindings
 import tachiyomi.domain.chapter.model.NoChaptersException
 import tachiyomi.domain.library.service.LibraryPreferences
 import java.io.File
+import kotlin.time.Instant
 
 /** A library refresh over the real SQL, with the plugin host faked by [PagedSource]. */
 class NovelRefreshTest {
@@ -74,13 +75,13 @@ class NovelRefreshTest {
         driver.close()
     }
 
-    private suspend fun storedNovel(nextUpdate: Long = 0L, totalPages: Long = 1L, cover: String? = null): Novel {
+    private suspend fun storedNovel(nextUpdate: Instant? = null, totalPages: Long = 1L, cover: String? = null): Novel {
         val id = novels.insert(
             Novel.create().copy(
                 source = "src",
                 url = "/novel",
                 title = "Novel",
-                favoriteAt = 0L,
+                favoriteAt = Instant.fromEpochMilliseconds(0L),
                 nextUpdate = nextUpdate,
                 totalPages = totalPages,
                 thumbnailUrl = cover,
@@ -93,7 +94,8 @@ class NovelRefreshTest {
         chapters.insert(
             NovelChapter(
                 id = -1L, novelId = novel.id, url = url, name = "Chapter $number", read = read, bookmark = false,
-                lastTextProgress = 0L, chapterNumber = number, sourceOrder = 0L, dateFetch = 0L, dateUpload = 0L,
+                lastTextProgress = 0L, chapterNumber = number, sourceOrder = 0L,
+                dateFetch = Instant.fromEpochMilliseconds(0L), dateUpload = null,
                 page = page,
             ),
         )
@@ -115,7 +117,7 @@ class NovelRefreshTest {
         coverCache,
         novelDownloadManager = downloadManager,
         manualFetch = manualFetch,
-        fetchWindow = 1_000L to 2_000L,
+        fetchWindow = Instant.fromEpochMilliseconds(1_000L)..Instant.fromEpochMilliseconds(2_000L),
     )
 
     /** A refresh writes only what the source owns, so a change made to the novel since the job read it stays. */
@@ -200,7 +202,7 @@ class NovelRefreshTest {
 
         refresh(novel, PagedSource(oneChapter, cover = COVER), manualFetch = true)
 
-        (cached.exists() to (novels.getById(novel.id)!!.coverLastModified > 0L)) shouldBe (false to true)
+        (cached.exists() to (novels.getById(novel.id)!!.coverLastModified != null)) shouldBe (false to true)
     }
 
     @Test
@@ -210,7 +212,7 @@ class NovelRefreshTest {
 
         refresh(novel, PagedSource(oneChapter, cover = COVER))
 
-        (cached.exists() to novels.getById(novel.id)!!.coverLastModified) shouldBe (true to 0L)
+        (cached.exists() to novels.getById(novel.id)!!.coverLastModified) shouldBe (true to null)
     }
 
     private val oneChapter get() = listOf(chapter("/c/1", 1.0))
@@ -275,7 +277,7 @@ class NovelRefreshTest {
             mapOf("2" to listOf(chapter("/c/2", 2.0)), "3" to listOf(chapter("/c/3", 3.0))),
         )
 
-        refresh(storedNovel(nextUpdate = 1L), source, manualFetch = true)
+        refresh(storedNovel(nextUpdate = Instant.fromEpochMilliseconds(1L)), source, manualFetch = true)
 
         novels.predictions shouldBe 1
     }

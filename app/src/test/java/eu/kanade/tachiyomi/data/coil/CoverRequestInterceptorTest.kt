@@ -26,14 +26,14 @@ class CoverRequestInterceptorTest {
 
     @Test
     fun `two rows showing one manga cover load it once at a time`() = runTest {
-        twoRowsAtOnce(MangaCover(mangaId = 1L, sourceId = 1L, isMangaFavorite = true, url = "u", lastModified = 0L))
+        twoRowsAtOnce(MangaCover(mangaId = 1L, sourceId = 1L, isMangaFavorite = true, url = "u", lastModified = null))
 
         mostLoadingAtOnce shouldBe 1
     }
 
     @Test
     fun `two rows showing one novel cover load it once at a time`() = runTest {
-        twoRowsAtOnce(NovelCover(url = "u", sourceId = "s", isNovelFavorite = true, lastModified = 0L, novelId = 1L))
+        twoRowsAtOnce(NovelCover(url = "u", sourceId = "s", isNovelFavorite = true, lastModified = null, novelId = 1L))
 
         mostLoadingAtOnce shouldBe 1
     }

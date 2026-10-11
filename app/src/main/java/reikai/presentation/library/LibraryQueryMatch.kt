@@ -37,9 +37,9 @@ class LibraryQueryFields<T>(
     val unreadCount: (T) -> Long,
     val readCount: (T) -> Long,
     val totalChapters: (T) -> Long,
-    val dateAdded: (T) -> Long?,
+    val dateAdded: (T) -> Instant?,
     val fetchInterval: (T) -> Int,
-    val nextUpdate: (T) -> Long,
+    val nextUpdate: (T) -> Instant?,
     /**
      * Whether [T] owns a chapter matching the term, answered from a set resolved once per query by
      * [chapterSearchTerms]. Null when the term was never resolved, which is a caller bug rather than a
@@ -196,9 +196,9 @@ private fun <T> matchesSource(row: T, fields: LibraryQueryFields<T>, value: Stri
     }
 
 private fun <T> ComparisonQueryNode.matches(row: T, fields: LibraryQueryFields<T>): Boolean {
-    fun compareDates(timestamp: Long): Boolean? {
+    fun compareDates(date: Instant): Boolean? {
         val inputDate = runCatching { LocalDate.parse(value) }.getOrNull() ?: return null
-        val rowDate = Instant.fromEpochMilliseconds(timestamp).toLocalDateTime(TimeZone.currentSystemDefault()).date
+        val rowDate = date.toLocalDateTime(TimeZone.currentSystemDefault()).date
         return queryComparator.apply(rowDate, inputDate)
     }
 
@@ -207,7 +207,7 @@ private fun <T> ComparisonQueryNode.matches(row: T, fields: LibraryQueryFields<T
         ComparisonField.DATE_ADDED -> fields.dateAdded(row)?.let { compareDates(it) }
         ComparisonField.FETCH_INTERVAL -> value.toIntOrNull()
             ?.let { queryComparator.apply(abs(fields.fetchInterval(row)), it) }
-        ComparisonField.NEXT_UPDATE -> compareDates(fields.nextUpdate(row))
+        ComparisonField.NEXT_UPDATE -> fields.nextUpdate(row)?.let { compareDates(it) }
         ComparisonField.UNREAD -> value.toLongOrNull()?.let { queryComparator.apply(fields.unreadCount(row), it) }
         ComparisonField.READ -> value.toLongOrNull()?.let { queryComparator.apply(fields.readCount(row), it) }
         ComparisonField.TOTAL -> value.toLongOrNull()?.let { queryComparator.apply(fields.totalChapters(row), it) }

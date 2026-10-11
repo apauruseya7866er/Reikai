@@ -2,6 +2,8 @@ package reikai.domain.chapter
 
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Instant
 
 /** What a chapter a sync adds arrives as, for manga and novels alike. */
 class ChapterArrivalsTest {
@@ -34,26 +36,26 @@ class ChapterArrivalsTest {
     @Test
     fun `a re-added chapter takes its removed twin's read, bookmark and earliest fetch date`() {
         val removed = listOf(
-            StoredChapter(5.0, read = true, bookmark = true, dateFetch = 3_000L),
-            StoredChapter(5.0, read = false, bookmark = false, dateFetch = 1_000L),
+            StoredChapter(5.0, read = true, bookmark = true, dateFetch = at(3_000L)),
+            StoredChapter(5.0, read = false, bookmark = false, dateFetch = at(1_000L)),
         )
 
         arrive(ArrivingChapter(5.0), removed = removed) shouldBe
-            Arrival(read = true, bookmark = true, dateFetch = 1_000L, dateUpload = NOW, isChangedOrDuplicate = true)
+            Arrival(read = true, bookmark = true, dateFetch = at(1_000L), dateUpload = NOW, isChangedOrDuplicate = true)
     }
 
     @Test
     fun `an unnumbered chapter does not inherit an unnumbered removed chapter's state`() {
-        val removed = listOf(StoredChapter(-1.0, read = true, bookmark = true, dateFetch = 1_000L))
+        val removed = listOf(StoredChapter(-1.0, read = true, bookmark = true, dateFetch = at(1_000L)))
 
         arrive(ArrivingChapter(-1.0), removed = removed) shouldBe
-            Arrival(read = false, bookmark = false, dateFetch = NOW + 1, dateUpload = NOW, isChangedOrDuplicate = false)
+            Arrival(read = false, bookmark = false, dateFetch = NOW + 1.milliseconds, dateUpload = NOW, false)
     }
 
     @Test
     fun `a genuinely new chapter keeps its own state and is not held back`() {
         arrive(ArrivingChapter(1.0, read = false, bookmark = true)) shouldBe
-            Arrival(read = false, bookmark = true, dateFetch = NOW + 1, dateUpload = NOW, isChangedOrDuplicate = false)
+            Arrival(read = false, bookmark = true, dateFetch = NOW + 1.milliseconds, dateUpload = NOW, false)
     }
 
     @Test
@@ -66,33 +68,25 @@ class ChapterArrivalsTest {
             now = NOW,
         )
 
-        arrivals.map { it.dateFetch } shouldBe listOf(NOW + 3, NOW + 2, NOW + 1)
+        arrivals.map { it.dateFetch } shouldBe listOf(NOW + 3.milliseconds, NOW + 2.milliseconds, NOW + 1.milliseconds)
     }
 
     @Test
     fun `an undated arrival takes the latest date listed before it, or now when none was`() {
         val arrivals = chapterArrivals(
-            listOf(ArrivingChapter(4.0), ArrivingChapter(3.0, dateUpload = 500L), ArrivingChapter(2.0)),
+            listOf(ArrivingChapter(4.0), ArrivingChapter(3.0, dateUpload = at(500L)), ArrivingChapter(2.0)),
             stored = emptyList(),
             removed = emptyList(),
             markDuplicateAsRead = true,
             now = NOW,
         )
 
-        arrivals.map { it.dateUpload } shouldBe listOf(NOW, 500L, 500L)
+        arrivals.map { it.dateUpload } shouldBe listOf(NOW, at(500L), at(500L))
     }
 
-    @Test
-    fun `a source that stops dating a stored chapter leaves its date alone`() {
-        remoteUploadDate(0L) shouldBe null
-    }
-
-    @Test
-    fun `a source's date for a stored chapter replaces the stored one`() {
-        remoteUploadDate(500L) shouldBe 500L
-    }
+    private fun at(millis: Long) = Instant.fromEpochMilliseconds(millis)
 
     private companion object {
-        const val NOW = 10_000L
+        val NOW = Instant.fromEpochMilliseconds(10_000L)
     }
 }

@@ -2,6 +2,7 @@ package reikai.domain.library
 
 import tachiyomi.core.common.util.lang.compareToWithCollator
 import kotlin.random.Random
+import kotlin.time.Instant
 
 /**
  * Neutral library sort modes shared by the manga and novel libraries. Both decode their persisted
@@ -26,18 +27,19 @@ enum class LibrarySortMode {
  * Per-entry field accessors [librarySortComparator] reads, so it never depends on the concrete row type
  * (the manga `LibraryItem` vs the novel `LibraryNovel`). Each library supplies getters over its own row.
  * [trackerMean] is a precomputed mean 0-10 score with the unscored default (-1.0) folded in by the caller,
+ * an unknown date is null and sorts as the earliest,
  * and [unreadCount] already carries each side's merged / deduplicated count, so the comparator stays pure.
  */
 class LibrarySortFields<T>(
     val id: (T) -> Long,
     val title: (T) -> String,
-    val lastRead: (T) -> Long,
-    val lastUpdate: (T) -> Long,
+    val lastRead: (T) -> Instant?,
+    val lastUpdate: (T) -> Instant?,
     val unreadCount: (T) -> Long,
     val totalChapters: (T) -> Long,
-    val latestUpload: (T) -> Long,
-    val chapterFetchedAt: (T) -> Long,
-    val dateAdded: (T) -> Long,
+    val latestUpload: (T) -> Instant?,
+    val chapterFetchedAt: (T) -> Instant?,
+    val dateAdded: (T) -> Instant?,
     val downloadCount: (T) -> Long,
     val trackerMean: (T) -> Double,
 )

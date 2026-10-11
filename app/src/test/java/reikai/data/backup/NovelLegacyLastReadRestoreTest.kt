@@ -69,6 +69,7 @@ class NovelLegacyLastReadRestoreTest {
 
     private suspend fun lastRead() =
         database.novelLibraryViewQueries.novelLibrary(::mapLibraryNovel).awaitAsList().single().lastRead
+            ?.toEpochMilliseconds()
 
     private fun restorer() = NovelRestorer(
         novelRepository = NovelRepositoryImpl(database),

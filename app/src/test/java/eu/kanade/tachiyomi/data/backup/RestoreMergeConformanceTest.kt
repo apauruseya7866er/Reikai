@@ -26,6 +26,7 @@ import reikai.domain.novel.model.NovelTrack
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.track.model.Track
+import kotlin.time.Instant
 
 /**
  * Restoring over a series the device already has merges the two copies by the same rules for both
@@ -183,9 +184,9 @@ class MangaMergeRestorer : MergeRestorer {
         ).description
 
     override suspend fun addedAt(device: Long, backup: Long): Long? = restoreOver(
-        deviceManga.copy(favoriteAt = device),
+        deviceManga.copy(favoriteAt = Instant.fromEpochMilliseconds(device)),
         BackupManga(source = 1L, url = "u", favorite = true, dateAdded = backup),
-    ).favoriteAt
+    ).favoriteAt?.toEpochMilliseconds()
 
     /** Restores [backup] over the device's [dbManga], returning the series as stored after. */
     private suspend fun restoreOver(dbManga: Manga, backup: BackupManga): Manga =
@@ -252,8 +253,8 @@ class MangaMergeRestorer : MergeRestorer {
                     status = device.status,
                     score = device.score,
                     remoteUrl = "",
-                    startDate = 0,
-                    finishDate = 0,
+                    startDate = null,
+                    finishDate = null,
                     private = false,
                 ),
             )
@@ -290,9 +291,9 @@ class NovelMergeRestorer : MergeRestorer {
         )?.description
 
     override suspend fun addedAt(device: Long, backup: Long): Long? = restoreOver(
-        deviceNovel.copy(favoriteAt = device),
+        deviceNovel.copy(favoriteAt = Instant.fromEpochMilliseconds(device)),
         BackupNovel(source = "s", url = "u", favorite = true, dateAdded = backup),
-    )?.favoriteAt
+    )?.favoriteAt?.toEpochMilliseconds()
 
     /** Restores [backup] over [dbNovel], returning the novel as written. */
     private suspend fun restoreOver(dbNovel: Novel, backup: BackupNovel): Novel? {
@@ -319,8 +320,8 @@ class NovelMergeRestorer : MergeRestorer {
             lastTextProgress = device.progress,
             chapterNumber = 0.0,
             sourceOrder = 0,
-            dateFetch = 0,
-            dateUpload = 0,
+            dateFetch = Instant.fromEpochMilliseconds(0),
+            dateUpload = null,
             page = "",
         )
         val chapters = mockk<NovelChapterRepository>(relaxed = true) {
@@ -381,8 +382,8 @@ class NovelMergeRestorer : MergeRestorer {
             status = device.status,
             score = device.score,
             remoteUrl = "",
-            startDate = 0,
-            finishDate = 0,
+            startDate = null,
+            finishDate = null,
             private = false,
         )
         val tracks = mockk<NovelTrackRepository>(relaxed = true) {

@@ -27,6 +27,7 @@ import reikai.domain.novel.model.NovelChapter
 import reikai.domain.source.ReikaiSourcePreferences
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import kotlin.time.Instant
 
 /**
  * Enqueueing a novel chapter already on disk queues nothing, whichever caller asked, as Mihon's
@@ -171,8 +172,8 @@ class NovelDownloadManagerEnqueueTest {
         lastTextProgress = 0L,
         chapterNumber = id.toDouble(),
         sourceOrder = id,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 }

@@ -29,6 +29,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /**
  * Removing a batch of a novel's chapters from the download index, over a real disk the index first scans.
@@ -149,8 +150,8 @@ class NovelDownloadCacheRemoveTest {
         lastTextProgress = 0L,
         chapterNumber = id.toDouble(),
         sourceOrder = id,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 

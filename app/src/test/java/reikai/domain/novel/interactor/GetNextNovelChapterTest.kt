@@ -18,6 +18,7 @@ import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.model.NovelChapterFlags
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import kotlin.time.Instant
 
 class GetNextNovelChapterTest {
 
@@ -60,8 +61,8 @@ class GetNextNovelChapterTest {
             lastTextProgress = 0L,
             chapterNumber = order.toDouble(),
             sourceOrder = order,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = "",
         )
 

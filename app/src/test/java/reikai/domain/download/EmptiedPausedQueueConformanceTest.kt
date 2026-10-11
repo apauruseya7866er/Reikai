@@ -42,6 +42,7 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /**
  * A queue paused for want of a network (offline, or off Wi-Fi with Wi-Fi-only on) that the user empties
@@ -176,8 +177,8 @@ class NovelEmptiedQueueHalf : EmptiedQueueHalf {
             lastTextProgress = 0L,
             chapterNumber = 1.0,
             sourceOrder = 1L,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = "",
         )
         val context = mockk<Context>(relaxed = true) {

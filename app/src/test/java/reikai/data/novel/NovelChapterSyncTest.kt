@@ -8,6 +8,8 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.unmockkAll
 import kotlinx.coroutines.test.runTest
+import mihon.core.common.extensions.toEpochMillisOrZero
+import mihon.core.common.extensions.toInstantOrNull
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import reikai.domain.chapter.NoChapterNumberOverrides
@@ -21,6 +23,7 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
 import tachiyomi.domain.chapter.model.NoChaptersException
 import tachiyomi.domain.library.service.LibraryPreferences
+import kotlin.time.Instant
 
 /** The sync's rules over a stubbed repository; the one-transaction write is [NovelChapterUpdateFromRemoteTest]'s. */
 class NovelChapterSyncTest {
@@ -48,8 +51,9 @@ class NovelChapterSyncTest {
         scanlator: String? = null,
     ) = NovelChapter(
         id = id, novelId = 1L, url = url, name = "name", read = read, bookmark = bookmark,
-        lastTextProgress = 0L, chapterNumber = number, sourceOrder = 0L, dateFetch = dateFetch,
-        dateUpload = dateUpload, page = "", scanlator = scanlator,
+        lastTextProgress = 0L, chapterNumber = number, sourceOrder = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(dateFetch), dateUpload = dateUpload.toInstantOrNull(),
+        page = "", scanlator = scanlator,
     )
 
     private fun srcItem(
@@ -80,7 +84,16 @@ class NovelChapterSyncTest {
                 val added = secondArg<List<NovelChapter>>()
                 changed += thirdArg<List<NovelChapter>>()
                 added.forEach {
-                    inserted.add(InsertedRow(it.url, it.read, it.bookmark, it.dateFetch, it.name, it.dateUpload))
+                    inserted.add(
+                        InsertedRow(
+                            it.url,
+                            it.read,
+                            it.bookmark,
+                            it.dateFetch.toEpochMilliseconds(),
+                            it.name,
+                            it.dateUpload.toEpochMillisOrZero(),
+                        ),
+                    )
                 }
                 added.mapIndexed { i, chapter -> chapter.copy(id = 100L + i) }
             }
@@ -129,7 +142,8 @@ class NovelChapterSyncTest {
     fun `a re-titled chapter the source stopped dating keeps its stored date`() = runTest {
         val db = listOf(dbChapter("/c/5", number = 5.0, dateUpload = 5_000L))
 
-        sync(db, listOf(srcItem("/c/5", number = 5.0, name = "Renamed"))).changed.single().dateUpload shouldBe 5_000L
+        sync(db, listOf(srcItem("/c/5", number = 5.0, name = "Renamed"))).changed.single().dateUpload shouldBe
+            Instant.fromEpochMilliseconds(5_000L)
     }
 
     @Test

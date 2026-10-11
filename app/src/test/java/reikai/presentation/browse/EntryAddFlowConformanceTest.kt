@@ -13,6 +13,7 @@ import reikai.novel.host.NovelItem
 import reikai.presentation.novel.browse.NovelAddFlow
 import reikai.presentation.novel.details.NovelScreen
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /**
  * The long-press add flow, pinned once for both content types over the real adders. The shared
@@ -179,11 +180,11 @@ class MangaAddFlowProbe : AddFlowProbe() {
         Manga.create().copy(id = id, url = "/$id", source = FakeMangaLibrary.SOURCE_ID, title = "entry $id")
 
     override fun storeEntry(inLibrary: Boolean) {
-        library.insert(listed(ENTRY).copy(favoriteAt = 100L.takeIf { inLibrary }))
+        library.insert(listed(ENTRY).copy(favoriteAt = Instant.fromEpochMilliseconds(100L).takeIf { inLibrary }))
     }
 
     override fun storeOther(inLibrary: Boolean) {
-        library.insert(listed(OTHER).copy(favoriteAt = 100L.takeIf { inLibrary }))
+        library.insert(listed(OTHER).copy(favoriteAt = Instant.fromEpochMilliseconds(100L).takeIf { inLibrary }))
     }
 
     override fun storeDuplicate(): Long {

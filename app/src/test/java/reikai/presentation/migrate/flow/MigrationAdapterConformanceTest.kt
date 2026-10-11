@@ -42,6 +42,7 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.service.SourceManager
 import java.io.IOException
+import kotlin.time.Instant
 
 /**
  * The rules both migration adapters must answer alike, run over each real adapter with its engine
@@ -365,8 +366,8 @@ object NovelProbe : Probe {
         lastTextProgress = 0L,
         chapterNumber = number,
         sourceOrder = 0L,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 }

@@ -41,6 +41,7 @@ import tachiyomi.domain.manga.interactor.GetMangaWithChapters
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
+import kotlin.time.Instant
 
 /**
  * When the stored stitch is rebuilt. Every surface reads it rather than stitching for itself, so a
@@ -428,7 +429,7 @@ class MergedStitchReconcileTest {
         override val type = ContentType.MANGA
 
         override suspend fun insertEntry(id: Long, source: Long) {
-            mangas[id] = Manga.create().copy(id = id, source = source, favoriteAt = 0L)
+            mangas[id] = Manga.create().copy(id = id, source = source, favoriteAt = Instant.fromEpochMilliseconds(0L))
             driver.execute(
                 null,
                 "INSERT INTO manga(id, source_id, remote_url, remote_title, remote_status, " +
@@ -512,7 +513,8 @@ class MergedStitchReconcileTest {
         override val type = ContentType.NOVELS
 
         override suspend fun insertEntry(id: Long, source: Long) {
-            novels[id] = Novel.create().copy(id = id, source = source.toString(), favoriteAt = 0L)
+            novels[id] =
+                Novel.create().copy(id = id, source = source.toString(), favoriteAt = Instant.fromEpochMilliseconds(0L))
             driver.execute(
                 null,
                 "INSERT INTO novels(_id, source, url, title, status, initialized, chapter_flags, " +
@@ -532,8 +534,8 @@ class MergedStitchReconcileTest {
                 lastTextProgress = 0,
                 chapterNumber = number,
                 sourceOrder = id,
-                dateFetch = 0L,
-                dateUpload = 0L,
+                dateFetch = Instant.fromEpochMilliseconds(0L),
+                dateUpload = null,
                 page = "",
             )
             driver.execute(

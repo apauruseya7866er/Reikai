@@ -40,6 +40,7 @@ import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.interactor.SetMangaChapterFlags
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
+import kotlin.time.Instant
 
 /**
  * A merged series shares one chapter setting, its settings owner's, whichever member it is opened
@@ -219,7 +220,7 @@ class GroupChapterSettingsConformanceTest {
         }
 
         override suspend fun setInLibrary(id: Long, inLibrary: Boolean) {
-            mangas.update(MangaUpdate(id) { favoriteAt = 1L.takeIf { inLibrary } })
+            mangas.update(MangaUpdate(id) { favoriteAt = Instant.fromEpochMilliseconds(1L).takeIf { inLibrary } })
         }
 
         override suspend fun addBack(id: Long) {
@@ -264,7 +265,7 @@ class GroupChapterSettingsConformanceTest {
         )
 
         override suspend fun setInLibrary(id: Long, inLibrary: Boolean) {
-            novels.update(NovelUpdate(id) { favoriteAt = 1L.takeIf { inLibrary } })
+            novels.update(NovelUpdate(id) { favoriteAt = Instant.fromEpochMilliseconds(1L).takeIf { inLibrary } })
         }
 
         override suspend fun addBack(id: Long) {

@@ -4,6 +4,7 @@
 -- wherever they have a direct analogue. `upsert` updates a stored row in place, as manga_track's does,
 -- so the table's ON CONFLICT REPLACE never gets to delete a row and give it a new id.
 import kotlin.Boolean;
+import kotlin.time.Instant;
 
 CREATE TABLE novel_tracks(
     _id INTEGER NOT NULL PRIMARY KEY,
@@ -17,8 +18,8 @@ CREATE TABLE novel_tracks(
     status INTEGER NOT NULL,
     score REAL NOT NULL,
     remote_url TEXT NOT NULL,
-    start_date INTEGER NOT NULL,
-    finish_date INTEGER NOT NULL,
+    start_date INTEGER AS Instant,
+    finish_date INTEGER AS Instant,
     private INTEGER AS Boolean NOT NULL DEFAULT 0,
     UNIQUE (novel_id, sync_id) ON CONFLICT REPLACE,
     FOREIGN KEY(novel_id) REFERENCES novels (_id)

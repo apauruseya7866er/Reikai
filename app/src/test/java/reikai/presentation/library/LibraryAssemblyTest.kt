@@ -11,6 +11,7 @@ import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.library.model.LibrarySort
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /**
  * Pins [assembleLibrary] to the bucketing, ordering, sort-scope and empty-category rules the manga and
@@ -27,7 +28,7 @@ class LibraryAssemblyTest {
         dateAdded: Long = 0,
         novel: Boolean = false,
     ): LibraryItem {
-        val manga = Manga.create().copy(id = id, title = title, favoriteAt = dateAdded)
+        val manga = Manga.create().copy(id = id, title = title, favoriteAt = Instant.fromEpochMilliseconds(dateAdded))
         return LibraryItem(
             libraryManga = LibraryManga(
                 manga = manga,
@@ -35,9 +36,9 @@ class LibraryAssemblyTest {
                 totalChapters = 0,
                 readCount = 0,
                 bookmarkCount = 0,
-                latestUpload = 0,
-                chapterFetchedAt = 0,
-                lastRead = 0,
+                latestUpload = null,
+                chapterFetchedAt = null,
+                lastRead = null,
             ),
             downloadCount = 0,
             unreadCount = 0,

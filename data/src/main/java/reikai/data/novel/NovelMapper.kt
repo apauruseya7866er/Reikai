@@ -8,12 +8,13 @@ import reikai.domain.novel.model.NovelCover
 import reikai.domain.novel.model.NovelHistoryWithRelations
 import reikai.domain.novel.model.NovelUpdateWithRelations
 import reikai.domain.novel.model.NovelWithChapterCount
+import kotlin.time.Instant
 
 /**
  * Mappers from the generated SQLDelight row types to the domain models. SQLDelight invokes these
  * as the `mapper:` argument; the parameter order must match the column order declared in the
- * `.sq` file. The `genre` / `update_strategy` columns arrive already typed via the registered column
- * adapters, so no conversion happens here beyond null-coalescing the nullable `last_update` column.
+ * `.sq` file. The `genre`, `update_strategy` and date columns arrive already typed via the registered
+ * column adapters, so no conversion happens here.
  */
 
 fun mapNovel(
@@ -27,17 +28,17 @@ fun mapNovel(
     genre: List<String>?,
     status: Long,
     thumbnailUrl: String?,
-    lastUpdate: Long?,
+    lastUpdate: Instant?,
     initialized: Boolean,
     chapterFlags: Long,
     updateStrategy: UpdateStrategy,
-    coverLastModified: Long,
+    coverLastModified: Instant?,
     totalPages: Long,
     notes: String,
     viewerFlags: Long,
-    nextUpdate: Long,
+    nextUpdate: Instant?,
     calculateInterval: Long,
-    favoriteAt: Long?,
+    favoriteAt: Instant?,
 ): Novel = Novel(
     id = id,
     source = source,
@@ -50,7 +51,7 @@ fun mapNovel(
     status = status,
     thumbnailUrl = thumbnailUrl,
     favoriteAt = favoriteAt,
-    lastUpdate = lastUpdate ?: 0L,
+    lastUpdate = lastUpdate,
     initialized = initialized,
     chapterFlags = chapterFlags,
     updateStrategy = updateStrategy,
@@ -79,22 +80,22 @@ fun mapLibraryNovel(
     genre: List<String>?,
     status: Long,
     thumbnailUrl: String?,
-    lastUpdate: Long?,
+    lastUpdate: Instant?,
     initialized: Boolean,
     chapterFlags: Long,
     updateStrategy: UpdateStrategy,
-    coverLastModified: Long,
+    coverLastModified: Instant?,
     totalPages: Long,
     notes: String,
     viewerFlags: Long,
-    nextUpdate: Long,
+    nextUpdate: Instant?,
     calculateInterval: Long,
-    favoriteAt: Long?,
+    favoriteAt: Instant?,
     totalCount: Long,
     readCount: Double,
-    latestUpload: Long,
-    chapterFetchedAt: Long,
-    lastRead: Long,
+    latestUpload: Instant?,
+    chapterFetchedAt: Instant?,
+    lastRead: Instant?,
     bookmarkCount: Double,
     categories: String,
 ): LibraryNovel = LibraryNovel(
@@ -147,17 +148,17 @@ fun mapNovelWithChapterCount(
     genre: List<String>?,
     status: Long,
     thumbnailUrl: String?,
-    lastUpdate: Long?,
+    lastUpdate: Instant?,
     initialized: Boolean,
     chapterFlags: Long,
     updateStrategy: UpdateStrategy,
-    coverLastModified: Long,
+    coverLastModified: Instant?,
     totalPages: Long,
     notes: String,
     viewerFlags: Long,
-    nextUpdate: Long,
+    nextUpdate: Instant?,
     calculateInterval: Long,
-    favoriteAt: Long?,
+    favoriteAt: Instant?,
     chapterCount: Long,
 ): NovelWithChapterCount = NovelWithChapterCount(
     novel = mapNovel(
@@ -202,8 +203,8 @@ fun mapNovelUpdate(
     source: String,
     favorite: Boolean,
     thumbnailUrl: String?,
-    coverLastModified: Long,
-    dateFetch: Long,
+    coverLastModified: Instant?,
+    dateFetch: Instant,
     novelUrl: String,
 ): NovelUpdateWithRelations = NovelUpdateWithRelations(
     novelId = novelId,
@@ -238,14 +239,14 @@ fun mapNovelHistoryWithRelations(
     thumbnailUrl: String?,
     source: String,
     favorite: Boolean,
-    coverLastModified: Long,
+    coverLastModified: Instant?,
     chapterNumber: Double,
     chapterName: String,
     chapterUrl: String,
     read: Boolean,
     bookmark: Boolean,
     lastTextProgress: Long,
-    readAt: Long?,
+    readAt: Instant?,
     readDuration: Long,
 ): NovelHistoryWithRelations = NovelHistoryWithRelations(
     id = id,
@@ -281,8 +282,8 @@ fun mapNovelChapter(
     lastTextProgress: Long,
     chapterNumber: Double,
     sourceOrder: Long,
-    dateFetch: Long,
-    dateUpload: Long,
+    dateFetch: Instant,
+    dateUpload: Instant?,
     page: String,
     @Suppress("UNUSED_PARAMETER") isDownloaded: Boolean,
     scanlator: String?,

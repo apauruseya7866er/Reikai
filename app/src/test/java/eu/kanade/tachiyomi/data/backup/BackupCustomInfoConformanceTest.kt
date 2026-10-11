@@ -48,6 +48,7 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.CustomMangaInfoRepository
 import java.io.ByteArrayOutputStream
 import java.util.zip.GZIPInputStream
+import kotlin.time.Instant
 
 /**
  * Custom info rides on each backed-up entry for both content types, and restore reads it only from
@@ -177,7 +178,14 @@ class BackupCustomInfoConformanceTest {
                 novelBackupCreator = NovelBackupCreator(
                     novelRepository = mockk {
                         coEvery { getFavorites() } returns
-                            listOf(Novel.create().copy(id = 7, url = "/7", source = "src", favoriteAt = 0L))
+                            listOf(
+                                Novel.create().copy(
+                                    id = 7,
+                                    url = "/7",
+                                    source = "src",
+                                    favoriteAt = Instant.fromEpochMilliseconds(0L),
+                                ),
+                            )
                     },
                     novelChapterRepository = mockk(),
                     categoryRepository = mockk(),

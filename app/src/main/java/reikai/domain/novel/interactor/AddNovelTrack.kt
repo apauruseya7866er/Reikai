@@ -50,7 +50,7 @@ class AddNovelTrack(
             }
             backfill.startDate?.let {
                 track = track.copy(startDate = it)
-                novelTrackUpdater.setRemoteStartDate(tracker, track.toDbTrack(), it)
+                novelTrackUpdater.setRemoteStartDate(tracker, track.toDbTrack(), it.toEpochMilliseconds())
             }
         }
     }

@@ -30,6 +30,7 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreferen
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.InjektScope
 import java.io.IOException
+import kotlin.time.Instant
 
 /**
  * A NovelUpdates push against a fake site. Source A (chapters 1 to 4) and source B (1 to 10) are one
@@ -49,8 +50,9 @@ class NovelUpdatesPushTest {
 
     private fun chapter(novelId: Long, number: Int) = NovelChapter(
         id = novelId * 1000 + number, novelId = novelId, url = "", name = "", read = true, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = number.toDouble(), sourceOrder = number.toLong(), dateFetch = 0L,
-        dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = number.toDouble(), sourceOrder = number.toLong(),
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null, page = "",
     )
 
     private fun releaseRow(number: Int) =

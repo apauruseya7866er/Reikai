@@ -18,6 +18,7 @@ import reikai.domain.recents.RECENTS_FEED_LIMIT
 import tachiyomi.domain.manga.model.CustomMangaInfo
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Instant
 
 /**
  * The newly-added lane both adapters build through [recentsAddedLane]: the surface's category filter
@@ -27,7 +28,7 @@ class RecentsAddedLaneTest {
 
     private data class Row(val id: Long, val title: String)
 
-    private data class Query(val after: Long, val limit: Long, val included: List<Long>, val excluded: List<Long>)
+    private data class Query(val after: Instant, val limit: Long, val included: List<Long>, val excluded: List<Long>)
 
     private val queries = mutableListOf<Query>()
 
@@ -46,7 +47,12 @@ class RecentsAddedLaneTest {
         entryId = Row::id,
         withCustomInfo = { info -> copy(title = info?.title ?: title) },
         toItem = {
-            RecentsItem(entryId = EntryId.Manga(it.id), timestamp = 0L, lane = RecentsLane.Added, payload = it)
+            RecentsItem(
+                entryId = EntryId.Manga(it.id),
+                timestamp = Instant.fromEpochMilliseconds(0L),
+                lane = RecentsLane.Added,
+                payload = it,
+            )
         },
     )
 
@@ -85,7 +91,7 @@ class RecentsAddedLaneTest {
 
         lane().take(2).toList()
 
-        queries.single().after shouldBeInRange
+        queries.single().after.toEpochMilliseconds() shouldBeInRange
             (now - 93.days).toEpochMilliseconds()..(now - 88.days).toEpochMilliseconds()
     }
 

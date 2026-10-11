@@ -13,6 +13,7 @@ import reikai.domain.entry.EntryId
 import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
 import java.io.File
+import kotlin.time.Instant
 
 /**
  * The novel half of the library removal; the rule both halves share is pinned by
@@ -24,7 +25,7 @@ class RemoveNovelsFromLibraryTest {
     @TempDir
     lateinit var dir: File
 
-    private val novel = Novel.create().copy(id = 5L, favoriteAt = 100L)
+    private val novel = Novel.create().copy(id = 5L, favoriteAt = Instant.fromEpochMilliseconds(100L))
 
     @Test
     fun `removing a novel leaves the custom cover of a manga with the same id`() = runTest {

@@ -18,6 +18,7 @@ import reikai.domain.novel.model.NovelMigrationFlag
 import reikai.novel.download.NovelDownloadManager
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.library.service.LibraryPreferences
+import kotlin.time.Instant
 
 /**
  * What only the novel engine does. Every rule both engines share is pinned once, over both, by
@@ -83,8 +84,8 @@ class MigrateNovelUseCaseTest {
         lastTextProgress = 0,
         chapterNumber = number,
         sourceOrder = id,
-        dateFetch = 0,
-        dateUpload = 0,
+        dateFetch = Instant.fromEpochMilliseconds(0),
+        dateUpload = null,
         page = "",
     )
 

@@ -28,6 +28,7 @@ import tachiyomi.data.chapter.ChapterRepositoryImpl
 import tachiyomi.data.manga.MangaRepositoryImpl
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /**
  * A refresh keeps a stored detail its source sends nothing for, for both types, so a source that stops sending one
@@ -159,7 +160,7 @@ class NovelRefreshHalf : RefreshHalf {
                 description = stored.description,
                 genre = stored.genres,
                 status = stored.status,
-                favoriteAt = 0L,
+                favoriteAt = Instant.fromEpochMilliseconds(0L),
             ),
         )!!
         val source = mockk<NovelSource> {

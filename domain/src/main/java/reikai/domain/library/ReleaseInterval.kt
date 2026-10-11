@@ -8,7 +8,9 @@ import kotlinx.datetime.daysUntil
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlin.math.absoluteValue
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 
 /**
@@ -22,29 +24,29 @@ object ReleaseInterval {
     private const val GRACE_PERIOD = 1L
 
     /** The days around [date] an entry's next update has to fall in to be fetched now. */
-    fun window(date: LocalDate, zone: TimeZone): Pair<Long, Long> {
+    fun window(date: LocalDate, zone: TimeZone): ClosedRange<Instant> {
         val today = date.atStartOfDayIn(zone)
-        return Pair(
-            (today - GRACE_PERIOD.days).toEpochMilliseconds(),
-            (today + GRACE_PERIOD.days).toEpochMilliseconds(),
-        )
+        return (today - GRACE_PERIOD.days)..(today + GRACE_PERIOD.days)
     }
 
-    /** [window], or [today]'s when it is (0, 0), which callers pass to mean "now". */
-    fun windowOrToday(window: Pair<Long, Long>, today: LocalDate, zone: TimeZone): Pair<Long, Long> =
-        if (window.first == 0L && window.second == 0L) window(today, zone) else window
+    /** [window], or [today]'s when there is none, which callers pass to mean "now". */
+    fun windowOrToday(window: ClosedRange<Instant>?, today: LocalDate, zone: TimeZone): ClosedRange<Instant> =
+        window ?: window(today, zone)
 
     /**
      * Whether a sync that left the chapter list unchanged still predicts again: when asked for by hand,
-     * when the entry was never predicted, or when its prediction has fallen behind [window]. A changed
-     * list always predicts.
+     * when the entry was never predicted, or when its prediction is missing or has fallen behind [window].
+     * Without a window only the first two apply. A changed list always predicts.
      */
     fun needsPrediction(
         manualFetch: Boolean,
         fetchInterval: Int,
-        nextUpdate: Long,
-        window: Pair<Long, Long>,
-    ): Boolean = manualFetch || fetchInterval == 0 || nextUpdate < window.first
+        nextUpdate: Instant?,
+        window: ClosedRange<Instant>?,
+    ): Boolean {
+        val isBeforeWindow = window != null && (nextUpdate == null || nextUpdate < window.start)
+        return manualFetch || fetchInterval == 0 || isBeforeWindow
+    }
 
     /** The interval the user set, which is negative and kept as it is, else the one [predict] calculates. */
     inline fun userOrPredicted(fetchInterval: Int, predict: () -> Int): Int =
@@ -54,9 +56,9 @@ object ReleaseInterval {
      * The median gap between the latest release days, one entry of [uploadDates] and [fetchDates] per
      * chapter. Upload dates are used when three or more are known, fetch dates otherwise, else a week.
      */
-    fun calculate(uploadDates: List<Long>, fetchDates: List<Long>, zone: TimeZone): Int {
+    fun calculate(uploadDates: List<Instant?>, fetchDates: List<Instant>, zone: TimeZone): Int {
         val chapterWindow = if (uploadDates.size <= 8) 3 else 10
-        val uploadDays = latestDays(uploadDates.filter { it > 0L }, zone, chapterWindow)
+        val uploadDays = latestDays(uploadDates.filterNotNull(), zone, chapterWindow)
         val fetchDays = latestDays(fetchDates, zone, chapterWindow)
 
         val interval = when {
@@ -69,17 +71,16 @@ object ReleaseInterval {
 
     /** When an entry last changed on [lastUpdate] is next due, keeping a [nextUpdate] already inside [window]. */
     fun nextUpdate(
-        nextUpdate: Long,
-        lastUpdate: Long,
+        nextUpdate: Instant?,
+        lastUpdate: Instant?,
         interval: Int,
         dateTime: LocalDateTime,
         zone: TimeZone,
-        window: Pair<Long, Long>,
-    ): Long {
-        if (nextUpdate in window.first.rangeTo(window.second + 1)) return nextUpdate
+        window: ClosedRange<Instant>,
+    ): Instant {
+        if (nextUpdate != null && nextUpdate in window.start..window.endInclusive + 1.milliseconds) return nextUpdate
 
-        val instant = if (lastUpdate > 0) Instant.fromEpochMilliseconds(lastUpdate) else kotlin.time.Clock.System.now()
-        val latestDate = instant.toLocalDateTime(zone).date.atStartOfDayIn(zone)
+        val latestDate = (lastUpdate ?: Clock.System.now()).toLocalDateTime(zone).date.atStartOfDayIn(zone)
 
         val daysSinceLatest = (dateTime.toInstant(zone) - latestDate).inWholeDays
         val cycle = daysSinceLatest.floorDiv(
@@ -88,12 +89,12 @@ object ReleaseInterval {
         )
 
         val offsetDays = ((cycle + 1) * interval.absoluteValue.toLong()).days
-        return latestDate.plus(offsetDays).toEpochMilliseconds()
+        return latestDate.plus(offsetDays)
     }
 
-    private fun latestDays(dates: List<Long>, zone: TimeZone, count: Int) = dates.asSequence()
+    private fun latestDays(dates: List<Instant>, zone: TimeZone, count: Int) = dates.asSequence()
         .sortedDescending()
-        .map { Instant.fromEpochMilliseconds(it).toLocalDateTime(zone).date.atStartOfDayIn(zone) }
+        .map { it.toLocalDateTime(zone).date.atStartOfDayIn(zone) }
         .distinct()
         .take(count)
         .toList()

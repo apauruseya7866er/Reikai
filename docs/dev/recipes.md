@@ -38,11 +38,12 @@ A schema change runs off the database's own `user_version`, not off `versionCode
 
 1. Change the table in `data/src/main/sqldelight/tachiyomi/data/*.sq` (views are in `.../view/*.sq`).
 2. Add the next-numbered file in `data/src/main/sqldelight/tachiyomi/migrations/` (the highest is
-   `61.sqm`, so the next is `62.sqm`) with the same change. Never copy Mihon's `.sqm` number, never edit
+   `62.sqm`, so the next is `63.sqm`) with the same change. Never copy Mihon's `.sqm` number, never edit
    the SQL of an existing `.sqm`, and put an index change in a migration of its own.
 3. If the migration rebuilds or renames a table, `DROP VIEW` every view over it and recreate each view
    with its current `view/*.sq` text; a table rename rewrites dependent views to read the dropped table.
-   `50.sqm` is the worked example.
+   Rename the old table aside under `PRAGMA legacy_alter_table = 1`, so the tables referencing it keep
+   their foreign keys on the rebuilt one. `62.sqm` is the worked example.
 4. If it moves or merges rows, add a data test in the shape of
    `data/src/test/java/reikai/data/migration/SchemaChainMigrationTest.kt`, which starts from the `43.db`
    snapshot and runs the real chain.

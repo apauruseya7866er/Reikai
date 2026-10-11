@@ -4,6 +4,7 @@ import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.minus
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 /**
  * The bound on the Reikai-owned recents feeds (novel updates, both newly-added lanes and the combined
@@ -14,6 +15,5 @@ const val RECENTS_FEED_LIMIT = 500L
 private const val RECENTS_FEED_MONTHS = 3L
 
 /** Recomputed per call, so a long-running process keeps a window from now rather than from startup. */
-fun recentsFeedCutoff(): Long = Clock.System.now()
+fun recentsFeedCutoff(): Instant = Clock.System.now()
     .minus(RECENTS_FEED_MONTHS, DateTimeUnit.MONTH, TimeZone.currentSystemDefault())
-    .toEpochMilliseconds()

@@ -3,6 +3,7 @@ package reikai.presentation.library
 import io.kotest.matchers.shouldBe
 import mihon.domain.library.model.search.QueryNode
 import org.junit.jupiter.api.Test
+import kotlin.time.Instant
 
 /**
  * The shared query kernel, exercised over a plain row type rather than `LibraryItem`, since the kernel is
@@ -36,9 +37,9 @@ class LibraryQueryMatchTest {
         unreadCount = { it.unread },
         readCount = { 0L },
         totalChapters = { 10L },
-        dateAdded = { 0L },
+        dateAdded = { EPOCH },
         fetchInterval = { 0 },
-        nextUpdate = { 0L },
+        nextUpdate = { EPOCH },
         matchesChapter = { row, term -> chapterMatches[term]?.contains(row.id) },
         matchesTagTerm = { _, _ -> false },
     )
@@ -243,6 +244,8 @@ class LibraryQueryMatchTest {
     }
 
     private companion object {
+        val EPOCH = Instant.fromEpochMilliseconds(0)
+
         fun source(
             key: String = "novelarrow",
             name: String = "novel arrow",

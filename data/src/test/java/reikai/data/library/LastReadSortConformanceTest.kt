@@ -15,6 +15,7 @@ import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.history.HistoryRepositoryImpl
 import tachiyomi.data.manga.MangaMapper
+import kotlin.time.Instant
 
 /**
  * The library's Last read sort is derived from reading history for both types, as Mihon's libraryView
@@ -42,7 +43,7 @@ class LastReadSortConformanceTest {
     fun `Last read is the latest read in the entry's history`(type: Type) = runTest {
         type.seed(driver)
 
-        type.lastRead(database) shouldBe 500L
+        type.lastRead(database) shouldBe Instant.fromEpochMilliseconds(500L)
     }
 
     @ParameterizedTest
@@ -52,7 +53,7 @@ class LastReadSortConformanceTest {
 
         type.clearHistory(database)
 
-        type.lastRead(database) shouldBe 0L
+        type.lastRead(database) shouldBe null
     }
 
     // Novels offer no scanlator filter, so there is no novel case.
@@ -62,7 +63,7 @@ class LastReadSortConformanceTest {
         driver.execute(null, "UPDATE chapter SET remote_scanlator = 'x' WHERE id = 2", 0).await()
         driver.execute(null, "INSERT INTO excluded_scanlator(manga_id, scanlator) VALUES (1, 'x')", 0).await()
 
-        Type.MANGA.lastRead(database) shouldBe 300L
+        Type.MANGA.lastRead(database) shouldBe Instant.fromEpochMilliseconds(300L)
     }
 
     /** One library entry with two chapters, read at 300 and 500. */
@@ -110,7 +111,7 @@ class LastReadSortConformanceTest {
 
         suspend fun seed(driver: JdbcSqliteDriver) = statements.forEach { driver.execute(null, it, 0).await() }
 
-        abstract suspend fun lastRead(database: Database): Long
+        abstract suspend fun lastRead(database: Database): Instant?
 
         abstract suspend fun clearHistory(database: Database)
     }

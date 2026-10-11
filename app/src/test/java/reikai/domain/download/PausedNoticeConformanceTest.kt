@@ -53,6 +53,7 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.i18n.MR
 import java.io.IOException
+import kotlin.time.Instant
 
 /**
  * A user pause leaves one Paused notice that outlives its worker, and resuming without a network
@@ -299,7 +300,11 @@ class NovelPausedNoticeHalf : PausedNoticeHalf {
     private val novel = Novel.create().copy(id = 1L, source = "src", title = "Novel")
     private val chapter = NovelChapter(
         id = 10L, novelId = novel.id, url = "u10", name = "Ch 10", read = false, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = 10.0, sourceOrder = 10L, dateFetch = 0L, dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = 10.0, sourceOrder = 10L,
+        dateFetch = Instant.fromEpochMilliseconds(
+            0L,
+        ),
+        dateUpload = null, page = "",
     )
     private val source = mockk<NovelSource> {
         every { minimumRequestDelayMs } returns 0L

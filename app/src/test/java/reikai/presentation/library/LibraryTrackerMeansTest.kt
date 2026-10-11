@@ -24,8 +24,8 @@ class LibraryTrackerMeansTest {
         status = 0L,
         score = score,
         remoteUrl = "",
-        startDate = 0L,
-        finishDate = 0L,
+        startDate = null,
+        finishDate = null,
         private = false,
     )
 

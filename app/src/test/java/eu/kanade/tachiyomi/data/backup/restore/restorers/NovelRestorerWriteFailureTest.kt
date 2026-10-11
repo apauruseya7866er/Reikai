@@ -16,6 +16,7 @@ import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.NovelTrackRepository
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
+import kotlin.time.Instant
 
 /**
  * The novel repositories log a failed write and report it instead of throwing, but the restore batch
@@ -62,8 +63,8 @@ class NovelRestorerWriteFailureTest {
                         lastTextProgress = 0L,
                         chapterNumber = 1.0,
                         sourceOrder = 0L,
-                        dateFetch = 0L,
-                        dateUpload = 0L,
+                        dateFetch = Instant.fromEpochMilliseconds(0L),
+                        dateUpload = null,
                         page = "",
                     ),
                 )

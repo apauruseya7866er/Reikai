@@ -11,6 +11,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 @Inject
 class FetchInterval(
@@ -21,9 +22,9 @@ class FetchInterval(
         manga: Manga,
         dateTime: LocalDateTime,
         timeZone: TimeZone,
-        window: Pair<Long, Long>,
+        window: ClosedRange<Instant>?,
     ): MangaUpdate {
-        // RK --> keeping a user-set interval and reading (0, 0) as today are ReleaseInterval rules novels call too
+        // RK --> keeping a user-set interval and reading no window as today are ReleaseInterval rules novels call too
         val interval = ReleaseInterval.userOrPredicted(manga.fetchInterval) {
             calculateInterval(
                 chapters = getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true),
@@ -42,7 +43,7 @@ class FetchInterval(
     }
 
     // RK --> the date math lives in reikai.domain.library.ReleaseInterval, which novels call too
-    fun getWindow(localDateTime: LocalDate, timeZone: TimeZone): Pair<Long, Long> =
+    fun getWindow(localDateTime: LocalDate, timeZone: TimeZone): ClosedRange<Instant> =
         ReleaseInterval.window(localDateTime, timeZone)
     // RK <--
 
@@ -55,8 +56,8 @@ class FetchInterval(
         interval: Int,
         dateTime: LocalDateTime,
         timeZone: TimeZone,
-        window: Pair<Long, Long>,
-    ): Long = ReleaseInterval.nextUpdate(manga.nextUpdate, manga.lastUpdate, interval, dateTime, timeZone, window)
+        window: ClosedRange<Instant>,
+    ): Instant = ReleaseInterval.nextUpdate(manga.nextUpdate, manga.lastUpdate, interval, dateTime, timeZone, window)
     // RK <--
 
     companion object {

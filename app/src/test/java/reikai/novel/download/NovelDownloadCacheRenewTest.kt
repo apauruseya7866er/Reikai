@@ -18,6 +18,7 @@ import reikai.util.testAppScope
 import java.io.File
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /**
  * A chapter written while the index scans the disk stays in the index, as Mihon's DownloadCache keeps it
@@ -100,8 +101,8 @@ class NovelDownloadCacheRenewTest {
         lastTextProgress = 0L,
         chapterNumber = id.toDouble(),
         sourceOrder = id,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 

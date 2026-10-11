@@ -34,6 +34,7 @@ import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
 import java.io.IOException
+import kotlin.time.Instant
 
 /**
  * Only a finished novel download leaves the saved queue, as Mihon's Downloader removes a download
@@ -54,8 +55,8 @@ class NovelDownloadManagerFailureTest {
         lastTextProgress = 0L,
         chapterNumber = 10.0,
         sourceOrder = 10L,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 

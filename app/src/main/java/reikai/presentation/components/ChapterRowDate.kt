@@ -2,6 +2,7 @@ package reikai.presentation.components
 
 import androidx.compose.runtime.Composable
 import eu.kanade.presentation.components.relativeDateText
+import kotlin.time.Instant
 
 /**
  * What a chapter with no date from the source shows. A typed slot rather than the row deciding for
@@ -16,9 +17,9 @@ enum class UndatedChapterDate {
 
 /** A chapter row's date line, the details list's and the reader sheet's alike. */
 @Composable
-fun chapterRowDate(dateUpload: Long, undated: UndatedChapterDate): String? = when {
-    dateUpload > 0L -> relativeDateText(dateUpload)
+fun chapterRowDate(dateUpload: Instant?, undated: UndatedChapterDate): String? = when {
+    dateUpload != null -> relativeDateText(dateUpload)
     // Upstream's formatter answers "N/A" for an undated chapter.
-    undated == UndatedChapterDate.NotApplicable -> relativeDateText(dateUpload)
+    undated == UndatedChapterDate.NotApplicable -> relativeDateText(date = null)
     else -> null
 }

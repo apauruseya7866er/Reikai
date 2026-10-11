@@ -224,6 +224,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Chapter selection on a manga or novel page now acts only on the chapters your filters show, and extending a range no longer re-adds a chapter you deselected.** Mark previous as read follows your filters too, and range selection works the same on both.
 - **Missing chapter warnings no longer count a chapter the series lists elsewhere, or one you hid or filtered out, in the chapter list or between chapters in the reader, on manga and novels.** The header counts each missing number once.
 - **A series whose site shows a placeholder until its cover loads now keeps its real cover.** A series already stuck on the placeholder takes its cover back from its source's listing.
+- **On a manga or novel page, a series with no predicted next update now shows N/A instead of Soon (from Mihon).** Unknown dates are now stored as unknown rather than as 0, for both.
 - **Refreshing a manga no longer blanks its author, artist, description or status when its source sends none.**
 - **Refreshing a manga no longer clears the chapters you selected when its new chapters download on their own, as novels already did (from Mihon).** Upstream: mihon a82d27c3a.
 - **Removing a novel from the library on its page now offers to delete its downloaded chapters, and removing a novel from anywhere now clears its saved cover, a custom one included, as manga does.**
@@ -694,6 +695,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 ### Other
 
 - Manga and novels now run on one shared implementation in the library, details, browse, migrate, recents, downloads, reader, backup and restore, library updates and tracking, so a change reaches both. Categories for both now live in one table, and custom novel cover files are renamed once on upgrade.
+- Every date in the database is stored as an instant with unknown dates left empty, on manga and novels alike (from Mihon, mihon 44c1e1915).
 - From Mihon: list screens stop querying a few seconds after you leave them (mihonapp/mihon#3716 through mihonapp/mihon#3762), and installed extensions are read off the main thread during a cold start (mihonapp/mihon#3788).
 - Novel plugin settings load and save off the main thread, and Updates, History and Recents no longer start the novel downloader while they show only manga.
 - Opening a source while the app is still starting now waits for the extension list instead of reading a half-built one, for manga and novels (partly from Mihon, mihonapp/mihon#3841, mihonapp/mihon#3869).

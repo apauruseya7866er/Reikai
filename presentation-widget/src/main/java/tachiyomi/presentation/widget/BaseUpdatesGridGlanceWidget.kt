@@ -85,7 +85,7 @@ abstract class BaseUpdatesGridGlanceWidget : GlanceAppWidget() {
 
             val flow = remember {
                 getUpdates
-                    .subscribe(false, DateLimit.toEpochMilliseconds())
+                    .subscribe(false, DateLimit)
                     .map { rawData ->
                         rawData.prepareData(context, rowCount, columnCount)
                     }

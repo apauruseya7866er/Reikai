@@ -17,6 +17,7 @@ import reikai.domain.merge.MergeManager
 import reikai.domain.recents.RECENTS_FEED_LIMIT
 import reikai.domain.recents.recentsFeedCutoff
 import tachiyomi.core.common.preference.Preference
+import kotlin.time.Instant
 
 /**
  * One lane's rows plus whether they are real yet. [loaded] cannot be recovered downstream: a lane
@@ -57,7 +58,7 @@ internal fun recentsTargetInputs(writes: Flow<Unit>, vararg reads: Preference<*>
  */
 internal fun <T, C : EntryCustomInfo> recentsAddedLane(
     categories: Flow<RecentsCategoryFilter>,
-    subscribe: (after: Long, limit: Long, included: List<Long>, excluded: List<Long>) -> Flow<List<T>>,
+    subscribe: (after: Instant, limit: Long, included: List<Long>, excluded: List<Long>) -> Flow<List<T>>,
     customInfo: Flow<List<C>>,
     customInfoId: (C) -> Long,
     entryId: (T) -> Long,

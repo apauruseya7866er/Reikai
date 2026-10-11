@@ -97,7 +97,7 @@ class RowProbe(private val label: String, val make: (read: Boolean, progress: Ch
                 subtitle = null,
                 read = read,
                 bookmark = false,
-                dateUpload = 0L,
+                dateUpload = null,
                 chapterNumber = 1.0,
                 progress = progress.takeIf { !read },
                 downloadState = Download.State.NOT_DOWNLOADED,

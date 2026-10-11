@@ -88,7 +88,6 @@ import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.theme.active
-import java.util.Date
 import kotlin.time.Clock
 
 /**
@@ -623,7 +622,7 @@ private fun mixedLaneTime(
 ): String {
     val time = when {
         datesOlderRows && !item.isFromToday() -> relativeDateText(item.timestamp)
-        else -> remember(item.timestamp) { Date(item.timestamp).toTimestampString() }
+        else -> remember(item.timestamp) { item.timestamp.toTimestampString() }
     }
     val res = when (item.lane) {
         is RecentsLane.Read -> if (movedOn) MR.strings.recents_row_last_read else MR.strings.recents_row_read

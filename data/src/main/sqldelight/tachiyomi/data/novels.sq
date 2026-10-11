@@ -2,6 +2,7 @@ import eu.kanade.tachiyomi.source.model.UpdateStrategy;
 import kotlin.Boolean;
 import kotlin.String;
 import kotlin.collections.List;
+import kotlin.time.Instant;
 
 -- Parallel of mangas. Held disjoint from the manga table because the source-id space differs
 -- (lnreader plugin.id is a String; Tachiyomi extension source ids are Long), the reader is
@@ -22,19 +23,19 @@ CREATE TABLE novels(
     genre TEXT AS List<String>,
     status INTEGER NOT NULL,
     thumbnail_url TEXT,
-    last_update INTEGER,
+    last_update INTEGER AS Instant,
     initialized INTEGER AS Boolean NOT NULL,
     chapter_flags INTEGER NOT NULL,
     update_strategy INTEGER AS UpdateStrategy NOT NULL DEFAULT 0,
-    cover_last_modified INTEGER NOT NULL DEFAULT 0,
+    cover_last_modified INTEGER AS Instant,
     total_pages INTEGER NOT NULL DEFAULT 1,
     notes TEXT NOT NULL DEFAULT '',
     viewer_flags INTEGER NOT NULL DEFAULT 0,
-    next_update INTEGER NOT NULL DEFAULT 0,
+    next_update INTEGER AS Instant,
     calculate_interval INTEGER NOT NULL DEFAULT 0,
     -- When the novel was added to the library, null while it is not in it: the manga table's
     -- favorite_at, which replaced its favorite flag and date added (mihon 986f46c09).
-    favorite_at INTEGER
+    favorite_at INTEGER AS Instant
 );
 
 CREATE INDEX novels_url_index ON novels(url);

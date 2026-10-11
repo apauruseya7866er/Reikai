@@ -3,12 +3,19 @@ package reikai.domain.novel
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.Novel
+import kotlin.time.Instant
 
 /** A browsed novel has no id, so whether it is in the library is a question about its source and url. */
 class FavoritedNovelsTest {
 
     private fun novel(source: String, url: String, favorite: Boolean) =
-        Novel.create().copy(source = source, url = url, favoriteAt = 1L.takeIf { favorite })
+        Novel.create().copy(
+            source = source,
+            url = url,
+            favoriteAt = Instant.fromEpochMilliseconds(1L).takeIf {
+                favorite
+            },
+        )
 
     @Test
     fun `the same path under another source is not in the library`() {

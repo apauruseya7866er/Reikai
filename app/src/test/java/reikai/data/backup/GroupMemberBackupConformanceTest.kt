@@ -23,6 +23,7 @@ import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.manga.MangaRepositoryImpl
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /**
  * A merge group member removed from the library is written into the backup as an entry of its own, for
@@ -100,7 +101,14 @@ class GroupMemberBackupConformanceTest {
                 customMangaInfoRepository = mockk(),
                 getFavorites = mockk {
                     coEvery { await() } returns
-                        listOf(Manga.create().copy(id = 1, url = "url-1", source = 1L, favoriteAt = 0L))
+                        listOf(
+                            Manga.create().copy(
+                                id = 1,
+                                url = "url-1",
+                                source = 1L,
+                                favoriteAt = Instant.fromEpochMilliseconds(0L),
+                            ),
+                        )
                 },
                 getManga = GetManga(MangaRepositoryImpl(database)),
                 mergeGroupRepository = groups,

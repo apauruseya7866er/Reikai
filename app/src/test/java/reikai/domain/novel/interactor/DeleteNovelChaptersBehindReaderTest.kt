@@ -17,6 +17,7 @@ import reikai.novel.download.NovelDownloadPendingDeleter
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.service.LibraryPreferences
+import kotlin.time.Instant
 
 /**
  * "After reading automatically delete" in the novel reader, as Mihon's reader runs it: finishing a
@@ -37,8 +38,8 @@ class DeleteNovelChaptersBehindReaderTest {
         lastTextProgress = 0L,
         chapterNumber = id.toDouble(),
         sourceOrder = id,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 

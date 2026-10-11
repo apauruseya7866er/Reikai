@@ -17,9 +17,9 @@ class NovelLibraryItemTest {
         readCount = 0,
         bookmarkCount = 0,
         downloadCount = 0,
-        latestUpload = 0,
-        chapterFetchedAt = 0,
-        lastRead = 0,
+        latestUpload = null,
+        chapterFetchedAt = null,
+        lastRead = null,
     )
 
     private fun item(id: Long) = libraryNovel(id).toLibraryItem(

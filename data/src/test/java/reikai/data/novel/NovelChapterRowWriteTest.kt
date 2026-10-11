@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.NovelChapter
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
+import kotlin.time.Instant
 
 /** Every whole-row write stores every column of the chapter it is given, over the real SQL. */
 class NovelChapterRowWriteTest {
@@ -40,13 +41,19 @@ class NovelChapterRowWriteTest {
 
     private val blank = NovelChapter(
         id = -1L, novelId = 1L, url = "c-url", name = "name", read = false, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L, dateFetch = 0L, dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(
+            0,
+        ),
+        dateUpload = null,
+        page = "",
     )
 
     /** A value in every column that differs from [blank]'s, so a column a write leaves out shows. */
     private fun NovelChapter.everyColumnChanged() = copy(
         novelId = 2L, url = "other-url", name = "other", read = true, bookmark = true, lastTextProgress = 55L,
-        chapterNumber = 9.5, sourceOrder = 4L, dateFetch = 3000L, dateUpload = 4000L, page = "2",
+        chapterNumber = 9.5, sourceOrder = 4L, dateFetch = Instant.fromEpochMilliseconds(3000L),
+        dateUpload = Instant.fromEpochMilliseconds(4000L), page = "2",
         scanlator = "Group",
     )
 

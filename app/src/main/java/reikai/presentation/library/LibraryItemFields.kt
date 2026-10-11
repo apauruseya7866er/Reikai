@@ -115,7 +115,7 @@ fun libraryItemSortFields(
     totalChapters = { it.libraryManga.totalChapters },
     latestUpload = { it.libraryManga.latestUpload },
     chapterFetchedAt = { it.libraryManga.chapterFetchedAt },
-    dateAdded = { it.libraryManga.manga.favoriteAt ?: 0L },
+    dateAdded = { it.libraryManga.manga.favoriteAt },
     downloadCount = { it.downloadCount.toLong() },
     trackerMean = trackerMean,
 )

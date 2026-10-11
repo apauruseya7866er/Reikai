@@ -11,6 +11,7 @@ import reikai.data.RecordingDriver
 import reikai.domain.novel.model.Novel
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
+import kotlin.time.Instant
 
 /**
  * What Browse Migrate's novel half reads: each source's library novels and their count. Both read the
@@ -59,5 +60,10 @@ class NovelFavoritesBySourceTest {
     }
 
     private fun novel(source: String, title: String, favoriteAt: Long?) =
-        Novel.create().copy(source = source, url = "/$title", title = title, favoriteAt = favoriteAt)
+        Novel.create().copy(
+            source = source,
+            url = "/$title",
+            title = title,
+            favoriteAt = favoriteAt?.let(Instant::fromEpochMilliseconds),
+        )
 }

@@ -24,6 +24,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
 import tachiyomi.data.subscribeToOneOrNull
+import kotlin.time.Instant
 
 @Inject
 @SingleIn(AppScope::class)
@@ -69,7 +70,7 @@ class NovelRepositoryImpl(
         database.novelLibraryViewQueries.novelLibrary(::mapLibraryNovel).subscribeToList()
 
     override fun getFilteredNovelUpdatesAsFlow(
-        after: Long,
+        after: Instant,
         limit: Long,
         unread: Boolean?,
         started: Boolean?,

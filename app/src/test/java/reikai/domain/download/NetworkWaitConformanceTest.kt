@@ -43,6 +43,7 @@ import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
 import java.io.IOException
+import kotlin.time.Instant
 
 /**
  * A queue without a suitable network (offline, or off Wi-Fi with Wi-Fi only on) waits for one and then
@@ -199,7 +200,11 @@ class NovelNetworkWaitHalf : NetworkWaitHalf {
     private val novel = Novel.create().copy(id = 1L, source = "src", title = "Novel")
     private val chapter = NovelChapter(
         id = 10L, novelId = novel.id, url = "u10", name = "Ch 10", read = false, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = 10.0, sourceOrder = 10L, dateFetch = 0L, dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = 10.0, sourceOrder = 10L,
+        dateFetch = Instant.fromEpochMilliseconds(
+            0L,
+        ),
+        dateUpload = null, page = "",
     )
     private val source = mockk<NovelSource> {
         every { minimumRequestDelayMs } returns 0L

@@ -62,7 +62,7 @@ class LocalTrackStatusMapperTest {
     private fun track(trackerId: Long, status: Long) = Track(
         id = 1L, mangaId = 1L, trackerId = trackerId, remoteId = 1L, libraryId = null, title = "",
         lastChapterRead = 0.0, totalChapters = 0L, status = status, score = 0.0, remoteUrl = "",
-        startDate = 0L, finishDate = 0L, private = false,
+        startDate = null, finishDate = null, private = false,
     )
 
     companion object {

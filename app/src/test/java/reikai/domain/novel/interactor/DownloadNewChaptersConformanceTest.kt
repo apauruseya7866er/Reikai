@@ -19,6 +19,7 @@ import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /** The "download new chapters" rule, run over the manga filter and its novel twin. */
 class DownloadNewChaptersConformanceTest {
@@ -105,7 +106,7 @@ class DownloadNewChaptersConformanceTest {
                 val filter = FilterChaptersForDownload(chapters, prefs, categories)
                 return Filter { favorite, new ->
                     filter.await(
-                        Manga.create().copy(id = 1, favoriteAt = 0L.takeIf { favorite }),
+                        Manga.create().copy(id = 1, favoriteAt = Instant.fromEpochMilliseconds(0L).takeIf { favorite }),
                         new.map { Chapter.create().copy(chapterNumber = it) },
                     ).map { it.chapterNumber }
                 }
@@ -132,7 +133,15 @@ class DownloadNewChaptersConformanceTest {
                 }
                 val filter = FilterNovelChaptersForDownload(chapters, prefs, categories)
                 return Filter { favorite, new ->
-                    filter.await(Novel.create().copy(id = 1, favoriteAt = 0L.takeIf { favorite }), new.map(::chapter))
+                    filter.await(
+                        Novel.create().copy(
+                            id = 1,
+                            favoriteAt = Instant.fromEpochMilliseconds(0L).takeIf {
+                                favorite
+                            },
+                        ),
+                        new.map(::chapter),
+                    )
                         .map { it.chapterNumber }
                 }
             }
@@ -155,8 +164,11 @@ class DownloadNewChaptersConformanceTest {
 
         fun chapter(number: Double) = NovelChapter(
             id = number.toLong(), novelId = 1L, url = "", name = "", read = false, bookmark = false,
-            lastTextProgress = 0L, chapterNumber = number, sourceOrder = 0L, dateFetch = 0L,
-            dateUpload = 0L, page = "",
+            lastTextProgress = 0L, chapterNumber = number, sourceOrder = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(
+                0L,
+            ),
+            dateUpload = null, page = "",
         )
     }
 }

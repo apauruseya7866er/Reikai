@@ -4,6 +4,7 @@ import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.NovelChapter
+import kotlin.time.Instant
 
 /**
  * The novel side's cross-source chapter identity: two sources' rows share a key when they are the
@@ -44,8 +45,8 @@ class NovelChapterMatchKeyTest {
         lastTextProgress = 0,
         chapterNumber = number,
         sourceOrder = 0,
-        dateFetch = 0,
-        dateUpload = 0,
+        dateFetch = Instant.fromEpochMilliseconds(0),
+        dateUpload = null,
         page = "",
     )
 }

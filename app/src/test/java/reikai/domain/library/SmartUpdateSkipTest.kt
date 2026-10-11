@@ -14,6 +14,8 @@ import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_C
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_READ
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_OUTSIDE_RELEASE_PERIOD
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Instant
 
 /** The Smart update rules, run once through each content type's library row. */
 class SmartUpdateSkipTest {
@@ -81,7 +83,7 @@ class SmartUpdateSkipTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("entries")
     fun `an entry due after the window is skipped under the release period restriction`(entry: SmartUpdateEntry) {
-        val facts = entry.facts(nextUpdate = WINDOW_END + 1)
+        val facts = entry.facts(nextUpdate = WINDOW_END + 1.milliseconds)
 
         smartUpdateSkip(facts, setOf(MANGA_OUTSIDE_RELEASE_PERIOD), WINDOW_END) shouldBe
             SmartUpdateSkip.NOT_IN_RELEASE_PERIOD
@@ -97,6 +99,12 @@ class SmartUpdateSkipTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("entries")
+    fun `an entry with no predicted update is fetched under the release period restriction`(entry: SmartUpdateEntry) {
+        smartUpdateSkip(entry.facts(nextUpdate = null), setOf(MANGA_OUTSIDE_RELEASE_PERIOD), WINDOW_END) shouldBe null
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("entries")
     fun `a never initialized entry is fetched whatever would skip it`(entry: SmartUpdateEntry) {
         val facts = entry.facts(fetchesOnce = true, completed = true, total = 3, initialized = false)
         val restrictions = setOf(MANGA_NON_COMPLETED, MANGA_NON_READ, MANGA_OUTSIDE_RELEASE_PERIOD)
@@ -105,7 +113,7 @@ class SmartUpdateSkipTest {
     }
 
     companion object {
-        private const val WINDOW_END = 2_000L
+        private val WINDOW_END = Instant.fromEpochMilliseconds(2_000L)
 
         @JvmStatic
         fun entries() = listOf(MangaSmartUpdateEntry(), NovelSmartUpdateEntry())
@@ -119,7 +127,7 @@ interface SmartUpdateEntry {
         completed: Boolean = false,
         total: Long = 0,
         read: Long = 0,
-        nextUpdate: Long = 0,
+        nextUpdate: Instant? = null,
         initialized: Boolean = true,
     ): SmartUpdateFacts
 }
@@ -133,7 +141,7 @@ class MangaSmartUpdateEntry : SmartUpdateEntry {
         completed: Boolean,
         total: Long,
         read: Long,
-        nextUpdate: Long,
+        nextUpdate: Instant?,
         initialized: Boolean,
     ) =
         LibraryManga(
@@ -147,9 +155,9 @@ class MangaSmartUpdateEntry : SmartUpdateEntry {
             totalChapters = total,
             readCount = read,
             bookmarkCount = 0,
-            latestUpload = 0,
-            chapterFetchedAt = 0,
-            lastRead = 0,
+            latestUpload = null,
+            chapterFetchedAt = null,
+            lastRead = null,
         ).smartUpdateFacts()
 }
 
@@ -162,7 +170,7 @@ class NovelSmartUpdateEntry : SmartUpdateEntry {
         completed: Boolean,
         total: Long,
         read: Long,
-        nextUpdate: Long,
+        nextUpdate: Instant?,
         initialized: Boolean,
     ) =
         LibraryNovel(
@@ -177,8 +185,8 @@ class NovelSmartUpdateEntry : SmartUpdateEntry {
             readCount = read,
             bookmarkCount = 0,
             downloadCount = 0,
-            latestUpload = 0,
-            chapterFetchedAt = 0,
-            lastRead = 0,
+            latestUpload = null,
+            chapterFetchedAt = null,
+            lastRead = null,
         ).smartUpdateFacts()
 }

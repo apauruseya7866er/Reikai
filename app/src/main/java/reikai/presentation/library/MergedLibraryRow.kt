@@ -3,12 +3,13 @@ package reikai.presentation.library
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import reikai.domain.merge.MergedGroupCounts
 import tachiyomi.domain.library.model.LibraryManga
+import kotlin.time.Instant
 
 /** One member of a merge group as its library row reads it; [S] is the content type's source key. */
 data class MergedRowMember<S>(
     val id: Long,
     val source: S,
-    val lastRead: Long,
+    val lastRead: Instant?,
     val downloadCount: Int,
     val genre: List<String>?,
 )
@@ -38,7 +39,9 @@ suspend fun <S> LibraryItem.stampMergedGroup(
         downloadCount = downloads,
         unreadCount = unread,
         // LastRead sorts by the most recent read across the group, so reading any source bubbles it up.
-        libraryManga = libraryManga.copy(lastRead = members.maxOf { it.lastRead }).withGroupCounts(counts),
+        libraryManga = libraryManga
+            .copy(lastRead = members.mapNotNull { it.lastRead }.maxOrNull())
+            .withGroupCounts(counts),
         relatedMangaIds = members.map { it.id },
         memberSources = sources.map { querySource(it) },
         memberGenres = members.flatMap { it.genre.orEmpty() }.distinct(),

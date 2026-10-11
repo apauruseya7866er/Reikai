@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test
 import reikai.domain.novel.NovelTrackRepository
 import reikai.domain.novel.interactor.UpsertNovelTrack
 import reikai.domain.novel.model.NovelTrack
+import kotlin.time.Instant
 import eu.kanade.tachiyomi.data.database.models.Track as DbTrack
 
 /** Verifies the shared status/score transitions ([reikai.domain.track.TrackFieldMutations]) land in `novel_tracks`. */
@@ -61,7 +62,7 @@ class NovelTrackUpdaterTest {
         updater.setRemoteLastChapterRead(tracker, dbTrack(lastRead = 9.0, total = 10, status = reading), 10)
         inserted.single().let {
             it.status shouldBe completed
-            (it.finishDate > 0L) shouldBe true
+            (it.finishDate != null) shouldBe true
         }
     }
 

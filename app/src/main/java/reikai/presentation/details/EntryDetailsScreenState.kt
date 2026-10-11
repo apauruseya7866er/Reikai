@@ -9,6 +9,7 @@ import reikai.domain.merge.DownloadTargets
 import reikai.domain.reader.ChapterProgress
 import reikai.presentation.components.UndatedChapterDate
 import reikai.presentation.selection.ChapterMarks
+import kotlin.time.Instant
 
 /**
  * The neutral details screen state both content types produce, so the shared details UI can render manga
@@ -129,7 +130,7 @@ sealed interface EntryChapterListItem {
         val subtitle: String?,
         override val read: Boolean,
         override val bookmark: Boolean,
-        val dateUpload: Long,
+        val dateUpload: Instant?,
         val chapterNumber: Double,
         /** Where reading stopped, in the engine's own unit; null once read. */
         override val progress: ChapterProgress?,

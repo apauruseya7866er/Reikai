@@ -11,6 +11,7 @@ import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import kotlinx.coroutines.test.runTest
+import mihon.core.common.extensions.toInstantOrNull
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -27,6 +28,7 @@ import tachiyomi.domain.history.interactor.GetNextChapters
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.repository.MangaRepository
+import kotlin.time.Instant
 
 /**
  * A merged manga's chapters in reading order, the one rule the library's "download next", the reader's
@@ -104,7 +106,7 @@ class MangaReadingOrderTest {
             id = id,
             mangaId = mangaId,
             name = name,
-            dateUpload = upload,
+            dateUpload = upload.toInstantOrNull(),
             chapterNumber = id.toDouble(),
         )
 
@@ -130,7 +132,7 @@ class MangaReadingOrderTest {
                 mangaId = 1L,
                 name = "Chapter",
                 chapterNumber = 1.0,
-                dateUpload = 100L,
+                dateUpload = Instant.fromEpochMilliseconds(100L),
                 sourceOrder = index.toLong(),
             )
         }

@@ -4,6 +4,7 @@ import io.kotest.matchers.collections.shouldContainExactly
 import kotlinx.datetime.LocalDate
 import org.junit.jupiter.api.Test
 import reikai.domain.entry.EntryId
+import kotlin.time.Instant
 
 /**
  * The order a long-press sweep runs along. It is the rendered order, so a group stands in for its
@@ -16,7 +17,7 @@ class RecentsSweepOrderTest {
 
     private fun item(raw: Long, chapter: Long) = RecentsItem(
         entryId = EntryId.Manga(raw),
-        timestamp = raw,
+        timestamp = Instant.fromEpochMilliseconds(raw),
         lane = RecentsLane.Updated(ChapterRef(EntryId.Manga(raw), chapter)),
         payload = Unit,
     )
@@ -55,7 +56,7 @@ class RecentsSweepOrderTest {
     fun `a row with no chapter is not somewhere a sweep can stop`() {
         val added = RecentsItem(
             entryId = EntryId.Novel(7),
-            timestamp = 1,
+            timestamp = Instant.fromEpochMilliseconds(1),
             lane = RecentsLane.Added,
             payload = Unit,
         )

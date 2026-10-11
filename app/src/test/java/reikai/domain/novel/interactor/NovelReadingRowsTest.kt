@@ -18,6 +18,7 @@ import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import kotlin.time.Instant
 
 /**
  * The rows a novel's reader lists in each scope. Novels 1 and 2 are one group; chapter 1's leading copy
@@ -61,8 +62,8 @@ class NovelReadingRowsTest {
         lastTextProgress = 0L,
         chapterNumber = order.toDouble(),
         sourceOrder = order,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 

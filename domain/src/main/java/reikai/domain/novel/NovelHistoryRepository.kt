@@ -5,11 +5,12 @@ import reikai.domain.backup.RestoredChapterHistory
 import reikai.domain.novel.model.NovelHistory
 import reikai.domain.novel.model.NovelHistoryUpdate
 import reikai.domain.novel.model.NovelHistoryWithRelations
+import kotlin.time.Instant
 
 /**
  * Novel twin of [tachiyomi.domain.history.repository.HistoryRepository], backing the History tab's
  * novel feed. [getNovelHistory] is the reactive one-row-per-novel feed (search by title);
- * [getLastNovelHistory] drives tab-reselect resume. resetNovelHistory* soft-delete (last_read = 0,
+ * [getLastNovelHistory] drives tab-reselect resume. resetNovelHistory* soft-delete (last_read = NULL,
  * hidden by the feed filter so a re-read re-surfaces it); [deleteAllNovelHistory] hard-clears.
  * Pinned by HistoryFeedConformanceTest.
  */
@@ -33,13 +34,13 @@ interface NovelHistoryRepository {
     suspend fun getUrlKeyedHistoryByNovelId(novelId: Long): List<RestoredChapterHistory>
 
     /** Backup restore of one chapter's history: the later read time and the longer duration win. */
-    suspend fun restoreHistory(chapterId: Long, readAt: Long, readDuration: Long)
+    suspend fun restoreHistory(chapterId: Long, readAt: Instant?, readDuration: Long)
 
     /**
      * Backup restore of an old backup's novel-level Last read stamp: a novel with no history row gets
      * one on its latest-read chapter, and one with any history keeps it untouched.
      */
-    suspend fun seedLastRead(novelId: Long, readAt: Long)
+    suspend fun seedLastRead(novelId: Long, readAt: Instant)
 
     /** Total novel reading time (ms) across all chapters, for the Stats screen. */
     suspend fun getTotalReadDuration(): Long

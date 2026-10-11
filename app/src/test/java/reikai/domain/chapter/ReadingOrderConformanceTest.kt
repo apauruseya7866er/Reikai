@@ -1,6 +1,7 @@
 package reikai.domain.chapter
 
 import io.kotest.matchers.shouldBe
+import mihon.core.common.extensions.toInstantOrNull
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
@@ -15,6 +16,7 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.getChapterSort
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /** One entry's chapters as its source listed them, with every sort axis disagreeing with every other. */
 data class ListedChapter(val id: Long, val name: String, val number: Double, val upload: Long)
@@ -131,7 +133,7 @@ class ReadingOrderConformanceTest {
                         id = spec.id,
                         name = spec.name,
                         chapterNumber = if (tied) 1.0 else spec.number,
-                        dateUpload = spec.upload,
+                        dateUpload = spec.upload.toInstantOrNull(),
                         // A manga source lists newest first, so the chapter listed last is read first.
                         sourceOrder = (listed.lastIndex - index).toLong(),
                         read = spec.id in read,
@@ -163,8 +165,8 @@ class ReadingOrderConformanceTest {
                         chapterNumber = if (tied) 1.0 else spec.number,
                         // A novel source lists oldest first, the opposite of a manga source.
                         sourceOrder = index.toLong(),
-                        dateFetch = 0L,
-                        dateUpload = spec.upload,
+                        dateFetch = Instant.fromEpochMilliseconds(0L),
+                        dateUpload = spec.upload.toInstantOrNull(),
                         page = "",
                     )
                 }

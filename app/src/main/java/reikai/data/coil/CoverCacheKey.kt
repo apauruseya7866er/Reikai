@@ -2,6 +2,7 @@ package reikai.data.coil
 
 import reikai.domain.entry.EntryId
 import reikai.domain.entry.customCoverKey
+import kotlin.time.Instant
 
 /**
  * The key Coil caches an entry's cover under, in memory and on disk, for both content types. A custom
@@ -9,5 +10,5 @@ import reikai.domain.entry.customCoverKey
  * any other cover by its address, so a browsed result and its stored row share one. A manga's key is
  * Mihon's unchanged, since [customCoverKey] is its bare id.
  */
-fun coverCacheKey(customCoverOwner: EntryId?, url: String?, lastModified: Long): String =
+fun coverCacheKey(customCoverOwner: EntryId?, url: String?, lastModified: Instant?): String =
     "${customCoverOwner?.customCoverKey() ?: url};$lastModified"

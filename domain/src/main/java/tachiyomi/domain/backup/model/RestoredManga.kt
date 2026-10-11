@@ -6,7 +6,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.track.model.Track
-import java.util.Date
+import kotlin.time.Instant
 
 data class RestoredManga(
     val manga: Manga,
@@ -26,6 +26,6 @@ data class RestoredManga(
 
 data class RestoredHistory(
     val chapterUrl: String,
-    val readAt: Date?,
+    val readAt: Instant?,
     val readDuration: Long,
 )

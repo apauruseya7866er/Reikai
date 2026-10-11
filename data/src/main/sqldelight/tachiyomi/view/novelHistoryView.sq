@@ -1,7 +1,6 @@
 -- Novel twin of historyView: one row per novel (its most-recently-read chapter), newest first, for
 -- the History tab's novel feed. Mirrors historyView's max_last_read subquery (SQLite returns the
 -- chapter_id of the MAX(last_read) row per novel) so the feed shows a single entry per series.
--- `readAt` is plain epoch-millis (no Date adapter), matching novel_history.last_read.
 CREATE VIEW novelHistoryView AS
 SELECT
     novel_history._id AS id,
@@ -57,7 +56,7 @@ lastTextProgress,
 readAt,
 readDuration
 FROM novelHistoryView
-WHERE novelHistoryView.readAt > 0
+WHERE novelHistoryView.readAt IS NOT NULL
 AND maxReadAtChapterId = novelHistoryView.chapterId
 AND lower(novelHistoryView.title) LIKE ('%' || :query || '%')
 -- Same category blocks as the manga twin, so the two history feeds filter identically. Like it, this
@@ -109,6 +108,6 @@ lastTextProgress,
 readAt,
 readDuration
 FROM novelHistoryView
-WHERE novelHistoryView.readAt > 0
+WHERE novelHistoryView.readAt IS NOT NULL
 ORDER BY readAt DESC
 LIMIT 1;

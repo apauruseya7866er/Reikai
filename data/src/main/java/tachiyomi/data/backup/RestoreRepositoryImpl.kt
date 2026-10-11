@@ -35,7 +35,7 @@ import tachiyomi.domain.manga.repository.MangaMetadataRepository
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.track.model.Track
 import tachiyomi.domain.track.repository.TrackRepository
-import java.util.Date
+import kotlin.time.Instant
 
 @Inject
 @SingleIn(AppScope::class)
@@ -147,7 +147,7 @@ class RestoreRepositoryImpl(
             remoteStatus = manga.status,
             remoteCover = manga.thumbnailUrl,
             stateChapterLastUpdate = manga.lastUpdate,
-            stateChapterNextUpdate = 0L,
+            stateChapterNextUpdate = null,
             stateChapterFetchInterval = 0L,
             stateInitialized = manga.initialized,
             userReaderFlags = manga.viewerFlags,
@@ -239,7 +239,7 @@ class RestoreRepositoryImpl(
     // RK: pageCount is excluded because it is derived rather than user state. Comparing it would make
     // every restore from a backup predating the column rewrite the whole chapter list to no effect.
     private fun Chapter.forComparison() =
-        this.copy(id = 0L, mangaId = 0L, dateFetch = 0L, dateUpload = 0L, pageCount = 0L)
+        this.copy(id = 0L, mangaId = 0L, dateFetch = Instant.DISTANT_PAST, dateUpload = null, pageCount = 0L)
 
     private suspend fun restoreHistory(manga: Manga, restoredHistory: List<RestoredHistory>) {
         if (restoredHistory.isEmpty()) return
@@ -252,23 +252,22 @@ class RestoreRepositoryImpl(
         val toUpdate = restoredHistory
             // RK --> the copies fold through the kernel the novel restore calls too, by URL, which names
             // one chapter of a manga
-            .map { RestoredChapterHistory(it.chapterUrl, it.readAt?.time ?: 0L, it.readDuration) }
+            .map { RestoredChapterHistory(it.chapterUrl, it.readAt, it.readDuration) }
             .foldHistoryCopies()
             // RK <--
             // Chapter doesn't exist; skip
             .filter { it.chapterUrl in chapterIdsByUrl }
-            // RK --> the later read and the longer time, by the kernel the migrate carries call too. 0 is
-            // kept rather than written as NULL, since it marks history the user removed.
+            // RK --> the later read and the longer time, by the kernel the migrate carries call too
             .map { history ->
                 val chapterId = chapterIdsByUrl.getValue(history.chapterUrl)
                 val dbHistory = dbHistoryByChapterId[chapterId]
                 val (readAt, readDuration) = mergedHistory(
                     history.readAt,
                     history.readDuration,
-                    dbHistory?.read_at?.time,
+                    dbHistory?.read_at,
                     dbHistory?.read_duration ?: 0L,
                 )
-                Triple(chapterId, Date(readAt), readDuration)
+                Triple(chapterId, readAt, readDuration)
             }
         // RK <--
 

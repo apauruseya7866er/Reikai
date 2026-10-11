@@ -104,7 +104,7 @@ class GalleryAdder(
             }
 
             if (fav && libraryAdder.addWithoutAsking(manga.id) != null) {
-                manga = manga.copy(favoriteAt = manga.favoriteAt ?: Clock.System.now().toEpochMilliseconds())
+                manga = manga.copy(favoriteAt = manga.favoriteAt ?: Clock.System.now())
             }
 
             if (cleanedChapterUrl != null) {

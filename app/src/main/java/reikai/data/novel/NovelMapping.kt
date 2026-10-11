@@ -1,12 +1,15 @@
 package reikai.data.novel
 
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
+import mihon.core.common.extensions.toInstantOrNull
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.novel.host.ChapterItem
 import reikai.novel.host.NovelItem
 import reikai.novel.host.NovelTextSanitizer
 import reikai.novel.host.SourceNovel
+import kotlin.time.Clock
+import kotlin.time.Instant
 
 /**
  * Status codes used by the `novels.status` column. Mirrors the lnreader NovelStatus enum the
@@ -68,7 +71,7 @@ val SourceNovel.sentName: String?
 fun SourceNovel.toNovel(
     sourceId: String,
     favorite: Boolean = true,
-    now: Long = System.currentTimeMillis(),
+    now: Instant = Clock.System.now(),
 ): Novel = Novel(
     id = -1L,
     source = sourceId,
@@ -81,11 +84,11 @@ fun SourceNovel.toNovel(
     status = NovelStatusCode.fromString(status).toLong(),
     thumbnailUrl = cover,
     favoriteAt = now.takeIf { favorite },
-    lastUpdate = 0L,
+    lastUpdate = null,
     initialized = true,
     chapterFlags = 0L,
     updateStrategy = UpdateStrategy.ALWAYS_UPDATE,
-    coverLastModified = 0L,
+    coverLastModified = null,
     totalPages = totalPages.toLong(),
     notes = "",
     viewerFlags = 0L,
@@ -107,7 +110,7 @@ fun NovelItem.toNovel(sourceId: String): Novel =
 fun ChapterItem.toNovelChapter(
     novelId: Long,
     sourceOrder: Long = 0L,
-    now: Long = System.currentTimeMillis(),
+    now: Instant = Clock.System.now(),
 ): NovelChapter = NovelChapter(
     id = -1L,
     novelId = novelId,
@@ -119,7 +122,8 @@ fun ChapterItem.toNovelChapter(
     chapterNumber = chapterNumber ?: 0.0,
     sourceOrder = sourceOrder,
     dateFetch = now,
-    dateUpload = NovelDateParser.parse(releaseTime, now),
+    // A date the plugin gives none for, or one it cannot be read from, is unknown, as manga's source API 0 is
+    dateUpload = NovelDateParser.parse(releaseTime, now.toEpochMilliseconds()).toInstantOrNull(),
     page = page.orEmpty(),
     // Manga's rule (copyFromSChapter): trimmed, and blank means none.
     scanlator = scanlator?.let(NovelTextSanitizer::decodeEntities)?.trim()?.ifEmpty { null },

@@ -39,6 +39,7 @@ import reikai.novel.source.NovelSourceManager
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
+import kotlin.time.Instant
 
 /**
  * The drain against everything else that edits the queue while it runs: a Resume while a paused drain
@@ -60,8 +61,8 @@ class NovelDownloadManagerDrainTest {
             lastTextProgress = 0L,
             chapterNumber = id.toDouble(),
             sourceOrder = id,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = "",
         )
     }

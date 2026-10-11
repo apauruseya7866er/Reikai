@@ -6,30 +6,32 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import org.junit.jupiter.api.Test
+import kotlin.time.Instant
 
 /** What binding a tracker to an entry pushes from local reading, for manga and novels alike. */
 class BindBackfillTest {
 
     private val zone = TimeZone.of("Asia/Tokyo")
-    private val firstReadAt = LocalDateTime(2024, 3, 1, 23, 30).toInstant(zone).toEpochMilliseconds()
+    private val firstReadAt = LocalDateTime(2024, 3, 1, 23, 30).toInstant(zone)
 
     private suspend fun backfill(
         chapters: List<BindChapter>,
         lastChapterRead: Double = 0.0,
-        startDate: Long = 0L,
-        readAts: List<Long?> = listOf(firstReadAt),
+        startDate: Instant? = null,
+        readAts: List<Instant?> = listOf(firstReadAt),
     ) = bindBackfill(chapters, lastChapterRead, startDate, zone) { readAts }
 
     @Test
     fun `a first read at 23 30 local sends that wall-clock time as UTC`() = runTest {
-        val expected = LocalDateTime(2024, 3, 1, 23, 30).toInstant(TimeZone.UTC).toEpochMilliseconds()
+        val expected = LocalDateTime(2024, 3, 1, 23, 30).toInstant(TimeZone.UTC)
 
         backfill(listOf(BindChapter(1.0, read = true))).startDate shouldBe expected
     }
 
     @Test
     fun `a start date the tracker already has is never overwritten`() = runTest {
-        backfill(listOf(BindChapter(1.0, read = true)), startDate = 1_000L).startDate shouldBe null
+        backfill(listOf(BindChapter(1.0, read = true)), startDate = Instant.fromEpochMilliseconds(1_000L))
+            .startDate shouldBe null
     }
 
     @Test
@@ -38,10 +40,10 @@ class BindBackfillTest {
     }
 
     @Test
-    fun `removed history and history with no date are not taken as the day reading began`() = runTest {
-        val expected = LocalDateTime(2024, 3, 1, 23, 30).toInstant(TimeZone.UTC).toEpochMilliseconds()
+    fun `removed history is not taken as the day reading began`() = runTest {
+        val expected = LocalDateTime(2024, 3, 1, 23, 30).toInstant(TimeZone.UTC)
 
-        backfill(listOf(BindChapter(1.0, read = true)), readAts = listOf(0L, null, firstReadAt)).startDate shouldBe
+        backfill(listOf(BindChapter(1.0, read = true)), readAts = listOf(null, firstReadAt)).startDate shouldBe
             expected
     }
 

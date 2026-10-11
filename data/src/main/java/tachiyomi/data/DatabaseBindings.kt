@@ -72,20 +72,45 @@ object DatabaseBindings {
         return Database(
             driver = driver,
             historyAdapter = History.Adapter(
-                read_atAdapter = DateColumnAdapter,
+                read_atAdapter = InstantColumnAdapter,
             ),
             mangaAdapter = Manga.Adapter(
                 remote_genreAdapter = StringListColumnAdapter,
                 remote_update_strategyAdapter = UpdateStrategyColumnAdapter,
                 remote_memoAdapter = MemoColumnAdapter,
+                user_favorite_atAdapter = InstantColumnAdapter,
+                state_chapter_last_updateAdapter = InstantColumnAdapter,
+                state_chapter_next_updateAdapter = InstantColumnAdapter,
+                state_cover_last_modifiedAdapter = InstantColumnAdapter,
             ),
             chapterAdapter = Chapter.Adapter(
+                remote_date_uploadAdapter = InstantColumnAdapter,
                 remote_memoAdapter = MemoColumnAdapter,
+                state_date_fetchAdapter = InstantColumnAdapter,
+            ),
+            manga_trackAdapter = Manga_track.Adapter(
+                start_dateAdapter = InstantColumnAdapter,
+                finish_dateAdapter = InstantColumnAdapter,
             ),
             // RK --> light-novel vertical
             novelsAdapter = Novels.Adapter(
                 genreAdapter = StringListColumnAdapter,
+                last_updateAdapter = InstantColumnAdapter,
                 update_strategyAdapter = UpdateStrategyColumnAdapter,
+                cover_last_modifiedAdapter = InstantColumnAdapter,
+                next_updateAdapter = InstantColumnAdapter,
+                favorite_atAdapter = InstantColumnAdapter,
+            ),
+            novel_chaptersAdapter = Novel_chapters.Adapter(
+                date_fetchAdapter = InstantColumnAdapter,
+                date_uploadAdapter = InstantColumnAdapter,
+            ),
+            novel_historyAdapter = Novel_history.Adapter(
+                last_readAdapter = InstantColumnAdapter,
+            ),
+            novel_tracksAdapter = Novel_tracks.Adapter(
+                start_dateAdapter = InstantColumnAdapter,
+                finish_dateAdapter = InstantColumnAdapter,
             ),
             // RK: manga custom-info overlay
             custom_manga_infoAdapter = Custom_manga_info.Adapter(

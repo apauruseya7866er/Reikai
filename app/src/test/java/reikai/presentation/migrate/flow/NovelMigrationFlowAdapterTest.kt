@@ -23,6 +23,7 @@ import reikai.novel.source.NovelItemsPage
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
 import java.io.IOException
+import kotlin.time.Instant
 
 /**
  * The novel half of the two smart-match options. Deep search and prioritize-by-chapters were hidden
@@ -212,8 +213,8 @@ class NovelMigrationFlowAdapterTest {
         lastTextProgress = 0L,
         chapterNumber = number,
         sourceOrder = 0L,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 }

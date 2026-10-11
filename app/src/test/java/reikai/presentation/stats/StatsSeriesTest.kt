@@ -123,9 +123,9 @@ class StatsSeriesTest {
         totalChapters = totalChapters,
         readCount = readCount,
         bookmarkCount = 0,
-        latestUpload = 0,
-        chapterFetchedAt = 0,
-        lastRead = 0,
+        latestUpload = null,
+        chapterFetchedAt = null,
+        lastRead = null,
     )
 
     private fun novel(id: Long, status: Long = 0, totalChapters: Long = 0, readCount: Long = 0) = LibraryNovel(
@@ -135,9 +135,9 @@ class StatsSeriesTest {
         readCount = readCount,
         bookmarkCount = 0,
         downloadCount = 0,
-        latestUpload = 0,
-        chapterFetchedAt = 0,
-        lastRead = 0,
+        latestUpload = null,
+        chapterFetchedAt = null,
+        lastRead = null,
     )
 
     private fun track(entryId: Long, score: Double) = Track(
@@ -152,8 +152,8 @@ class StatsSeriesTest {
         status = 0L,
         score = score,
         remoteUrl = "",
-        startDate = 0L,
-        finishDate = 0L,
+        startDate = null,
+        finishDate = null,
         private = false,
     )
 

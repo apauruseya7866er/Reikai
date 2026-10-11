@@ -56,7 +56,7 @@ fun RecommendationGridItem(
                             sourceId = candidate.sourceId,
                             isMangaFavorite = inLibrary,
                             url = candidate.manga.thumbnail_url,
-                            lastModified = 0L,
+                            lastModified = null,
                         ),
                     )
                 },

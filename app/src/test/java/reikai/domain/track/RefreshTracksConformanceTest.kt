@@ -139,8 +139,8 @@ class RefreshTracksConformanceTest {
             status = 0L,
             score = 0.0,
             remoteUrl = "",
-            startDate = 0L,
-            finishDate = 0L,
+            startDate = null,
+            finishDate = null,
             private = false,
         )
 
@@ -156,8 +156,8 @@ class RefreshTracksConformanceTest {
             status = 0L,
             score = 0.0,
             remoteUrl = "",
-            startDate = 0L,
-            finishDate = 0L,
+            startDate = null,
+            finishDate = null,
             private = false,
         )
     }

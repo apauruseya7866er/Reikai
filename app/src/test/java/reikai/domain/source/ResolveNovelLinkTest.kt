@@ -32,6 +32,7 @@ import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.domain.library.service.LibraryPreferences
 import java.io.File
+import kotlin.time.Instant
 
 /** The three novel tiers of a shared link over the real SQL, with the sources faked. */
 class ResolveNovelLinkTest {
@@ -79,7 +80,14 @@ class ResolveNovelLinkTest {
     )
 
     private suspend fun stored(url: String, sourceId: String = "a"): Novel {
-        val id = novels.insert(Novel.create().copy(source = sourceId, url = url, title = "Stored", favoriteAt = 0L))!!
+        val id = novels.insert(
+            Novel.create().copy(
+                source = sourceId,
+                url = url,
+                title = "Stored",
+                favoriteAt = Instant.fromEpochMilliseconds(0L),
+            ),
+        )!!
         return novels.getById(id)!!
     }
 

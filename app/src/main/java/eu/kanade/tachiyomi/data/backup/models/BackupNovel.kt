@@ -5,7 +5,9 @@ package eu.kanade.tachiyomi.data.backup.models
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
+import mihon.core.common.extensions.toInstantOrNull
 import reikai.domain.novel.model.Novel
+import tachiyomi.domain.manga.model.Manga
 
 @Serializable
 class BackupNovel(
@@ -60,12 +62,17 @@ class BackupNovel(
             genre = this@BackupNovel.genre.ifEmpty { null },
             status = this@BackupNovel.status,
             thumbnailUrl = this@BackupNovel.thumbnailUrl,
-            favoriteAt = if (this@BackupNovel.favorite) this@BackupNovel.dateAdded else null,
-            lastUpdate = this@BackupNovel.lastUpdate,
+            // A library entry the backup knows no date for keeps the unknown date manga's restore gives
+            favoriteAt = if (this@BackupNovel.favorite) {
+                this@BackupNovel.dateAdded.toInstantOrNull() ?: Manga.UNKNOWN_FAVORITE_AT
+            } else {
+                null
+            },
+            lastUpdate = this@BackupNovel.lastUpdate.toInstantOrNull(),
             initialized = this@BackupNovel.initialized,
             chapterFlags = this@BackupNovel.chapterFlags,
             updateStrategy = this@BackupNovel.updateStrategy,
-            coverLastModified = this@BackupNovel.coverLastModified,
+            coverLastModified = this@BackupNovel.coverLastModified.toInstantOrNull(),
             totalPages = this@BackupNovel.totalPages,
             notes = this@BackupNovel.notes,
             viewerFlags = this@BackupNovel.viewerFlags,

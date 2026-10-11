@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test
 import reikai.domain.entry.EntryId
 import reikai.domain.merge.ChapterCopyRow
 import reikai.domain.merge.ChapterUnit
+import kotlin.time.Instant
 
 /**
  * A History row's copies, loaded with the read lane so the row and the Downloaded filter (both of which
@@ -27,8 +28,10 @@ class RecentsRowCopiesIndexTest {
 
     private val merged = EntryId.Manga(1L)
     private val alone = EntryId.Manga(2L)
-    private val mergedRow = RecentsItem(merged, 100, RecentsLane.Read(ChapterRef(merged, 10L)), Unit)
-    private val aloneRow = RecentsItem(alone, 90, RecentsLane.Read(ChapterRef(alone, 40L)), Unit)
+    private val mergedRow =
+        RecentsItem(merged, Instant.fromEpochMilliseconds(100), RecentsLane.Read(ChapterRef(merged, 10L)), Unit)
+    private val aloneRow =
+        RecentsItem(alone, Instant.fromEpochMilliseconds(90), RecentsLane.Read(ChapterRef(alone, 40L)), Unit)
     private val lane = flowOf(RecentsLaneRows(listOf(mergedRow, aloneRow), loaded = true))
 
     private fun copy(named: Long, id: Long, order: Int) =

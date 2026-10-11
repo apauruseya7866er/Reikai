@@ -1,6 +1,7 @@
 package tachiyomi.domain.updates.model
 
 import tachiyomi.domain.manga.model.MangaCover
+import kotlin.time.Instant
 
 data class UpdatesWithRelations(
     val mangaId: Long,
@@ -14,6 +15,6 @@ data class UpdatesWithRelations(
     val lastPageRead: Long,
     val pageCount: Long, // RK: lets the progress line say how far through the chapter reading stopped
     val sourceId: Long,
-    val dateFetch: Long,
+    val dateFetch: Instant,
     val coverData: MangaCover,
 )

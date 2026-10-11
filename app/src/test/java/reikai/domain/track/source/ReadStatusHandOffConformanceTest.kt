@@ -12,6 +12,7 @@ import reikai.domain.novel.model.NovelChapter
 import reikai.presentation.recents.EmittingPreferenceStore
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
+import kotlin.time.Instant
 
 /**
  * What a mark read or unread hands the source's own tracker: each changed chapter with the state it
@@ -77,7 +78,11 @@ class ReadStatusHandOffConformanceTest {
                             NovelChapter(
                                 id = it.id, novelId = 1L, url = "", name = "", read = it.read, bookmark = false,
                                 lastTextProgress = if (it.started) 5L else 0L, chapterNumber = it.id.toDouble(),
-                                sourceOrder = it.id, dateFetch = 0L, dateUpload = 0L, page = "",
+                                sourceOrder = it.id,
+                                dateFetch = Instant.fromEpochMilliseconds(
+                                    0L,
+                                ),
+                                dateUpload = null, page = "",
                             )
                         },
                     )

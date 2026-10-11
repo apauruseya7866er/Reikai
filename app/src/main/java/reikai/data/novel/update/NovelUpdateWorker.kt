@@ -71,6 +71,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.service.LibraryPreferences
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 /**
  * Periodic background check for new chapters in favorited light novels, the novel analog of Mihon's
@@ -184,7 +185,7 @@ class NovelUpdateWorker(
         val favorites = novelRepo.getLibraryNovelAsFlow().first()
             .filter { entry ->
                 isUpdateScope(entry.categories, categoryId, include, exclude) &&
-                    smartUpdateSkip(entry.smartUpdateFacts(), restrictions, fetchWindow.second) == null
+                    smartUpdateSkip(entry.smartUpdateFacts(), restrictions, fetchWindow.endInclusive) == null
             }
             .sortedBy { it.novel.title }
             .map { it.novel }
@@ -232,7 +233,7 @@ class NovelUpdateWorker(
     private suspend fun checkNovel(
         novel: Novel,
         source: NovelSource,
-        fetchWindow: Pair<Long, Long>,
+        fetchWindow: ClosedRange<Instant>,
     ): List<NovelChapter> = refreshNovelFromSource(
         novel,
         source,

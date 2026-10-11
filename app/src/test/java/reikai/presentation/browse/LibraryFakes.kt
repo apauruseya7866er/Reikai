@@ -33,6 +33,7 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.model.MangaWithChapterCount
 import tachiyomi.domain.manga.repository.MangaRepository
+import kotlin.time.Instant
 
 fun libraryCategory(id: Long) = Category(id = id, name = "category $id", order = 0L, flags = 0L)
 
@@ -84,7 +85,7 @@ class FakeMangaLibrary(
                 id = id,
                 url = "/$id",
                 source = SOURCE_ID,
-                favoriteAt = 100L.takeIf {
+                favoriteAt = Instant.fromEpochMilliseconds(100L).takeIf {
                     favorite
                 },
             ),
@@ -176,7 +177,14 @@ class FakeNovelLibrary(
     val duplicateIds = mutableSetOf<Long>()
 
     fun put(id: Long, path: String, favorite: Boolean, categories: List<Long> = emptyList()): Novel {
-        val row = Novel.create().copy(id = id, source = SOURCE_ID, url = path, favoriteAt = 100L.takeIf { favorite })
+        val row = Novel.create().copy(
+            id = id,
+            source = SOURCE_ID,
+            url = path,
+            favoriteAt = Instant.fromEpochMilliseconds(100L).takeIf {
+                favorite
+            },
+        )
         rows[id] = row
         filed[id] = categories
         return row

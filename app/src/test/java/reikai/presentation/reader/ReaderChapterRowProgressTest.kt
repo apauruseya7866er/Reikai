@@ -8,6 +8,7 @@ import reikai.domain.merge.GroupChapterFlags
 import reikai.domain.merge.MergeScope
 import reikai.domain.novel.model.NovelChapter
 import tachiyomi.domain.chapter.model.Chapter
+import kotlin.time.Instant
 
 /**
  * The chapter sheet says how far into a chapter reading got, for both types, in the unit each reader
@@ -118,8 +119,8 @@ class NovelRowProgressProbe : ChapterRowProgressProbe {
             lastTextProgress = if (started) 4200L else 0L,
             chapterNumber = number,
             sourceOrder = 1L,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = "",
         )
         return chapter.toReaderChapterRow(

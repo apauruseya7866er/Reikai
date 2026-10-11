@@ -6,6 +6,7 @@ import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelUpdate
 import reikai.domain.novel.model.NovelUpdateWithRelations
 import reikai.domain.novel.model.NovelWithChapterCount
+import kotlin.time.Instant
 
 /**
  * Parallel of [tachiyomi.domain.manga.repository.MangaRepository] holding novels in a separate
@@ -63,7 +64,7 @@ interface NovelRepository {
      * lives on disk.
      */
     fun getFilteredNovelUpdatesAsFlow(
-        after: Long,
+        after: Instant,
         limit: Long,
         unread: Boolean?,
         started: Boolean?,

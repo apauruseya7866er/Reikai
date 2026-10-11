@@ -16,19 +16,21 @@ import reikai.domain.novel.model.NovelTrack
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
+import kotlin.time.Instant
 
 class PushNovelUnreadTest {
 
     private fun chapter(id: Long, novelId: Long) = NovelChapter(
         id = id, novelId = novelId, url = "", name = "", read = true, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = id.toDouble(), sourceOrder = id, dateFetch = 0L,
-        dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = id.toDouble(), sourceOrder = id,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null, page = "",
     )
 
     private val track = NovelTrack(
         id = 5L, novelId = 1L, trackerId = 100L, remoteId = 9L, libraryId = null, title = "t",
         lastChapterRead = 0.0, totalChapters = 0, status = 0, score = 0.0, remoteUrl = "",
-        startDate = 0, finishDate = 0, private = false,
+        startDate = null, finishDate = null, private = false,
     )
 
     // Novels 1 and 2 are one merge group; only novel 1 carries the track.

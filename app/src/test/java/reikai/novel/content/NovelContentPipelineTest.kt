@@ -20,6 +20,7 @@ import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
+import kotlin.time.Instant
 
 /**
  * The pipeline's own guarantees. The plain-text case is the one that matters most: a chapter whose
@@ -322,8 +323,8 @@ class NovelContentPipelineTest {
         lastTextProgress = 0L,
         chapterNumber = 1.0,
         sourceOrder = 0L,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 }

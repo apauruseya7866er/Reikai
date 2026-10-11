@@ -31,6 +31,7 @@ import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.service.SourceManager
+import kotlin.time.Instant
 
 /**
  * The recents chapter verbs for both content types, built from the graph rather than a screen's model,
@@ -240,7 +241,7 @@ class NovelActionsHarness(private val entryMissing: Boolean = false) : ActionsHa
     private fun chapter(id: Long) = NovelChapter(
         id = id, novelId = RecentsChapterActionsConformanceTest.ownerOf(id), url = "", name = "", read = false,
         bookmark = false, lastTextProgress = 0L, chapterNumber = id.toDouble(), sourceOrder = id,
-        dateFetch = 0L, dateUpload = 0L, page = "",
+        dateFetch = Instant.fromEpochMilliseconds(0L), dateUpload = null, page = "",
     )
 
     private val chapterRepository = mockk<NovelChapterRepository> {

@@ -6,6 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
 import reikai.domain.entry.EntryId
 import reikai.domain.library.ContentType
+import kotlin.time.Instant
 
 /**
  * The show-read rule, parameterized over both content types rather than written twice: it is one rule
@@ -24,13 +25,23 @@ class RecentsRowGateTest {
         RecentsRowGate(RecentsChapterFilters.NONE, showRead = showRead, unread = unread)
 
     private fun read(entry: EntryId) =
-        RecentsItem(entry, timestamp = 0, lane = RecentsLane.Read(ChapterRef(entry, 1)), payload = Unit)
+        RecentsItem(
+            entry,
+            timestamp = Instant.fromEpochMilliseconds(0),
+            lane = RecentsLane.Read(ChapterRef(entry, 1)),
+            payload = Unit,
+        )
 
     private fun updated(entry: EntryId) =
-        RecentsItem(entry, timestamp = 0, lane = RecentsLane.Updated(ChapterRef(entry, 1)), payload = Unit)
+        RecentsItem(
+            entry,
+            timestamp = Instant.fromEpochMilliseconds(0),
+            lane = RecentsLane.Updated(ChapterRef(entry, 1)),
+            payload = Unit,
+        )
 
     private fun added(entry: EntryId) =
-        RecentsItem(entry, timestamp = 0, lane = RecentsLane.Added, payload = Unit)
+        RecentsItem(entry, timestamp = Instant.fromEpochMilliseconds(0), lane = RecentsLane.Added, payload = Unit)
 
     @ParameterizedTest
     @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])

@@ -13,6 +13,7 @@ import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.model.NovelUpdate
+import kotlin.time.Instant
 
 /** A novel's smart update prediction is stored from its own chapters, keeping an interval the user set. */
 class NovelFetchIntervalTest {
@@ -56,8 +57,8 @@ class NovelFetchIntervalTest {
         lastTextProgress = 0L,
         chapterNumber = day.toDouble(),
         sourceOrder = 0L,
-        dateFetch = 0L,
-        dateUpload = LocalDateTime(2026, 9, day, 8, 0).toInstant(zone).toEpochMilliseconds(),
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = LocalDateTime(2026, 9, day, 8, 0).toInstant(zone),
         page = "",
     )
 }

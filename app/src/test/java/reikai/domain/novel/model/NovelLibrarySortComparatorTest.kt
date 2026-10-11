@@ -9,6 +9,7 @@ import reikai.presentation.library.SourceBadge
 import reikai.presentation.library.libraryItemSortFields
 import reikai.presentation.library.novels.toLibraryItem
 import tachiyomi.domain.library.model.LibrarySort
+import kotlin.time.Instant
 
 /**
  * Characterisation tests for the novel library sort comparator, now a thin adapter over the shared
@@ -35,17 +36,17 @@ class NovelLibrarySortComparatorTest {
         novel = Novel.create().copy(
             id = id,
             title = title,
-            lastUpdate = lastUpdate,
-            favoriteAt = dateAdded,
+            lastUpdate = Instant.fromEpochMilliseconds(lastUpdate),
+            favoriteAt = Instant.fromEpochMilliseconds(dateAdded),
         ),
         categories = emptyList(),
         totalChapters = totalChapters,
         readCount = readCount,
         bookmarkCount = 0,
         downloadCount = downloadCount,
-        latestUpload = latestUpload,
-        chapterFetchedAt = chapterFetchedAt,
-        lastRead = lastRead,
+        latestUpload = Instant.fromEpochMilliseconds(latestUpload),
+        chapterFetchedAt = Instant.fromEpochMilliseconds(chapterFetchedAt),
+        lastRead = Instant.fromEpochMilliseconds(lastRead),
     )
 
     // Drives the real production path: shape each novel into the shared library row, then sort it with

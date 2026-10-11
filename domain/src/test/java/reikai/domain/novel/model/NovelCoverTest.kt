@@ -2,15 +2,16 @@ package reikai.domain.novel.model
 
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
+import kotlin.time.Instant
 
 class NovelCoverTest {
 
     private val novel = Novel.create().copy(
         id = 7L,
         source = "plugin",
-        favoriteAt = 0L,
+        favoriteAt = Instant.fromEpochMilliseconds(0L),
         thumbnailUrl = "https://stored",
-        coverLastModified = 42L,
+        coverLastModified = Instant.fromEpochMilliseconds(42L),
     )
 
     @Test
@@ -19,7 +20,7 @@ class NovelCoverTest {
             url = "https://stored",
             sourceId = "plugin",
             isNovelFavorite = true,
-            lastModified = 42L,
+            lastModified = Instant.fromEpochMilliseconds(42L),
             novelId = 7L,
         )
     }
@@ -40,7 +41,7 @@ class NovelCoverTest {
             url = "https://listed",
             sourceId = "plugin",
             isNovelFavorite = false,
-            lastModified = 0L,
+            lastModified = null,
         )
     }
 }

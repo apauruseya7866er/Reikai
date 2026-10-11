@@ -9,6 +9,7 @@ import reikai.domain.library.EntryLibraryRemoval
 import reikai.domain.track.source.SourceTrackerDispatcher
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.MangaUpdate
+import kotlin.time.Instant
 
 /** [EntryLibraryRemoval] over the manga table. Writes only the library date and the cover stamp. */
 @Inject
@@ -22,9 +23,9 @@ class RemoveMangaFromLibrary(
 
     override fun entryId(id: Long): EntryId = EntryId.Manga(id)
 
-    override suspend fun favoriteAt(id: Long): Long? = getManga.await(id)?.favoriteAt
+    override suspend fun favoriteAt(id: Long): Instant? = getManga.await(id)?.favoriteAt
 
-    override suspend fun writeFavoriteAt(favoriteAt: Map<Long, Long?>): Boolean =
+    override suspend fun writeFavoriteAt(favoriteAt: Map<Long, Instant?>): Boolean =
         updateManga.awaitAll(favoriteAt.map { (id, at) -> MangaUpdate(id) { this.favoriteAt = at } })
 
     override suspend fun deleteCovers(id: Long): Boolean =

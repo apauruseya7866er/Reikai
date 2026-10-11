@@ -181,7 +181,7 @@ class UpdateErrorsViewModelTest {
         mangaTitle = "m$id",
         sourceId = 0L,
         thumbnailUrl = null,
-        coverLastModified = 0L,
+        coverLastModified = null,
         message = message,
         lastUpdate = 0L,
     )
@@ -193,7 +193,7 @@ class UpdateErrorsViewModelTest {
         source = "src",
         novelUrl = "/n$id",
         thumbnailUrl = null,
-        coverLastModified = 0L,
+        coverLastModified = null,
         message = message,
         lastUpdate = 0L,
     )

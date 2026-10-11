@@ -7,6 +7,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import reikai.data.novel.expectedNextUpdate
@@ -18,6 +19,7 @@ import reikai.domain.track.source.SourceTrackerDispatcher
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.repository.MangaRepository
+import kotlin.time.Instant
 
 /** The novel halves of two of Mihon's manga rules, each run beside the manga original. */
 class EntryUpdateTwinsConformanceTest {
@@ -29,6 +31,14 @@ class EntryUpdateTwinsConformanceTest {
         val manga = Manga.create().copy(status = status, nextUpdate = NEXT_UPDATE)
 
         novel.expectedNextUpdate() shouldBe manga.expectedNextUpdate
+    }
+
+    @Test
+    fun `an entry never predicted is never due, on either type`() {
+        val novel = Novel.create().copy(nextUpdate = null)
+        val manga = Manga.create().copy(nextUpdate = null)
+
+        (novel.expectedNextUpdate() to manga.expectedNextUpdate) shouldBe (null to null)
     }
 
     @ParameterizedTest(name = "favorite {0}")
@@ -55,6 +65,6 @@ class EntryUpdateTwinsConformanceTest {
 
     private companion object {
         const val ID = 7L
-        const val NEXT_UPDATE = 1_000_000L
+        val NEXT_UPDATE = Instant.fromEpochMilliseconds(1_000_000L)
     }
 }

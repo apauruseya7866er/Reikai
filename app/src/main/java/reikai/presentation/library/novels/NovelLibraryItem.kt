@@ -33,7 +33,7 @@ fun LibraryNovel.toLibraryItem(
         genre = n.genre,
         status = n.status,
         thumbnailUrl = n.thumbnailUrl,
-        favoriteAt = n.favoriteAt ?: 0L,
+        favoriteAt = n.favoriteAt ?: Manga.UNKNOWN_FAVORITE_AT,
         lastUpdate = n.lastUpdate,
         coverLastModified = n.coverLastModified,
         initialized = n.initialized,

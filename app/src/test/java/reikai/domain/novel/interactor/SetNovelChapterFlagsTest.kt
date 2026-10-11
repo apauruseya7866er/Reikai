@@ -20,6 +20,7 @@ import reikai.domain.novel.model.effectiveSorting
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
+import kotlin.time.Instant
 
 /**
  * Title display and chapter sort each have their own local-override bit, so changing one on a novel
@@ -121,7 +122,17 @@ class SetNovelChapterFlagsTest {
         val sorted = NovelChapterFlags.SORT_LOCAL or NovelChapterFlags.SORTING_ALPHABET
         (1..4).forEach {
             novels.insert(
-                Novel.create().copy(url = "/$it", favoriteAt = if (it < 4) 0L else null, chapterFlags = sorted),
+                Novel.create().copy(
+                    url = "/$it",
+                    favoriteAt = if (it <
+                        4
+                    ) {
+                        Instant.fromEpochMilliseconds(0L)
+                    } else {
+                        null
+                    },
+                    chapterFlags = sorted,
+                ),
             )
         }
         return database to novels

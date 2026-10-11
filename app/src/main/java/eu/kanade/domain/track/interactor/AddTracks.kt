@@ -47,14 +47,14 @@ class AddTracks(
                 track.lastChapterRead,
                 track.startDate,
                 TimeZone.currentSystemDefault(),
-            ) { getHistory.await(mangaId).map { it.readAt?.time } }
+            ) { getHistory.await(mangaId).map { it.readAt } }
             backfill.lastChapterRead?.let {
                 track = track.copy(lastChapterRead = it)
                 tracker.setRemoteLastChapterRead(track.toDbTrack(), it.toInt())
             }
             backfill.startDate?.let {
                 track = track.copy(startDate = it)
-                tracker.setRemoteStartDate(track.toDbTrack(), it)
+                tracker.setRemoteStartDate(track.toDbTrack(), it.toEpochMilliseconds())
             }
             // RK <--
 

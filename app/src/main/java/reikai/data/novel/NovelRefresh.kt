@@ -20,6 +20,7 @@ import reikai.novel.source.NovelSource
 import tachiyomi.domain.chapter.model.NoChaptersException
 import tachiyomi.domain.library.service.LibraryPreferences
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 /** What a refresh makes of the details already stored for a novel. */
 enum class StoredDetails {
@@ -89,7 +90,7 @@ suspend fun storeRefreshedNovel(
         existing.hasCustomCover(coverCache)
     }
     if (cover.deletesCachedFile) coverCache.getCoverFile(existing.thumbnailUrl)?.delete()
-    val coverLastModified = Clock.System.now().toEpochMilliseconds().takeIf { cover.stamps }
+    val coverLastModified = Clock.System.now().takeIf { cover.stamps }
     if (merged == existing && coverLastModified == null) return existing
     val newTitle = merged.title.takeIf { it != existing.title }
     val stored = novelRepository.update(
@@ -130,7 +131,7 @@ suspend fun refreshNovelFromSource(
     coverCache: CoverCache,
     novelDownloadManager: NovelDownloadManager? = null,
     manualFetch: Boolean = false,
-    fetchWindow: Pair<Long, Long> = Pair(0, 0),
+    fetchWindow: ClosedRange<Instant>? = null,
     details: StoredDetails = StoredDetails.KEPT,
 ): NovelRefreshResult {
     val sourceNovel = source.parseNovel(novel.url)

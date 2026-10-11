@@ -25,6 +25,7 @@ import tachiyomi.domain.manga.interactor.GetCustomMangaInfo
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.source.local.LocalSource
+import kotlin.time.Instant
 
 /**
  * A custom cover is kept only for an entry in the library (removal deletes it), so the cover viewer
@@ -77,7 +78,13 @@ class MangaCoverEditProbe(private val source: Long = 1L) : CoverEditProbe {
     override fun toString() = "manga"
 
     override fun model(inLibrary: Boolean): EntryCoverViewModel<*> {
-        val manga = Manga.create().copy(id = 1L, source = source, favoriteAt = 100L.takeIf { inLibrary })
+        val manga = Manga.create().copy(
+            id = 1L,
+            source = source,
+            favoriteAt = Instant.fromEpochMilliseconds(100L).takeIf {
+                inLibrary
+            },
+        )
         return MangaEntryCoverViewModel(
             mangaId = manga.id,
             getManga = mockk<GetManga> { every { subscribe(manga.id) } returns flowOf(manga) },
@@ -95,7 +102,14 @@ class NovelCoverEditProbe : CoverEditProbe {
     override fun toString() = "novel"
 
     override fun model(inLibrary: Boolean): EntryCoverViewModel<*> {
-        val novel = Novel.create().copy(id = 1L, source = "plugin", url = "/1", favoriteAt = 100L.takeIf { inLibrary })
+        val novel = Novel.create().copy(
+            id = 1L,
+            source = "plugin",
+            url = "/1",
+            favoriteAt = Instant.fromEpochMilliseconds(100L).takeIf {
+                inLibrary
+            },
+        )
         return NovelCoverViewModel(
             novelUrl = novel.url,
             novelSource = novel.source,

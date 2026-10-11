@@ -16,6 +16,7 @@ import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelUpdate
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
+import kotlin.time.Instant
 
 /**
  * The library keys the browse, search and feed lists badge their rows from, over the real SQL. Browsing
@@ -52,7 +53,9 @@ class NovelFavoritedKeysTest {
     fun `adding a novel to the library emits keys that contain it`() = runTest {
         val browsed = repository.getByUrlAndSource("browsed", SOURCE)!!
 
-        emissionsAcross { repository.update(NovelUpdate(browsed.id) { favoriteAt = 2L }) }
+        emissionsAcross {
+            repository.update(NovelUpdate(browsed.id) { favoriteAt = Instant.fromEpochMilliseconds(2L) })
+        }
             .last().contains(SOURCE, "browsed") shouldBe true
     }
 
@@ -61,8 +64,15 @@ class NovelFavoritedKeysTest {
     fun `a library novel's cover change emits its new row`() = runTest {
         val inLibrary = repository.getByUrlAndSource("in-library", SOURCE)!!
 
-        emissionsAcross { repository.update(NovelUpdate(inLibrary.id) { coverLastModified = 5L }) }
-            .last().stored(SOURCE, "in-library")?.coverLastModified shouldBe 5L
+        emissionsAcross {
+            repository.update(
+                NovelUpdate(inLibrary.id) {
+                    coverLastModified =
+                        Instant.fromEpochMilliseconds(5L)
+                },
+            )
+        }
+            .last().stored(SOURCE, "in-library")?.coverLastModified shouldBe Instant.fromEpochMilliseconds(5L)
     }
 
     /** Every value the keys flow sent, the one on collection included, across [write]. */
@@ -78,7 +88,12 @@ class NovelFavoritedKeysTest {
     }
 
     private fun novel(url: String, favoriteAt: Long?) =
-        Novel.create().copy(source = SOURCE, url = url, title = url, favoriteAt = favoriteAt)
+        Novel.create().copy(
+            source = SOURCE,
+            url = url,
+            title = url,
+            favoriteAt = favoriteAt?.let(Instant::fromEpochMilliseconds),
+        )
 
     private companion object {
         const val SOURCE = "src"

@@ -15,13 +15,13 @@ import kotlin.time.Instant
 /**
  * Predicts when [novel] is next due from all of its [chapters] and stores it, the novel side of manga's
  * `UpdateManga.awaitUpdateFetchInterval`. An interval the user set is kept, and then [chapters] is never
- * read; a [window] of (0, 0) means today's.
+ * read; no [window] means today's.
  */
 suspend fun updateNovelFetchInterval(
     novel: Novel,
     chapters: suspend () -> List<NovelChapter>,
     novelRepository: NovelRepository,
-    window: Pair<Long, Long> = Pair(0, 0),
+    window: ClosedRange<Instant>? = null,
     zone: TimeZone = TimeZone.currentSystemDefault(),
     now: LocalDateTime = Clock.System.now().toLocalDateTime(zone),
 ) {
@@ -50,7 +50,7 @@ suspend fun predictNovelFetchInterval(
     manualFetch: Boolean,
     novelChapterRepository: NovelChapterRepository,
     novelRepository: NovelRepository,
-    window: Pair<Long, Long> = Pair(0, 0),
+    window: ClosedRange<Instant>? = null,
 ) {
     if (listChanged || ReleaseInterval.needsPrediction(manualFetch, novel.fetchInterval, novel.nextUpdate, window)) {
         updateNovelFetchInterval(novel, { novelChapterRepository.getByNovelId(novel.id) }, novelRepository, window)
@@ -62,4 +62,4 @@ suspend fun predictNovelFetchInterval(
  * EntryUpdateTwinsConformanceTest.
  */
 fun Novel.expectedNextUpdate(): Instant? =
-    nextUpdate.takeIf { status != NovelStatusCode.COMPLETED.toLong() }?.let(Instant::fromEpochMilliseconds)
+    nextUpdate?.takeIf { status != NovelStatusCode.COMPLETED.toLong() }

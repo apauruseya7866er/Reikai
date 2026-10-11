@@ -4,6 +4,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.entry.EntryId
 import reikai.domain.library.ContentType
+import kotlin.time.Instant
 
 /**
  * The recents kernel: one order and one collapse, both pure. Fixtures are built by hand because the
@@ -13,10 +14,10 @@ import reikai.domain.library.ContentType
 class RecentsAssemblyTest {
 
     private fun manga(id: Long, at: Long, lane: RecentsLane = RecentsLane.Added) =
-        RecentsItem(EntryId.Manga(id), at, lane, payload = "m$id@$at")
+        RecentsItem(EntryId.Manga(id), Instant.fromEpochMilliseconds(at), lane, payload = "m$id@$at")
 
     private fun novel(id: Long, at: Long, lane: RecentsLane = RecentsLane.Added) =
-        RecentsItem(EntryId.Novel(id), at, lane, payload = "n$id@$at")
+        RecentsItem(EntryId.Novel(id), Instant.fromEpochMilliseconds(at), lane, payload = "n$id@$at")
 
     private fun updated(entryId: EntryId, chapterId: Long) =
         RecentsLane.Updated(ChapterRef(entryId, chapterId))

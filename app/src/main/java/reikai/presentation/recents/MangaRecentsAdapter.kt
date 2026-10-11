@@ -55,6 +55,7 @@ import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.source.service.SourceManager
+import kotlin.time.Instant
 
 /**
  * Adapts Mihon's two live models to the neutral [RecentsProvider]. Both stay live and upstream-tracked
@@ -417,10 +418,9 @@ internal fun UpdatesItem.toRecentsItem(): RecentsItem = RecentsItem(
     payload = this,
 )
 
-// readAt is a java.util.Date here and a Long on the novel side; the divergence dies at this seam.
 internal fun HistoryWithRelations.toRecentsItem(): RecentsItem = RecentsItem(
     entryId = EntryId.Manga(mangaId),
-    timestamp = readAt?.time ?: 0L,
+    timestamp = readAt ?: Instant.fromEpochMilliseconds(0),
     lane = RecentsLane.Read(ChapterRef(EntryId.Manga(mangaId), chapterId)),
     payload = this,
 )

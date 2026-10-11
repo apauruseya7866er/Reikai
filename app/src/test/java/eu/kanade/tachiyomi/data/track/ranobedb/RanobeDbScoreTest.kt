@@ -25,8 +25,8 @@ class RanobeDbScoreTest {
         status = 5L,
         score = score,
         remoteUrl = "https://ranobedb.org/series/3",
-        startDate = 0L,
-        finishDate = 0L,
+        startDate = null,
+        finishDate = null,
         private = false,
     )
 

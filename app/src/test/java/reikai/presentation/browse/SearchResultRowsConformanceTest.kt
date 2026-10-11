@@ -15,6 +15,7 @@ import reikai.novel.host.NovelItem
 import reikai.presentation.browse.catalogue.EntryBrowseRow
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.asMangaCover
+import kotlin.time.Instant
 
 /**
  * The result rows a search and the feed hold, pinned once for both content types. A source answers
@@ -79,7 +80,10 @@ interface ResultRowProbe {
 class MangaResultRowProbe : ResultRowProbe {
     private val listed = Manga.create().copy(id = 1L, url = "/1", title = "listed")
     private val stored = MutableStateFlow<Manga?>(listed)
-    private val added = listed.copy(favoriteAt = 1L, coverLastModified = 9L)
+    private val added = listed.copy(
+        favoriteAt = Instant.fromEpochMilliseconds(1L),
+        coverLastModified = Instant.fromEpochMilliseconds(9L),
+    )
 
     override fun toString() = "manga"
     override fun row() = liveMangaRow(listed, stored)
@@ -94,7 +98,13 @@ class NovelResultRowProbe : ResultRowProbe {
     private val item = NovelItem(name = "listed", path = "/listed", cover = null)
     private val favorited = MutableStateFlow(FavoritedNovels.None)
     private val added =
-        Novel.create().copy(id = 5L, source = SOURCE_ID, url = item.path, favoriteAt = 1L, coverLastModified = 9L)
+        Novel.create().copy(
+            id = 5L,
+            source = SOURCE_ID,
+            url = item.path,
+            favoriteAt = Instant.fromEpochMilliseconds(1L),
+            coverLastModified = Instant.fromEpochMilliseconds(9L),
+        )
 
     override fun toString() = "novel"
     override fun row() = novelBrowseRow(item, SOURCE_ID, favorited)

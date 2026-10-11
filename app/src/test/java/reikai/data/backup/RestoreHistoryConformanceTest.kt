@@ -75,18 +75,40 @@ class RestoreHistoryConformanceTest {
         type.history(database) shouldBe Stored(readAt = 500L, duration = 10L)
     }
 
+    // A backup writes 0 for history the user removed, which the database holds as no read time.
     @ParameterizedTest
     @EnumSource(Type::class)
-    fun `a removed entry restored over a removed entry stays read at 0`(type: Type) = runTest {
-        type.seed(driver, device = Stored(readAt = 0L, duration = 1L))
+    fun `a removed entry restored over a removed entry stays removed`(type: Type) = runTest {
+        type.seed(driver, device = Stored(readAt = null, duration = 1L))
 
         type.restore(database, copies = listOf(Copy(readAt = 0L, duration = 5L)))
 
-        type.history(database) shouldBe Stored(readAt = 0L, duration = 5L)
+        type.history(database) shouldBe Stored(readAt = null, duration = 5L)
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `a removed entry in the backup leaves the device's read time`(type: Type) = runTest {
+        type.seed(driver, device = Stored(readAt = 300L, duration = 1L))
+
+        type.restore(database, copies = listOf(Copy(readAt = 0L, duration = 5L)))
+
+        type.history(database) shouldBe Stored(readAt = 300L, duration = 5L)
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `a read in the backup restores over history the device removed`(type: Type) = runTest {
+        type.seed(driver, device = Stored(readAt = null, duration = 1L))
+
+        type.restore(database, copies = listOf(Copy(readAt = 300L, duration = 5L)))
+
+        type.history(database) shouldBe Stored(readAt = 300L, duration = 5L)
     }
 
     data class Copy(val readAt: Long, val duration: Long)
 
+    /** [readAt] in epoch millis, null for history the user removed. */
     data class Stored(val readAt: Long?, val duration: Long)
 
     /** One series with one chapter at url "c", optionally already read on the device. */
@@ -128,7 +150,7 @@ class RestoreHistoryConformanceTest {
             override suspend fun history(database: Database) = database.historyQueries
                 .getHistoryByMangaId(1L)
                 .awaitAsOneOrNull()
-                ?.let { Stored(it.read_at?.time, it.read_duration) }
+                ?.let { Stored(it.read_at?.toEpochMilliseconds(), it.read_duration) }
         },
         NOVEL {
             override fun statements(device: Stored?) = listOfNotNull(
@@ -169,7 +191,7 @@ class RestoreHistoryConformanceTest {
 
             override suspend fun history(database: Database) =
                 NovelHistoryRepositoryImpl(database).getHistoryByNovelId(1L).singleOrNull()
-                    ?.let { Stored(it.readAt, it.readDuration) }
+                    ?.let { Stored(it.readAt?.toEpochMilliseconds(), it.readDuration) }
         },
         ;
 

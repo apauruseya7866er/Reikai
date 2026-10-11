@@ -18,6 +18,7 @@ import reikai.novel.source.NovelSource
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /**
  * What a source's tracker is handed, pinned once for both content types: each probe reads one type's
@@ -120,7 +121,14 @@ class MangaProbe : SourceTrackedEntriesConformanceTest.LoaderProbe {
             mangaRepository = mockk {
                 if (exists) {
                     coEvery { getMangaById(1) } returns
-                        Manga.create().copy(id = 1, source = 7, url = "/1", favoriteAt = 0L.takeIf { favorite })
+                        Manga.create().copy(
+                            id = 1,
+                            source = 7,
+                            url = "/1",
+                            favoriteAt = Instant.fromEpochMilliseconds(0L).takeIf {
+                                favorite
+                            },
+                        )
                 } else {
                     coEvery { getMangaById(1) } throws IllegalStateException("gone")
                 }
@@ -171,7 +179,7 @@ class NovelProbe : SourceTrackedEntriesConformanceTest.LoaderProbe {
                             id = 1,
                             source = "s",
                             url = "/1",
-                            favoriteAt = 0L.takeIf {
+                            favoriteAt = Instant.fromEpochMilliseconds(0L).takeIf {
                                 favorite
                             },
                         )
@@ -191,8 +199,8 @@ class NovelProbe : SourceTrackedEntriesConformanceTest.LoaderProbe {
                         lastTextProgress = 0,
                         chapterNumber = it.number,
                         sourceOrder = it.id,
-                        dateFetch = 0,
-                        dateUpload = 0,
+                        dateFetch = Instant.fromEpochMilliseconds(0),
+                        dateUpload = null,
                         page = "",
                     )
                 }

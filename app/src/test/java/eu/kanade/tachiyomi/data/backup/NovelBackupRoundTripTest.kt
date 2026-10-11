@@ -25,11 +25,18 @@ import reikai.domain.merge.RestoreMergeGroups
 import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
+import kotlin.time.Instant
 
 class NovelBackupRoundTripTest {
 
     private fun novel(id: Long, url: String, source: String, title: String = "T") =
-        Novel.create().copy(id = id, url = url, source = source, title = title, favoriteAt = 0L)
+        Novel.create().copy(
+            id = id,
+            url = url,
+            source = source,
+            title = title,
+            favoriteAt = Instant.fromEpochMilliseconds(0L),
+        )
 
     private fun restorer(repo: NovelRepository, repository: MergeGroupRepository) = NovelRestorer(
         novelRepository = repo,
@@ -154,7 +161,11 @@ class NovelBackupRoundTripTest {
     fun `a chapter's group survives a backup and its restore`() = runTest {
         val stored = NovelChapter(
             id = 7L, novelId = 1L, url = "c1", name = "Chapter 1", read = false, bookmark = false,
-            lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L, dateFetch = 0L, dateUpload = 0L,
+            lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(
+                0L,
+            ),
+            dateUpload = null,
             page = "", scanlator = "Group",
         )
         val creator = NovelBackupCreator(

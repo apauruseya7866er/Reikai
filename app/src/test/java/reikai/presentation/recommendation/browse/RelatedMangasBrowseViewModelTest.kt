@@ -46,6 +46,7 @@ import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 class RelatedMangasBrowseViewModelTest {
 
@@ -234,7 +235,7 @@ class RelatedMangasBrowseViewModelTest {
                 url = "/series/1/Slug",
                 source = SOURCE_ID,
                 title = "Series",
-                favoriteAt = 1L,
+                favoriteAt = Instant.fromEpochMilliseconds(1L),
             ),
         )
         val cache = RelatedMangaCache().apply {
@@ -254,7 +255,7 @@ class RelatedMangasBrowseViewModelTest {
                 url = "/series/1/Slug",
                 source = SOURCE_ID,
                 title = "Series",
-                favoriteAt = 1L,
+                favoriteAt = Instant.fromEpochMilliseconds(1L),
             ),
         )
         val cache = RelatedMangaCache().apply {

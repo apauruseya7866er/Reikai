@@ -9,6 +9,7 @@ import reikai.domain.library.updateerror.LibraryUpdateError
 import reikai.domain.library.updateerror.LibraryUpdateErrorRepository
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
+import kotlin.time.Instant
 
 @Inject
 @SingleIn(AppScope::class)
@@ -46,7 +47,7 @@ class LibraryUpdateErrorRepositoryImpl(
         mangaTitle: String,
         source: Long,
         thumbnailUrl: String?,
-        coverLastModified: Long,
+        coverLastModified: Instant?,
         errorId: Long,
         message: String,
         lastUpdate: Long,

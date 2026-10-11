@@ -24,14 +24,14 @@ class UpdateNovel(
 
     suspend fun awaitUpdateCoverLastModified(novelId: Long): Boolean {
         return novelRepository.update(
-            NovelUpdate(novelId) { coverLastModified = Clock.System.now().toEpochMilliseconds() },
+            NovelUpdate(novelId) { coverLastModified = Clock.System.now() },
         )
     }
 
     // Twin of UpdateManga.awaitUpdateFavorite, pinned by EntryUpdateTwinsConformanceTest.
     suspend fun awaitUpdateFavorite(novelId: Long, favorite: Boolean): Boolean {
         val update = when (favorite) {
-            true -> NovelUpdate(novelId) { favoriteAt = Clock.System.now().toEpochMilliseconds() }
+            true -> NovelUpdate(novelId) { favoriteAt = Clock.System.now() }
             false -> NovelUpdate(novelId) { favoriteAt = null }
         }
         return novelRepository.update(update)

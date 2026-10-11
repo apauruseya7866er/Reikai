@@ -15,6 +15,7 @@ import reikai.domain.library.ContentType
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.updates.UpdatesRepositoryImpl
+import kotlin.time.Instant
 
 /**
  * The updates feed stays subscribed for the life of the process (the unified widget holds it), so it
@@ -38,7 +39,7 @@ class UpdatesFeedQueryPlanTest {
         val database = DatabaseBindings.providesDatabase(RecordingDriver(driver, issued))
         when (type) {
             ContentType.MANGA -> UpdatesRepositoryImpl(database).subscribeAll(
-                after = 0,
+                after = Instant.fromEpochMilliseconds(0),
                 limit = 500,
                 unread = true,
                 started = null,
@@ -48,7 +49,7 @@ class UpdatesFeedQueryPlanTest {
                 excludedCategories = emptyList(),
             ).first()
             else -> NovelRepositoryImpl(database).getFilteredNovelUpdatesAsFlow(
-                after = 0,
+                after = Instant.fromEpochMilliseconds(0),
                 limit = 500,
                 unread = true,
                 started = null,

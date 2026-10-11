@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test
 import reikai.domain.merge.GroupMarks
 import reikai.domain.novel.NovelPreferences
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import kotlin.time.Instant
 
 /** The global Downloaded only switch over a novel's chapter list, as manga's `Manga.downloadedFilter` applies it. */
 class NovelDownloadedOnlyTest {
@@ -29,8 +30,8 @@ class NovelDownloadedOnlyTest {
         lastTextProgress = 0L,
         chapterNumber = id.toDouble(),
         sourceOrder = id,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 

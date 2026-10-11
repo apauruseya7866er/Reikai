@@ -15,6 +15,7 @@ import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.chapter.ChapterRepositoryImpl
 import tachiyomi.domain.chapter.model.Chapter
+import kotlin.time.Instant
 
 /**
  * A source sync adds a chapter only when the entry does not already have one at that url, read inside
@@ -60,9 +61,10 @@ class ChapterSyncConformanceTest {
             override suspend fun seed(database: Database, url: String) {
                 database.mangaQueries.insertReturningId(
                     sourceId = 1, remoteUrl = "m", remoteArtist = null, remoteAuthor = null, remoteDescription = null,
-                    remoteGenre = null, remoteTitle = "T", remoteStatus = 0, remoteCover = null, userFavoriteAt = 0,
-                    stateChapterLastUpdate = 0, stateChapterNextUpdate = 0, stateInitialized = false,
-                    userReaderFlags = 0, userChapterFlags = 0, stateCoverLastModified = 0,
+                    remoteGenre = null, remoteTitle = "T", remoteStatus = 0, remoteCover = null,
+                    userFavoriteAt = Instant.fromEpochMilliseconds(0),
+                    stateChapterLastUpdate = null, stateChapterNextUpdate = null, stateInitialized = false,
+                    userReaderFlags = 0, userChapterFlags = 0, stateCoverLastModified = null,
                     remoteUpdateStrategy = UpdateStrategy.ALWAYS_UPDATE,
                     stateChapterFetchInterval = 0, userNotes = "", remoteMemo = JsonObject(emptyMap()),
                 )
@@ -86,9 +88,13 @@ class ChapterSyncConformanceTest {
             override suspend fun seed(database: Database, url: String) {
                 database.novelsQueries.insert(
                     source = "src", url = "n", title = "T", author = null, artist = null, description = null,
-                    genre = null, status = 0, thumbnailUrl = null, favoriteAt = 0, lastUpdate = 0, initialized = false,
+                    genre = null, status = 0, thumbnailUrl = null,
+                    favoriteAt = Instant.fromEpochMilliseconds(
+                        0,
+                    ),
+                    lastUpdate = null, initialized = false,
                     chapterFlags = 0, updateStrategy = UpdateStrategy.ALWAYS_UPDATE,
-                    coverLastModified = 0, totalPages = 1, notes = "", viewerFlags = 0,
+                    coverLastModified = null, totalPages = 1, notes = "", viewerFlags = 0,
                 )
                 sync(database, listOf(url))
             }
@@ -102,8 +108,11 @@ class ChapterSyncConformanceTest {
 
             private fun chapter(url: String) = NovelChapter(
                 id = -1L, novelId = 1L, url = url, name = url, read = false, bookmark = false,
-                lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L, dateFetch = 0L,
-                dateUpload = 0L, page = "",
+                lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L,
+                dateFetch = Instant.fromEpochMilliseconds(
+                    0,
+                ),
+                dateUpload = null, page = "",
             )
         }, ;
 

@@ -27,7 +27,7 @@ import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.updates.model.UpdatesWithRelations
 import tachiyomi.i18n.MR
-import java.util.Date
+import kotlin.time.Instant
 
 /**
  * The adapters' row mapping and display projection, pinned once for both content types rather than as
@@ -47,14 +47,14 @@ class RecentsMappingTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("probes")
-    fun `a read time arrives as epoch millis whatever the engine stores`(probe: RecentsMappingProbe) {
-        probe.history(readAt = 4321L).timestamp shouldBe 4321L
+    fun `a read time arrives as the same instant whatever the engine stores`(probe: RecentsMappingProbe) {
+        probe.history(readAt = 4321L).timestamp shouldBe Instant.fromEpochMilliseconds(4321L)
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("probes")
     fun `an entry never read carries no timestamp rather than a null one`(probe: RecentsMappingProbe) {
-        probe.history(readAt = null).timestamp shouldBe 0L
+        probe.history(readAt = null).timestamp shouldBe Instant.fromEpochMilliseconds(0L)
     }
 
     @ParameterizedTest(name = "{0}")
@@ -281,7 +281,7 @@ class MangaRecentsMappingProbe : RecentsMappingProbe {
 
     override fun toString() = "manga"
 
-    private val cover = MangaCover(mangaId = 7, sourceId = 1, isMangaFavorite = true, url = null, lastModified = 0)
+    private val cover = MangaCover(mangaId = 7, sourceId = 1, isMangaFavorite = true, url = null, lastModified = null)
 
     override fun update(read: Boolean, bookmark: Boolean, started: Boolean) =
         updateItem(updateRow(read, bookmark, started))
@@ -305,7 +305,7 @@ class MangaRecentsMappingProbe : RecentsMappingProbe {
             lastPageRead = if (started) 5L else 0L,
             pageCount = 38,
             sourceId = 1,
-            dateFetch = 1000,
+            dateFetch = Instant.fromEpochMilliseconds(1000),
             coverData = cover,
         )
 
@@ -324,7 +324,7 @@ class MangaRecentsMappingProbe : RecentsMappingProbe {
             mangaId = 7,
             title = "t",
             chapterNumber = 1.0,
-            readAt = readAt?.let { Date(it) },
+            readAt = readAt?.let(Instant::fromEpochMilliseconds),
             readDuration = 0,
             coverData = cover,
             chapterName = "c",
@@ -338,7 +338,12 @@ class MangaRecentsMappingProbe : RecentsMappingProbe {
             storedTitle = "t",
         )
 
-    private fun addedRow() = RecentlyAddedManga(mangaId = 7, title = "t", dateAdded = 99, coverData = cover)
+    private fun addedRow() = RecentlyAddedManga(
+        mangaId = 7,
+        title = "t",
+        dateAdded = Instant.fromEpochMilliseconds(99),
+        coverData = cover,
+    )
 
     override fun added() = addedRow().toRecentsItem()
 
@@ -364,7 +369,8 @@ class NovelRecentsMappingProbe : RecentsMappingProbe {
 
     override fun toString() = "novel"
 
-    private val cover = NovelCover(url = null, sourceId = null, isNovelFavorite = true, lastModified = 0, novelId = 7)
+    private val cover =
+        NovelCover(url = null, sourceId = null, isNovelFavorite = true, lastModified = null, novelId = 7)
 
     override fun update(read: Boolean, bookmark: Boolean, started: Boolean) =
         updateItem(updateRow(read, bookmark, started))
@@ -383,7 +389,7 @@ class NovelRecentsMappingProbe : RecentsMappingProbe {
             bookmark = bookmark,
             lastTextProgress = if (started) 5000L else 0L,
             source = "s",
-            dateFetch = 1000,
+            dateFetch = Instant.fromEpochMilliseconds(1000),
             coverData = cover,
             novelUrl = "nu",
         )
@@ -403,7 +409,7 @@ class NovelRecentsMappingProbe : RecentsMappingProbe {
             novelId = 7,
             title = "t",
             chapterNumber = 1.0,
-            readAt = readAt,
+            readAt = readAt?.let(Instant::fromEpochMilliseconds),
             readDuration = 0,
             coverData = cover,
             chapterName = "c",
@@ -415,7 +421,12 @@ class NovelRecentsMappingProbe : RecentsMappingProbe {
             storedTitle = "t",
         )
 
-    private fun addedRow() = RecentlyAddedNovel(novelId = 7, title = "t", dateAdded = 99, coverData = cover)
+    private fun addedRow() = RecentlyAddedNovel(
+        novelId = 7,
+        title = "t",
+        dateAdded = Instant.fromEpochMilliseconds(99),
+        coverData = cover,
+    )
 
     override fun added() = addedRow().toRecentsItem()
 

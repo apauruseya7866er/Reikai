@@ -17,6 +17,7 @@ import reikai.domain.novel.model.NovelHistoryWithRelations
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
+import kotlin.time.Instant
 
 @Inject
 @SingleIn(AppScope::class)
@@ -82,14 +83,14 @@ class NovelHistoryRepositoryImpl(
 
     override suspend fun getUrlKeyedHistoryByNovelId(novelId: Long): List<RestoredChapterHistory> =
         database.novel_historyQueries.getUrlKeyedHistoryByNovelId(novelId) { url, readAt, readDuration ->
-            RestoredChapterHistory(url, readAt ?: 0L, readDuration)
+            RestoredChapterHistory(url, readAt, readDuration)
         }.awaitAsList()
 
-    override suspend fun restoreHistory(chapterId: Long, readAt: Long, readDuration: Long) {
+    override suspend fun restoreHistory(chapterId: Long, readAt: Instant?, readDuration: Long) {
         database.novel_historyQueries.restoreUpsert(chapterId, readAt, readDuration)
     }
 
-    override suspend fun seedLastRead(novelId: Long, readAt: Long) {
+    override suspend fun seedLastRead(novelId: Long, readAt: Instant) {
         database.novel_historyQueries.seedLastRead(readAt = readAt, novelId = novelId)
     }
 

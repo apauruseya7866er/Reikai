@@ -5,8 +5,8 @@ import java.time.Instant
 import java.util.Locale
 
 /**
- * Parse an lnreader plugin's chapter `releaseTime` string into epoch millis for the `dateUpload`
- * column. Plugins emit inconsistent shapes (ISO instants, relative phrases like "3 days ago", and a
+ * Parse an lnreader plugin's chapter `releaseTime` string into epoch millis, which `toNovelChapter`
+ * turns into the chapter's upload date. Plugins emit inconsistent shapes (ISO instants, relative phrases like "3 days ago", and a
  * handful of locale date formats), so each shape is tried in turn and anything unrecognized falls back
  * to 0L (unknown, which the sync fills as it does for manga) rather than guessing. Ported from tsundoku's JsSource.
  */

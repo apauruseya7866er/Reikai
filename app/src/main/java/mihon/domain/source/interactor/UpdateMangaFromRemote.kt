@@ -28,6 +28,7 @@ import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.isLocal
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 @Inject
 class UpdateMangaFromRemote(
@@ -44,7 +45,7 @@ class UpdateMangaFromRemote(
         fetchDetails: Boolean = false,
         fetchChapters: Boolean = false,
         manualFetch: Boolean = false,
-        fetchWindow: Pair<Long, Long> = Pair(0, 0),
+        fetchWindow: ClosedRange<Instant>? = null,
     ): Result<RemoteMangaUpdate> {
         val source = sourceManager.getOrStub(manga.source)
         return invoke(
@@ -62,7 +63,7 @@ class UpdateMangaFromRemote(
         fetchDetails: Boolean = false,
         fetchChapters: Boolean = false,
         manualFetch: Boolean = false,
-        fetchWindow: Pair<Long, Long> = Pair(0, 0),
+        fetchWindow: ClosedRange<Instant>? = null,
     ): Result<RemoteMangaUpdate> {
         return try {
             val chapters = chapterRepository.getChapterByMangaId(manga.id)
@@ -121,7 +122,7 @@ class UpdateMangaFromRemote(
             localManga.hasCustomCover(coverCache)
         }
         if (cover.deletesCachedFile) coverCache.deleteFromCache(localManga, false)
-        val coverLastModified = Clock.System.now().toEpochMilliseconds().takeIf { cover.stamps }
+        val coverLastModified = Clock.System.now().takeIf { cover.stamps }
         // RK <--
 
         val success = mangaRepository.updateRemote(

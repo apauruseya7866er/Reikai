@@ -28,6 +28,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
+import kotlin.time.Instant
 
 /**
  * Both saved download queues are re-pointed by a migration after the upgrade's dedupe, and both engines restore
@@ -115,8 +116,9 @@ class SavedQueueRestoreOrderTest {
 
             private fun chapter(id: Long) = NovelChapter(
                 id = id, novelId = 1L, url = "/c/$id", name = "Ch $id", read = false, bookmark = false,
-                lastTextProgress = 0L, chapterNumber = id.toDouble(), sourceOrder = id, dateFetch = 0L,
-                dateUpload = 0L, page = "",
+                lastTextProgress = 0L, chapterNumber = id.toDouble(), sourceOrder = id,
+                dateFetch = Instant.fromEpochMilliseconds(0L),
+                dateUpload = null, page = "",
             )
         },
         ;

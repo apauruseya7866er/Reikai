@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import tachiyomi.domain.manga.model.Manga
 import java.io.Serializable
+import kotlin.time.Instant
 
 /**
  * Domain mirror of the `novels` SQLDelight table. Held disjoint from [tachiyomi.domain.manga.model.Manga]
@@ -24,12 +25,12 @@ data class Novel(
     val status: Long,
     val thumbnailUrl: String?,
     /** When the novel was added to the library, null while it is not in it (as [Manga.favoriteAt]). */
-    val favoriteAt: Long?,
-    val lastUpdate: Long,
+    val favoriteAt: Instant?,
+    val lastUpdate: Instant?,
     val initialized: Boolean,
     val chapterFlags: Long,
     val updateStrategy: UpdateStrategy,
-    val coverLastModified: Long,
+    val coverLastModified: Instant?,
     /**
      * For paged-novel sources (Royal Road volumes, some Japanese sources) where a single novel's
      * chapter list spans multiple endpoints. Defaults to 1 for single-page novels; the update job
@@ -44,8 +45,8 @@ data class Novel(
      * default orientation". See `readerOrientation`.
      */
     val viewerFlags: Long,
-    /** When smart update next fetches this novel, in epoch millis; 0 until one is predicted. */
-    val nextUpdate: Long = 0L,
+    /** When smart update next fetches this novel; null until one is predicted. */
+    val nextUpdate: Instant? = null,
     /** The release interval in days that [nextUpdate] was predicted from, negative when the user set it. */
     val fetchInterval: Int = 0,
 ) : Serializable {
@@ -66,11 +67,11 @@ data class Novel(
             status = 0L,
             thumbnailUrl = null,
             favoriteAt = null,
-            lastUpdate = 0L,
+            lastUpdate = null,
             initialized = false,
             chapterFlags = 0L,
             updateStrategy = UpdateStrategy.ALWAYS_UPDATE,
-            coverLastModified = 0L,
+            coverLastModified = null,
             totalPages = 1L,
             notes = "",
             viewerFlags = 0L,

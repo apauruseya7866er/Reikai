@@ -36,6 +36,7 @@ import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /**
  * A Delete the user asked for, through both engines' real delete with only the disk faked. The
@@ -192,8 +193,8 @@ class NovelManualDeleteHalf : ManualDeleteHalf {
         lastTextProgress = 0L,
         chapterNumber = target.id.toDouble(),
         sourceOrder = target.id,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 }

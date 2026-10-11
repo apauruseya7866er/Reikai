@@ -168,7 +168,7 @@ class MigrateNovelUseCase(
             }.takeIf { replace }
             val targetUpdate = NovelUpdate(target.id) {
                 // Inherit the source's added-date on a replace, else stamp now, matching manga migration.
-                favoriteAt = current.favoriteAt?.takeIf { replace } ?: Clock.System.now().toEpochMilliseconds()
+                favoriteAt = current.favoriteAt?.takeIf { replace } ?: Clock.System.now()
                 // Carry the chapter-list (sort/filter/display) and reader (orientation) flags onto
                 // the target unconditionally, matching manga migration.
                 chapterFlags = current.chapterFlags
@@ -268,7 +268,8 @@ internal fun computeHistoryMigration(
         val stored = targetHistoryByChapter[target.id]
         val (mergedReadAt, addedDuration) =
             mergedHistory(readAt, history.readDuration, stored?.readAt, stored?.readDuration ?: 0L)
-        NovelHistoryUpdate(target.id, mergedReadAt, addedDuration)
+        // Never null here, since the incoming read has a time
+        NovelHistoryUpdate(target.id, mergedReadAt ?: readAt, addedDuration)
     }
 }
 

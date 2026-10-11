@@ -6,6 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import reikai.domain.merge.flaggedOnAnotherSource
 import reikai.domain.novel.model.NovelChapter
+import kotlin.time.Instant
 
 class NovelChapterAggregationTest {
 
@@ -29,8 +30,8 @@ class NovelChapterAggregationTest {
             lastTextProgress = 0,
             chapterNumber = number,
             sourceOrder = nextId,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = "",
         )
 

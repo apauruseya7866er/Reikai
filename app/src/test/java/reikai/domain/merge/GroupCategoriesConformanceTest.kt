@@ -44,6 +44,7 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEFAULT_CATEGORY_PREF_KEY
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.MangaUpdate
+import kotlin.time.Instant
 
 /**
  * A merged series sits in one set of categories: a category write through any member reaches every
@@ -270,7 +271,7 @@ class GroupCategoriesConformanceTest {
         override suspend fun file(id: Long, ids: List<Long>) = adder.moveToCategories(mangas.getMangaById(id), ids)
 
         override suspend fun setInLibrary(id: Long, inLibrary: Boolean) {
-            mangas.update(MangaUpdate(id) { favoriteAt = 1L.takeIf { inLibrary } })
+            mangas.update(MangaUpdate(id) { favoriteAt = Instant.fromEpochMilliseconds(1L).takeIf { inLibrary } })
         }
 
         override suspend fun addBack(id: Long, path: AddPath) {
@@ -318,7 +319,7 @@ class GroupCategoriesConformanceTest {
         override suspend fun seed(id: Long) {
             val stored = novels.insert(Novel.create().copy(source = "src$id", url = "/novel/$id", title = "Novel"))
             stored shouldBe id
-            novels.update(NovelUpdate(id) { favoriteAt = 1L })
+            novels.update(NovelUpdate(id) { favoriteAt = Instant.fromEpochMilliseconds(1L) })
         }
 
         override suspend fun store(id: Long, vararg ids: Long) = setNovelCategories.await(id, ids.toList())
@@ -328,7 +329,7 @@ class GroupCategoriesConformanceTest {
         override suspend fun file(id: Long, ids: List<Long>) = adder.applyCategories(id, ids)
 
         override suspend fun setInLibrary(id: Long, inLibrary: Boolean) {
-            novels.update(NovelUpdate(id) { favoriteAt = 1L.takeIf { inLibrary } })
+            novels.update(NovelUpdate(id) { favoriteAt = Instant.fromEpochMilliseconds(1L).takeIf { inLibrary } })
         }
 
         override suspend fun addBack(id: Long, path: AddPath) {

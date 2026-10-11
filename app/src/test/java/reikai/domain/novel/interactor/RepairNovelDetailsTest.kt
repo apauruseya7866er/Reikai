@@ -26,11 +26,19 @@ import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.domain.library.service.LibraryPreferences
 import java.io.File
+import kotlin.time.Instant
 
 class RepairNovelDetailsTest {
 
     private fun novel(id: Long, title: String, source: String, url: String, author: String? = "Author") =
-        Novel.create().copy(id = id, title = title, source = source, url = url, author = author, favoriteAt = 0L)
+        Novel.create().copy(
+            id = id,
+            title = title,
+            source = source,
+            url = url,
+            author = author,
+            favoriteAt = Instant.fromEpochMilliseconds(0L),
+        )
 
     @Test
     fun `same source, title and author at different urls flags both`() {
@@ -149,7 +157,7 @@ class RepairNovelDetailsTest {
             title = "Donor",
             author = "Donor author",
             description = "Donor synopsis",
-            favoriteAt = 0L,
+            favoriteAt = Instant.fromEpochMilliseconds(0L),
         )
         novels.insert(donor)
         novels.insert(donor.copy(url = VICTIM))

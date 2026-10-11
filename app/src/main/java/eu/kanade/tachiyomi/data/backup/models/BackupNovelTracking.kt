@@ -4,6 +4,7 @@ package eu.kanade.tachiyomi.data.backup.models
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
+import mihon.core.common.extensions.toInstantOrNull
 import reikai.domain.novel.model.NovelTrack
 
 @Serializable
@@ -34,8 +35,8 @@ class BackupNovelTracking(
             status = this@BackupNovelTracking.status,
             score = this@BackupNovelTracking.score,
             remoteUrl = this@BackupNovelTracking.remoteUrl,
-            startDate = this@BackupNovelTracking.startDate,
-            finishDate = this@BackupNovelTracking.finishDate,
+            startDate = this@BackupNovelTracking.startDate.toInstantOrNull(),
+            finishDate = this@BackupNovelTracking.finishDate.toInstantOrNull(),
             private = this@BackupNovelTracking.private,
         )
     }

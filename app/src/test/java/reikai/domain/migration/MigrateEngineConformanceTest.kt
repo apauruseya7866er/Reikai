@@ -59,7 +59,7 @@ import tachiyomi.domain.track.model.Track
 import java.io.File
 import java.io.InputStream
 import java.nio.file.Files
-import java.util.Date
+import kotlin.time.Instant
 
 /**
  * The one pin on the two migrate engines, Mihon's MigrateMangaUseCase and its novel twin: each case
@@ -634,7 +634,7 @@ class MangaEngine : MigrateEngine {
                         swapOf(
                             it.id,
                             it.isSet(it::favoriteAt),
-                            it.favoriteAt,
+                            it.favoriteAt?.toEpochMilliseconds(),
                             it.notes,
                             it.chapterFlags,
                             it.viewerFlags,
@@ -682,13 +682,15 @@ class MangaEngine : MigrateEngine {
         val getHistory = mockk<GetHistory> {
             coEvery { await(any<Long>()) } answers {
                 val ids = chapters.values.filter { it.mangaId == firstArg<Long>() }.map { it.id }
-                rec.historyOf(ids).map { History(it.chapterId, it.chapterId, Date(it.readAt), it.duration) }
+                rec.historyOf(ids).map {
+                    History(it.chapterId, it.chapterId, Instant.fromEpochMilliseconds(it.readAt), it.duration)
+                }
             }
         }
         val upsertHistory = mockk<UpsertHistory> {
             coEvery { await(any()) } answers {
                 val u = firstArg<HistoryUpdate>()
-                rec.upsertHistory(u.chapterId, u.readAt.time, u.sessionReadDuration)
+                rec.upsertHistory(u.chapterId, u.readAt.toEpochMilliseconds(), u.sessionReadDuration)
             }
         }
         val useCase = MigrateMangaUseCase(
@@ -718,7 +720,7 @@ class MangaEngine : MigrateEngine {
         )
         val current = Manga.create().copy(
             id = MigrateEngineConformanceTest.SOURCE,
-            favoriteAt = MigrateEngineConformanceTest.SOURCE_ADDED,
+            favoriteAt = Instant.fromEpochMilliseconds(MigrateEngineConformanceTest.SOURCE_ADDED),
             source = 1L,
             url = "/1",
             notes = setup.notes,
@@ -737,7 +739,9 @@ class MangaEngine : MigrateEngine {
         val error = runCatching { useCase(current, target, replace, mangaFlags, skipTargetRefresh) }.exceptionOrNull()
         val targetChapters = chapters.values.filter { it.mangaId == MigrateEngineConformanceTest.TARGET }
             .sortedBy { it.id }
-            .map { Ch(it.id, it.chapterNumber, it.read, it.bookmark, it.dateFetch, it.lastPageRead) }
+            .map {
+                Ch(it.id, it.chapterNumber, it.read, it.bookmark, it.dateFetch.toEpochMilliseconds(), it.lastPageRead)
+            }
         return rec.outcome(error, targetChapters)
     }
 
@@ -747,7 +751,7 @@ class MangaEngine : MigrateEngine {
         chapterNumber = number,
         read = read,
         bookmark = bookmark,
-        dateFetch = dateFetch,
+        dateFetch = Instant.fromEpochMilliseconds(dateFetch),
         lastPageRead = position,
     )
 
@@ -763,8 +767,8 @@ class MangaEngine : MigrateEngine {
         status = 0L,
         score = 0.0,
         remoteUrl = "",
-        startDate = 0L,
-        finishDate = 0L,
+        startDate = null,
+        finishDate = null,
         private = false,
     )
 }
@@ -811,7 +815,7 @@ class NovelEngine : MigrateEngine {
                         swapOf(
                             it.id,
                             it.isSet(it::favoriteAt),
-                            it.favoriteAt,
+                            it.favoriteAt?.toEpochMilliseconds(),
                             it.notes,
                             it.chapterFlags,
                             it.viewerFlags,
@@ -858,11 +862,13 @@ class NovelEngine : MigrateEngine {
         val history = mockk<NovelHistoryRepository> {
             coEvery { getHistoryByNovelId(any()) } answers {
                 val ids = chapters.values.filter { it.novelId == firstArg<Long>() }.map { it.id }
-                rec.historyOf(ids).map { NovelHistory(it.chapterId, it.readAt, it.duration) }
+                rec.historyOf(ids).map {
+                    NovelHistory(it.chapterId, Instant.fromEpochMilliseconds(it.readAt), it.duration)
+                }
             }
             coEvery { upsertNovelHistory(any()) } answers {
                 val u = firstArg<NovelHistoryUpdate>()
-                rec.upsertHistory(u.chapterId, u.readAt, u.sessionReadDuration)
+                rec.upsertHistory(u.chapterId, u.readAt.toEpochMilliseconds(), u.sessionReadDuration)
             }
         }
         val useCase = MigrateNovelUseCase(
@@ -889,7 +895,7 @@ class NovelEngine : MigrateEngine {
         )
         val current = Novel.create().copy(
             id = MigrateEngineConformanceTest.SOURCE,
-            favoriteAt = MigrateEngineConformanceTest.SOURCE_ADDED,
+            favoriteAt = Instant.fromEpochMilliseconds(MigrateEngineConformanceTest.SOURCE_ADDED),
             notes = setup.notes,
             chapterFlags = setup.chapterFlags,
             viewerFlags = setup.viewerFlags,
@@ -906,7 +912,16 @@ class NovelEngine : MigrateEngine {
         val error = runCatching { useCase(current, target, novelFlags, replace, skipTargetRefresh) }.exceptionOrNull()
         val targetChapters = chapters.values.filter { it.novelId == MigrateEngineConformanceTest.TARGET }
             .sortedBy { it.id }
-            .map { Ch(it.id, it.chapterNumber, it.read, it.bookmark, it.dateFetch, it.lastTextProgress) }
+            .map {
+                Ch(
+                    it.id,
+                    it.chapterNumber,
+                    it.read,
+                    it.bookmark,
+                    it.dateFetch.toEpochMilliseconds(),
+                    it.lastTextProgress,
+                )
+            }
         return rec.outcome(error, targetChapters)
     }
 
@@ -920,14 +935,14 @@ class NovelEngine : MigrateEngine {
         lastTextProgress = position,
         chapterNumber = number,
         sourceOrder = id,
-        dateFetch = dateFetch,
-        dateUpload = 0,
+        dateFetch = Instant.fromEpochMilliseconds(dateFetch),
+        dateUpload = null,
         page = "",
     )
 
     private fun novelTrack(id: Long) = NovelTrack(
         id = id, novelId = MigrateEngineConformanceTest.SOURCE, trackerId = 1, remoteId = 1, libraryId = null,
         title = "t", lastChapterRead = 0.0, totalChapters = 0, status = 0, score = 0.0, remoteUrl = "",
-        startDate = 0, finishDate = 0, private = false,
+        startDate = null, finishDate = null, private = false,
     )
 }

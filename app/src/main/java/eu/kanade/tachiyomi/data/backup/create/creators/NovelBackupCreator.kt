@@ -18,6 +18,7 @@ import eu.kanade.tachiyomi.data.backup.models.BackupNovelTracking
 import eu.kanade.tachiyomi.data.backup.models.customInfo
 import eu.kanade.tachiyomi.data.backup.models.toBackupCustomInfo
 import kotlinx.coroutines.flow.first
+import mihon.core.common.extensions.toEpochMillisOrZero
 import reikai.data.backup.BackupEntryParts
 import reikai.data.backup.mergeGroupRefs
 import reikai.domain.category.CategoryContentType
@@ -95,7 +96,11 @@ class NovelBackupCreator(
 
     override suspend fun history(entry: Novel, backup: BackupNovel) {
         val history = novelHistoryRepository.getUrlKeyedHistoryByNovelId(entry.id).map {
-            BackupNovelHistory(url = it.chapterUrl, lastRead = it.readAt, readDuration = it.readDuration)
+            BackupNovelHistory(
+                url = it.chapterUrl,
+                lastRead = it.readAt.toEpochMillisOrZero(),
+                readDuration = it.readDuration,
+            )
         }
         if (history.isNotEmpty()) {
             backup.history = history
@@ -133,12 +138,12 @@ private fun Novel.toBackupNovel() = BackupNovel(
     genre = this.genre.orEmpty(),
     status = this.status,
     thumbnailUrl = this.thumbnailUrl,
-    dateAdded = this.favoriteAt ?: 0L,
-    lastUpdate = this.lastUpdate,
+    dateAdded = this.favoriteAt.toEpochMillisOrZero(),
+    lastUpdate = this.lastUpdate.toEpochMillisOrZero(),
     initialized = this.initialized,
     chapterFlags = this.chapterFlags,
     updateStrategy = this.updateStrategy,
-    coverLastModified = this.coverLastModified,
+    coverLastModified = this.coverLastModified.toEpochMillisOrZero(),
     totalPages = this.totalPages,
     favorite = this.favorite,
     notes = this.notes,
@@ -153,8 +158,8 @@ private fun NovelChapter.toBackupNovelChapter(sourceNumber: Double?) = BackupNov
     lastTextProgress = this.lastTextProgress,
     chapterNumber = this.chapterNumber,
     sourceOrder = this.sourceOrder,
-    dateFetch = this.dateFetch,
-    dateUpload = this.dateUpload,
+    dateFetch = this.dateFetch.toEpochMilliseconds(),
+    dateUpload = this.dateUpload.toEpochMillisOrZero(),
     page = this.page,
     scanlator = this.scanlator,
     sourceChapterNumber = sourceNumber,
@@ -170,7 +175,7 @@ private fun NovelTrack.toBackupNovelTracking() = BackupNovelTracking(
     status = this.status,
     score = this.score,
     remoteUrl = this.remoteUrl,
-    startDate = this.startDate,
-    finishDate = this.finishDate,
+    startDate = this.startDate.toEpochMillisOrZero(),
+    finishDate = this.finishDate.toEpochMillisOrZero(),
     private = this.private,
 )

@@ -9,6 +9,7 @@ import reikai.domain.merge.GroupMarks
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.reader.ChapterProgress
 import tachiyomi.domain.chapter.model.Chapter
+import kotlin.time.Instant
 
 /**
  * A details row stops saying how far into a chapter reading got once the row reads as read, and the
@@ -88,8 +89,8 @@ object NovelDetailsRowProbe : DetailsRowProbe {
         lastTextProgress = 4200L,
         chapterNumber = 1.0,
         sourceOrder = 1L,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     ).toEntryChapter(
         sourceName = null,

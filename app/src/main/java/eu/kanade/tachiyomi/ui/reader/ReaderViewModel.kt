@@ -140,7 +140,6 @@ import tachiyomi.domain.manga.model.asMangaCover
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.image.LocalCoverManager
 import tachiyomi.source.local.isLocal
-import java.util.Date
 import kotlin.time.Clock
 
 /**
@@ -1030,7 +1029,7 @@ class ReaderViewModel(
     // RK <--
 
     fun restartReadTimer() {
-        chapterReadSession.start(Clock.System.now().toEpochMilliseconds()) // RK
+        chapterReadSession.start(Clock.System.now()) // RK
     }
 
     /**
@@ -1041,9 +1040,9 @@ class ReaderViewModel(
             if (incognito.of(readerChapter.chapter.manga_id!!)) return@let // RK
 
             val chapterId = readerChapter.chapter.id!!
-            val endTime = Date()
+            val endTime = Clock.System.now()
             // RK: read and cleared in one step before the save awaits (mihon 553762fae)
-            val sessionReadDuration = chapterReadSession.take(endTime.time)
+            val sessionReadDuration = chapterReadSession.take(endTime)
 
             upsertHistory.await(HistoryUpdate(chapterId, endTime, sessionReadDuration))
         }

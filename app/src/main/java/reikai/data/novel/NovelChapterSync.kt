@@ -5,7 +5,6 @@ import reikai.domain.chapter.ChapterNumberOverrideRepository
 import reikai.domain.chapter.StoredChapter
 import reikai.domain.chapter.appliedTo
 import reikai.domain.chapter.chapterArrivals
-import reikai.domain.chapter.remoteUploadDate
 import reikai.domain.library.ContentType
 import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.NovelRepository
@@ -18,6 +17,7 @@ import tachiyomi.data.chapter.ChapterSanitizer
 import tachiyomi.domain.chapter.model.NoChaptersException
 import tachiyomi.domain.chapter.service.ChapterRecognition
 import tachiyomi.domain.library.service.LibraryPreferences
+import kotlin.time.Clock
 
 /**
  * Novel-side parallel of the manga `syncChaptersWithSource`, in one transaction. A re-added chapter
@@ -74,13 +74,14 @@ suspend fun syncChaptersWithNovelSource(
             toAdd.add(sourceChapter)
             continue
         }
+        // A source that stops dating a chapter or naming its group keeps the stored value, as manga's
+        // coalescing update does.
         val updated = dbChapter.copy(
             name = sourceChapter.name,
-            dateUpload = remoteUploadDate(sourceChapter.dateUpload) ?: dbChapter.dateUpload,
+            dateUpload = sourceChapter.dateUpload ?: dbChapter.dateUpload,
             chapterNumber = sourceChapter.chapterNumber,
             sourceOrder = sourceChapter.sourceOrder,
             page = sourceChapter.page,
-            // A source that stops naming a group keeps the stored one, as manga's coalescing update does.
             scanlator = sourceChapter.scanlator ?: dbChapter.scanlator,
         )
         if (updated != dbChapter) {
@@ -92,6 +93,7 @@ suspend fun syncChaptersWithNovelSource(
 
     if (toAdd.isEmpty() && toDelete.isEmpty() && toChange.isEmpty()) return NovelChapterSyncResult.UNCHANGED
 
+    val now = Clock.System.now()
     val markDuplicateAsRead = libraryPreferences.markDuplicateReadChapterAsRead.get()
         .contains(LibraryPreferences.MARK_DUPLICATE_CHAPTER_READ_NEW)
     // Sources list newest first, so the kernel counts fetch dates down from now in that order.
@@ -100,7 +102,7 @@ suspend fun syncChaptersWithNovelSource(
         stored = dbChapters.map { it.toStoredChapter() },
         removed = toDelete.map { it.toStoredChapter() },
         markDuplicateAsRead = markDuplicateAsRead,
-        now = System.currentTimeMillis(),
+        now = now,
     )
     val changedOrDuplicateReadUrls = toAdd.zip(arrivals)
         .filter { (_, arrival) -> arrival.isChangedOrDuplicate }
@@ -117,7 +119,7 @@ suspend fun syncChaptersWithNovelSource(
     val insertedChapters = novelChapterRepository.updateFromRemote(toDelete.map { it.id }, updatedToAdd, toChange)
 
     // novels.last_update tracks the last time the chapter list changed at all; only on a real change.
-    novelRepository.update(NovelUpdate(novel.id) { lastUpdate = System.currentTimeMillis() })
+    novelRepository.update(NovelUpdate(novel.id) { lastUpdate = now })
 
     // Relocate any downloaded file whose chapter was re-titled, so recognition follows the new name
     // (mirrors the manga rename-on-sync, pinned by RenameOnSyncConformanceTest). No-op when the chapter

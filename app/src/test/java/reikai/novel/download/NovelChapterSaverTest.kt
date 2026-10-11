@@ -24,6 +24,7 @@ import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.storage.service.StorageManager
 import java.io.File
+import kotlin.time.Instant
 
 /**
  * Saves on a real disk with the chapter name hash off, where two chapters of one name share one file. Manga's
@@ -106,6 +107,10 @@ class NovelChapterSaverTest {
 
     private fun chapter(id: Long, url: String) = NovelChapter(
         id = id, novelId = 1L, url = url, name = "Chapter", read = false, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L, dateFetch = 0L, dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(
+            0L,
+        ),
+        dateUpload = null, page = "",
     )
 }

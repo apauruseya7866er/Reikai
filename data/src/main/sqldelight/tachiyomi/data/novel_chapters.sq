@@ -1,4 +1,5 @@
 import kotlin.Boolean;
+import kotlin.time.Instant;
 
 -- Parallel of chapters. Two divergences from the manga chapter table:
 -- 1. `last_text_progress` replaces `last_page_read` + `pages_left`. Scroll progress in hundredths of a
@@ -17,8 +18,8 @@ CREATE TABLE novel_chapters(
     last_text_progress INTEGER NOT NULL DEFAULT 0,
     chapter_number REAL NOT NULL,
     source_order INTEGER NOT NULL,
-    date_fetch INTEGER NOT NULL,
-    date_upload INTEGER NOT NULL,
+    date_fetch INTEGER AS Instant NOT NULL,
+    date_upload INTEGER AS Instant,
     page TEXT NOT NULL DEFAULT '',
     is_downloaded INTEGER AS Boolean NOT NULL DEFAULT 0,
     scanlator TEXT,

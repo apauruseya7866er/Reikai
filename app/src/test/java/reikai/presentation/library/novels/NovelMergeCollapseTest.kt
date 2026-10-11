@@ -5,6 +5,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.LibraryNovel
 import reikai.domain.novel.model.Novel
+import kotlin.time.Instant
 
 class NovelMergeCollapseTest {
 
@@ -21,16 +22,16 @@ class NovelMergeCollapseTest {
             source = source,
             title = title,
             author = author,
-            favoriteAt = dateAdded,
+            favoriteAt = Instant.fromEpochMilliseconds(dateAdded),
         ),
         categories = emptyList(),
         totalChapters = chapters,
         readCount = 0,
         bookmarkCount = 0,
         downloadCount = 0,
-        latestUpload = 0,
-        chapterFetchedAt = 0,
-        lastRead = 0,
+        latestUpload = null,
+        chapterFetchedAt = null,
+        lastRead = null,
     )
 
     private fun collapse(

@@ -92,7 +92,7 @@ class MangaDownloadQueueProvider(
             seriesOf = { it.manga.id },
             keyOf = {
                 when (key) {
-                    DownloadQueueSortKey.UPLOAD_DATE -> it.chapter.dateUpload.toDouble()
+                    DownloadQueueSortKey.UPLOAD_DATE -> it.chapter.dateUpload?.toEpochMilliseconds()?.toDouble()
                     DownloadQueueSortKey.CHAPTER_NUMBER -> it.chapter.chapterNumber
                 }
             },

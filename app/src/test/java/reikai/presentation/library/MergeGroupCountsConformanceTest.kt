@@ -14,6 +14,7 @@ import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.Source
+import kotlin.time.Instant
 
 /**
  * A merged group's counts, pinned once over both library collapses. Group 7 holds entries 1 (leading,
@@ -90,7 +91,8 @@ class MergeGroupCountsConformanceTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("collapses")
     fun `a merged row reports the most recent read across its group`(collapse: GroupCountCollapse) = runTest {
-        collapse.group7(stitched = null, stitchedDownloads = null).libraryManga.lastRead shouldBe 500L
+        collapse.group7(stitched = null, stitchedDownloads = null).libraryManga.lastRead shouldBe
+            Instant.fromEpochMilliseconds(500L)
     }
 
     companion object {
@@ -165,9 +167,9 @@ class MangaGroupCountCollapse : GroupCountCollapse {
                     totalChapters = chapters,
                     readCount = chapters - unread,
                     bookmarkCount = 0,
-                    latestUpload = 0,
-                    chapterFetchedAt = 0,
-                    lastRead = lastReads[id] ?: 0,
+                    latestUpload = null,
+                    chapterFetchedAt = null,
+                    lastRead = lastReads[id]?.let(Instant::fromEpochMilliseconds),
                 ),
                 downloadCount = downloads,
                 unreadCount = unread,
@@ -201,15 +203,15 @@ class NovelGroupCountCollapse : GroupCountCollapse {
         val library = members.map { (id, counts) ->
             val (chapters, unread, downloads) = counts
             LibraryNovel(
-                novel = Novel.create().copy(id = id, source = "src", favoriteAt = 0L),
+                novel = Novel.create().copy(id = id, source = "src", favoriteAt = Instant.fromEpochMilliseconds(0L)),
                 categories = emptyList(),
                 totalChapters = chapters,
                 readCount = chapters - unread,
                 bookmarkCount = 0,
                 downloadCount = downloads.toLong(),
-                latestUpload = 0,
-                chapterFetchedAt = 0,
-                lastRead = lastReads[id] ?: 0,
+                latestUpload = null,
+                chapterFetchedAt = null,
+                lastRead = lastReads[id]?.let(Instant::fromEpochMilliseconds),
             )
         }
         return NovelMergeCollapse.collapse(

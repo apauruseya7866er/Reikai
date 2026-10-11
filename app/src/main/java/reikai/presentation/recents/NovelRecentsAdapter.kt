@@ -55,6 +55,7 @@ import reikai.presentation.novel.browse.NovelLibraryAdder
 import reikai.presentation.novel.details.NovelScreen
 import reikai.presentation.updates.NovelUpdatesItem
 import reikai.presentation.updates.NovelUpdatesViewModel
+import kotlin.time.Instant
 
 /**
  * The novel twin of [MangaRecentsAdapter], pinned by RecentsMappingTest and RecentsTargetRowTest, over
@@ -397,7 +398,7 @@ internal fun NovelUpdatesItem.toRecentsItem(): RecentsItem = RecentsItem(
 
 internal fun NovelHistoryWithRelations.toRecentsItem(): RecentsItem = RecentsItem(
     entryId = EntryId.Novel(novelId),
-    timestamp = readAt ?: 0L,
+    timestamp = readAt ?: Instant.fromEpochMilliseconds(0),
     lane = RecentsLane.Read(ChapterRef(EntryId.Novel(novelId), chapterId)),
     payload = this,
 )

@@ -153,9 +153,9 @@ class LibraryExportRowsTest {
         readCount = 0L,
         bookmarkCount = 0L,
         downloadCount = 0L,
-        latestUpload = 0L,
-        chapterFetchedAt = 0L,
-        lastRead = 0L,
+        latestUpload = null,
+        chapterFetchedAt = null,
+        lastRead = null,
     )
 
     private companion object {

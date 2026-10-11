@@ -16,6 +16,7 @@ import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.track.TrackNovelChapter
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.library.service.LibraryPreferences
+import kotlin.time.Instant
 
 /**
  * What finishing a chapter marks read in every novel reader. Novel 1 lists chapter 5 twice (5 and 55);
@@ -26,8 +27,8 @@ class NovelChapterFinishTest {
 
     private fun chapter(id: Long, novelId: Long, number: Double) = NovelChapter(
         id = id, novelId = novelId, url = "/$id", name = "", read = false, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = number, sourceOrder = id, dateFetch = 0L,
-        dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = number, sourceOrder = id, dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null, page = "",
     )
 
     private val finished = chapter(5L, novelId = 1L, number = 5.0)

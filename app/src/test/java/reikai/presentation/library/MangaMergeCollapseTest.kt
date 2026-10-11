@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.Source
+import kotlin.time.Instant
 
 class MangaMergeCollapseTest {
 
@@ -25,7 +26,12 @@ class MangaMergeCollapseTest {
         unread: Long = 0,
         isLocal: Boolean = false,
     ): LibraryItem {
-        val manga = Manga.create().copy(id = id, source = source, title = title, favoriteAt = dateAdded)
+        val manga = Manga.create().copy(
+            id = id,
+            source = source,
+            title = title,
+            favoriteAt = Instant.fromEpochMilliseconds(dateAdded),
+        )
         return LibraryItem(
             libraryManga = LibraryManga(
                 manga = manga,
@@ -33,9 +39,9 @@ class MangaMergeCollapseTest {
                 totalChapters = totalChapters,
                 readCount = 0,
                 bookmarkCount = 0,
-                latestUpload = 0,
-                chapterFetchedAt = 0,
-                lastRead = 0,
+                latestUpload = null,
+                chapterFetchedAt = null,
+                lastRead = null,
             ),
             downloadCount = 0,
             unreadCount = unread,

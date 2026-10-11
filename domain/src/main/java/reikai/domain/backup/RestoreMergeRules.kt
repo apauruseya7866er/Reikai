@@ -1,6 +1,8 @@
 package reikai.domain.backup
 
+import tachiyomi.domain.manga.model.Manga
 import kotlin.math.max
+import kotlin.time.Instant
 
 /**
  * Whether a restore takes the backup's source details over the device's: only when the backup fetched
@@ -12,10 +14,13 @@ fun backupDetailsWin(deviceInitialized: Boolean, backupInitialized: Boolean): Bo
 
 /**
  * When a restored entry was added to the library: null while neither copy is in it, else the earlier of
- * the two known dates, 0 when neither knows one (mihon 986f46c09).
+ * the two known dates, [Manga.UNKNOWN_FAVORITE_AT] when neither knows one (mihon 986f46c09).
  */
-fun restoredFavoriteAt(device: Long?, backup: Long?): Long? =
-    if (device == null && backup == null) null else listOfNotNull(device, backup).filter { it > 0 }.minOrNull() ?: 0L
+fun restoredFavoriteAt(device: Instant?, backup: Instant?): Instant? = if (device == null && backup == null) {
+    null
+} else {
+    listOfNotNull(device, backup).filter { it > Manga.UNKNOWN_FAVORITE_AT }.minOrNull() ?: Manga.UNKNOWN_FAVORITE_AT
+}
 
 /** A chapter's user state as a restore merges it; [progress] is the type's own resume position. */
 data class RestoredChapterState(val read: Boolean, val bookmark: Boolean, val progress: Long)
@@ -51,8 +56,8 @@ fun <T> List<T>.foldChapterCopies(
  */
 fun backupChapterReadAhead(device: Double, backup: Double): Double? = backup.takeIf { it > device }
 
-/** One chapter's history keyed by its url, as a backup carries it; [readAt] is 0 for an entry the user removed. */
-data class RestoredChapterHistory(val chapterUrl: String, val readAt: Long, val readDuration: Long)
+/** One chapter's history keyed by its url, as a backup carries it; [readAt] is null for an entry the user removed. */
+data class RestoredChapterHistory(val chapterUrl: String, val readAt: Instant?, val readDuration: Long)
 
 /**
  * A backup can hold one entry per copy of a duplicated chapter; they are one chapter's history, so they
@@ -60,16 +65,22 @@ data class RestoredChapterHistory(val chapterUrl: String, val readAt: Long, val 
  */
 fun List<RestoredChapterHistory>.foldHistoryCopies(): List<RestoredChapterHistory> =
     groupBy { it.chapterUrl }.map { (chapterUrl, copies) ->
-        RestoredChapterHistory(chapterUrl, copies.maxOf { it.readAt }, copies.sumOf { it.readDuration })
+        val readAt = copies.mapNotNull { it.readAt }.maxOrNull()
+        RestoredChapterHistory(chapterUrl, readAt, copies.sumOf { it.readDuration })
     }
 
 /**
  * The (read time, duration to add) that brings a stored history row to the later read and the longer
- * duration of it and an incoming row; a caller with no stored row passes null and 0. Shaped for the
- * additive `upsert` in history.sq and novel_history.sq, and it adds nothing once the row holds both, so
- * a migration retry or a second restore adds no time. The longer duration, not the sum, so a chapter
- * read on both copies counts once. novel_history.sq `restoreUpsert` states the same rule in SQL, pinned
- * with this one by RestoreHistoryConformanceTest.
+ * duration of it and an incoming row; a caller with no stored row passes null and 0. A null read time is
+ * removed history, which a known time on either side replaces. Shaped for the additive `upsert` in
+ * history.sq and novel_history.sq: it adds nothing once the row holds both, so a retry adds no time, and
+ * the longer duration rather than the sum counts a chapter read on both copies once. novel_history.sq
+ * `restoreUpsert` states the same rule in SQL, pinned with this one by RestoreHistoryConformanceTest.
  */
-fun mergedHistory(readAt: Long, readDuration: Long, storedReadAt: Long?, storedDuration: Long): Pair<Long, Long> =
-    max(readAt, storedReadAt ?: readAt) to max(readDuration, storedDuration) - storedDuration
+fun mergedHistory(
+    readAt: Instant?,
+    readDuration: Long,
+    storedReadAt: Instant?,
+    storedDuration: Long,
+): Pair<Instant?, Long> =
+    listOfNotNull(readAt, storedReadAt).maxOrNull() to max(readDuration, storedDuration) - storedDuration

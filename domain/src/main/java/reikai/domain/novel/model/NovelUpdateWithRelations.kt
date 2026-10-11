@@ -1,6 +1,7 @@
 package reikai.domain.novel.model
 
 import androidx.compose.runtime.Immutable
+import kotlin.time.Instant
 
 /**
  * One light-novel "recent update" row, the novel twin of
@@ -19,7 +20,7 @@ data class NovelUpdateWithRelations(
     val bookmark: Boolean,
     val lastTextProgress: Long,
     val source: String,
-    val dateFetch: Long,
+    val dateFetch: Instant,
     val coverData: NovelCover,
     val novelUrl: String,
 )

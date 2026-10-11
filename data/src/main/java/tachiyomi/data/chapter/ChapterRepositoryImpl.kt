@@ -16,6 +16,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.model.ChapterRemoteUpdate
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.repository.ChapterRepository
+import kotlin.time.Instant
 
 @Inject
 @SingleIn(AppScope::class)
@@ -176,13 +177,13 @@ class ChapterRepositoryImpl(
         remoteName: String,
         remoteScanlator: String?,
         remoteChapterNumber: Double,
-        remoteDateUpload: Long,
+        remoteDateUpload: Instant?,
         remoteOrder: Long,
         remoteMemo: JsonObject,
         userRead: Boolean,
         userBookmark: Boolean,
         userLastPageRead: Long,
-        stateDateFetch: Long,
+        stateDateFetch: Instant,
         pageCount: Long, // RK: page count column
     ): Chapter = Chapter(
         id = id,

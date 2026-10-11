@@ -28,6 +28,7 @@ import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import java.io.File
+import kotlin.time.Clock
 
 data class ChapterChain(val manga: Manga, val chapters: List<Chapter>, val history: List<History>)
 
@@ -115,7 +116,7 @@ class EHentaiUpdateHelper(
             }
             if (!accepted.manga.favorite) {
                 mangaUpdates += MangaUpdate(accepted.manga.id) {
-                    favoriteAt = System.currentTimeMillis()
+                    favoriteAt = Clock.System.now()
                 }
             }
 
@@ -173,9 +174,7 @@ class EHentaiUpdateHelper(
         val history = chainsAsHistory.groupBy { history -> chainsAsChapters.find { it.id == history.chapterId }?.url }
         val newHistory = currentChapters.mapNotNull { chapter ->
             val newHistory = history[chapter.url]
-                ?.maxByOrNull {
-                    it.readAt?.time ?: 0
-                }
+                ?.maxWithOrNull(compareBy { it.readAt })
                 ?.takeIf { it.chapterId != chapter.id && it.readAt != null }
             if (newHistory != null) {
                 HistoryUpdate(chapter.id, newHistory.readAt!!, newHistory.readDuration)

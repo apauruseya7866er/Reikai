@@ -1,9 +1,11 @@
 package reikai.domain.novel.model
 
 import io.kotest.matchers.shouldBe
+import mihon.core.common.extensions.toInstantOrNull
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.NovelPreferences
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import kotlin.time.Instant
 
 /**
  * The order the novel reader pages in. It used to be hardcoded to chapter number, so a novel sorted by
@@ -41,8 +43,8 @@ class NovelReadingOrderTest {
         lastTextProgress = 0L,
         chapterNumber = number,
         sourceOrder = order,
-        dateFetch = 0L,
-        dateUpload = upload,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = upload.toInstantOrNull(),
         page = "",
     )
 

@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.data.backup.models.BackupNovelMergeGroup
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelSourceRef
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelTracking
 import eu.kanade.tachiyomi.data.backup.models.customInfo
+import mihon.core.common.extensions.toInstantOrNull
 import reikai.data.novel.updateNovelFetchInterval
 import reikai.domain.backup.RestoredChapterHistory
 import reikai.domain.backup.RestoredChapterState
@@ -93,7 +94,7 @@ class NovelRestorer(
         restoreHistory(chapters, backupNovel.history)
         // An old backup carries the Last read stamp without history; after the history above, so a
         // backup that has history keeps it as is.
-        backupNovel.lastReadAt?.takeIf { it > 0 }?.let { lastRead ->
+        backupNovel.lastReadAt?.toInstantOrNull()?.let { lastRead ->
             novelHistoryRepository.seedLastRead(novelId, lastRead)
         }
         // An entry without custom info leaves the device's own alone, as manga does, pinned by
@@ -210,7 +211,7 @@ class NovelRestorer(
     ) {
         val chapterIdsByUrl = chapters.associate { it.url to it.id }
         backupHistory
-            .map { RestoredChapterHistory(it.url, it.lastRead, it.readDuration) }
+            .map { RestoredChapterHistory(it.url, it.lastRead.toInstantOrNull(), it.readDuration) }
             .foldHistoryCopies()
             .forEach { history ->
                 val chapterId = chapterIdsByUrl[history.chapterUrl] ?: return@forEach

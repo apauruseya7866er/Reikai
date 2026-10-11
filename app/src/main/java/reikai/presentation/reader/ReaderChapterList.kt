@@ -6,6 +6,7 @@ import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.data.download.model.Download
 import kotlinx.coroutines.flow.Flow
 import reikai.presentation.components.UndatedChapterDate
+import kotlin.time.Instant
 
 /**
  * One row of the reader's chapter sheet, already resolved by the content type that owns the chapter.
@@ -17,8 +18,8 @@ data class ReaderChapterRow(
     val title: String,
     /** The line under the title: a source name, a scanlator, both, or nothing. */
     val subtitle: String?,
-    /** Epoch millis, 0 where the source dated nothing; formatted by the sheet so both types read alike. */
-    val dateUpload: Long,
+    /** Null where the source dated nothing; formatted by the sheet so both types read alike. */
+    val dateUpload: Instant?,
     /** How far into an unread chapter the reader got, already worded ("42%", "Page 3"), or null. */
     val readProgress: String?,
     val read: Boolean,

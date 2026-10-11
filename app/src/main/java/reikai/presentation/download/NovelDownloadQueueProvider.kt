@@ -111,7 +111,7 @@ class NovelDownloadQueueProvider(
             keyOf = { download ->
                 chapterById[download.chapterId]?.let {
                     when (key) {
-                        DownloadQueueSortKey.UPLOAD_DATE -> it.dateUpload.toDouble()
+                        DownloadQueueSortKey.UPLOAD_DATE -> it.dateUpload?.toEpochMilliseconds()?.toDouble()
                         DownloadQueueSortKey.CHAPTER_NUMBER -> it.chapterNumber
                     }
                 }

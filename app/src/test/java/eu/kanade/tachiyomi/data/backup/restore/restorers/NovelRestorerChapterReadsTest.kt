@@ -65,7 +65,7 @@ class NovelRestorerChapterReadsTest {
 
         val urlById = NovelChapterRepositoryImpl(database).getByNovelId(1L).associate { it.id to it.url }
         NovelHistoryRepositoryImpl(database).getHistoryByNovelId(1L)
-            .map { Triple(urlById[it.chapterId], it.readAt, it.readDuration) }
+            .map { Triple(urlById[it.chapterId], it.readAt?.toEpochMilliseconds(), it.readDuration) }
             .sortedBy { it.first } shouldBe listOf(Triple("c1", 100L, 5L), Triple("c4", 200L, 7L))
     }
 

@@ -20,6 +20,7 @@ import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.source.model.Source
+import kotlin.time.Instant
 
 /**
  * What a merged library row carries besides its counts, pinned once over both library collapses.
@@ -176,9 +177,9 @@ class MangaMergedRowCollapse : MergedRowCollapse {
                     totalChapters = 4,
                     readCount = 1,
                     bookmarkCount = 0,
-                    latestUpload = 0,
-                    chapterFetchedAt = 0,
-                    lastRead = 0,
+                    latestUpload = null,
+                    chapterFetchedAt = null,
+                    lastRead = null,
                 ),
                 downloadCount = downloads,
                 unreadCount = 3,
@@ -223,15 +224,19 @@ class NovelMergedRowCollapse : MergedRowCollapse {
         val library = rowMembers.map { (id, member) ->
             val (sourceIndex, downloads) = member
             LibraryNovel(
-                novel = Novel.create().copy(id = id, source = sourceKeys[sourceIndex], favoriteAt = 0L),
+                novel = Novel.create().copy(
+                    id = id,
+                    source = sourceKeys[sourceIndex],
+                    favoriteAt = Instant.fromEpochMilliseconds(0L),
+                ),
                 categories = emptyList(),
                 totalChapters = 4,
                 readCount = 1,
                 bookmarkCount = 0,
                 downloadCount = downloads.toLong(),
-                latestUpload = 0,
-                chapterFetchedAt = 0,
-                lastRead = 0,
+                latestUpload = null,
+                chapterFetchedAt = null,
+                lastRead = null,
             )
         }
         val preferred = if (preferSecondSource) listOf(sourceKeys[1]) else emptyList()

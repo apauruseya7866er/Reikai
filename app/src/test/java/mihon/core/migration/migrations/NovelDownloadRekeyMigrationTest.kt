@@ -30,6 +30,7 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.storage.service.StorageManager
 import java.io.File
+import kotlin.time.Instant
 
 /**
  * Old-scheme novel downloads (`<novel id>/<chapter id>.html`) on a real disk. The upgrade's dedupe (51.sqm) runs
@@ -169,7 +170,11 @@ class NovelDownloadRekeyMigrationTest {
 
     private fun chapter(id: Long, url: String) = NovelChapter(
         id = id, novelId = SURVIVOR, url = url, name = "Chapter $id", read = false, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L, dateFetch = 0L, dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(
+            0L,
+        ),
+        dateUpload = null, page = "",
     )
 
     private companion object {

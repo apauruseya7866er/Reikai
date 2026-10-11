@@ -3,12 +3,17 @@ package reikai.domain.novel
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.NovelChapter
+import kotlin.time.Instant
 
 class NovelHiddenChaptersTest {
 
     private fun chapter(novelId: Long) = NovelChapter(
         id = 1L, novelId = novelId, url = "/c1", name = "c1", read = false, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L, dateFetch = 0L, dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(
+            0L,
+        ),
+        dateUpload = null, page = "",
     )
 
     @Test

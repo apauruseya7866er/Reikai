@@ -32,6 +32,7 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /**
  * The library continue button over both content types under a Downloaded filter, on a merged series of
@@ -104,8 +105,8 @@ class MergedResumeDownloadedConformanceTest {
                 lastTextProgress = 0L,
                 chapterNumber = number,
                 sourceOrder = number.toLong(),
-                dateFetch = 0L,
-                dateUpload = 0L,
+                dateFetch = Instant.fromEpochMilliseconds(0L),
+                dateUpload = null,
                 page = "",
             )
             val chapterRepository = mockk<NovelChapterRepository> {

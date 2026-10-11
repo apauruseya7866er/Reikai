@@ -24,7 +24,7 @@ internal fun unifiedWidgetUpdates(
     getUpdates: GetUpdates,
     novelRepository: NovelRepository,
 ): Flow<UnifiedWidgetUpdates> {
-    val after = BaseUpdatesGridGlanceWidget.DateLimit.toEpochMilliseconds()
+    val after = BaseUpdatesGridGlanceWidget.DateLimit
     return combine(
         getUpdates.subscribe(read = false, after = after),
         novelRepository.getFilteredNovelUpdatesAsFlow(

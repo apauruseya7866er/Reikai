@@ -26,6 +26,7 @@ import reikai.domain.merge.GroupSnapshot
 import reikai.domain.merge.MergeManager
 import tachiyomi.core.common.i18n.stringResource
 import java.util.Collections
+import kotlin.time.Instant
 
 /**
  * Manage sources' remove, over a removal in memory: nothing is deleted while the Undo can still put the
@@ -106,7 +107,8 @@ class EntryMergeActionHostTest {
         snackbarResult.complete(SnackbarResult.ActionPerformed)
         removal.restored.await()
 
-        removal.favoriteAt shouldBe mapOf(1L to 100L, 2L to 200L)
+        removal.favoriteAt shouldBe
+            mapOf(1L to Instant.fromEpochMilliseconds(100L), 2L to Instant.fromEpochMilliseconds(200L))
     }
 
     @Test
@@ -128,10 +130,10 @@ class EntryMergeActionHostTest {
     }
 
     private class MemoryRemoval : EntryLibraryRemoval(mockk(relaxed = true), mockk(relaxed = true)) {
-        val favoriteAt: MutableMap<Long, Long?> = Collections.synchronizedMap(
-            mutableMapOf<Long, Long?>(
-                1L to 100L,
-                2L to 200L,
+        val favoriteAt: MutableMap<Long, Instant?> = Collections.synchronizedMap(
+            mutableMapOf<Long, Instant?>(
+                1L to Instant.fromEpochMilliseconds(100L),
+                2L to Instant.fromEpochMilliseconds(200L),
             ),
         )
         val coversDropped: MutableList<Long> = Collections.synchronizedList(mutableListOf())
@@ -141,7 +143,7 @@ class EntryMergeActionHostTest {
 
         override suspend fun favoriteAt(id: Long) = favoriteAt[id]
 
-        override suspend fun writeFavoriteAt(favoriteAt: Map<Long, Long?>): Boolean {
+        override suspend fun writeFavoriteAt(favoriteAt: Map<Long, Instant?>): Boolean {
             this.favoriteAt.putAll(favoriteAt)
             if (favoriteAt.values.all { it != null }) restored.complete(Unit)
             return true

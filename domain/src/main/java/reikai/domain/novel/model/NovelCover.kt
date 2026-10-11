@@ -1,5 +1,7 @@
 package reikai.domain.novel.model
 
+import kotlin.time.Instant
+
 /**
  * Coil model for a light-novel cover, the novel twin of [tachiyomi.domain.manga.model.MangaCover], type only.
  * [sourceId] picks the client and headers the cover is fetched with (`NovelImageRequests`), which
@@ -11,7 +13,7 @@ data class NovelCover(
     val url: String?,
     val sourceId: String?,
     val isNovelFavorite: Boolean,
-    val lastModified: Long,
+    val lastModified: Instant?,
     val novelId: Long = 0L,
 )
 
@@ -34,4 +36,4 @@ fun Novel.asNovelCover(url: String? = thumbnailUrl) = NovelCover(
  * no stored row draws the listed [url].
  */
 fun novelResultCover(stored: Novel?, url: String?, sourceId: String): NovelCover =
-    stored?.asNovelCover() ?: NovelCover(url = url, sourceId = sourceId, isNovelFavorite = false, lastModified = 0L)
+    stored?.asNovelCover() ?: NovelCover(url = url, sourceId = sourceId, isNovelFavorite = false, lastModified = null)

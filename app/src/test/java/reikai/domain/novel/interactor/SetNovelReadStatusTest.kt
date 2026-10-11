@@ -10,13 +10,15 @@ import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.track.PushNovelUnread
 import reikai.domain.track.source.SourceTrackerDispatcher
+import kotlin.time.Instant
 
 class SetNovelReadStatusTest {
 
     private fun chapter(id: Long, novelId: Long = 1L, read: Boolean = false, progress: Long = 0L) = NovelChapter(
         id = id, novelId = novelId, url = "", name = "", read = read, bookmark = false,
-        lastTextProgress = progress, chapterNumber = id.toDouble(), sourceOrder = id, dateFetch = 0L,
-        dateUpload = 0L, page = "",
+        lastTextProgress = progress, chapterNumber = id.toDouble(), sourceOrder = id,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null, page = "",
     )
 
     private fun interactor(

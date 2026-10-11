@@ -14,6 +14,7 @@ import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.history.HistoryRepositoryImpl
 import tachiyomi.data.updates.UpdatesRepositoryImpl
+import kotlin.time.Instant
 
 /**
  * The recents feeds filter in SQL, and both content types must answer a filter the same way: the
@@ -55,7 +56,7 @@ class RecentsFilterQueriesTest {
         excluded: List<Long> = emptyList(),
         started: Boolean? = null,
     ): List<Long> = updates.subscribeAll(
-        after = 0,
+        after = Instant.fromEpochMilliseconds(0),
         limit = 100,
         unread = null,
         started = started,
@@ -70,7 +71,7 @@ class RecentsFilterQueriesTest {
         excluded: List<Long> = emptyList(),
         started: Boolean? = null,
     ): List<Long> = novels.getFilteredNovelUpdatesAsFlow(
-        after = 0,
+        after = Instant.fromEpochMilliseconds(0),
         limit = 100,
         unread = null,
         started = started,

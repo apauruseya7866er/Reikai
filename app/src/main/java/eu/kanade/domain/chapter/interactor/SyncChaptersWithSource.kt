@@ -16,7 +16,6 @@ import reikai.domain.chapter.ChapterNumberOverrideRepository
 import reikai.domain.chapter.StoredChapter
 import reikai.domain.chapter.appliedTo
 import reikai.domain.chapter.chapterArrivals
-import reikai.domain.chapter.remoteUploadDate
 import reikai.domain.library.ContentType
 import reikai.domain.library.ReleaseInterval
 import tachiyomi.domain.chapter.interactor.ShouldUpdateDbChapter
@@ -28,6 +27,7 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.source.local.isLocal
 import kotlin.time.Clock
+import kotlin.time.Instant
 
 @Inject
 class SyncChaptersWithSource(
@@ -54,7 +54,7 @@ class SyncChaptersWithSource(
         manga: Manga,
         source: Source,
         manualFetch: Boolean = false,
-        fetchWindow: Pair<Long, Long> = Pair(0, 0),
+        fetchWindow: ClosedRange<Instant>? = null,
     ): List<Chapter> {
         if (rawSourceChapters.isEmpty() && !source.isLocal()) {
             throw NoChaptersException()
@@ -62,7 +62,7 @@ class SyncChaptersWithSource(
 
         val timeZone = TimeZone.currentSystemDefault()
         val now = Clock.System.now().toLocalDateTime(timeZone)
-        val nowMillis = now.toInstant(timeZone).toEpochMilliseconds()
+        val nowInstant = now.toInstant(timeZone)
 
         // RK --> the prepare hook, both url dedupes and number recognition run in toSourceChapters, the
         // list as a sync stores it, which the migration count peek reads too. A number the user corrected
@@ -111,7 +111,7 @@ class SyncChaptersWithSource(
                             chapterNumber = chapter.chapterNumber,
                             scanlator = chapter.scanlator,
                             sourceOrder = chapter.sourceOrder,
-                            dateUpload = remoteUploadDate(chapter.dateUpload), // RK
+                            dateUpload = chapter.dateUpload,
                             memo = chapter.memo,
                         ),
                     )
@@ -149,7 +149,7 @@ class SyncChaptersWithSource(
             stored = dbChapters.map { StoredChapter(it.chapterNumber, it.read) },
             removed = removedChapters.map { StoredChapter(it.chapterNumber, it.read, it.bookmark, it.dateFetch) },
             markDuplicateAsRead = markDuplicateAsRead,
-            now = nowMillis,
+            now = nowInstant,
         )
         val changedOrDuplicateReadUrls = newChapters.zip(arrivals)
             .filter { (_, arrival) -> arrival.isChangedOrDuplicate }

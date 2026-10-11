@@ -2,6 +2,7 @@ package reikai.presentation.recents
 
 import androidx.compose.runtime.Immutable
 import reikai.domain.entry.EntryId
+import kotlin.time.Instant
 
 /**
  * A chapter, identified so it cannot be confused with another content type's. `chapter.id` and
@@ -53,15 +54,15 @@ val RecentsLane.kind: RecentsLaneKind
     }
 
 /**
- * One row of recent activity, neutral over both content types. [timestamp] is epoch millis whatever
- * the source column was, normalised per adapter so the shared layer never meets a `Date` on one side
- * and a `Long` on the other. [payload] is the adapter's own row, carried and never inspected here;
+ * One row of recent activity, neutral over both content types. [timestamp] is normalised per adapter,
+ * so the shared layer reads one type whichever column it came from. [payload] is the adapter's own row,
+ * carried and never inspected here;
  * anything the shared layer reasons about is a field or a typed slot, never read back out of it.
  */
 @Immutable
 data class RecentsItem(
     val entryId: EntryId,
-    val timestamp: Long,
+    val timestamp: Instant,
     val lane: RecentsLane,
     val payload: Any,
     /** A merged series' other members' covers, stamped at assembly ([withGroupCovers]); empty otherwise. */

@@ -1,5 +1,7 @@
 package reikai.domain.novel.updateerror
 
+import kotlin.time.Instant
+
 /**
  * A single favorited novel that failed its last update, joined with the novel's display data
  * (the `novel_update_error_view` row). Favorites only; newest first. The novel twin of
@@ -13,7 +15,7 @@ data class NovelUpdateError(
     val source: String,
     val novelUrl: String,
     val thumbnailUrl: String?,
-    val coverLastModified: Long,
+    val coverLastModified: Instant?,
     val message: String,
     val lastUpdate: Long,
 )

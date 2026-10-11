@@ -2,6 +2,7 @@ package reikai.domain.recents
 
 import reikai.domain.novel.model.NovelCover
 import tachiyomi.domain.manga.model.MangaCover
+import kotlin.time.Instant
 
 /**
  * A library entry that was recently added, one row per content type. Deliberately not modelled on
@@ -12,7 +13,7 @@ import tachiyomi.domain.manga.model.MangaCover
 data class RecentlyAddedManga(
     val mangaId: Long,
     val title: String,
-    val dateAdded: Long,
+    val dateAdded: Instant,
     val coverData: MangaCover,
 )
 
@@ -23,6 +24,6 @@ data class RecentlyAddedManga(
 data class RecentlyAddedNovel(
     val novelId: Long,
     val title: String,
-    val dateAdded: Long,
+    val dateAdded: Instant,
     val coverData: NovelCover,
 )

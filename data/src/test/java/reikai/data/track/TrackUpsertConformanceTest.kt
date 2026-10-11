@@ -68,7 +68,7 @@ class TrackUpsertConformanceTest {
                     Track(
                         id = 0, mangaId = 1, trackerId = 2, remoteId = 3, libraryId = null, title = "T",
                         lastChapterRead = lastChapterRead, totalChapters = 0, status = 1, score = 0.0,
-                        remoteUrl = "", startDate = 0, finishDate = 0, private = false,
+                        remoteUrl = "", startDate = null, finishDate = null, private = false,
                     ),
                 )
                 return repository.getTracksByMangaId(1).map { it.id }
@@ -87,7 +87,7 @@ class TrackUpsertConformanceTest {
                     NovelTrack(
                         id = 0, novelId = 1, trackerId = 2, remoteId = 3, libraryId = null, title = "T",
                         lastChapterRead = lastChapterRead, totalChapters = 0, status = 1, score = 0.0,
-                        remoteUrl = "", startDate = 0, finishDate = 0, private = false,
+                        remoteUrl = "", startDate = null, finishDate = null, private = false,
                     ),
                 )
                 return repository.getTracksByNovelId(1).map { it.id }

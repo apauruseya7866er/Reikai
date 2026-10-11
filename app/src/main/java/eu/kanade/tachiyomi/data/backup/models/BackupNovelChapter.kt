@@ -3,7 +3,9 @@ package eu.kanade.tachiyomi.data.backup.models
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
+import mihon.core.common.extensions.toInstantOrNull
 import reikai.domain.novel.model.NovelChapter
+import kotlin.time.Instant
 
 @Serializable
 class BackupNovelChapter(
@@ -36,8 +38,8 @@ class BackupNovelChapter(
             lastTextProgress = this@BackupNovelChapter.lastTextProgress,
             chapterNumber = this@BackupNovelChapter.chapterNumber,
             sourceOrder = this@BackupNovelChapter.sourceOrder,
-            dateFetch = this@BackupNovelChapter.dateFetch,
-            dateUpload = this@BackupNovelChapter.dateUpload,
+            dateFetch = Instant.fromEpochMilliseconds(this@BackupNovelChapter.dateFetch),
+            dateUpload = this@BackupNovelChapter.dateUpload.toInstantOrNull(),
             page = this@BackupNovelChapter.page,
             scanlator = this@BackupNovelChapter.scanlator,
         )

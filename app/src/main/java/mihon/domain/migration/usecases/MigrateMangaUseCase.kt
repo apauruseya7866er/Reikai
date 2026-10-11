@@ -33,7 +33,6 @@ import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.track.interactor.UpsertTrack
-import java.util.Date // RK
 import kotlin.time.Clock
 
 @Inject
@@ -127,12 +126,13 @@ class MigrateMangaUseCase(
                             val readAt = history.readAt ?: return@let
                             val stored = targetHistory[mangaChapter.id]
                             val (mergedReadAt, addedDuration) = mergedHistory(
-                                readAt.time,
+                                readAt,
                                 history.readDuration,
-                                stored?.readAt?.time,
+                                stored?.readAt,
                                 stored?.readDuration ?: 0L,
                             )
-                            historyUpdates += HistoryUpdate(mangaChapter.id, Date(mergedReadAt), addedDuration)
+                            // Never null here, since the incoming read has a time
+                            historyUpdates += HistoryUpdate(mangaChapter.id, mergedReadAt ?: readAt, addedDuration)
                         }
                         // RK <--
 
@@ -202,7 +202,7 @@ class MigrateMangaUseCase(
             }
                 .takeIf { replace }
             val targetMangaUpdate = MangaUpdate(target.id) {
-                favoriteAt = current.favoriteAt?.takeIf { replace } ?: Clock.System.now().toEpochMilliseconds()
+                favoriteAt = current.favoriteAt?.takeIf { replace } ?: Clock.System.now()
                 chapterFlags = current.chapterFlags
                 viewerFlags = current.viewerFlags
                 if (MigrationFlag.NOTES in flags) notes = current.notes

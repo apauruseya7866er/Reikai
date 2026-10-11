@@ -13,6 +13,7 @@ import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.manga.MangaRepositoryImpl
 import tachiyomi.domain.manga.model.MangaUpdate
+import kotlin.time.Instant
 
 /**
  * Library membership is one nullable date on both types (mihon 986f46c09), so a partial update has to
@@ -52,7 +53,7 @@ class FavoriteAtWriteConformanceTest {
 
         type.write(database, favoriteAtSet = false, notes = "n")
 
-        type.favoriteAt(database) shouldBe 500L
+        type.favoriteAt(database) shouldBe Instant.fromEpochMilliseconds(500L)
     }
 
     enum class Type {
@@ -108,6 +109,6 @@ class FavoriteAtWriteConformanceTest {
 
         abstract suspend fun write(database: Database, favoriteAtSet: Boolean, notes: String?)
 
-        abstract suspend fun favoriteAt(database: Database): Long?
+        abstract suspend fun favoriteAt(database: Database): Instant?
     }
 }

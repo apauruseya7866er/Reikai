@@ -1,12 +1,12 @@
 package reikai.domain.novel.model
 
 import androidx.compose.runtime.Immutable
+import kotlin.time.Instant
 
 /**
  * One History-tab novel row: a novel's most-recently-read chapter plus its cover. Novel twin of
- * [tachiyomi.domain.history.model.HistoryWithRelations], type only. [readAt] is epoch millis (the novel side
- * stores history times as plain Long, no Date adapter); nullable to mirror the manga model, though the
- * feed query only returns rows with readAt > 0.
+ * [tachiyomi.domain.history.model.HistoryWithRelations], type only. [readAt] is nullable to mirror the
+ * manga model, though the feed query only returns rows that have one.
  */
 @Immutable
 data class NovelHistoryWithRelations(
@@ -15,7 +15,7 @@ data class NovelHistoryWithRelations(
     val novelId: Long,
     val title: String,
     val chapterNumber: Double,
-    val readAt: Long?,
+    val readAt: Instant?,
     val readDuration: Long,
     val coverData: NovelCover,
     // The recents read lane acts on the chapter this row names, so it carries that chapter's own
@@ -38,17 +38,17 @@ data class NovelHistoryWithRelations(
 /** One chapter's history row, the novel twin of [tachiyomi.domain.history.model.History], type only. */
 data class NovelHistory(
     val chapterId: Long,
-    val readAt: Long?,
+    val readAt: Instant?,
     val readDuration: Long,
 )
 
 /**
- * Reader write payload (novel twin of [tachiyomi.domain.history.model.HistoryUpdate]). [readAt] is
- * epoch millis; [sessionReadDuration] is the time spent in the chapter this session, accumulated into
+ * Reader write payload, twin of [tachiyomi.domain.history.model.HistoryUpdate], type only.
+ * [sessionReadDuration] is the time spent in the chapter this session, accumulated into
  * `time_read` on upsert, pinned by HistoryFeedConformanceTest.
  */
 data class NovelHistoryUpdate(
     val chapterId: Long,
-    val readAt: Long,
+    val readAt: Instant,
     val sessionReadDuration: Long,
 )

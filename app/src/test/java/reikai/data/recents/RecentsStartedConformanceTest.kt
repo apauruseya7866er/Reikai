@@ -17,6 +17,7 @@ import tachiyomi.core.common.preference.TriState
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.updates.UpdatesRepositoryImpl
+import kotlin.time.Instant
 
 /**
  * The Started filter has one meaning on every lane of a view. The updated lane asks it in SQL, Mihon's
@@ -86,7 +87,7 @@ class RecentsStartedConformanceTest {
                 },
                 keptBySql = { database, started ->
                     UpdatesRepositoryImpl(database).subscribeAll(
-                        after = 0,
+                        after = Instant.fromEpochMilliseconds(0),
                         limit = 10,
                         unread = null,
                         started = started,
@@ -117,7 +118,7 @@ class RecentsStartedConformanceTest {
                 },
                 keptBySql = { database, started ->
                     NovelRepositoryImpl(database).getFilteredNovelUpdatesAsFlow(
-                        after = 0,
+                        after = Instant.fromEpochMilliseconds(0),
                         limit = 10,
                         unread = null,
                         started = started,

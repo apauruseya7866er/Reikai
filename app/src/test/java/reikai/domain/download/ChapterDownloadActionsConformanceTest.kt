@@ -72,6 +72,7 @@ import tachiyomi.domain.storage.service.StorageManager
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 
 /**
  * A chapter row's download control over both engines, each real: the manga half through
@@ -379,8 +380,9 @@ class NovelDownloadActionsHalf : DownloadActionsHalf {
     private val novel = Novel.create().copy(id = 1L, source = "src", title = "Novel")
     private fun chapter(id: Long) = NovelChapter(
         id = id, novelId = novel.id, url = "u$id", name = "Ch $id", read = false, bookmark = false,
-        lastTextProgress = 0L, chapterNumber = id.toDouble(), sourceOrder = id, dateFetch = 0L,
-        dateUpload = 0L, page = "",
+        lastTextProgress = 0L, chapterNumber = id.toDouble(), sourceOrder = id,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null, page = "",
     )
 
     private val hanging = mutableSetOf<String>()

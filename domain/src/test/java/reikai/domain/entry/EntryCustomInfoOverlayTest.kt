@@ -10,6 +10,7 @@ import reikai.domain.recents.RecentlyAddedManga
 import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
+import kotlin.time.Instant
 
 /**
  * The display overlay, pinned once over both content types' override rows: the novel library draws a
@@ -152,8 +153,14 @@ class EntryCustomInfoOverlayTest {
     private fun row(id: Long) = RecentlyAddedManga(
         mangaId = id,
         title = "stored",
-        dateAdded = 0L,
-        coverData = MangaCover(mangaId = id, sourceId = 1L, isMangaFavorite = true, url = "stored", lastModified = 0L),
+        dateAdded = Instant.fromEpochMilliseconds(0L),
+        coverData = MangaCover(
+            mangaId = id,
+            sourceId = 1L,
+            isMangaFavorite = true,
+            url = "stored",
+            lastModified = null,
+        ),
     )
 
     companion object {

@@ -108,8 +108,8 @@ class LibraryDynamicGroupingFeedTest {
         status = 1L,
         score = 0.0,
         remoteUrl = "",
-        startDate = 0L,
-        finishDate = 0L,
+        startDate = null,
+        finishDate = null,
         private = false,
     )
 
@@ -127,9 +127,9 @@ class LibraryDynamicGroupingFeedTest {
             readCount = 0,
             bookmarkCount = 0,
             downloadCount = 0,
-            latestUpload = 0,
-            chapterFetchedAt = 0,
-            lastRead = 0,
+            latestUpload = null,
+            chapterFetchedAt = null,
+            lastRead = null,
         ).toLibraryItem(LibraryBadgePrefs(false, false, false, false, false), "ja", SourceBadge.Generic, "")
         else -> LibraryItem(
             libraryManga = LibraryManga(
@@ -144,9 +144,9 @@ class LibraryDynamicGroupingFeedTest {
                 totalChapters = 0,
                 readCount = 0,
                 bookmarkCount = 0,
-                latestUpload = 0,
-                chapterFetchedAt = 0,
-                lastRead = 0,
+                latestUpload = null,
+                chapterFetchedAt = null,
+                lastRead = null,
             ),
             downloadCount = 0,
             unreadCount = 0,

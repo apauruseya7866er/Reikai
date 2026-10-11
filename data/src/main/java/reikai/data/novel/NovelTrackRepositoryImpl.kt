@@ -13,6 +13,7 @@ import reikai.domain.novel.model.NovelTrack
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
+import kotlin.time.Instant
 
 @Inject
 @SingleIn(AppScope::class)
@@ -90,8 +91,8 @@ private fun mapNovelTrack(
     status: Long,
     score: Double,
     remoteUrl: String,
-    startDate: Long,
-    finishDate: Long,
+    startDate: Instant?,
+    finishDate: Instant?,
     private: Boolean,
 ): NovelTrack = NovelTrack(
     id = id,

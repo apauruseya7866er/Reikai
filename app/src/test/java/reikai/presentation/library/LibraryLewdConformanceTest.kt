@@ -219,9 +219,9 @@ class LibraryLewdConformanceTest {
                 totalChapters = 0,
                 readCount = 0,
                 bookmarkCount = 0,
-                latestUpload = 0,
-                chapterFetchedAt = 0,
-                lastRead = 0,
+                latestUpload = null,
+                chapterFetchedAt = null,
+                lastRead = null,
             ),
             downloadCount = 0,
             unreadCount = 0,
@@ -237,9 +237,9 @@ class LibraryLewdConformanceTest {
             readCount = 0,
             bookmarkCount = 0,
             downloadCount = 0,
-            latestUpload = 0,
-            chapterFetchedAt = 0,
-            lastRead = 0,
+            latestUpload = null,
+            chapterFetchedAt = null,
+            lastRead = null,
         )
 
         fun lewdPrefs(lewd: TriState) = LibraryFilterPrefs(

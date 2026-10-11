@@ -24,6 +24,7 @@ import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /**
  * A merged series' details list shows one row per chapter, flagged read or bookmarked when any
@@ -223,8 +224,8 @@ class MergedChapterFilterConformanceTest {
             lastTextProgress = 0L,
             chapterNumber = 1.0,
             sourceOrder = 0L,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = "",
         )
     }

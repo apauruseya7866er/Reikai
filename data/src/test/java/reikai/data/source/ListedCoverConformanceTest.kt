@@ -14,6 +14,7 @@ import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.manga.MangaRepositoryImpl
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
 
 /**
  * The funnel that stores an entry a source lists keeps a lazy-load placeholder out of the stored cover,
@@ -77,7 +78,9 @@ class ListedCoverConformanceTest {
     enum class Type {
         MANGA {
             override suspend fun seedFavorite(database: Database, cover: String) {
-                MangaRepositoryImpl(database).insertNetworkManga(listOf(manga(cover).copy(favoriteAt = 1L)))
+                MangaRepositoryImpl(
+                    database,
+                ).insertNetworkManga(listOf(manga(cover).copy(favoriteAt = Instant.fromEpochMilliseconds(1L))))
             }
 
             override suspend fun store(database: Database, cover: String) =
@@ -91,7 +94,7 @@ class ListedCoverConformanceTest {
         },
         NOVEL {
             override suspend fun seedFavorite(database: Database, cover: String) {
-                NovelRepositoryImpl(database).insert(novel(cover).copy(favoriteAt = 1L))
+                NovelRepositoryImpl(database).insert(novel(cover).copy(favoriteAt = Instant.fromEpochMilliseconds(1L)))
             }
 
             override suspend fun store(database: Database, cover: String) =

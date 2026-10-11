@@ -1,6 +1,7 @@
 package reikai.domain.recents
 
 import kotlinx.coroutines.flow.Flow
+import kotlin.time.Instant
 
 /**
  * The recents surface's newly-added lane, which has no upstream twin on either content type, so it is
@@ -10,14 +11,14 @@ import kotlinx.coroutines.flow.Flow
  */
 interface RecentlyAddedRepository {
     fun subscribeManga(
-        after: Long,
+        after: Instant,
         limit: Long,
         includedCategories: List<Long>,
         excludedCategories: List<Long>,
     ): Flow<List<RecentlyAddedManga>>
 
     fun subscribeNovels(
-        after: Long,
+        after: Instant,
         limit: Long,
         includedCategories: List<Long>,
         excludedCategories: List<Long>,

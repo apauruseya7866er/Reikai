@@ -1,6 +1,7 @@
 package reikai.domain.novel.model
 
 import java.io.Serializable
+import kotlin.time.Instant
 
 /**
  * Domain mirror of the `novel_tracks` table, the novel twin of [tachiyomi.domain.track.model.Track], type only.
@@ -19,7 +20,7 @@ data class NovelTrack(
     val status: Long,
     val score: Double,
     val remoteUrl: String,
-    val startDate: Long,
-    val finishDate: Long,
+    val startDate: Instant?,
+    val finishDate: Instant?,
     val private: Boolean,
 ) : Serializable

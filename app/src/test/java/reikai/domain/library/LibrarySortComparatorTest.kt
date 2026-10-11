@@ -2,6 +2,7 @@ package reikai.domain.library
 
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
+import kotlin.time.Instant
 
 class LibrarySortComparatorTest {
 
@@ -22,13 +23,13 @@ class LibrarySortComparatorTest {
     private val fields = LibrarySortFields<Row>(
         id = { it.id },
         title = { it.title },
-        lastRead = { it.lastRead },
-        lastUpdate = { it.lastUpdate },
+        lastRead = { Instant.fromEpochMilliseconds(it.lastRead) },
+        lastUpdate = { Instant.fromEpochMilliseconds(it.lastUpdate) },
         unreadCount = { it.unreadCount },
         totalChapters = { it.totalChapters },
-        latestUpload = { it.latestUpload },
-        chapterFetchedAt = { it.chapterFetchedAt },
-        dateAdded = { it.dateAdded },
+        latestUpload = { Instant.fromEpochMilliseconds(it.latestUpload) },
+        chapterFetchedAt = { Instant.fromEpochMilliseconds(it.chapterFetchedAt) },
+        dateAdded = { Instant.fromEpochMilliseconds(it.dateAdded) },
         downloadCount = { it.downloadCount },
         trackerMean = { it.trackerMean },
     )

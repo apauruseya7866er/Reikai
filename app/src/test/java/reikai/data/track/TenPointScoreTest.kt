@@ -54,8 +54,8 @@ class TenPointScoreTest {
         status = 5L,
         score = score,
         remoteUrl = "",
-        startDate = 0L,
-        finishDate = 0L,
+        startDate = null,
+        finishDate = null,
         private = false,
     )
 

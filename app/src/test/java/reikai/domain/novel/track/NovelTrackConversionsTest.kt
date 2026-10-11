@@ -4,6 +4,7 @@ import eu.kanade.domain.track.model.toDomainTrack
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.NovelTrack
+import kotlin.time.Instant
 
 class NovelTrackConversionsTest {
 
@@ -19,8 +20,8 @@ class NovelTrackConversionsTest {
         status = 1,
         score = 8.0,
         remoteUrl = "https://example/999",
-        startDate = 111L,
-        finishDate = 222L,
+        startDate = Instant.fromEpochMilliseconds(111L),
+        finishDate = Instant.fromEpochMilliseconds(222L),
         private = false,
     )
 

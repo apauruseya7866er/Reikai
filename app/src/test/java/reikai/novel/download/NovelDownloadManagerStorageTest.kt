@@ -30,6 +30,7 @@ import reikai.novel.source.NovelSourceManager
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.download.service.DownloadPreferences
+import kotlin.time.Instant
 
 /** A nearly full device refuses a novel chapter before fetching it, as Mihon's Downloader refuses a manga one. */
 class NovelDownloadManagerStorageTest {
@@ -45,8 +46,8 @@ class NovelDownloadManagerStorageTest {
         lastTextProgress = 0L,
         chapterNumber = 10.0,
         sourceOrder = 10L,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 

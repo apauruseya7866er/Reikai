@@ -26,6 +26,7 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
 import tachiyomi.domain.manga.repository.MangaRepository
 import java.io.File
+import kotlin.time.Instant
 
 /**
  * The one library removal both content types and every surface take entries out through, run over each
@@ -192,8 +193,8 @@ class EntryLibraryRemovalConformanceTest {
 
         abstract val removal: EntryLibraryRemoval
         abstract fun entryId(id: Long): EntryId
-        abstract fun put(id: Long, joinedAt: Long? = JOINED_AT)
-        abstract fun favoriteAt(id: Long): Long?
+        abstract fun put(id: Long, joinedAt: Instant? = JOINED_AT)
+        abstract fun favoriteAt(id: Long): Instant?
         abstract fun cachedCover(id: Long): File
 
         protected fun handingOut(ids: List<Long>) {
@@ -230,7 +231,7 @@ class EntryLibraryRemovalConformanceTest {
 
         override fun entryId(id: Long) = EntryId.Manga(id)
 
-        override fun put(id: Long, joinedAt: Long?) {
+        override fun put(id: Long, joinedAt: Instant?) {
             rows[id] =
                 Manga.create().copy(
                     id = id,
@@ -275,7 +276,7 @@ class EntryLibraryRemovalConformanceTest {
 
         override fun entryId(id: Long) = EntryId.Novel(id)
 
-        override fun put(id: Long, joinedAt: Long?) {
+        override fun put(id: Long, joinedAt: Instant?) {
             rows[id] = Novel.create().copy(id = id, thumbnailUrl = "https://example.org/$id.jpg", favoriteAt = joinedAt)
         }
 
@@ -287,6 +288,6 @@ class EntryLibraryRemovalConformanceTest {
     private companion object {
         const val ID = 5L
         const val OTHER_ID = 6L
-        const val JOINED_AT = 100L
+        val JOINED_AT = Instant.fromEpochMilliseconds(100L)
     }
 }

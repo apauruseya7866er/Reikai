@@ -6,6 +6,7 @@ import reikai.domain.merge.ChapterUnit
 import reikai.domain.merge.GroupChapterFlags
 import reikai.domain.merge.MergeScope
 import reikai.domain.novel.model.NovelChapter
+import kotlin.time.Instant
 
 /**
  * The kernel's own cases prove the rule. This proves the novel reader's sheet actually goes through
@@ -25,8 +26,8 @@ class NovelReaderChapterRowSubtitleTest {
         lastTextProgress = 0,
         chapterNumber = id.toDouble(),
         sourceOrder = id,
-        dateFetch = 0,
-        dateUpload = 0,
+        dateFetch = Instant.fromEpochMilliseconds(0),
+        dateUpload = null,
         page = "",
         scanlator = scanlator,
     )

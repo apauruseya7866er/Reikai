@@ -14,6 +14,7 @@ import reikai.domain.novel.model.NovelChapter
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
 import java.io.IOException
+import kotlin.time.Instant
 
 /** Novel 1 of source `src`, in no group, with [chapters] as its source lists them. */
 object NovelDownloadedTextsFixture {
@@ -28,8 +29,8 @@ object NovelDownloadedTextsFixture {
         lastTextProgress = 0L,
         chapterNumber = order.toDouble(),
         sourceOrder = order,
-        dateFetch = 0L,
-        dateUpload = 0L,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
         page = "",
     )
 

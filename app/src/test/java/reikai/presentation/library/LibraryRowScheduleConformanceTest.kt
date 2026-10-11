@@ -47,9 +47,9 @@ class LibraryRowScheduleConformanceTest {
                     totalChapters = 0,
                     readCount = 0,
                     bookmarkCount = 0,
-                    latestUpload = 0,
-                    chapterFetchedAt = 0,
-                    lastRead = 0,
+                    latestUpload = null,
+                    chapterFetchedAt = null,
+                    lastRead = null,
                 ),
                 downloadCount = 0,
                 unreadCount = 0,
@@ -65,9 +65,9 @@ class LibraryRowScheduleConformanceTest {
                 readCount = 0,
                 bookmarkCount = 0,
                 downloadCount = 0,
-                latestUpload = 0,
-                chapterFetchedAt = 0,
-                lastRead = 0,
+                latestUpload = null,
+                chapterFetchedAt = null,
+                lastRead = null,
             ).toLibraryItem(
                 badgePrefs = LibraryBadgePrefs(false, false, false, false, false),
                 sourceLanguage = "en",
@@ -83,7 +83,7 @@ class LibraryRowScheduleConformanceTest {
     private companion object {
         /** A user-set interval is stored negative, as manga's is. */
         const val INTERVAL = -7
-        val NEXT_UPDATE = Instant.parse("2030-06-15T12:00:00Z").toEpochMilliseconds()
+        val NEXT_UPDATE = Instant.parse("2030-06-15T12:00:00Z")
 
         val queryFields = libraryItemQueryFields(sourceKey = { "" })
         val filterFields = libraryItemFilterFields(

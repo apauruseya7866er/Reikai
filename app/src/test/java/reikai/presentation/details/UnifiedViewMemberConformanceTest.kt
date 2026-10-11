@@ -157,7 +157,7 @@ class UnifiedViewMemberConformanceTest {
             }
             ids.forEachIndexed { i, id ->
                 harness.chapter(id, 1.0)
-                harness.updateNovel(id) { nextUpdate = dueAt(i) }
+                harness.updateNovel(id) { nextUpdate = Instant.fromEpochMilliseconds(dueAt(i)) }
             }
             harness.merge(*ids.toLongArray())
             NovelEntryAdapter(harness.openDetails(ids[opened]), mockk(relaxed = true)).settled().shown(ids)

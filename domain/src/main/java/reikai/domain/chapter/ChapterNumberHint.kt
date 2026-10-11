@@ -2,6 +2,8 @@ package reikai.domain.chapter
 
 import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Instant
 
 /**
  * Chapters whose number is far out of line with their neighbours in the source's own list, for manga and
@@ -32,7 +34,7 @@ object ChapterNumberHint {
      * Hints for [rows] by [id]. Each owner is judged on its own list in [sourceOrder], either direction: a
      * merged list restamps the order and keeps one copy per chapter, so it cannot be judged as one. A row
      * the user hid ([isHidden]) is left out, so it is never marked and never shapes a drawn row's run.
-     * [dateUpload] is epoch millis, 0 when the source gives none.
+     * [dateUpload] is null when the source gives none.
      */
     fun <T> forOwners(
         rows: Iterable<T>,
@@ -41,7 +43,7 @@ object ChapterNumberHint {
         sourceOrder: (T) -> Long,
         number: (T) -> Double,
         name: (T) -> String,
-        dateUpload: (T) -> Long,
+        dateUpload: (T) -> Instant?,
         isHidden: (T) -> Boolean,
     ): Map<Long, Hint> {
         val hints = HashMap<Long, Hint>()
@@ -96,12 +98,16 @@ object ChapterNumberHint {
         after: T,
         own: List<T>,
         number: (T) -> Double,
-        date: (T) -> Long,
+        date: (T) -> Instant?,
     ): Boolean {
-        val at = date(row)
-        if (date(before) <= 0 || date(after) <= 0) return false
-        if (abs(at - date(before)) <= PLACE_GAP || abs(at - date(after)) <= PLACE_GAP) return false
-        return own.any { it !== row && number(it) == number(row) && date(it) > 0 && abs(date(it) - at) <= COPY_GAP }
+        val at = date(row) ?: return false
+        val beforeAt = date(before) ?: return false
+        val afterAt = date(after) ?: return false
+        if ((at - beforeAt).absoluteValue <= PLACE_GAP || (at - afterAt).absoluteValue <= PLACE_GAP) return false
+        return own.any { twin ->
+            twin !== row && number(twin) == number(row) &&
+                date(twin)?.let { (it - at).absoluteValue <= COPY_GAP } == true
+        }
     }
 
     /**
@@ -138,7 +144,6 @@ object ChapterNumberHint {
 
     // Measured on the owner's library, the gaps sit far either side: the one misplaced copy is hours from
     // its twin and years from its place, every other dated stray is months from any twin or days from its place.
-    private const val DAY_MILLIS = 86_400_000L
-    private const val COPY_GAP = 2 * DAY_MILLIS
-    private const val PLACE_GAP = 30 * DAY_MILLIS
+    private val COPY_GAP = 2.days
+    private val PLACE_GAP = 30.days
 }
