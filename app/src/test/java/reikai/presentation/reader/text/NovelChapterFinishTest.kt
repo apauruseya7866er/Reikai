@@ -1,11 +1,16 @@
 package reikai.presentation.reader.text
 
 import eu.kanade.domain.track.service.TrackPreferences
+import eu.kanade.tachiyomi.data.track.BaseTracker
+import eu.kanade.tachiyomi.data.track.TrackerManager
+import eu.kanade.tachiyomi.network.HttpException
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import io.mockk.verify
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -17,8 +22,12 @@ import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.interactor.DeleteNovelChaptersAfterRead
 import reikai.domain.novel.interactor.SetNovelReadStatus
 import reikai.domain.novel.model.NovelChapter
+import reikai.domain.novel.model.NovelTrack
+import reikai.domain.novel.track.NovelDelayedTrackingStore
 import reikai.domain.novel.track.TrackNovelChapter
 import reikai.domain.reader.ChapterIncognito
+import reikai.domain.track.TrackedChapterNumber
+import reikai.domain.track.ownChapterNumbers
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.library.service.LibraryPreferences
 import kotlin.time.Instant
@@ -50,6 +59,8 @@ class NovelChapterFinishTest {
     private fun TestScope.subject(
         libraryStore: InMemoryPreferenceStore = InMemoryPreferenceStore(),
         trackStore: InMemoryPreferenceStore = InMemoryPreferenceStore(),
+        trackNovelChapter: TrackNovelChapter = this@NovelChapterFinishTest.trackNovelChapter,
+        trackedChapterNumber: TrackedChapterNumber = ownChapterNumbers(),
     ) = NovelChapterFinish(
         chapterRepo = repo,
         setNovelReadStatus = SetNovelReadStatus(
@@ -61,6 +72,7 @@ class NovelChapterFinishTest {
         libraryPreferences = LibraryPreferences(libraryStore),
         trackPreferences = TrackPreferences(trackStore),
         trackNovelChapter = trackNovelChapter,
+        trackedChapterNumber = trackedChapterNumber,
         incognito = ChapterIncognito(sourceOf = { null }, isIncognito = { false }),
         scope = backgroundScope,
         context = mockk(relaxed = true),
@@ -111,6 +123,58 @@ class NovelChapterFinishTest {
 
         coVerify { trackNovelChapter.await(any(), 1L, 5.0) }
     }
+
+    /**
+     * A source chip and a History resume both finish novel 2's own copy (205, numbered 4 there) of
+     * novel 1's chapter 5, which the series is tracked by.
+     */
+    @Test
+    fun `finishing a sibling's copy pushes the trunk's number`() = runTest {
+        subject(trackedChapterNumber = trunkNumbers()).finish(siblingCopy, listOf(1L, 2L), stitch) {}
+        runCurrent()
+
+        coVerify { trackNovelChapter.await(any(), 2L, 5.0) }
+    }
+
+    @Test
+    fun `a refused push of a sibling's copy queues the trunk's number`() = runTest {
+        val store = mockk<NovelDelayedTrackingStore>(relaxed = true)
+        val refusing = TrackNovelChapter(
+            getNovelTracks = mockk { coEvery { awaitGroup(2L) } returns listOf(novelTrack()) },
+            trackerManager = refusingTracker(),
+            upsertNovelTrack = mockk(relaxed = true),
+            delayedTrackingStore = store,
+        )
+
+        subject(trackNovelChapter = refusing, trackedChapterNumber = trunkNumbers())
+            .finish(siblingCopy, listOf(1L, 2L), stitch) {}
+        runCurrent()
+
+        verify { store.add(1L, 5.0) }
+    }
+
+    private val siblingCopy = chapter(205L, novelId = 2L, number = 4.0)
+
+    private fun trunkNumbers() = mockk<TrackedChapterNumber> {
+        coEvery { ofNovels(listOf(siblingCopy)) } returns listOf(5.0)
+    }
+
+    private fun refusingTracker(): TrackerManager {
+        val tracker = mockk<BaseTracker> {
+            every { id } returns 3L
+            every { isLoggedIn } returns true
+            every { supportsReadingDates } returns false
+            coEvery { refresh(any()) } answers { firstArg() }
+            coEvery { update(any(), any()) } throws HttpException(429)
+        }
+        return mockk { every { get(3L) } returns tracker }
+    }
+
+    private fun novelTrack() = NovelTrack(
+        id = 1L, novelId = 2L, trackerId = 3L, remoteId = 9L, libraryId = null, title = "", lastChapterRead = 0.0,
+        totalChapters = 0L, status = 0L, score = 0.0, remoteUrl = "", startDate = null, finishDate = null,
+        private = false,
+    )
 
     /** The push is network, and the reader's other writes and its seamless crossings wait on a finish. */
     @Test

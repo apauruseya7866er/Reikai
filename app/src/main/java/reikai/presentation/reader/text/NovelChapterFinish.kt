@@ -12,6 +12,7 @@ import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.track.TrackNovelChapter
 import reikai.domain.reader.ChapterIncognito
 import reikai.domain.reader.duplicatesOfRead
+import reikai.domain.track.TrackedChapterNumber
 import tachiyomi.domain.library.service.LibraryPreferences
 
 /**
@@ -28,6 +29,7 @@ class NovelChapterFinish(
     private val libraryPreferences: LibraryPreferences,
     private val trackPreferences: TrackPreferences,
     private val trackNovelChapter: TrackNovelChapter,
+    private val trackedChapterNumber: TrackedChapterNumber,
     private val incognito: ChapterIncognito,
     private val scope: CoroutineScope,
     private val context: Context,
@@ -60,8 +62,12 @@ class NovelChapterFinish(
         // Without "delete after marked as read", as in Mihon's reader: the trim behind is the reader's rule.
         setNovelReadStatus.awaitFinishedInReader(listOf(chapter) + duplicates)
         // Launched, as manga's is: a finish runs under the reader's write lock, which crossings share.
+        // A sibling's copy (a source chip, a History resume) sends the trunk's number.
         if (trackPreferences.autoUpdateTrack.get()) {
-            scope.launch { trackNovelChapter.await(context, chapter.novelId, chapter.chapterNumber) }
+            scope.launch {
+                val number = trackedChapterNumber.ofNovels(listOf(chapter)).single()
+                trackNovelChapter.await(context, chapter.novelId, number)
+            }
         }
         trimBehind()
     }

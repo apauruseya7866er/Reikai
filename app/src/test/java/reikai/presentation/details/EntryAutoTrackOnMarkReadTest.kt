@@ -43,6 +43,10 @@ class EntryAutoTrackOnMarkReadTest {
 
     private val marked = Copy(id = 1L, number = 10.0)
     private val siblingCopy = Copy(id = 2L, number = 11.0)
+
+    /** A merged novel's sibling copy, listed as 103 on its own source, of the trunk's chapter 3. */
+    private val numberedApart = Copy(id = 3L, number = 103.0)
+    private val trunkNumbers = mapOf(numberedApart to 3.0)
     private val anilist = tracker("AniList")
     private val kitsu = tracker("Kitsu")
 
@@ -80,6 +84,21 @@ class EntryAutoTrackOnMarkReadTest {
         step().setRead(entryId = 1L, chapters = listOf(marked), read = true)
 
         pushed shouldBe listOf(10.0)
+    }
+
+    @Test
+    fun `a sibling copy marked under its source chip pushes the trunk's number`() = runTest {
+        step().setRead(entryId = 1L, chapters = listOf(numberedApart), read = true)
+
+        pushed shouldBe listOf(3.0)
+    }
+
+    /** Judged by its own number, the copy would look past a tracker at 50 and ask to push it. */
+    @Test
+    fun `a sibling copy is judged behind the tracker by the trunk's number`() = runTest {
+        step(lastRead = 50.0).setRead(entryId = 1L, chapters = listOf(numberedApart), read = true)
+
+        pushed shouldBe emptyList()
     }
 
     @Test
@@ -179,7 +198,7 @@ class EntryAutoTrackOnMarkReadTest {
         },
         expandToGroup = { chapters -> chapters + siblingCopy },
         writeRead = { chapters, _ -> written += chapters },
-        chapterNumber = Copy::number,
+        trackedNumbers = { chapters -> chapters.map { trunkNumbers[it] ?: it.number } },
         refresh = { refreshFailed },
         lastReadPerTracker = { listOf(lastRead) },
         pushProgress = { _, number ->

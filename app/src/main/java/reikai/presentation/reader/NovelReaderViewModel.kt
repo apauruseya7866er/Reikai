@@ -90,6 +90,7 @@ import reikai.domain.reader.neighbourChapter
 import reikai.domain.reader.readerChapterFilters
 import reikai.domain.source.SourceKey
 import reikai.domain.source.isInstalled
+import reikai.domain.track.TrackedChapterNumber
 import reikai.novel.download.NovelDownload
 import reikai.novel.download.NovelDownloadCache
 import reikai.novel.download.NovelDownloadManager
@@ -146,6 +147,7 @@ class NovelReaderViewModel(
     // read (parity with the manga reader).
     private val libraryPreferences: LibraryPreferences,
     private val trackNovelChapter: TrackNovelChapter,
+    private val trackedChapterNumber: TrackedChapterNumber,
     private val trackPreferences: TrackPreferences,
     private val getIncognitoState: GetIncognitoState,
     private val setNovelViewerFlags: SetNovelViewerFlags,
@@ -285,6 +287,7 @@ class NovelReaderViewModel(
         libraryPreferences = libraryPreferences,
         trackPreferences = trackPreferences,
         trackNovelChapter = trackNovelChapter,
+        trackedChapterNumber = trackedChapterNumber,
         incognito = incognito,
         scope = appScope,
         context = context,

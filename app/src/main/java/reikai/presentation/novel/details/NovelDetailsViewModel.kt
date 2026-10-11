@@ -131,6 +131,7 @@ import reikai.domain.reader.novelChapterListFilters
 import reikai.domain.source.healedCover
 import reikai.domain.source.keptCover
 import reikai.domain.track.EntryTrackPorts
+import reikai.domain.track.TrackedChapterNumber
 import reikai.domain.track.autobind.AutoBindTrackers
 import reikai.domain.track.autobind.TrackingButtonState
 import reikai.domain.track.autobind.offerTrackers
@@ -226,6 +227,7 @@ class NovelDetailsViewModel(
     private val getNovelTracks: GetNovelTracks,
     private val refreshNovelTracks: RefreshNovelTracks,
     private val trackNovelChapter: TrackNovelChapter,
+    private val trackedChapterNumber: TrackedChapterNumber,
     private val trackerManager: TrackerManager,
     private val trackPreferences: TrackPreferences,
     private val basePreferences: BasePreferences,
@@ -1434,7 +1436,7 @@ class NovelDetailsViewModel(
         trackPreferences = trackPreferences,
         expandToGroup = { expandToGroup(it) },
         writeRead = { chapters, read -> setNovelReadStatus.await(read, chapters) },
-        chapterNumber = NovelChapter::chapterNumber,
+        trackedNumbers = { trackedChapterNumber.ofNovels(it) },
         refresh = { refreshNovelTracks.await(it) },
         lastReadPerTracker = { getNovelTracks.awaitGroup(it).map(NovelTrack::lastChapterRead) },
         pushProgress = { id, chapterNumber -> trackNovelChapter.await(context, id, chapterNumber) },

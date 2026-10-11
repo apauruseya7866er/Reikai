@@ -35,7 +35,8 @@ class EntryAutoTrackOnMarkRead<C>(
     private val trackPreferences: TrackPreferences,
     private val expandToGroup: suspend (chapters: List<C>) -> List<C>,
     private val writeRead: suspend (chapters: List<C>, read: Boolean) -> Unit,
-    private val chapterNumber: (C) -> Double,
+    // The numbers a push sends for chapters, the trunk's copy's on a merged series (TrackedChapterNumber).
+    private val trackedNumbers: suspend (List<C>) -> List<Double>,
     private val refresh: suspend (entryId: Long) -> List<Pair<Tracker?, Throwable>>,
     private val lastReadPerTracker: suspend (entryId: Long) -> List<Double>,
     private val pushProgress: suspend (entryId: Long, chapterNumber: Double) -> ChapterPushOutcome,
@@ -49,14 +50,15 @@ class EntryAutoTrackOnMarkRead<C>(
     suspend fun setRead(entryId: Long, chapters: List<C>, read: Boolean) {
         // The read state is written even if the screen closes, the tracking prompt isn't
         appScope.launch { writeRead(expandToGroup(chapters), read) }.join()
-        if (read) reportFailures(push(entryId, chapters.map(chapterNumber)))
+        if (read) reportFailures(push(entryId, chapters))
     }
 
     /** Every tracker that failed along the way, at the refresh or at the push. */
-    private suspend fun push(entryId: Long, chapterNumbers: List<Double>): List<Pair<Tracker, Throwable>> {
-        if (chapterNumbers.isEmpty() || trackerManager.loggedInTrackers().isEmpty()) return emptyList()
+    private suspend fun push(entryId: Long, chapters: List<C>): List<Pair<Tracker, Throwable>> {
+        if (chapters.isEmpty() || trackerManager.loggedInTrackers().isEmpty()) return emptyList()
         val autoTrackState = trackPreferences.autoUpdateTrackOnMarkRead.get()
         if (autoTrackState == AutoTrackState.NEVER) return emptyList()
+        val chapterNumbers = trackedNumbers(chapters)
 
         val refreshFailed = refresh(entryId).mapNotNull { (tracker, e) -> tracker?.let { it to e } }
         refreshFailed.forEach { (tracker, e) ->

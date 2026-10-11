@@ -45,9 +45,7 @@ object ChapterAggregation {
             return unstitchedChapters(chaptersBySource.values.firstOrNull().orEmpty()) { it.id }
         }
 
-        val ranked = stitchOrder(rank(chaptersBySource, sourceIdByManga, preferredSourceIds, memberRanking)) {
-            it.chapters.isNotEmpty()
-        }
+        val ranked = walkOrder(chaptersBySource, sourceIdByManga, preferredSourceIds, memberRanking)
 
         val order = MergedChapterOrder<Chapter> { chapter ->
             // Narrowed to Float so a float-origin and a double-origin "1.1" key to the same value
@@ -100,6 +98,23 @@ object ChapterAggregation {
         preferredSourceIds: List<Long> = emptyList(),
         memberRanking: List<Long> = emptyList(),
     ): List<Long> = rank(chaptersBySource, sourceIdByManga, preferredSourceIds, memberRanking).map { it.mangaId }
+
+    /** The member [merge] walks first, the trunk, or null for an empty group. */
+    fun trunkId(
+        chaptersBySource: Map<Long, List<Chapter>>,
+        sourceIdByManga: Map<Long, Long>,
+        preferredSourceIds: List<Long>,
+        memberRanking: List<Long>,
+    ): Long? = walkOrder(chaptersBySource, sourceIdByManga, preferredSourceIds, memberRanking).firstOrNull()?.mangaId
+
+    private fun walkOrder(
+        chaptersBySource: Map<Long, List<Chapter>>,
+        sourceIdByManga: Map<Long, Long>,
+        preferredSourceIds: List<Long>,
+        memberRanking: List<Long>,
+    ): List<RankedSource> = stitchOrder(rank(chaptersBySource, sourceIdByManga, preferredSourceIds, memberRanking)) {
+        it.chapters.isNotEmpty()
+    }
 
     // The shared trunk order, counting distinct recognized numbers.
     private fun rank(

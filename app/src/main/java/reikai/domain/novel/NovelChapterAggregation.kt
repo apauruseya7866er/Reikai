@@ -44,9 +44,7 @@ object NovelChapterAggregation {
             return unstitchedChapters(chaptersByNovel.values.firstOrNull().orEmpty()) { it.id }
         }
 
-        val ranked = stitchOrder(rank(chaptersByNovel, sourceIdByNovel, preferredSourceIds, memberRanking)) {
-            it.chapters.isNotEmpty()
-        }
+        val ranked = walkOrder(chaptersByNovel, sourceIdByNovel, preferredSourceIds, memberRanking)
 
         // No usable keys on the trunk -> no reliable cross-source matching, so just show its full list.
         val trunk = ranked.first()
@@ -96,6 +94,23 @@ object NovelChapterAggregation {
         preferredSourceIds: List<String> = emptyList(),
         memberRanking: List<Long> = emptyList(),
     ): List<Long> = rank(chaptersByNovel, sourceIdByNovel, preferredSourceIds, memberRanking).map { it.novelId }
+
+    /** The member [merge] walks first, the trunk, or null for an empty group. */
+    fun trunkId(
+        chaptersByNovel: Map<Long, List<NovelChapter>>,
+        sourceIdByNovel: Map<Long, String>,
+        preferredSourceIds: List<String>,
+        memberRanking: List<Long>,
+    ): Long? = walkOrder(chaptersByNovel, sourceIdByNovel, preferredSourceIds, memberRanking).firstOrNull()?.novelId
+
+    private fun walkOrder(
+        chaptersByNovel: Map<Long, List<NovelChapter>>,
+        sourceIdByNovel: Map<Long, String>,
+        preferredSourceIds: List<String>,
+        memberRanking: List<Long>,
+    ): List<RankedSource> = stitchOrder(rank(chaptersByNovel, sourceIdByNovel, preferredSourceIds, memberRanking)) {
+        it.chapters.isNotEmpty()
+    }
 
     // The shared trunk order, counting rows: the novel stitch collapses no scanlator variants.
     private fun rank(

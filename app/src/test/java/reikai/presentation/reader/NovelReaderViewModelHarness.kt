@@ -64,6 +64,7 @@ import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.model.NovelUpdate
 import reikai.domain.source.SourceKey
+import reikai.domain.track.ownChapterNumbers
 import reikai.novel.download.NovelDownloadCache
 import reikai.novel.download.NovelDownloadManager
 import reikai.novel.host.NovelItem
@@ -349,6 +350,7 @@ class NovelReaderViewModelHarness private constructor(
             libraryPreferences = libraryPreferences,
             // The tracker network.
             trackNovelChapter = mockk(relaxed = true),
+            trackedChapterNumber = ownChapterNumbers(),
             trackPreferences = TrackPreferences(store),
             // BasePreferences builds an extension-installer preference whose default calls into
             // android.graphics, so only the incognito switch is carried over. The manga-extension
@@ -446,6 +448,7 @@ class NovelReaderViewModelHarness private constructor(
             getNovelTracks = mockk(relaxed = true),
             refreshNovelTracks = mockk(relaxed = true),
             trackNovelChapter = mockk(relaxed = true),
+            trackedChapterNumber = ownChapterNumbers(),
             trackerManager = mockk(relaxed = true),
             trackPreferences = TrackPreferences(store),
             basePreferences = mockk<BasePreferences>(relaxed = true) {

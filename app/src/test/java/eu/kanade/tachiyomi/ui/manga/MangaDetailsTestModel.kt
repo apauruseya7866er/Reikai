@@ -35,6 +35,7 @@ import reikai.domain.recommendation.RelatedLibraryKeys
 import reikai.domain.recommendation.RelatedMangaCache
 import reikai.domain.track.EntryTrackPort
 import reikai.domain.track.EntryTrackPorts
+import reikai.domain.track.ownChapterNumbers
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.PreferenceStore
@@ -87,6 +88,7 @@ internal fun mangaDetailsModel(
         every { subscribe(any()) } returns flowOf(null)
         coEvery { await(any()) } returns null
     }
+    val trackedChapterNumber = ownChapterNumbers()
     beforeModel()
     return MangaViewModel(
         appScope = testAppScope(),
@@ -100,6 +102,7 @@ internal fun mangaDetailsModel(
             every { loggedInTrackersFlow() } returns flowOf(emptyList())
         },
         trackChapter = mockk(relaxed = true),
+        trackedChapterNumber = trackedChapterNumber,
         refreshTracks = mockk(relaxed = true),
         downloadManager = downloadManager,
         downloadCache = mockk<DownloadCache>(relaxed = true) { every { changes } returns MutableSharedFlow() },

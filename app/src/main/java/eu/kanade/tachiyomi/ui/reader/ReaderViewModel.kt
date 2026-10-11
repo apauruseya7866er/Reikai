@@ -114,6 +114,7 @@ import reikai.domain.reader.neighbourChapter
 import reikai.domain.reader.readerChapterFilters
 import reikai.domain.source.SourceKey // RK
 import reikai.domain.source.isInstalled
+import reikai.domain.track.TrackedChapterNumber
 import reikai.domain.track.source.ChapterWrite // RK
 import reikai.domain.track.source.SourceTrackerDispatcher // RK
 import reikai.presentation.components.mergeSourceLabels
@@ -185,6 +186,7 @@ class ReaderViewModel(
     private val setReadStatus: SetReadStatus,
     private val getChapter: GetChapter,
     private val chapterDownloadActions: MangaChapterDownloadActions,
+    private val trackedChapterNumber: TrackedChapterNumber,
     // RK <--
 ) : ViewModel() {
 
@@ -1637,7 +1639,9 @@ class ReaderViewModel(
 
         // Reading the last page and leaving right away is common, so it outlives the reader
         appScope.launch {
-            trackChapter.await(context, chapterManga.id, readerChapter.chapter.chapterNumber)
+            // RK: the number a merged series' trackers count by, the trunk's copy's (TrackedChapterNumber)
+            val chapterNumber = trackedChapterNumber.ofManga(listOf(readerChapter.chapter)).single()
+            trackChapter.await(context, chapterManga.id, chapterNumber)
         }
     }
 

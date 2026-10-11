@@ -14,6 +14,9 @@ interface MergedGroupStitcher {
     /** [groupId]'s stitch, as rows to store. Empty when the group has nothing left to stitch. */
     suspend fun stitch(groupId: Long): MergedChapterUnitRepository.GroupStitch
 
+    /** The trunk's chapters, id to number, under the same ranking [stitch] walks; empty for no group. */
+    suspend fun trunkNumbers(groupId: Long): Map<Long, Double>
+
     /** The ranking stamp every group of [contentType] would be stitched under now, keyed by group; a
      *  group with no library member is absent. See [rankingStamps]. */
     suspend fun rankings(): Map<Long, String>

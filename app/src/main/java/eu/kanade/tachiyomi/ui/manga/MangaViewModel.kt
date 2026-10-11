@@ -137,6 +137,7 @@ import reikai.domain.recommendation.localIdOf
 import reikai.domain.recommendation.taste.RefreshTrackerLibrary
 import reikai.domain.track.EntryTrackPorts
 import reikai.domain.track.RemoteFirstRemoval
+import reikai.domain.track.TrackedChapterNumber
 import reikai.domain.track.autobind.AutoBindTrackers
 import reikai.domain.track.autobind.TrackingButtonState
 import reikai.domain.track.autobind.offerTrackers
@@ -218,6 +219,7 @@ class MangaViewModel(
     readerPreferences: ReaderPreferences,
     private val trackerManager: TrackerManager,
     private val trackChapter: TrackChapter,
+    private val trackedChapterNumber: TrackedChapterNumber, // RK: the number a merged series' push sends
     private val refreshTracks: RefreshTracks, // RK: upstream lists this last
     private val downloadManager: DownloadManager,
     private val downloadCache: DownloadCache,
@@ -1468,7 +1470,7 @@ class MangaViewModel(
         trackPreferences = trackPreferences,
         expandToGroup = { expandToGroup(it) },
         writeRead = { chapters, read -> setReadStatus.await(read = read, chapters = chapters.toTypedArray()) },
-        chapterNumber = Chapter::chapterNumber,
+        trackedNumbers = { trackedChapterNumber.ofManga(it) },
         refresh = { refreshTracks.await(it) },
         lastReadPerTracker = { getTracksInGroup.await(it).map(Track::lastChapterRead) },
         pushProgress = { id, chapterNumber -> trackChapter.await(context, id, chapterNumber) },

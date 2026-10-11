@@ -38,6 +38,7 @@ import reikai.domain.download.MangaChapterDownloadActions
 import reikai.domain.manga.MangaPreferences
 import reikai.domain.manga.MergedChapterProvider
 import reikai.domain.source.SourceKey
+import reikai.domain.track.ownChapterNumbers
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.Preference
@@ -263,6 +264,7 @@ class MangaReaderViewModelHarness private constructor(
                 ),
                 getChapter = GetChapter(chapters),
                 chapterDownloadActions = MangaChapterDownloadActions(downloadManager, getManga, sourceManager),
+                trackedChapterNumber = ownChapterNumbers(),
             ).also {
                 store.put("reader", it)
                 modelJob = it.viewModelScope.coroutineContext.job
