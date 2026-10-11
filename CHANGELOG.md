@@ -543,6 +543,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Reading progress queued for a tracker while offline is no longer dropped when the track is refreshed or restored before it is sent, on manga and novels (from Mihon).** Upstream: mihon 9a77baedc.
 - **A failed tracker link, update, refresh or Fill from tracker now says why in plain words, such as No Internet connection, Log in to AniList again or No entry found on Kitsu, and a failed novel link no longer crashes the app.** Trackers with public listings still fill while you are signed out.
 - **Refreshing, searching or filling from Bangumi, MangaBaka or Hikka while signed out no longer crashes the app.** Signed-out trackers now say to log in again instead of showing raw error text.
+- **Searching a tracker again no longer lets the earlier search's late results replace the new ones, on manga and novels (from Mihon).** Upstream: mihonapp/mihon#4071.
 - **An expired or revoked AniList sign-in now asks you to sign in again under Settings -> Tracking, instead of failing with an error (partly from Mihon).** Upstream: mihonapp/mihon#3888.
 - **AniList tracking now stays under the service's request limit, so a burst of updates is no longer rejected (from Mihon).** Upstream: mihonapp/mihon#3942.
 - **Marking a chapter read now updates the tracker status shown on the entry straight away, on manga and novels.**

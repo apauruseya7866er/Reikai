@@ -61,7 +61,9 @@ import eu.kanade.tachiyomi.util.lang.convertEpochMillisZone
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
@@ -774,6 +776,8 @@ data class EntryTrackerSearchScreen(
         private val tracker = trackerManager.get(trackerId)!!
         private val port = ports.of(entry)
 
+        private var searchJob: Job? = null
+
         val supportsPrivateTracking = tracker.supportsPrivateTracking
 
         val replacesRemoteEntry = tracker is ReplacingWriteTracker
@@ -788,7 +792,9 @@ data class EntryTrackerSearchScreen(
         }
 
         fun trackingSearch(query: String) {
-            viewModelScope.launch {
+            // A late result from an earlier search would replace this one's
+            searchJob?.cancel()
+            searchJob = viewModelScope.launch {
                 // To show loading state
                 state.update { it.copy(queryResult = null, selected = null) }
 
@@ -796,6 +802,7 @@ data class EntryTrackerSearchScreen(
                     try {
                         Result.success(port.search(tracker, query))
                     } catch (e: Throwable) {
+                        if (e is CancellationException) throw e
                         Result.failure(e)
                     }
                 }
