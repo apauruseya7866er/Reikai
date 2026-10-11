@@ -62,6 +62,7 @@ internal fun mangaDetailsModel(
     relatedMangaCache: RelatedMangaCache = mockk(relaxed = true),
     relatedLibraryKeys: RelatedLibraryKeys = mockk(relaxed = true),
     prepareRecommendationAssembly: PrepareRecommendationAssembly = mockk(relaxed = true),
+    onMergedRender: () -> Unit = {},
     beforeModel: () -> Unit = {},
 ): MangaViewModel {
     val prefs = InMemoryPreferenceStore()
@@ -72,7 +73,10 @@ internal fun mangaDetailsModel(
     }
     val mergedChapterProvider = mockk<MergedChapterProvider> {
         coEvery { stitchOf(any()) } returns stitch
-        every { merged(any(), any()) } answers { renderStoredStitch(firstArg(), secondArg()) { it.id } }
+        every { merged(any(), any()) } answers {
+            onMergedRender()
+            renderStoredStitch(firstArg(), secondArg()) { it.id }
+        }
     }
     val getFlatMetadataById = mockk<GetFlatMetadataById> {
         every { subscribe(any()) } returns flowOf(null)

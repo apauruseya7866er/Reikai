@@ -23,7 +23,7 @@ import kotlin.time.Instant
 /**
  * SQLite tells a query only that its table was written, so a write to one novel re-runs every other
  * novel's query. The details page restarts its chapter pipeline on each emission of these flows, so
- * they emit only when the value they carry changed.
+ * they emit only when the value they carry changed. MangaMergedFlowDedupTest pins the manga half.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class NovelFlowDedupTest {
