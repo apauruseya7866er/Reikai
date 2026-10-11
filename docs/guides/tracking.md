@@ -31,7 +31,7 @@ A tracking sheet lists only the services whose catalogue holds that kind of entr
 :::info Tracker behavior in Reikai
 * Tracking is one-way: **Reikai -> Tracker**
 * Status changes automatically when you start & complete a series, and so do the start & finish dates on a service that stores them.
-* After reading the last page of a chapter, or marking a chapter as read, the tracker's progress will update.
+* After reading the last page of a chapter, or marking a chapter as read, the tracker's progress will update. It only moves forward: a chapter at or below what the tracker already has, say because you read further on another device, leaves it where it is.
 * Offline progress syncs when back online.
 * Reikai uses the scoring system you selected on the tracker, if the tracker lets you pick one (AniList, Kitsu, MangaBaka).
 :::
@@ -57,7 +57,7 @@ Three of the services are built for novels rather than manga. They work like eve
 * **Your progress lives in the note on your NovelUpdates list entry**, written as `total chapters read: 12`, because the site keeps no reading position of its own. Reikai rewrites that one line and leaves the rest of your note alone, and if it cannot read the note it writes nothing rather than risk replacing it.
 * **Use my own NovelUpdates lists** in <nav to="tracking"> sends each status to one of your own reading lists instead of the five NovelUpdates starts with. Pick the list for each status under **Match statuses to lists**.
 * **Novels from NovelUpdates' own app or plugin track themselves.** While you are signed in, adding one to your library binds it to its NovelUpdates page with no search. A novel from any other source binds through the tracking dialog like any tracker, and its chapters move your bookmark when their number matches a release.
-* **Never move progress back** is on by default: reading an earlier chapter leaves NovelUpdates where it is. Turn it off to follow rereads.
+* **Never move progress back** is on by default: reading an earlier chapter leaves NovelUpdates where it is, as it does every tracker. Turn it off to let NovelUpdates follow rereads.
 * **Move back on unread** is off by default. Turn it on and marking chapters unread moves NovelUpdates back to the highest chapter you still have read.
 
 These three NovelUpdates rows show in <nav to="tracking"> only while you are signed in to it.
@@ -87,7 +87,7 @@ These three NovelUpdates rows show in <nav to="tracking"> only while you are sig
 
 On a [merged series](/docs/multi-source), you do not set tracker links per source. One binding covers the whole group, and the setting that governs this is **Share trackers across merged sources** in <nav to="tracking">, on by default.
 
-**Adding** a tracker binds it to the source the page was opened on, whichever source chip is selected, and counts for every source in the group: the chip shows on each one, reading a chapter from any of them advances it, and the library's tracker filter, score sort and status grouping all see it. There is one binding while the group is merged, never a copy per source, so the progress shown is always the group's.
+**Adding** a tracker binds it to the source the page was opened on, whichever source chip is selected, and counts for every source in the group: the chip shows on each one, reading a chapter from any of them advances it (by the number the **Primary** source gives that chapter, so a source that numbers its chapters differently still lands on the right one), and the library's tracker filter, score sort and status grouping all see it. There is one binding while the group is merged, never a copy per source, so the progress shown is always the group's.
 
 **Merging** needs no tracker step. The moment entries are one group, a tracker bound on any member counts for all of them. If two members were already tracked with different remote entries on the same service, both bindings stay and the furthest-read one counts.
 

@@ -530,6 +530,8 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Fixed
 
+- **Reading a chapter you already passed on another device no longer moves your tracker's progress back, on every tracker for manga and novels.** NovelUpdates still follows rereads if you turn off Never move progress back.
+- **A merged light novel read from another source's chapters, or resumed from History, now updates your trackers with the chapter number its Primary source uses.** Sources that number chapters differently no longer send the wrong chapter.
 - **A tracker set on one source of a merged series now shows, updates and is removed on all of its sources, unless you turn off Settings -> Tracking -> Share trackers across merged sources.** The library's tracking filter, sort and groups follow the group too, and a split or migration leaves each source its own copy.
 - **Reading an older chapter from another source of a merged series can no longer push your tracker's progress backwards.**
 - **Reading progress queued for a tracker while offline is no longer dropped when the track is refreshed or restored before it is sent, on manga and novels (from Mihon).** Upstream: mihon 9a77baedc.
