@@ -152,15 +152,16 @@ class MergeGroupRepositoryTest {
         repository.getMembers(ContentType.MANGA, groupId) shouldBe listOf(2L)
     }
 
-    @Test
-    fun `a manga cannot belong to two groups`() = runTest {
-        insertManga(1)
-        insertManga(2)
-        insertManga(3)
-        repository.createGroup(ContentType.MANGA, listOf(1, 2))!!
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `an entry cannot belong to two groups`(type: ContentType) = runTest {
+        insertEntry(type, 1)
+        insertEntry(type, 2)
+        insertEntry(type, 3)
+        repository.createGroup(type, listOf(1, 2))!!
 
-        // Manga 1 is already a member; UNIQUE(manga_id) rejects re-grouping it into another group.
-        shouldThrow<Exception> { repository.createGroup(ContentType.MANGA, listOf(1, 3)) }
+        // Entry 1 is already a member; its UNIQUE member column rejects re-grouping it into another group.
+        shouldThrow<Exception> { repository.createGroup(type, listOf(1, 3)) }
     }
 
     @Test
@@ -269,58 +270,62 @@ class MergeGroupRepositoryTest {
         repository.merge(ContentType.MANGA, listOf(1)) shouldBe null
     }
 
-    @Test
-    fun `removeFromGroup keeps two or more survivors grouped`() = runTest {
-        insertManga(1)
-        insertManga(2)
-        insertManga(3)
-        val groupId = repository.createGroup(ContentType.MANGA, listOf(1, 2, 3))!!
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `removeFromGroup keeps two or more survivors grouped`(type: ContentType) = runTest {
+        insertEntry(type, 1)
+        insertEntry(type, 2)
+        insertEntry(type, 3)
+        val groupId = repository.createGroup(type, listOf(1, 2, 3))!!
 
-        val survivors = repository.removeFromGroup(ContentType.MANGA, listOf(1))
+        val survivors = repository.removeFromGroup(type, listOf(1))
 
         survivors shouldBe listOf(2L, 3L)
-        repository.getGroupId(ContentType.MANGA, 1).shouldBeNull()
-        repository.getGroupId(ContentType.MANGA, 2) shouldBe groupId
+        repository.getGroupId(type, 1).shouldBeNull()
+        repository.getGroupId(type, 2) shouldBe groupId
     }
 
-    @Test
-    fun `removeFromGroup dissolves the group when one survivor remains`() = runTest {
-        insertManga(1)
-        insertManga(2)
-        val groupId = repository.createGroup(ContentType.MANGA, listOf(1, 2))!!
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `removeFromGroup dissolves the group when one survivor remains`(type: ContentType) = runTest {
+        insertEntry(type, 1)
+        insertEntry(type, 2)
+        val groupId = repository.createGroup(type, listOf(1, 2))!!
 
-        val survivors = repository.removeFromGroup(ContentType.MANGA, listOf(1))
+        val survivors = repository.removeFromGroup(type, listOf(1))
 
         survivors shouldBe listOf(2L)
         repository.getGroup(groupId).shouldBeNull()
-        repository.getGroupId(ContentType.MANGA, 2).shouldBeNull()
+        repository.getGroupId(type, 2).shouldBeNull()
     }
 
-    @Test
-    fun `replaceInGroup puts the target in the source's place`() = runTest {
-        insertManga(1)
-        insertManga(2)
-        insertManga(3)
-        val groupId = repository.createGroup(ContentType.MANGA, listOf(1, 2))!!
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `replaceInGroup puts the target in the source's place`(type: ContentType) = runTest {
+        insertEntry(type, 1)
+        insertEntry(type, 2)
+        insertEntry(type, 3)
+        val groupId = repository.createGroup(type, listOf(1, 2))!!
 
-        repository.replaceInGroup(ContentType.MANGA, oldId = 1, newId = 3)
+        repository.replaceInGroup(type, oldId = 1, newId = 3)
 
         // The arriving entry takes the outgoing one's slot, so migrating the trunk keeps the trunk.
-        repository.getMembers(ContentType.MANGA, groupId) shouldBe listOf(3L, 2L)
-        repository.getGroupId(ContentType.MANGA, 1).shouldBeNull()
+        repository.getMembers(type, groupId) shouldBe listOf(3L, 2L)
+        repository.getGroupId(type, 1).shouldBeNull()
     }
 
-    @Test
-    fun `replaceInGroup dissolves the group when the target was already its only sibling`() = runTest {
-        insertManga(1)
-        insertManga(2)
-        val groupId = repository.createGroup(ContentType.MANGA, listOf(1, 2))!!
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `replaceInGroup dissolves the group when the target was already its only sibling`(type: ContentType) = runTest {
+        insertEntry(type, 1)
+        insertEntry(type, 2)
+        val groupId = repository.createGroup(type, listOf(1, 2))!!
 
         // Migrating onto the entry it was merged with: the target would be left alone in the group.
-        repository.replaceInGroup(ContentType.MANGA, oldId = 1, newId = 2)
+        repository.replaceInGroup(type, oldId = 1, newId = 2)
 
         repository.getGroup(groupId).shouldBeNull()
-        repository.getGroupId(ContentType.MANGA, 2).shouldBeNull()
+        repository.getGroupId(type, 2).shouldBeNull()
     }
 
     @Test
@@ -355,19 +360,20 @@ class MergeGroupRepositoryTest {
         handedOut.shouldBeEmpty()
     }
 
-    @Test
-    fun `replaceInGroup brings the target's own group along`() = runTest {
-        insertManga(1)
-        insertManga(2)
-        insertManga(3)
-        insertManga(4)
-        val groupId = repository.createGroup(ContentType.MANGA, listOf(1, 2))!!
-        val targetGroup = repository.createGroup(ContentType.MANGA, listOf(3, 4))!!
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `replaceInGroup brings the target's own group along`(type: ContentType) = runTest {
+        insertEntry(type, 1)
+        insertEntry(type, 2)
+        insertEntry(type, 3)
+        insertEntry(type, 4)
+        val groupId = repository.createGroup(type, listOf(1, 2))!!
+        val targetGroup = repository.createGroup(type, listOf(3, 4))!!
 
-        repository.replaceInGroup(ContentType.MANGA, oldId = 1, newId = 3)
+        repository.replaceInGroup(type, oldId = 1, newId = 3)
 
         // The whole arriving group lands in the outgoing member's slot, keeping its own order.
-        repository.getMembers(ContentType.MANGA, groupId) shouldBe listOf(3L, 4L, 2L)
+        repository.getMembers(type, groupId) shouldBe listOf(3L, 4L, 2L)
         repository.getGroup(targetGroup).shouldBeNull()
     }
 
@@ -381,17 +387,18 @@ class MergeGroupRepositoryTest {
         repository.getGroupId(ContentType.MANGA, 2).shouldBeNull()
     }
 
-    @Test
-    fun `dissolve ungroups every member`() = runTest {
-        insertManga(1)
-        insertManga(2)
-        insertManga(3)
-        repository.createGroup(ContentType.MANGA, listOf(1, 2, 3))!!
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `dissolve ungroups every member`(type: ContentType) = runTest {
+        insertEntry(type, 1)
+        insertEntry(type, 2)
+        insertEntry(type, 3)
+        repository.createGroup(type, listOf(1, 2, 3))!!
 
-        repository.dissolve(ContentType.MANGA, 2)
+        repository.dissolve(type, 2)
 
-        repository.getGroupId(ContentType.MANGA, 1).shouldBeNull()
-        repository.getGroupId(ContentType.MANGA, 3).shouldBeNull()
+        repository.getGroupId(type, 1).shouldBeNull()
+        repository.getGroupId(type, 3).shouldBeNull()
     }
 
     @Test
