@@ -25,7 +25,7 @@ The public methods are `loadPlugin`, `popularNovels`, `searchNovels`, `parseNove
 `LnHostBridge` is the engine-agnostic service layer: HTTP, storage and logging, with no WebView. The host binds five functions into each engine:
 
 - `__lnLog(level, message)`, sync, to logcat.
-- `__lnGetStorage(pluginId, key)` and `__lnSetStorage(pluginId, key, value)`, sync; a null value deletes.
+- `__lnGetStorage(pluginId, key)` and `__lnSetStorage(pluginId, key, value)`, sync; a null value deletes. They read whatever id they are handed, so `headless.js` takes private references and deletes both globals before any plugin runs: a plugin reaches storage only through its own scoped `@libs/storage`.
 - `__lnFetch(url, optsJson)`, async, runs `runFetch` on `Dispatchers.IO` and returns a JSON response string.
 - `__lnDelay(ms)`, async, suspends for the delay capped at 30 seconds; it backs the `setTimeout` polyfill that plugins use for rate-limit pauses and retry backoff.
 
@@ -46,7 +46,7 @@ The vendor bundles in `assets/lnhost/vendor/` are `dayjs`, `htmlparser2`, `cheer
 
 ### Storage and settings
 
-A plugin's storage is `PreferenceStore` keys `ln_storage::<pluginId>::<key>` (`lnStorageScope`), scoped by the plugin's own id; the URL-derived id from `scopeIdFromUrl` is used only when id discovery throws. The settings UI reads and writes the same `storage:` keys through `LnPluginHost.getSetting` / `setSetting` and the same `{value: ...}` envelope, so what the UI saves is what the plugin reads. Uninstalling leaves the keys, as Mihon leaves an extension's source preferences, so a reinstall gets its settings and logins back.
+A plugin's storage is `PreferenceStore` keys `ln_storage::<pluginId>::<key>` (`lnStorageScope`), scoped by the plugin's own id; the URL-derived id from `scopeIdFromUrl` is used only when id discovery throws. The settings UI reads and writes the same `storage:` keys through `LnPluginHost.getSetting` / `setSetting` and the same `{value: ...}` envelope, so what the UI saves is what the plugin reads. Uninstalling leaves the keys, as Mihon leaves an extension's source preferences, so a reinstall gets its settings and logins back. The id owns the scope, so a reload passes `loadPlugin` the id the URL was installed under and a script that now declares another is refused before it can take that id's engine; an install from another URL that replaces a plugin by id is the user's choice, and drops the site sign-in the old script captured (`forgetWebStorage`).
 
 Site storage follows LNReader's contract. When the in-app browser is opened for a plugin (a plugin row, or a novel, chapter or catalogue of a plugin source), `rememberPluginStorageCapture` runs `WEB_STORAGE_SCRIPT` after every page load and `PluginWebStorageViewModel` keeps the newest storage per host. When the screen's model is cleared it resolves the plugin through `webStoragePlugin`, which answers only for an installed plugin declaring `webStorageUtilized`, picks the newest page on the plugin's site or a subdomain (`pluginSiteStorage`, over `isSameSite`), and hands it to `LnPluginHost.storeWebStorage`. That writes `webview:local` / `webview:session` and marks the slot for a rebuild, since a plugin can read the storage once, in its constructor. The captured storage holds the site's sign-in, so `PreferenceBackupCreator` backs it up only with sensitive settings included (`isSensitivePluginKey`).
 

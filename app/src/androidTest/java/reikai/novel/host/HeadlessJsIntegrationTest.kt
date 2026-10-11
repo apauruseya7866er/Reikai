@@ -418,6 +418,45 @@ class HeadlessJsIntegrationTest {
         assertEquals("signed-in", host.parseChapter("web-storage-test", "/c"))
     }
 
+    /** Plugin code runs in the runtime's global scope, so the id-taking storage bridge must not be on it. */
+    @Test
+    fun aPluginCannotReadAnotherPluginsStorage() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        host.loadPlugin(
+            "victim-test",
+            "module.exports.default = { id: 'victim-test', name: 'V', site: 'https://a.org', version: '1' };",
+        )
+        host.storeWebStorage("victim-test", WebStorageSnapshot(local = """{"auth":"secret"}""", session = "{}"))
+        val thief = """
+            module.exports.default = {
+              id: 'thief-test', name: 'T', site: 'https://b.org', version: '1',
+              parseChapter: async function () {
+                try { return String(__lnGetStorage('victim-test', 'webview:local')); } catch (e) { return 'blocked'; }
+              },
+            };
+        """.trimIndent()
+        host.loadPlugin("thief-test", thief)
+
+        assertEquals("blocked", host.parseChapter("thief-test", "/c"))
+    }
+
+    /** A reload that now declares another plugin's id would take over that plugin's engine and storage. */
+    @Test
+    fun aReloadDeclaringAnotherIdIsRefused() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        host.loadPlugin(
+            "owner-test",
+            "module.exports.default = { id: 'owner-test', name: 'O', site: 'https://a.org', version: '1'," +
+                " parseChapter: async function () { return 'owner'; } };",
+        )
+        val impostor = "module.exports.default = { id: 'owner-test', name: 'I', site: 'https://b.org', version: '1'," +
+            " parseChapter: async function () { return 'impostor'; } };"
+
+        runCatching { host.loadPlugin("impostor-test", impostor, expectedId = "impostor-test") }
+
+        assertEquals("owner", host.parseChapter("owner-test", "/c"))
+    }
+
     /** LNReader's opt-in to the browser's storage reaches the app, which keeps none for a plugin without it. */
     @Test
     fun aPluginAskingForTheSiteStorageSaysSo() = runBlocking {

@@ -201,6 +201,9 @@ class LnPluginHost(
         source: String,
         iconUrl: String? = null,
         lang: String? = null,
+        // The id this script was installed under, for a reload: a script that now declares another id
+        // would take over that plugin's engine and storage, sign-in included.
+        expectedId: String? = null,
     ): LnPluginInfo = withPluginTimeout(LOAD_TIMEOUT_MS, "loadPlugin") {
         val info = loaderSlot.mutex.withLock {
             loaderSlot.onThread {
@@ -212,6 +215,9 @@ class LnPluginHost(
                 JSON.decodeFromString(LnPluginInfo.serializer(), infoJson)
                     .copy(supportsLatest = derivesLatestSupport(source))
             }
+        }
+        if (expectedId != null && info.id != expectedId) {
+            throw LnPluginException("now declares the id ${info.id}, installed as $expectedId")
         }
         // Retain the args under the plugin's CANONICAL id (callMethod is keyed by it, which can
         // differ from the URL-derived pluginId), and drop a live engine still running the previous
@@ -294,6 +300,13 @@ class LnPluginHost(
         // headless.js makeWebStorage reads these keys.
         bridge.setStorage(pluginId, "${WEB_STORAGE_KEY_PREFIX}local", storage.local)
         bridge.setStorage(pluginId, "${WEB_STORAGE_KEY_PREFIX}session", storage.session)
+        pluginSlots[pluginId]?.rebuild = true
+    }
+
+    /** Drops the site storage [storeWebStorage] kept for [pluginId], which carries the site's sign-in. */
+    fun forgetWebStorage(pluginId: String) {
+        bridge.setStorage(pluginId, "${WEB_STORAGE_KEY_PREFIX}local", null)
+        bridge.setStorage(pluginId, "${WEB_STORAGE_KEY_PREFIX}session", null)
         pluginSlots[pluginId]?.rebuild = true
     }
 

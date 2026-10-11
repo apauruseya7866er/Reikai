@@ -1,8 +1,10 @@
 package reikai.novel.install
 
 import eu.kanade.tachiyomi.extension.ExtensionManager
+import io.mockk.Runs
 import io.mockk.coEvery
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import reikai.domain.novel.NovelPreferences
@@ -22,7 +24,7 @@ class LnPluginHarness(installedUrls: Set<String>) {
 
     val prefs = NovelPreferences(EmittingPreferenceStore()).also { it.installedPluginUrls().set(installedUrls) }
 
-    val host = mockk<LnPluginHost>()
+    val host = mockk<LnPluginHost> { every { forgetWebStorage(any()) } just Runs }
 
     val loader = mockk<LnPluginLoader>(relaxed = true) {
         coEvery { installed(any()) } returns "plugin source"

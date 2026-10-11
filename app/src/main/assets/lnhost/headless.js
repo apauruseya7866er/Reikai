@@ -5,8 +5,8 @@
 // plugins expect (see refs/lnreader-main/src/plugins/pluginManager.ts) and bridges fetch / storage /
 // log to Kotlin through host functions bound by LnPluginHost.kt:
 //   __lnLog(level, message)            -- sync
-//   __lnGetStorage(pluginId, key)      -- sync, returns string|null
-//   __lnSetStorage(pluginId, key, val) -- sync, val null deletes
+//   __lnGetStorage(pluginId, key)      -- sync, returns string|null (runtime only, see below)
+//   __lnSetStorage(pluginId, key, val) -- sync, val null deletes (runtime only, see below)
 //   __lnFetch(url, optsJson)           -- async, returns a JSON FetchResponse string
 //
 // Plugin source is downloaded by Kotlin (LnPluginLoader) and passed into __lnLoadPlugin. All HTTP
@@ -15,6 +15,15 @@
 
 (function () {
   "use strict";
+
+  // The storage bridge reads whatever plugin id it is handed, and plugin code runs in this global
+  // scope, so a plugin calling it directly could read another plugin's settings and captured site
+  // sign-in. The runtime keeps private references and removes the globals; plugins reach storage only
+  // through their own scoped @libs/storage.
+  var hostGetStorage = globalThis.__lnGetStorage;
+  var hostSetStorage = globalThis.__lnSetStorage;
+  delete globalThis.__lnGetStorage;
+  delete globalThis.__lnSetStorage;
 
   // QuickJS has no browser globals; plugins (and the cheerio/dayjs bundles) expect a handful.
   globalThis.window = globalThis;
@@ -807,10 +816,10 @@
           value: value,
           expires: expires instanceof Date ? expires.getTime() : expires,
         };
-        __lnSetStorage(pluginId, prefix + key, JSON.stringify(item));
+        hostSetStorage(pluginId, prefix + key, JSON.stringify(item));
       },
       get: function (key, raw) {
-        var stored = __lnGetStorage(pluginId, prefix + key);
+        var stored = hostGetStorage(pluginId, prefix + key);
         if (stored === null || stored === undefined) return undefined;
         var item;
         try {
@@ -822,7 +831,7 @@
         // returns as undefined (item.value), not as the envelope.
         if (item && typeof item === "object" && ("value" in item || "created" in item)) {
           if (item.expires && Date.now() > item.expires) {
-            __lnSetStorage(pluginId, prefix + key, null);
+            hostSetStorage(pluginId, prefix + key, null);
             return undefined;
           }
           return raw ? item : item.value;
@@ -830,7 +839,7 @@
         return item;
       },
       delete: function (key) {
-        __lnSetStorage(pluginId, prefix + key, null);
+        hostSetStorage(pluginId, prefix + key, null);
       },
     };
   }
@@ -842,7 +851,7 @@
   function makeWebStorage(pluginId, kind) {
     return {
       get: function () {
-        var stored = __lnGetStorage(pluginId, "webview:" + kind);
+        var stored = hostGetStorage(pluginId, "webview:" + kind);
         if (stored === null || stored === undefined) return undefined;
         try {
           return JSON.parse(stored);

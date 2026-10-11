@@ -30,7 +30,7 @@ class LnPluginInstallerRaceTest {
 
     /** The pass loads the stored script and waits on [passGate]; an install loads the new one at once. */
     private fun holdThePass() {
-        coEvery { harness.host.loadPlugin(any(), any(), any(), any()) } coAnswers {
+        coEvery { harness.host.loadPlugin(any(), any(), any(), any(), any()) } coAnswers {
             if (secondArg<String>() == NEW_SCRIPT) {
                 LnPluginHarness.info(ID, version = "2")
             } else {

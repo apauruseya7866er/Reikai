@@ -144,6 +144,8 @@ class LnPluginInstaller(
         }
         rememberSeenSources(listOf(source))
         staleUrls.forEach { loader.delete(it) }
+        // A script from another URL now holds this id, so the site sign-in the old one captured is not its.
+        if (staleUrls.isNotEmpty()) host.forgetWebStorage(info.id)
 
         logcat(LogPriority.INFO) { "installed plugin ${info.id} from $canonical" }
         return source
@@ -188,7 +190,7 @@ class LnPluginInstaller(
         val loaded = runCatchingCancellable {
             val stored = loader.installed(url)
             val src = stored ?: downloadMissingScript(url)
-            val info = host.loadPlugin(scopeIdFromUrl(url), src, metadata?.iconUrl, metadata?.lang)
+            val info = host.loadPlugin(scopeIdFromUrl(url), src, metadata?.iconUrl, metadata?.lang, metadata?.pluginId)
             if (stored == null) loader.store(url, src)
             // A missing script means the stylesheet went with it, so it is fetched again with it.
             val stylesheet = if (stored == null) {
