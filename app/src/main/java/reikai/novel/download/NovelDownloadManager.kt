@@ -112,6 +112,14 @@ class NovelDownloadManager(
      */
     private val drainLock = Mutex()
 
+    /**
+     * Held across a chapter's save, which first checks the row is still queued, and across each removal
+     * that also moves or deletes files. A chapter dropped while its fetch ran is then never written back
+     * into a folder that was deleted or renamed meanwhile, which Mihon gets by cancelling the removed
+     * download's job.
+     */
+    private val saveLock = Mutex()
+
     /** Per-source pacing delay (ms), adapted by [runQueue]: halved on success, doubled on failure.
      *  Only touched inside the single active drain, so a plain map is safe. */
     private val sourceDelays = HashMap<String, Long>()
@@ -280,11 +288,13 @@ class NovelDownloadManager(
         if (dir.name == newName) return
         val otherFolders = sourceTitles.otherNovelTitles(novel.source, novel.id).map { provider.novelDirName(it) }
         if (!movesDownloadFolder(dir, newName, otherFolders)) return
-        cancelDownloads(_queueState.value.filter { it.novelId == novel.id }.map { it.chapterId })
-        if (withIOContext { provider.renameNovel(novel, newTitle) }) {
-            cache.renameNovel(novel, newTitle)
-        } else {
-            logcat(LogPriority.ERROR) { "Failed to rename novel download folder: ${dir.name}" }
+        saveLock.withLock {
+            cancelDownloads(_queueState.value.filter { it.novelId == novel.id }.map { it.chapterId })
+            if (withIOContext { provider.renameNovel(novel, newTitle) }) {
+                cache.renameNovel(novel, newTitle)
+            } else {
+                logcat(LogPriority.ERROR) { "Failed to rename novel download folder: ${dir.name}" }
+            }
         }
     }
 
@@ -302,8 +312,10 @@ class NovelDownloadManager(
                 isBookmarked = NovelChapter::bookmark,
             )
             if (deletable.isEmpty()) return@launch
-            dequeueChapters(deletable)
-            deleteChapterFiles(deletable)
+            saveLock.withLock {
+                dequeueChapters(deletable)
+                deleteChapterFiles(deletable)
+            }
         }
     }
 
@@ -320,7 +332,7 @@ class NovelDownloadManager(
      * reports, and a queued chapter is not downloaded yet, so the worker would keep fetching into a
      * novel migrated away from.
      */
-    suspend fun awaitDeleteNovel(novel: Novel) {
+    suspend fun awaitDeleteNovel(novel: Novel): Unit = saveLock.withLock {
         val queued = _queueState.value.filter { it.novelId == novel.id }.map { it.chapterId }
         _queueState.update { q -> q.filterNot { it.novelId == novel.id } }
         retainQueuedCompletions()
@@ -418,6 +430,7 @@ class NovelDownloadManager(
                 var attempt = 0
                 var lastError: Throwable? = null
                 var connectionLost = false
+                var dropped = false
                 // The least delay the source declares binds its retries as well as its pacing.
                 val minimumMs = novel?.let { sourceManager.get(it.source) }?.minimumRequestDelayMs ?: 0L
                 while (true) {
@@ -427,8 +440,12 @@ class NovelDownloadManager(
                             ?: return@runCatchingCancellable false
                         if (chapter == null) return@runCatchingCancellable false
                         val html = source.parseChapter(next.url).ifBlank { throw EmptyChapterException() }
-                        // A name another chapter's download holds counts as downloaded, as manga's downloader counts it
-                        saver.save(novel, chapter, source, html) != NovelChapterSaver.SaveResult.FAILED
+                        saveLock.withLock {
+                            // Cancelled, or its novel deleted or renamed, while the fetch ran: nothing to write
+                            dropped = _queueState.value.none { it.chapterId == next.chapterId }
+                            // A name another chapter's download holds counts as downloaded, as manga's downloader counts it
+                            dropped || saver.save(novel, chapter, source, html) != NovelChapterSaver.SaveResult.FAILED
+                        }
                     }.getOrElse {
                         lastError = it
                         logcat(LogPriority.ERROR, it) {
@@ -454,13 +471,14 @@ class NovelDownloadManager(
                     _downloadingNovelId.value = null
                     continue
                 }
-                if (ok) {
+                // A dropped row is already out of the queue and the store, and neither finished nor failed.
+                if (ok && !dropped) {
                     completions.record(next.novelId)
                     _queueState.update { q -> q.filter { it.chapterId != next.chapterId } }
                     removeSaved(listOf(next.chapterId))
                     retainQueuedCompletions()
                     done++
-                } else {
+                } else if (!ok) {
                     // Stays in the saved queue, as a failed manga chapter does: only a finished download
                     // leaves it, so after a restart the row is back as Queued and waits for Resume.
                     val reason = if (lastError is EmptyChapterException) {

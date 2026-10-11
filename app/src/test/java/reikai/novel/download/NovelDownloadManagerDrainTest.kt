@@ -90,6 +90,14 @@ class NovelDownloadManagerDrainTest {
     }
     private val sourceManager = mockk<NovelSourceManager>().also { coEvery { it.get("src") } returns source }
 
+    private val written = mutableListOf<Long>()
+    private val saver = mockk<NovelChapterSaver> {
+        coEvery { save(any(), any(), any(), any()) } answers {
+            written += secondArg<NovelChapter>().id
+            NovelChapterSaver.SaveResult.SAVED
+        }
+    }
+
     private lateinit var manager: NovelDownloadManager
 
     @BeforeEach
@@ -103,8 +111,8 @@ class NovelDownloadManagerDrainTest {
         manager = NovelDownloadManager(
             scope = testAppScope(),
             context = context,
-            provider = mockk { every { availableSpace() } returns -1L },
-            cache = mockk { every { downloadedChapterIds(novel, any()) } returns emptySet() },
+            provider = mockk(relaxed = true) { every { availableSpace() } returns -1L },
+            cache = mockk(relaxed = true) { every { downloadedChapterIds(novel, any()) } returns emptySet() },
             chapterRepo = chapterRepo,
             novelRepo = mockk<NovelRepository> { coEvery { getById(1L) } returns novel },
             sourceManager = sourceManager,
@@ -112,7 +120,7 @@ class NovelDownloadManagerDrainTest {
             downloadPreferences = DownloadPreferences(InMemoryPreferenceStore()),
             sourcePreferences = ReikaiSourcePreferences(InMemoryPreferenceStore()),
             novelPreferences = NovelPreferences(InMemoryPreferenceStore()),
-            saver = mockk { coEvery { save(any(), any(), any(), any()) } returns NovelChapterSaver.SaveResult.SAVED },
+            saver = saver,
             securityPreferences = SecurityPreferences(InMemoryPreferenceStore()),
             adultChecker = mockk { coEvery { adultNovelIdsAmong(any()) } returns emptySet() },
             sourceTitles = mockk(),
@@ -180,6 +188,38 @@ class NovelDownloadManagerDrainTest {
         advanceUntilIdle()
 
         savedChapterIds() shouldBe listOf(10L, 11L)
+    }
+
+    @Test
+    fun `a chapter cancelled while its fetch runs is not written`() = runTest(io) {
+        removeMidFetch { manager.cancelDownloads(listOf(10L)) }
+
+        written shouldBe emptyList()
+    }
+
+    @Test
+    fun `a novel deleted while its chapter's fetch runs does not get the chapter back`() = runTest(io) {
+        removeMidFetch { manager.awaitDeleteNovel(novel) }
+
+        written shouldBe emptyList()
+    }
+
+    @Test
+    fun `a chapter deleted while its fetch runs is not written`() = runTest(io) {
+        removeMidFetch { manager.deleteChapters(chapters.take(1)) }
+
+        written shouldBe emptyList()
+    }
+
+    /** Starts the drain on the first chapter, runs [remove] while its fetch is held, then lets the fetch finish. */
+    private suspend fun TestScope.removeMidFetch(remove: suspend () -> Unit) {
+        manager.downloadChapters(chapters.take(1))
+        launch { manager.runQueue(onProgress = {}, onError = { _, _, _, _ -> }) }
+        runCurrent()
+        remove()
+        runCurrent()
+        firstFetch.complete(Unit)
+        advanceUntilIdle()
     }
 
     /** Queues both chapters, copies the queue reversed as a sort would, then lets the drain finish both. */
