@@ -58,8 +58,14 @@ class RestoreMergeConformanceTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("restorers")
-    fun `the earlier library date survives, whichever side has it`(restorer: MergeRestorer) = runTest {
+    fun `the device's earlier library date survives a later backup`(restorer: MergeRestorer) = runTest {
         restorer.addedAt(device = 200, backup = 500) shouldBe 200
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("restorers")
+    fun `the backup's earlier library date replaces the device's later one`(restorer: MergeRestorer) = runTest {
+        restorer.addedAt(device = 500, backup = 200) shouldBe 200
     }
 
     @ParameterizedTest(name = "{0}")
