@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.Downloader
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.NetworkState
 import eu.kanade.tachiyomi.util.system.activeNetworkState
 import io.kotest.matchers.shouldBe
@@ -18,7 +19,6 @@ import io.mockk.mockkStatic
 import io.mockk.runs
 import io.mockk.unmockkObject
 import io.mockk.unmockkStatic
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -45,8 +45,9 @@ import tachiyomi.domain.manga.model.Manga
 import kotlin.time.Instant
 
 /**
- * A queue paused for want of a network (offline, or off Wi-Fi with Wi-Fi-only on) that the user empties
- * has nothing left to resume, so its downloader ends, and with it the foreground notification.
+ * A paused queue (for want of a network, offline or off Wi-Fi with Wi-Fi-only on, or by the user) that
+ * the user empties has nothing left to resume, so its downloader ends, and with it its notifications. A
+ * paused queue with chapters left keeps them, and stays paused.
  */
 class EmptiedPausedQueueConformanceTest {
 
@@ -54,35 +55,71 @@ class EmptiedPausedQueueConformanceTest {
     @MethodSource("halves")
     fun `cancelling the last chapter of a queue paused offline ends the downloader`(half: EmptiedQueueHalf) =
         runTest {
-            half.emptyPausedQueue(this, Pause.OFFLINE, Emptying.CANCEL_LAST_CHAPTER) shouldBe true
+            half.removeFromPausedQueue(this, Pause.OFFLINE, Removal.CANCEL_CHAPTER).ended shouldBe true
         }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("halves")
     fun `cancelling the last chapter of a queue paused off Wi-Fi ends the downloader`(half: EmptiedQueueHalf) =
         runTest {
-            half.emptyPausedQueue(this, Pause.OFF_WIFI, Emptying.CANCEL_LAST_CHAPTER) shouldBe true
+            half.removeFromPausedQueue(this, Pause.OFF_WIFI, Removal.CANCEL_CHAPTER).ended shouldBe true
         }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("halves")
     fun `deleting the only queued series of a paused queue ends the downloader`(half: EmptiedQueueHalf) = runTest {
-        half.emptyPausedQueue(this, Pause.OFFLINE, Emptying.DELETE_SERIES) shouldBe true
+        half.removeFromPausedQueue(this, Pause.OFFLINE, Removal.DELETE_SERIES).ended shouldBe true
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("halves")
     fun `renaming the only queued series of a paused queue ends the downloader`(half: EmptiedQueueHalf) = runTest {
-        half.emptyPausedQueue(this, Pause.OFFLINE, Emptying.RENAME_SERIES) shouldBe true
+        half.removeFromPausedQueue(this, Pause.OFFLINE, Removal.RENAME_SERIES).ended shouldBe true
     }
 
-    enum class Pause { OFFLINE, OFF_WIFI }
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("halves")
+    fun `cancelling one of two chapters of a queue paused offline keeps the downloader paused`(
+        half: EmptiedQueueHalf,
+    ) = runTest {
+        half.removeFromPausedQueue(this, Pause.OFFLINE, Removal.CANCEL_CHAPTER, queued = 2).ended shouldBe false
+    }
 
-    enum class Emptying { CANCEL_LAST_CHAPTER, DELETE_SERIES, RENAME_SERIES }
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("halves")
+    fun `cancelling one of two chapters of a queue paused offline keeps the other queued`(half: EmptiedQueueHalf) =
+        runTest {
+            half.removeFromPausedQueue(this, Pause.OFFLINE, Removal.CANCEL_CHAPTER, queued = 2).left shouldBe
+                listOf(CHAPTER + 1)
+        }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("halves")
+    fun `deleting the last chapter of a queue the user paused dismisses the paused notice`(half: EmptiedQueueHalf) =
+        runTest {
+            half.removeFromPausedQueue(this, Pause.USER, Removal.DELETE_CHAPTER).noticeDismissed shouldBe true
+        }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("halves")
+    fun `deleting the only series of a queue the user paused dismisses the paused notice`(half: EmptiedQueueHalf) =
+        runTest {
+            half.removeFromPausedQueue(this, Pause.USER, Removal.DELETE_SERIES).noticeDismissed shouldBe true
+        }
+
+    enum class Pause { OFFLINE, OFF_WIFI, USER }
+
+    enum class Removal { CANCEL_CHAPTER, DELETE_CHAPTER, DELETE_SERIES, RENAME_SERIES }
+
+    /** Whether the downloader ended, the chapter ids still queued, and whether the paused notice went. */
+    data class Outcome(val ended: Boolean, val left: List<Long>, val noticeDismissed: Boolean)
 
     companion object {
         const val ENTRY = 1L
         const val CHAPTER = 10L
+
+        /** Chapter ids [CHAPTER], [CHAPTER] + 1, ...; the removal takes the first, or its whole series. */
+        fun chapterIds(queued: Int) = List(queued) { CHAPTER + it }
 
         @JvmStatic
         fun halves() = listOf(MangaEmptiedQueueHalf(), NovelEmptiedQueueHalf())
@@ -90,37 +127,48 @@ class EmptiedPausedQueueConformanceTest {
 }
 
 interface EmptiedQueueHalf {
-    /** Pauses a one-chapter queue by [pause], empties it by [emptying]; whether the downloader ended. */
-    suspend fun emptyPausedQueue(
+    /** Pauses a queue of [queued] chapters by [pause], then removes the first one by [removal]. */
+    suspend fun removeFromPausedQueue(
         test: TestScope,
         pause: EmptiedPausedQueueConformanceTest.Pause,
-        emptying: EmptiedPausedQueueConformanceTest.Emptying,
-    ): Boolean
+        removal: EmptiedPausedQueueConformanceTest.Removal,
+        queued: Int = 1,
+    ): EmptiedPausedQueueConformanceTest.Outcome
 }
 
 /**
- * Mihon's downloader, paused by a lost network, has stopped its job, and DownloadWorker waits while it stays
- * paused; only its stop() clears the pause, so stop() being asked is the manga answer. The pause kind is
- * the same state.
+ * Mihon's downloader, paused by a lost network or by the user, has stopped its job, and DownloadWorker waits
+ * while it stays paused; only its stop() clears the pause, so stop() being asked is the manga answer. Every
+ * pause kind is the same state, and its clearQueue() is what dismisses the paused notice.
  */
 class MangaEmptiedQueueHalf : EmptiedQueueHalf {
     override fun toString() = "manga"
 
-    override suspend fun emptyPausedQueue(
+    override suspend fun removeFromPausedQueue(
         test: TestScope,
         pause: EmptiedPausedQueueConformanceTest.Pause,
-        emptying: EmptiedPausedQueueConformanceTest.Emptying,
-    ): Boolean {
+        removal: EmptiedPausedQueueConformanceTest.Removal,
+        queued: Int,
+    ): EmptiedPausedQueueConformanceTest.Outcome {
         val manga = Manga.create().copy(id = EmptiedPausedQueueConformanceTest.ENTRY, source = 1L)
-        val chapter = Chapter.create().copy(id = EmptiedPausedQueueConformanceTest.CHAPTER, mangaId = manga.id)
-        val download = Download(mockk(relaxed = true), manga, chapter)
-        val queue = MutableStateFlow(listOf(download))
-        val stopped = CompletableDeferred<Unit>()
+        val downloads = EmptiedPausedQueueConformanceTest.chapterIds(queued).map { id ->
+            Download(mockk(relaxed = true), manga, Chapter.create().copy(id = id, mangaId = manga.id))
+        }
+        val queue = MutableStateFlow(downloads)
+        var stopped = false
+        var cleared = false
         val downloader = mockk<Downloader>(relaxed = true) {
             every { isRunning } returns false
             every { queueState } returns queue
-            coEvery { dequeue(any<List<Chapter>>()) } answers { queue.value = emptyList() }
-            coEvery { stop(null) } answers { stopped.complete(Unit) }
+            coEvery { dequeue(any<List<Chapter>>()) } answers {
+                val gone = firstArg<List<Chapter>>().mapTo(HashSet()) { it.id }
+                queue.value = queue.value.filter { it.chapter.id !in gone }
+            }
+            coEvery { stop(null) } answers { stopped = true }
+            coEvery { clearQueue() } answers {
+                cleared = true
+                queue.value = emptyList()
+            }
         }
         val manager = DownloadManager(
             context = mockk(relaxed = true),
@@ -130,11 +178,12 @@ class MangaEmptiedQueueHalf : EmptiedQueueHalf {
                     every { parentFile } returns null
                 }
                 every { getMangaDirName(any()) } returns "New"
+                coEvery { findChapterDirs(any(), any(), any()) } returns (null to emptyList())
             },
             cache = mockk(relaxed = true),
             getCategories = mockk(),
             sourceManager = mockk { coEvery { getOrStub(manga.source) } returns mockk(relaxed = true) },
-            downloadPreferences = mockk(),
+            downloadPreferences = DownloadPreferences(InMemoryPreferenceStore()),
             getManga = mockk(),
             getChapter = mockk(),
             downloader = downloader,
@@ -142,58 +191,57 @@ class MangaEmptiedQueueHalf : EmptiedQueueHalf {
             sourceTitles = mockk { coEvery { otherMangaTitles(any(), any()) } returns emptyList() },
         )
 
-        when (emptying) {
-            EmptiedPausedQueueConformanceTest.Emptying.CANCEL_LAST_CHAPTER ->
-                manager.cancelQueuedDownloads(listOf(download))
-            EmptiedPausedQueueConformanceTest.Emptying.DELETE_SERIES -> manager.deleteManga(
-                manga,
-                mockk(relaxed = true),
-            )
-            EmptiedPausedQueueConformanceTest.Emptying.RENAME_SERIES -> manager.renameManga(manga, "New")
+        val first = downloads.first()
+        when (removal) {
+            EmptiedPausedQueueConformanceTest.Removal.CANCEL_CHAPTER -> manager.cancelQueuedDownloads(listOf(first))
+            EmptiedPausedQueueConformanceTest.Removal.DELETE_CHAPTER ->
+                manager.deleteChapters(listOf(first.chapter), manga, mockk(relaxed = true))
+            EmptiedPausedQueueConformanceTest.Removal.DELETE_SERIES -> manager.deleteManga(manga, mockk(relaxed = true))
+            EmptiedPausedQueueConformanceTest.Removal.RENAME_SERIES -> manager.renameManga(manga, "New")
         }
 
-        return ManualDeleteConformanceTest.awaitOnRealThreads(stopped) != null
+        return EmptiedPausedQueueConformanceTest.Outcome(
+            ended = stopped,
+            left = queue.value.map { it.chapter.id },
+            noticeDismissed = cleared,
+        )
     }
 }
 
-/** The novel drain waits out a missing network in a loop; the answer is whether that drain returned. */
+/**
+ * The novel drain waits out a missing network in a loop, so ending is that drain returning. A user pause
+ * stops the worker instead and leaves its own paused notice, which the manager dismisses.
+ */
 class NovelEmptiedQueueHalf : EmptiedQueueHalf {
     override fun toString() = "novel"
 
-    override suspend fun emptyPausedQueue(
+    override suspend fun removeFromPausedQueue(
         test: TestScope,
         pause: EmptiedPausedQueueConformanceTest.Pause,
-        emptying: EmptiedPausedQueueConformanceTest.Emptying,
-    ): Boolean {
+        removal: EmptiedPausedQueueConformanceTest.Removal,
+        queued: Int,
+    ): EmptiedPausedQueueConformanceTest.Outcome {
         val novel = Novel.create().copy(id = EmptiedPausedQueueConformanceTest.ENTRY, source = "src", title = "Novel")
-        val chapter = NovelChapter(
-            id = EmptiedPausedQueueConformanceTest.CHAPTER,
-            novelId = novel.id,
-            url = "u",
-            name = "Ch",
-            read = false,
-            bookmark = false,
-            lastTextProgress = 0L,
-            chapterNumber = 1.0,
-            sourceOrder = 1L,
-            dateFetch = Instant.fromEpochMilliseconds(0L),
-            dateUpload = null,
-            page = "",
-        )
+        val chapters = EmptiedPausedQueueConformanceTest.chapterIds(queued).map { id -> chapter(id, novel.id) }
+        val cancelled = mutableListOf<Int>()
+        val notifications = mockk<NotificationManager>(relaxed = true) {
+            every { cancel(any<Int>()) } answers { cancelled += firstArg<Int>() }
+        }
         val context = mockk<Context>(relaxed = true) {
             every { getSharedPreferences(any(), any()) } returns FakeSharedPreferences()
-            every { getSystemService(NotificationManager::class.java) } returns
-                mockk<NotificationManager>(relaxed = true)
+            every { getSystemService(NotificationManager::class.java) } returns notifications
         }
         val downloadPreferences = DownloadPreferences(InMemoryPreferenceStore())
         downloadPreferences.downloadOnlyOverWifi.set(pause == EmptiedPausedQueueConformanceTest.Pause.OFF_WIFI)
-        val online = pause == EmptiedPausedQueueConformanceTest.Pause.OFF_WIFI
+        val online = pause != EmptiedPausedQueueConformanceTest.Pause.OFFLINE
+        val onWifi = pause == EmptiedPausedQueueConformanceTest.Pause.USER
         mockkObject(NovelDownloadWorker.Companion)
         mockkStatic(Context::activeNetworkState)
         mockkStatic(Dispatchers::class)
         try {
             every { NovelDownloadWorker.start(any()) } just runs
-            every { any<Context>().activeNetworkState() } returns NetworkState(online, online, false)
+            every { NovelDownloadWorker.stop(any()) } just runs
+            every { any<Context>().activeNetworkState() } returns NetworkState(online, online, onWifi)
             every { Dispatchers.IO } returns StandardTestDispatcher(test.testScheduler)
             val manager = NovelDownloadManager(
                 scope = testAppScope(),
@@ -206,7 +254,7 @@ class NovelEmptiedQueueHalf : EmptiedQueueHalf {
                     every { novelDirName("New") } returns "New"
                 },
                 cache = mockk(relaxed = true) { every { downloadedChapterIds(novel, any()) } returns emptySet() },
-                chapterRepo = mockk { coEvery { getById(chapter.id) } returns chapter },
+                chapterRepo = mockk { chapters.forEach { ch -> coEvery { getById(ch.id) } returns ch } },
                 novelRepo = mockk<NovelRepository> { coEvery { getById(novel.id) } returns novel },
                 sourceManager = mockk(),
                 installer = mockk { coEvery { ensureLoaded() } just runs },
@@ -219,27 +267,53 @@ class NovelEmptiedQueueHalf : EmptiedQueueHalf {
                 sourceTitles = mockk { coEvery { otherNovelTitles(any(), any()) } returns emptyList() },
                 getEntryCustomInfo = mockk { coEvery { await(any()) } returns null },
             )
-            manager.downloadChapters(listOf(chapter))
-            val drain = test.backgroundScope.launch { manager.runQueue(onProgress = {}, onError = { _, _, _, _ -> }) }
+            manager.downloadChapters(chapters)
+            val drain = if (pause == EmptiedPausedQueueConformanceTest.Pause.USER) {
+                manager.pauseDownloads()
+                null
+            } else {
+                test.backgroundScope.launch { manager.runQueue(onProgress = {}, onError = { _, _, _, _ -> }) }
+            }
             test.advanceTimeBy(1)
             test.runCurrent()
+            cancelled.clear()
 
-            when (emptying) {
-                EmptiedPausedQueueConformanceTest.Emptying.CANCEL_LAST_CHAPTER ->
-                    manager.cancelDownloads(listOf(chapter.id))
-                EmptiedPausedQueueConformanceTest.Emptying.DELETE_SERIES -> manager.awaitDeleteNovel(novel)
-                EmptiedPausedQueueConformanceTest.Emptying.RENAME_SERIES -> manager.renameNovel(novel, "New")
+            when (removal) {
+                EmptiedPausedQueueConformanceTest.Removal.CANCEL_CHAPTER ->
+                    manager.cancelDownloads(listOf(chapters.first().id))
+                EmptiedPausedQueueConformanceTest.Removal.DELETE_CHAPTER -> manager.deleteChapters(chapters.take(1))
+                EmptiedPausedQueueConformanceTest.Removal.DELETE_SERIES -> manager.awaitDeleteNovel(novel)
+                EmptiedPausedQueueConformanceTest.Removal.RENAME_SERIES -> manager.renameNovel(novel, "New")
             }
             test.advanceTimeBy(PAUSE_RECHECK_MS)
             test.runCurrent()
 
-            return drain.isCompleted
+            return EmptiedPausedQueueConformanceTest.Outcome(
+                ended = drain?.isCompleted == true,
+                left = manager.queueState.value.map { it.chapterId },
+                noticeDismissed = Notifications.ID_NOVEL_DOWNLOADER_PAUSED in cancelled,
+            )
         } finally {
             unmockkObject(NovelDownloadWorker.Companion)
             unmockkStatic(Context::activeNetworkState)
             unmockkStatic(Dispatchers::class)
         }
     }
+
+    private fun chapter(id: Long, novelId: Long) = NovelChapter(
+        id = id,
+        novelId = novelId,
+        url = "u$id",
+        name = "Ch $id",
+        read = false,
+        bookmark = false,
+        lastTextProgress = 0L,
+        chapterNumber = id.toDouble(),
+        sourceOrder = id,
+        dateFetch = Instant.fromEpochMilliseconds(0L),
+        dateUpload = null,
+        page = "",
+    )
 
     private companion object {
         // Longer than the drain's recheck interval while it waits for a network.

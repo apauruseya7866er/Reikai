@@ -15,7 +15,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -218,11 +217,9 @@ class NovelDownloadManager(
     fun cancelDownloads(chapterIds: List<Long>) {
         val ids = chapterIds.toSet()
         if (ids.isEmpty()) return
-        val left = _queueState.updateAndGet { q -> q.filter { it.chapterId !in ids } }
-        retainQueuedCompletions()
+        _queueState.update { q -> q.filter { it.chapterId !in ids } }
+        afterDequeue()
         scope.launch { removeSaved(ids) }
-        // A paused queue emptied one series at a time has nothing left to resume.
-        if (left.isEmpty()) dismissPausedNotification()
     }
 
     /** Bump a queued chapter to the front so it downloads next, retrying it if it failed, and persist
@@ -335,7 +332,7 @@ class NovelDownloadManager(
     suspend fun awaitDeleteNovel(novel: Novel): Unit = saveLock.withLock {
         val queued = _queueState.value.filter { it.novelId == novel.id }.map { it.chapterId }
         _queueState.update { q -> q.filterNot { it.novelId == novel.id } }
-        retainQueuedCompletions()
+        afterDequeue()
         withIOContext {
             removeSaved(queued)
             provider.deleteNovel(novel)
@@ -346,7 +343,13 @@ class NovelDownloadManager(
     private fun dequeueChapters(chapters: List<NovelChapter>) {
         val ids = chapters.map { it.id }.toSet()
         _queueState.update { q -> q.filter { it.chapterId !in ids } }
+        afterDequeue()
+    }
+
+    /** After the user removed chapters: a paused queue emptied one series at a time has nothing left to resume. */
+    private fun afterDequeue() {
         retainQueuedCompletions()
+        if (_queueState.value.isEmpty()) dismissPausedNotification()
     }
 
     private fun retainQueuedCompletions() {

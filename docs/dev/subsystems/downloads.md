@@ -32,7 +32,7 @@ Both downloaders retry a fetch on `DownloadRetry`'s schedule (three more tries, 
 
 ### Network, resume and notifications
 
-Which network lets a queue fetch is one rule, `downloadNetworkIssue` (`DownloadNetworkGate.kt`), asked by Mihon's `DownloadWorker` and the novel drain. A missing network, or Wi-Fi only off Wi-Fi, pauses rather than fails: the chapter in flight is requeued, the worker stays in the foreground and polls, and fetching resumes when the network returns, including a manga queue started offline. Emptying a queue paused this way ends its downloader on both types.
+Which network lets a queue fetch is one rule, `downloadNetworkIssue` (`DownloadNetworkGate.kt`), asked by Mihon's `DownloadWorker` and the novel drain. A missing network, or Wi-Fi only off Wi-Fi, pauses rather than fails: the chapter in flight is requeued, the worker stays in the foreground and polls, and fetching resumes when the network returns, including a manga queue started offline. Emptying a queue paused this way or by the user ends its downloader and its paused notice on both types, while a paused queue with chapters left stays paused.
 
 Both types resume as Mihon does after the app is killed: a worker the system was running is rescheduled by WorkManager, and any other queue waits for Resume. The saved queues are `DownloadStore` (manga) and `NovelDownloadStore` (novels, `{novelId, chapterId, order}`), restored once at launch behind whatever was queued meanwhile; a restored row lands only if it is still saved, so a cancel or Cancel all during the restore keeps it out.
 
