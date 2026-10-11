@@ -2,6 +2,7 @@ package app.cash.quickjs
 
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
+import reikai.quickjs.createQuickJs
 import java.io.Closeable
 import java.util.concurrent.Executors
 import com.dokar.quickjs.QuickJs as DokarQuickJs
@@ -32,7 +33,7 @@ class QuickJs private constructor() : Closeable {
     private var engine: DokarQuickJs? = null
 
     private fun <R> onJsThread(block: suspend (DokarQuickJs) -> R): R = runBlocking(dispatcher) {
-        val current = engine ?: DokarQuickJs.create(dispatcher).also { engine = it }
+        val current = engine ?: createQuickJs(dispatcher).also { engine = it }
         block(current)
     }
 

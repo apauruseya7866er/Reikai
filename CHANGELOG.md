@@ -440,6 +440,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Fixed
 
+- **Manga sources that run JavaScript no longer risk closing the app when they start at the same moment as each other or a light-novel plugin.**
 - **Some extensions no longer crash the app while searching or browsing (from Mihon).** Upstream: mihonapp/mihon#4027.
 - **Global search no longer crashes on a result a source lists twice, leaves a finished source spinning, or searches fewer sources when run just after the app opens (partly from Mihon).** Upstream: mihonapp/mihon#3841.
 - **The Cloudflare bypass now gives up in seconds, not half a minute, when a site abandons a challenge, the browser dies, or a challenge needs a person with Solve interactive Cloudflare challenges off, and a dying browser can't take the app down (partly from Mihon).** Upstream: mihonapp/mihon#3842, mihonapp/mihon#3858.

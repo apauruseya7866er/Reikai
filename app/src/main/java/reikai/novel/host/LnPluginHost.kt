@@ -36,6 +36,7 @@ import logcat.LogPriority
 import mihon.core.metro.AppCoroutineScope
 import reikai.novel.network.deviceWebViewUserAgent
 import reikai.novel.source.WEB_STORAGE_KEY_PREFIX
+import reikai.quickjs.createQuickJs
 import reikai.util.runCatchingCancellable
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.util.system.logcat
@@ -117,12 +118,6 @@ class LnPluginHost(
     private val loaderSlot = EngineSlot("loader")
     private val pluginSlots = ConcurrentHashMap<String, EngineSlot>()
 
-    // QuickJs.create runs the native initGlobals, which caches jclass handles as PROCESS-wide JNI
-    // global refs. Two slots creating engines at once race there and abort the runtime with
-    // "jobject is an invalid global reference". A slot's own mutex cannot cover this: every slot
-    // holds a different one. Only the native init is serialised, so searches still fan out.
-    private val engineCreationMutex = Mutex()
-
     // Idle sweeper lifecycle; guarded by [sweeperLock].
     private val sweeperLock = Any()
     private var sweeperJob: Job? = null
@@ -136,7 +131,8 @@ class LnPluginHost(
     private suspend fun EngineSlot.engine(): QuickJs {
         qjs?.let { return it }
         val scripts = runtimeScripts
-        val q = engineCreationMutex.withLock { QuickJs.create(checkNotNull(dispatcher)) }
+        // A slot's own mutex cannot cover the native init; only creation is serialised, so searches fan out.
+        val q = createQuickJs(checkNotNull(dispatcher))
         try {
             setUp(q, scripts)
         } catch (e: Throwable) {
