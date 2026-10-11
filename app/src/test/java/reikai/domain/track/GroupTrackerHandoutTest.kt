@@ -43,9 +43,10 @@ class GroupTrackerHandoutTest {
         written shouldBe emptyList()
     }
 
+    // Unequal progress, so without the conflict rule the further-read binding would overwrite the other.
     @Test
     fun `skips a tracker whose remote id conflicts across members`() = runTest {
-        handOut(mapOf(1L to listOf(Row(1L, 10L, 100L)), 2L to listOf(Row(2L, 10L, 999L))))
+        handOut(mapOf(1L to listOf(Row(1L, 10L, 100L, 5.0)), 2L to listOf(Row(2L, 10L, 999L))))
 
         written shouldBe emptyList()
     }
