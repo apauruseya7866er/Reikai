@@ -1,16 +1,22 @@
 package reikai.presentation.details
 
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewModelScope
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import eu.kanade.domain.manga.model.downloadedFilter
-import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.ui.manga.ChapterList
 import eu.kanade.tachiyomi.ui.manga.MangaViewModel
+import eu.kanade.tachiyomi.ui.manga.mangaDetailsModel
+import exh.debug.DebugToggles
 import io.kotest.matchers.shouldBe
 import io.mockk.every
-import io.mockk.mockk
+import io.mockk.mockkObject
 import io.mockk.mockkStatic
-import io.mockk.unmockkStatic
+import io.mockk.unmockkAll
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -24,14 +30,19 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import reikai.domain.chapter.hiddenChapterKey
-import reikai.domain.merge.gapPresent
+import reikai.domain.manga.MangaPreferences
 import reikai.domain.novel.NovelChapterListEntry
 import reikai.domain.novel.model.NovelChapterFlags
 import reikai.presentation.novel.details.NovelDetailsState
 import reikai.presentation.novel.details.NovelDetailsViewModel
 import reikai.presentation.reader.NovelReaderViewModelHarness
+import reikai.presentation.recents.EmittingPreferenceStore
 import tachiyomi.core.common.preference.TriState
-import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.data.Database
+import tachiyomi.data.DatabaseBindings
+import tachiyomi.data.chapter.ChapterRepositoryImpl
+import tachiyomi.data.manga.MangaRepositoryImpl
+import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
 
 /**
@@ -57,14 +68,16 @@ class DetailsGapConformanceTest {
     @BeforeEach
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        // The downloaded filter reads a global preference through the app graph; it is not under test.
+        // Both read through Injekt in production; held at their shipped defaults.
         mockkStatic(DOWNLOADED_FILTER_FILE)
         every { any<Manga>().downloadedFilter } returns TriState.DISABLED
+        mockkObject(DebugToggles.ENABLE_EXH_ROOT_REDIRECT)
+        every { DebugToggles.ENABLE_EXH_ROOT_REDIRECT.enabled } returns DebugToggles.ENABLE_EXH_ROOT_REDIRECT.default
     }
 
     @AfterEach
     fun tearDown() {
-        unmockkStatic(DOWNLOADED_FILTER_FILE)
+        unmockkAll()
         Dispatchers.resetMain()
     }
 
@@ -131,63 +144,100 @@ class DetailsGapConformanceTest {
         fun probes() = listOf(MangaProbe(), NovelProbe())
     }
 
-    /** The manga state as the model assembles it: every row's numbers, the rows it shows. */
+    /** A real MangaViewModel over an in-memory database, assembling the state from stored rows. */
     class MangaProbe : Probe {
         override fun toString() = "manga"
 
-        private fun item(number: Int, read: Boolean = false) = ChapterList.Item(
-            Chapter.create().copy(
-                id = number.toLong(),
-                mangaId = 1L,
-                name = "Chapter $number",
-                chapterNumber = number.toDouble(),
-                read = read,
-                sourceOrder = 100L - number,
-            ),
-            Download.State.NOT_DOWNLOADED,
-            0,
-            isRead = read,
-            isBookmarked = false,
-        )
+        override suspend fun elevenFilteredOut(scope: TestScope): Pair<List<Int>, Int> =
+            open((1..12).toList(), read = setOf(11), flags = Manga.CHAPTER_SHOW_UNREAD) { model ->
+                // The filter applies as the list renders, so the state still holds every row.
+                answer(model.success { it.chapters.size == 12 && it.processedChapters.size == 11 })
+            }
+
+        override suspend fun elevenHidden(scope: TestScope, revealed: Boolean): Pair<List<Int>, Int> {
+            val prefs = EmittingPreferenceStore()
+            MangaPreferences(prefs).hiddenChapters().set(setOf(hiddenChapterKey(SOURCE_ID.toString(), url(11))))
+            return open((1..12).toList(), prefs = prefs) { model ->
+                val hidden = model.success { it.hasHiddenChapters && it.chapters.size == 11 }
+                if (!revealed) return@open answer(hidden)
+                model.toggleShowHidden()
+                answer(model.success { it.showHidden && it.chapters.size == 12 })
+            }
+        }
+
+        override suspend fun elevenMissing(scope: TestScope, hideMarkers: Boolean): Pair<List<Int>, Int> {
+            val prefs = EmittingPreferenceStore()
+            LibraryPreferences(prefs).hideMissingChapters.set(hideMarkers)
+            return open((1..12).filterNot { it == 11 }, prefs = prefs) { model ->
+                answer(model.success { it.chapters.size == 11 })
+            }
+        }
 
         private fun answer(state: MangaViewModel.State.Success) =
             state.chapterListItems.filterIsInstance<ChapterList.MissingCount>().map { it.count } to
                 state.missingChapterCount
 
-        private fun state(
-            all: List<ChapterList.Item>,
-            shown: List<ChapterList.Item> = all,
+        /** Manga 1 holding [numbers], [read] of them read, under chapter [flags]; then [block]. */
+        private suspend fun <T> open(
+            numbers: List<Int>,
+            read: Set<Int> = emptySet(),
             flags: Long = 0L,
-            revealed: Set<Long> = emptySet(),
-            hideMarkers: Boolean = false,
-        ) = MangaViewModel.State.Success(
-            manga = Manga.create().copy(id = 1L, chapterFlags = flags),
-            source = mockk(),
-            isFromSource = false,
-            chapters = shown,
-            availableScanlators = emptySet(),
-            excludedScanlators = emptySet(),
-            hideMissingChapters = hideMarkers,
-            showHidden = revealed.isNotEmpty(),
-            hasHiddenChapters = true,
-            hiddenChapterIds = revealed,
-            gapPresent = all.map { it.chapter }.gapPresent(),
-        )
-
-        override suspend fun elevenFilteredOut(scope: TestScope): Pair<List<Int>, Int> =
-            answer(state((1..12).map { item(it, read = it == 11) }, flags = Manga.CHAPTER_SHOW_UNREAD))
-
-        override suspend fun elevenHidden(scope: TestScope, revealed: Boolean): Pair<List<Int>, Int> {
-            val all = (1..12).map { item(it) }
-            return if (revealed) {
-                answer(state(all, revealed = setOf(11L)))
-            } else {
-                answer(state(all, shown = all.filterNot { it.id == 11L }))
+            prefs: EmittingPreferenceStore = EmittingPreferenceStore(),
+            block: suspend (MangaViewModel) -> T,
+        ): T {
+            val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+            Database.Schema.create(driver).await()
+            val database = DatabaseBindings.providesDatabase(driver)
+            driver.execute(
+                null,
+                "INSERT INTO manga(id, source_id, remote_url, remote_title, remote_status, state_initialized, " +
+                    "user_reader_flags, user_chapter_flags, state_cover_last_modified, user_favorite_at, " +
+                    "remote_update_strategy, state_chapter_next_update, state_chapter_fetch_interval, user_notes, " +
+                    "remote_memo) VALUES ($MANGA_ID, $SOURCE_ID, '/manga', 'Title', 0, 1, 0, $flags, 0, 1, 0, 0, 0, " +
+                    "'', '{}')",
+                0,
+            ).await()
+            numbers.forEach { n ->
+                driver.execute(
+                    null,
+                    "INSERT INTO chapter(id, manga_id, remote_url, remote_name, remote_scanlator, user_read, " +
+                        "user_bookmark, user_last_page_read, remote_chapter_number, remote_order, state_date_fetch, " +
+                        "remote_date_upload, remote_memo) VALUES ($n, $MANGA_ID, '${url(n)}', 'Chapter $n', NULL, " +
+                        "${if (n in read) 1 else 0}, 0, 0, $n.0, ${100 - n}, 0, 0, '{}')",
+                    0,
+                ).await()
+            }
+            val store = ViewModelStore()
+            val model = mangaDetailsModel(
+                MANGA_ID,
+                MangaRepositoryImpl(database),
+                ChapterRepositoryImpl(database),
+                longArrayOf(MANGA_ID),
+                prefs = prefs,
+            ).also { store.put("manga", it) }
+            return try {
+                block(model)
+            } finally {
+                // The model reads on the real IO dispatcher, so it stops before the database closes.
+                val job = model.viewModelScope.coroutineContext.job
+                store.clear()
+                job.join()
+                driver.close()
             }
         }
 
-        override suspend fun elevenMissing(scope: TestScope, hideMarkers: Boolean): Pair<List<Int>, Int> =
-            answer(state((1..12).filterNot { it == 11 }.map { item(it) }, hideMarkers = hideMarkers))
+        private fun url(number: Int) = "/chapter/$number"
+
+        private suspend fun MangaViewModel.success(
+            ready: (MangaViewModel.State.Success) -> Boolean,
+        ): MangaViewModel.State.Success = withContext(Dispatchers.Default) {
+            withTimeout(30_000) { state.filterIsInstance<MangaViewModel.State.Success>().first(ready) }
+        }
+
+        private companion object {
+            const val MANGA_ID = 1L
+            const val SOURCE_ID = 1L
+        }
     }
 
     class NovelProbe : Probe {
