@@ -30,6 +30,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.minus
 import mihon.core.metro.metroGraph
 import mihon.presentation.widget.di.PresentationWidgetGraph
+import reikai.presentation.widget.MangaUpdatesPerSeries
 import reikai.presentation.widget.loadWidgetCover
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.manga.model.MangaCover
@@ -50,6 +51,8 @@ abstract class BaseUpdatesGridGlanceWidget : GlanceAppWidget() {
     @Inject private lateinit var getUpdates: GetUpdates
 
     @Inject private lateinit var preferences: SecurityPreferences
+
+    @Inject private lateinit var perSeries: MangaUpdatesPerSeries // RK
 
     override val sizeMode = SizeMode.Exact
 
@@ -113,8 +116,8 @@ abstract class BaseUpdatesGridGlanceWidget : GlanceAppWidget() {
         val widthPx = CoverWidth.value.toInt().dpToPx
         val heightPx = CoverHeight.value.toInt().dpToPx
         return withContext(Dispatchers.Default) {
-            this@prepareData
-                .distinctBy { it.mangaId }
+            // A merged series draws one cover, as on the combined widget
+            perSeries.onePerSeries(this@prepareData)
                 .take(rowCount * columnCount)
                 .map { updatesView ->
                     val bitmap = loadWidgetCover(

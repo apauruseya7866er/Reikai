@@ -1,5 +1,7 @@
 package reikai.domain.merge
 
+import tachiyomi.core.common.util.lang.withIOContext
+
 /**
  * One item per merge group: the first item whose entry belongs to a group keeps it, later members of
  * that group drop out, and an ungrouped entry always stays.
@@ -12,6 +14,12 @@ fun <T, K> List<T>.dedupeByMergeGroup(membership: Map<K, Long>, id: (T) -> K): L
     if (membership.isEmpty()) return this
     val seenGroups = HashSet<Long>()
     return filter { item -> membership[id(item)]?.let(seenGroups::add) ?: true }
+}
+
+/** [items] one per entry, then one per merge group, as a cover grid counting a merged series once draws them. */
+suspend fun <T> EntryMergeManager.onePerSeries(items: List<T>, id: (T) -> Long): List<T> {
+    val rows = items.distinctBy(id)
+    return rows.dedupeByMergeGroup(withIOContext { groupIdsFor(rows.map(id)) }, id)
 }
 
 /** Entries that render as one row: a merge group's present members, or one entry's items. */

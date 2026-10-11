@@ -50,15 +50,13 @@ import reikai.domain.entry.EntryId
 import reikai.domain.entry.GetEntryCustomInfo
 import reikai.domain.entry.withCustomInfo
 import reikai.domain.manga.MangaMergeManager
-import reikai.domain.merge.EntryMergeManager
-import reikai.domain.merge.dedupeByMergeGroup
+import reikai.domain.merge.onePerSeries
 import reikai.domain.novel.NovelMergeManager
 import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.NovelUpdateWithRelations
 import reikai.presentation.details.mangaDetailsIntent
 import reikai.presentation.details.novelDetailsIntent
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.updates.interactor.GetUpdates
 import tachiyomi.i18n.MR
@@ -165,8 +163,8 @@ class UnifiedUpdatesGlanceWidget : GlanceAppWidget() {
     ): SectionData {
         // Dedupe per series, then per merge group so a series grouped across sources draws one cover, then
         // give each section half the rows.
-        val novelRows = updates.novel.onePerSeries(novelMergeManager) { it.novelId }
-        val mangaRows = updates.manga.onePerSeries(mangaMergeManager) { it.mangaId }
+        val novelRows = novelMergeManager.onePerSeries(updates.novel) { it.novelId }
+        val mangaRows = mangaMergeManager.onePerSeries(updates.manga) { it.mangaId }
         val perSectionRows = (rowCount / 2).coerceAtLeast(1)
         val cap = perSectionRows * columnCount
 
@@ -201,11 +199,6 @@ class UnifiedUpdatesGlanceWidget : GlanceAppWidget() {
                 }
             SectionData(novel = novelCovers, manga = mangaCovers)
         }
-    }
-
-    private suspend fun <T> List<T>.onePerSeries(mergeManager: EntryMergeManager, id: (T) -> Long): List<T> {
-        val rows = distinctBy(id)
-        return rows.dedupeByMergeGroup(withIOContext { mergeManager.groupIdsFor(rows.map(id)) }, id)
     }
 
     private fun mangaIntent(context: Context, mangaId: Long) =
