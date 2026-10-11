@@ -140,7 +140,8 @@ class MangaReaderViewModelHarness private constructor(
      * seeds the store the reader, download and library settings read, by key. The page loader throws for
      * a chapter in [failing], as a dropped connection does, and [incognito] answers for every source. A
      * source in [missingSources] resolves to a stub, as an uninstalled extension's does. The device is on
-     * Wi-Fi only when [wifi] is set, so by default the next chapter's eager preload is held.
+     * Wi-Fi only when [wifi] is set, so by default the next chapter's eager preload is held. A first open
+     * that fails throws its error, unless [allowInitError] hands the failed state to [probe] instead.
      */
     suspend fun <T> open(
         manga: Manga,
@@ -154,6 +155,7 @@ class MangaReaderViewModelHarness private constructor(
         incognito: Boolean = false,
         missingSources: Set<Long> = emptySet(),
         wifi: Boolean = false,
+        allowInitError: Boolean = false,
         onDownload: (List<Chapter>) -> Unit = {},
         onDelete: (List<Chapter>) -> Unit = {},
         onEnqueueDelete: (List<Chapter>) -> Unit = {},
@@ -255,7 +257,7 @@ class MangaReaderViewModelHarness private constructor(
                 modelJob = it.viewModelScope.coroutineContext.job
             }
             val state = settled(model) { it.viewerChapters != null || it.initError != null }
-                .also { it.initError?.let { error -> throw error } }
+                .also { if (!allowInitError) it.initError?.let { error -> throw error } }
             return probe(model, state)
         } finally {
             store.clear()

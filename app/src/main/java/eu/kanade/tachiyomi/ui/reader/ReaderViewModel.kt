@@ -1168,8 +1168,12 @@ class ReaderViewModel(
     }
 
     // From every chapter: the skip-filtered list leaves out a read one, which can fail to load as well.
-    private fun chapterById(chapterId: Long) =
-        fullChapterList.takeIf { chapterListsReady }?.firstOrNull { it.chapter.id == chapterId }?.chapter
+    // The readiness check comes first: a first open can fail before the lateinit list is assigned.
+    private fun chapterById(chapterId: Long) = if (!chapterListsReady) {
+        null
+    } else {
+        fullChapterList.firstOrNull { it.chapter.id == chapterId }?.chapter
+    }
 
     /** The chapter the reader is opening, which a first open that failed is about. */
     val openingChapterId: Long get() = if (chapterId == -1L) initialChapterId else chapterId
