@@ -71,6 +71,13 @@ class MadaraChapterEndpointTest {
         call(site, ask(url = "https://site.example/blog/ajax/chapters/")).body.string() shouldBe CHAPTERS
     }
 
+    @Test
+    fun `a site in a subfolder asking the chapters route is asked for the post below its root`() {
+        val site = Site(root = "/blog/")
+        call(site, ask(url = "https://site.example/blog/ajax/chapters/"))
+        site.asked[1] shouldBe "HEAD https://site.example/blog/?p=42"
+    }
+
     private fun call(site: Site, request: Request): Response =
         OkHttpClient.Builder().addInterceptor(MadaraChapterEndpoint).addInterceptor(site).build()
             .newCall(request).execute()
@@ -107,16 +114,18 @@ class MadaraChapterEndpointTest {
             val request = chain.request()
             asked += "${request.method} ${request.url}"
             val path = request.url.encodedPath
+            // WordPress resolves a post id at its own root only, so a lookup anywhere else finds nothing.
+            val postLookup = request.url.queryParameter("p") == "42" && path == root
             return when {
                 // A request claiming a body it does not carry is dropped, as the live sites drop it.
                 request.header("Content-Length")?.let { it != "${request.body?.contentLength() ?: 0}" } == true ->
                     respond(request, 400, "")
                 path.endsWith("admin-ajax.php") -> respond(request, adminAjaxCode, adminAjaxBody)
-                request.url.queryParameter("p") == "42" && redirects && !followed ->
+                postLookup && redirects && !followed ->
                     respond(request, 301, "").newBuilder().header("Location", "${root}novel/a-novel/").build()
-                request.url.queryParameter("p") == "42" && redirects ->
+                postLookup && redirects ->
                     respond(request.newBuilder().url("https://site.example${root}novel/a-novel/").build(), 200, "")
-                request.url.queryParameter("p") == "42" -> respond(request, 200, "")
+                postLookup -> respond(request, 200, "")
                 path == "${root}novel/a-novel/ajax/chapters/" -> respond(request, novelAjaxCode, CHAPTERS)
                 else -> respond(request, 404, "")
             }
