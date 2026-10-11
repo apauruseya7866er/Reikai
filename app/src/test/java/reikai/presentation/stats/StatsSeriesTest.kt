@@ -9,6 +9,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
 import reikai.domain.library.ContentType
 import reikai.domain.library.smartUpdateFacts
+import reikai.domain.merge.MergedGroupCounts
 import reikai.domain.merge.TestMergeManagers
 import reikai.domain.novel.model.LibraryNovel
 import reikai.domain.novel.model.Novel
@@ -82,12 +83,64 @@ class StatsSeriesTest {
             globalUpdateCount(type, updatedIds = setOf(2L)) shouldBe 1
         }
 
+    /** The lead source has read nothing; the stitch reads the series from the other source's copies. */
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a merged series read only on a later member counts as started`(type: ContentType) = runTest {
+        mergedSeries(type, leadRead = 0, stitch = MergedGroupCounts(total = 3, read = 2, bookmarked = 0))
+            .started shouldBe 1
+    }
+
+    /** The lead has read all of its own chapters, but the group covers one more. */
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a merged series with a chapter unread on another member is not completed`(type: ContentType) = runTest {
+        mergedSeries(type, leadRead = 3, stitch = MergedGroupCounts(total = 4, read = 3, bookmarked = 0))
+            .completed shouldBe 0
+    }
+
+    /** Members 1 (the lead, three chapters, [leadRead] read, completed) and 2, merged in group 9. */
+    private suspend fun mergedSeries(type: ContentType, leadRead: Long, stitch: MergedGroupCounts): StatusCounts {
+        val managers = TestMergeManagers(mapOf(type to mapOf(1L to 9L, 2L to 9L)), mergingOn = true)
+        val counts = mapOf(9L to stitch)
+        return when (type) {
+            ContentType.MANGA -> managers.manga.statsSeries(
+                listOf(manga(1L, COMPLETED, 3, leadRead), manga(2L, COMPLETED, 4, 3)),
+                counts,
+            ) {
+                it.id
+            }.let {
+                StatusCounts(
+                    it.startedCount { m ->
+                        m.smartUpdateFacts()
+                    },
+                    it.completedCount { m -> m.smartUpdateFacts() },
+                )
+            }
+            else -> managers.novel.statsSeries(
+                listOf(novel(1L, COMPLETED, 3, leadRead), novel(2L, COMPLETED, 4, 3)),
+                counts,
+            ) {
+                it.id
+            }.let {
+                StatusCounts(
+                    it.startedCount { n ->
+                        n.smartUpdateFacts()
+                    },
+                    it.completedCount { n -> n.smartUpdateFacts() },
+                )
+            }
+        }
+    }
+
+    private data class StatusCounts(val started: Int, val completed: Int)
+
     private suspend fun globalUpdateCount(type: ContentType, updatedIds: Set<Long>): Int {
         val managers = TestMergeManagers(mapOf(type to mapOf(1L to 9L, 2L to 9L)), mergingOn = true)
         return when (type) {
-            ContentType.MANGA -> managers.manga.statsSeries(listOf(manga(2L), manga(1L))) { it.id }
+            ContentType.MANGA -> managers.manga.statsSeries(listOf(manga(2L), manga(1L)), emptyMap()) { it.id }
                 .globalUpdateCount { it.id in updatedIds }
-            else -> managers.novel.statsSeries(listOf(novel(2L), novel(1L))) { it.id }
+            else -> managers.novel.statsSeries(listOf(novel(2L), novel(1L)), emptyMap()) { it.id }
                 .globalUpdateCount { it.id in updatedIds }
         }
     }
@@ -101,8 +154,8 @@ class StatsSeriesTest {
     private suspend fun series(type: ContentType, mergingOn: Boolean): StatsSeries<*> {
         val managers = TestMergeManagers(mapOf(type to mapOf(1L to 9L, 2L to 9L)), mergingOn)
         return when (type) {
-            ContentType.MANGA -> managers.manga.statsSeries(listOf(manga(2L), manga(1L))) { it.id }
-            else -> managers.novel.statsSeries(listOf(novel(2L), novel(1L))) { it.id }
+            ContentType.MANGA -> managers.manga.statsSeries(listOf(manga(2L), manga(1L)), emptyMap()) { it.id }
+            else -> managers.novel.statsSeries(listOf(novel(2L), novel(1L)), emptyMap()) { it.id }
         }
     }
 
@@ -110,9 +163,11 @@ class StatsSeriesTest {
     private suspend fun completedCount(type: ContentType, status: Long, readCount: Long): Int {
         val managers = TestMergeManagers(emptyMap(), mergingOn = false)
         return when (type) {
-            ContentType.MANGA -> managers.manga.statsSeries(listOf(manga(1L, status, 3, readCount))) { it.id }
+            ContentType.MANGA -> managers.manga.statsSeries(listOf(manga(1L, status, 3, readCount)), emptyMap()) {
+                it.id
+            }
                 .completedCount { it.smartUpdateFacts() }
-            else -> managers.novel.statsSeries(listOf(novel(1L, status, 3, readCount))) { it.id }
+            else -> managers.novel.statsSeries(listOf(novel(1L, status, 3, readCount)), emptyMap()) { it.id }
                 .completedCount { it.smartUpdateFacts() }
         }
     }

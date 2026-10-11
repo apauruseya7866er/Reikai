@@ -25,6 +25,7 @@ import reikai.domain.library.includes
 import reikai.domain.library.smartUpdateFacts
 import reikai.domain.library.smartUpdateProgressSkip
 import reikai.domain.manga.MangaMergeManager
+import reikai.domain.merge.MergedChapterUnitRepository
 import reikai.domain.novel.NovelHistoryRepository
 import reikai.domain.novel.NovelMergeManager
 import reikai.domain.novel.NovelPreferences
@@ -64,6 +65,7 @@ class StatsViewModel(
     private val novelDownloadManager: () -> NovelDownloadManager,
     private val mangaMergeManager: MangaMergeManager,
     private val novelMergeManager: NovelMergeManager,
+    private val mergedChapterUnits: MergedChapterUnitRepository,
     // RK <--
 ) : ViewModel() {
 
@@ -84,10 +86,16 @@ class StatsViewModel(
             val libraryManga = getLibraryManga.await()
             // RK: replaces upstream's id-distinct list. A series favorited from three sources is three
             //     rows here and one card in the library, so StatsSeries counts it once.
-            val manga = mangaMergeManager.statsSeries(libraryManga) { it.id }
+            val manga = mangaMergeManager.statsSeries(
+                libraryManga,
+                mergedChapterUnits.getGroupCounts(ContentType.MANGA),
+            ) { it.id }
 
             // RK --> compute manga + novel ingredients once, then fold per selected type on chip change.
-            val novels = novelMergeManager.statsSeries(novelRepository.getLibraryNovelAsFlow().first()) { it.id }
+            val novels = novelMergeManager.statsSeries(
+                novelRepository.getLibraryNovelAsFlow().first(),
+                mergedChapterUnits.getGroupCounts(ContentType.NOVELS),
+            ) { it.id }
 
             val ingredients = StatsIngredients(
                 manga = manga,
@@ -134,8 +142,8 @@ class StatsViewModel(
             (if (mangaPart) getGlobalUpdateItemCount(i.manga) else 0) +
                 (if (novelPart) getNovelGlobalUpdateItemCount(i.novels) else 0),
             startedMangaCount =
-            (if (mangaPart) i.manga.titles.count { it.hasStarted } else 0) +
-                (if (novelPart) i.novels.titles.count { it.hasStarted } else 0),
+            (if (mangaPart) i.manga.startedCount { it.smartUpdateFacts() } else 0) +
+                (if (novelPart) i.novels.startedCount { it.smartUpdateFacts() } else 0),
             // Novels have no local source, so local titles stays a manga-only stat.
             localMangaCount = if (mangaPart) i.manga.titles.count { it.manga.isLocal() } else 0,
         )
