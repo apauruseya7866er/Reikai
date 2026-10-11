@@ -53,6 +53,7 @@ import reikai.domain.novel.NovelMergedChapterProvider
 import reikai.domain.novel.NovelPreferences
 import reikai.domain.novel.interactor.DeleteNovelChaptersAfterRead
 import reikai.domain.novel.interactor.DeleteNovelChaptersBehindReader
+import reikai.domain.novel.interactor.FilterNovelChaptersForDownload
 import reikai.domain.novel.interactor.GetNextNovelChapter
 import reikai.domain.novel.interactor.SetNovelChapterFlags
 import reikai.domain.novel.interactor.SetNovelReadStatus
@@ -162,6 +163,9 @@ class NovelReaderViewModelHarness private constructor(
         every { queueState } returns MutableStateFlow(emptyList())
         every { getChapterText(any(), any()) } answers { downloaded[secondArg<NovelChapter>().id] }
     }
+
+    /** What a details refresh asks of the new chapters it would download. */
+    var filterChaptersForDownload = mockk<FilterNovelChaptersForDownload>(relaxed = true)
 
     /** What the in-app browser reports as a chapter saved from its page. */
     val pageSaves = MutableSharedFlow<Long>(extraBufferCapacity = 1)
@@ -417,7 +421,7 @@ class NovelReaderViewModelHarness private constructor(
             novelDownloadCache = downloadCache,
             sourceManager = sourceManager,
             installer = installer,
-            filterChaptersForDownload = mockk(relaxed = true),
+            filterChaptersForDownload = filterChaptersForDownload,
             novelLibraryAdder = mockk(relaxed = true),
             setNovelReadStatus = setNovelReadStatus(),
             novelPreferences = novelPreferences,

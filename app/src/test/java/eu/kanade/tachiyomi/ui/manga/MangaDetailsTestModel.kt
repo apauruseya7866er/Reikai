@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flowOf
+import mihon.domain.chapter.interactor.FilterChaptersForDownload
+import mihon.domain.source.interactor.UpdateMangaFromRemote
 import reikai.domain.manga.MangaChapterSettings
 import reikai.domain.manga.MangaMergeManager
 import reikai.domain.manga.MangaPreferences
@@ -52,6 +54,8 @@ internal fun mangaDetailsModel(
     downloadManager: DownloadManager = detailsDownloadManager(),
     sourceManager: SourceManager = mockk(relaxed = true),
     stitch: List<ChapterUnit> = emptyList(),
+    filterChaptersForDownload: FilterChaptersForDownload = mockk(relaxed = true),
+    updateMangaFromRemote: UpdateMangaFromRemote = mockk(relaxed = true),
     beforeModel: () -> Unit = {},
 ): MangaViewModel {
     val prefs = InMemoryPreferenceStore()
@@ -95,8 +99,8 @@ internal fun mangaDetailsModel(
         updateManga = mockk(relaxed = true),
         resetEntryInfo = mockk(relaxed = true),
         getTracksInGroup = mockk(relaxed = true),
-        filterChaptersForDownload = mockk(relaxed = true),
-        updateMangaFromRemote = mockk(relaxed = true),
+        filterChaptersForDownload = filterChaptersForDownload,
+        updateMangaFromRemote = updateMangaFromRemote,
         mergeManager = mergeManager,
         mangaLibraryAdder = mockk(relaxed = true),
         removeMangaFromLibrary = mockk(relaxed = true),

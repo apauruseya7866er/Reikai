@@ -172,6 +172,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **A merged novel's combined chapter list no longer hides a chapter whose title differs only by a trailing number, or an untitled chapter 0 that only another source lists.**
 - **The heart on a merged series' page now removes the source chip you have selected, and under All asks first with "All grouped sources" ticked, on manga and novels.** Before, it always removed the source you opened the page from.
 - **Removing a source in Manage sources now offers to delete its downloads once its Undo is gone, as the heart on the series' page does.**
+- **Refreshing a merged manga now checks each source's own categories and read chapters before downloading its new chapters, as merged novels do.** Before, every source's new chapters were judged by the first source's.
 
 ### Updates & History
 

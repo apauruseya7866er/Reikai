@@ -1538,8 +1538,12 @@ class MangaViewModel(
 
     private fun downloadNewChapters(chapters: List<Chapter>) {
         appScope.launch {
-            val manga = successState?.manga ?: return@launch
-            val chaptersToDownload = filterChaptersForDownload.await(manga, chapters)
+            // RK --> a merged group's new chapters are judged against their own member, as novels' are
+            val state = successState ?: return@launch
+            val chaptersToDownload = chapters.groupBy { it.mangaId }.flatMap { (mangaId, owned) ->
+                filterChaptersForDownload.await(ownerOf(mangaId, state), owned)
+            }
+            // RK <--
 
             if (chaptersToDownload.isNotEmpty()) {
                 downloadChapters(chaptersToDownload)
