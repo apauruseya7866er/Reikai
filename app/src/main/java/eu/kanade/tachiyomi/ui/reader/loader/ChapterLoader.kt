@@ -31,6 +31,7 @@ class ChapterLoader(
     private val downloadProvider: DownloadProvider,
     private val chapterCache: ChapterCache,
     private val appScope: CoroutineScope,
+    private val canLoadAhead: () -> Boolean,
     // RK: resume position even on already-read chapters when enabled
     private val readerPreferences: ReaderPreferences,
     private val manga: Manga,
@@ -110,8 +111,9 @@ class ChapterLoader(
                     is Format.Epub -> EpubPageLoader(format.file.epubReader(context))
                 }
             }
-            // RK: readerPreferences for the user-set preload count
-            source is HttpSource -> HttpPageLoader(chapter, source, chapterCache, appScope, readerPreferences)
+            // RK: readerPreferences for the user-set count of pages that load ahead off Wi-Fi
+            source is HttpSource ->
+                HttpPageLoader(chapter, source, chapterCache, appScope, canLoadAhead, readerPreferences)
             source is StubSource -> error(context.stringResource(MR.strings.source_not_installed, source.toString()))
             else -> error(context.stringResource(MR.strings.loader_not_implemented_error))
         }

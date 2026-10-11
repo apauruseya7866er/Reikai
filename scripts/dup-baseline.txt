@@ -2,6 +2,7 @@
 # kept on purpose. One per line: file A, file B, hash of the normalised tokens (tab-separated).
 # Regenerate with: pwsh scripts/dup-check.ps1 -UpdateBaseline, and say in the commit why a new one
 # is kept.
+app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsMangaReaderScreen.kt	app/src/main/java/reikai/presentation/recommendation/SettingsRecommendationsScreen.kt	4c95e27df5c79ab2
 app/src/main/java/eu/kanade/tachiyomi/data/backup/create/creators/MangaBackupCreator.kt	app/src/main/java/eu/kanade/tachiyomi/data/backup/create/creators/NovelBackupCreator.kt	c7dbc2f375ec0b4d
 app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupCustomMangaInfo.kt	app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupCustomNovelInfo.kt	3f25b0ac5f1f9294
 app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupManga.kt	app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupNovel.kt	eb95fab0158a498f

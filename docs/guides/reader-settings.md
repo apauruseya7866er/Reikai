@@ -64,6 +64,12 @@ Briefly shows an overlay for the current tap zones when reader is opened.
 ### Animate page transitions <Badge type="info" text="On" />
 This setting applies a smooth transition when tapping to change page.
 
+### Load ahead only on Wi-Fi <Badge type="info" text="On" />
+On Wi-Fi, a chapter from a source loads all its pages in the background, and the next chapter once it has. Off Wi-Fi with this on, only the pages near the one you are reading load, and the next chapter loads as you near the end. Novels are not affected: their next chapter is a single small download.
+
+### Pages to load ahead off Wi-Fi <Badge type="info" text="4 pages" />
+Shown while **Load ahead only on Wi-Fi** is on. How many pages past the one you are reading load off Wi-Fi. Higher is smoother and costs more data.
+
 ## Display
 
 ### Default rotation <Badge type="info" text="Free" />
@@ -159,9 +165,6 @@ Which buttons sit in the reader's bottom bar, and in what order. Rotation, readi
 
 ### Resume reading position <Badge type="info" text="Off" />
 Reopens a chapter where you left it, even one already marked read.
-
-### Pages to preload <Badge type="info" text="4 pages" />
-How far ahead pages are fetched. Higher is smoother and costs more data.
 
 ### Always show chapter transition <Badge type="info" text="On" />
 Shows chapter transitions regardless of whether the next chapter is loaded or not.

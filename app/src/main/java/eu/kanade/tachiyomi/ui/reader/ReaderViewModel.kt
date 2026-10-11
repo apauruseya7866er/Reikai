@@ -42,6 +42,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.chapter.ReaderChapterItem
 import eu.kanade.tachiyomi.ui.reader.loader.DownloadPageLoader
+import eu.kanade.tachiyomi.ui.reader.loader.HttpPageLoader
 import eu.kanade.tachiyomi.ui.reader.loader.MergedChapterLoader
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
@@ -55,6 +56,7 @@ import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
+import eu.kanade.tachiyomi.util.system.activeNetworkState
 import exh.util.defaultReaderType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -613,6 +615,7 @@ class ReaderViewModel(
                     downloadProvider,
                     chapterCache,
                     appScope,
+                    ::canLoadAhead,
                     readerPreferences,
                     group.mangaById,
                     sourceManager,
@@ -676,6 +679,8 @@ class ReaderViewModel(
             // neighbour of the live set. The references and the queue cancel run out here, once, since
             // update re-runs its block whenever a background write lands first.
             if (pageSwitch != null && !chapterSwitches.isLatest(pageSwitch)) return@withUIContext
+            // Past the check, so an overtaken switch can't cancel the live chapter's preload for its own
+            preloadNextChapterAfter(newChapters)
             // Add new references first to avoid unnecessary recycling
             newChapters.ref()
             state.value.viewerChapters?.unref()
@@ -764,6 +769,34 @@ class ReaderViewModel(
         }
     }
     // RK <--
+
+    private var nextChapterPreloadJob: Job? = null
+
+    /**
+     * Preloads the next chapter of [chapters] once the current one has loaded, so it doesn't take bandwidth from the
+     * pages being read. Skipped when loading ahead isn't allowed on this network.
+     */
+    private fun preloadNextChapterAfter(chapters: ViewerChapters) {
+        val nextChapter = chapters.nextChapter ?: return
+        nextChapterPreloadJob?.cancel()
+        nextChapterPreloadJob = viewModelScope.launch(Dispatchers.IO) {
+            if (!canLoadAhead()) return@launch
+            val current = chapters.currChapter
+            // Only online pages load in the background; other loaders load a page once it's shown
+            if (current.pageLoader is HttpPageLoader) {
+                current.pages.orEmpty().forEach { page ->
+                    page.statusFlow.first { it == Page.State.Ready || it is Page.State.Error }
+                }
+            }
+            preload(nextChapter)
+        }
+    }
+
+    /**
+     * Whether online chapters may load past the pages near the one being read.
+     */
+    private fun canLoadAhead(): Boolean =
+        !readerPreferences.loadAheadOnlyOverWifi.get() || context.activeNetworkState().isWifi
 
     /**
      * Called when the viewers decide it's a good time to preload a [chapter] and improve the UX so

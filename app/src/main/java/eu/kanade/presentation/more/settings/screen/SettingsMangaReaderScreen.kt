@@ -33,7 +33,9 @@ import java.text.NumberFormat
  * The screen is self-contained: every setting on it applies to the manga reader only. Where the novel
  * reader has a setting of the same name (keep screen on, the volume keys, skip and mark-read-on-skip),
  * the two are deliberately separate values, because the ergonomics of paged images and continuously
- * scrolling text differ. Not twin debt: docs/dev/subsystems/architecture.md.
+ * scrolling text differ. Not twin debt: docs/dev/subsystems/architecture.md. Load ahead only on Wi-Fi
+ * has no novel twin either: a novel's next chapter is one text request, already the size of the
+ * limited manga window (docs/dev/subsystems/reader.md).
  */
 object SettingsMangaReaderScreen : SearchableSettings {
 
@@ -51,6 +53,7 @@ object SettingsMangaReaderScreen : SearchableSettings {
         // so is the volume-key scroll amount, since that renderer's long strip turns whole pages.
         val highQualityRenderer by remember { context.appGraph.basePreferences.highQualityRenderer }
             .collectAsState()
+        val loadAheadOnlyOverWifi by readerPref.loadAheadOnlyOverWifi.collectAsState()
 
         return listOf(
             Preference.PreferenceItem.ListPreference(
@@ -81,6 +84,19 @@ object SettingsMangaReaderScreen : SearchableSettings {
             Preference.PreferenceItem.SwitchPreference(
                 preference = readerPref.pageTransitions,
                 title = stringResource(MR.strings.pref_page_transitions),
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = readerPref.loadAheadOnlyOverWifi,
+                title = stringResource(MR.strings.pref_load_ahead_only_over_wifi),
+                subtitle = stringResource(MR.strings.pref_load_ahead_only_over_wifi_summary),
+            ),
+            // On Wi-Fi, or with the switch above off, the whole chapter loads ahead
+            Preference.PreferenceItem.SliderPreference(
+                preference = readerPref.preloadSize,
+                valueRange = ReaderRanges.preloadPages,
+                title = stringResource(MR.strings.pref_reader_preload_size),
+                valueText = { pluralStringResource(MR.plurals.pref_pages, it, it) },
+                visible = loadAheadOnlyOverWifi,
             ),
             getDisplayGroup(readerPreferences = readerPref),
             getEInkGroup(readerPreferences = readerPref),
@@ -217,12 +233,6 @@ object SettingsMangaReaderScreen : SearchableSettings {
                     preference = readerPreferences.preserveReadingPosition,
                     title = stringResource(MR.strings.pref_preserve_reading_position),
                     subtitle = stringResource(MR.strings.pref_preserve_reading_position_summary),
-                ),
-                Preference.PreferenceItem.SliderPreference(
-                    preference = readerPreferences.preloadSize,
-                    valueRange = ReaderRanges.preloadPages,
-                    title = stringResource(MR.strings.pref_reader_preload_size),
-                    valueText = { pluralStringResource(MR.plurals.pref_pages, it, it) },
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = readerPreferences.autoScrollOnOpen,

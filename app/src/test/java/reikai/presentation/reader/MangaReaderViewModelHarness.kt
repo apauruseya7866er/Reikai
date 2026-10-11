@@ -14,11 +14,15 @@ import eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.util.system.NetworkState
+import eu.kanade.tachiyomi.util.system.activeNetworkState
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkConstructor
+import io.mockk.mockkStatic
 import io.mockk.unmockkConstructor
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -135,7 +139,8 @@ class MangaReaderViewModelHarness private constructor(
      * Opens [chapterId] of [manga], waits for the first chapter to land, then asks [probe]. [preferences]
      * seeds the store the reader, download and library settings read, by key. The page loader throws for
      * a chapter in [failing], as a dropped connection does, and [incognito] answers for every source. A
-     * source in [missingSources] resolves to a stub, as an uninstalled extension's does.
+     * source in [missingSources] resolves to a stub, as an uninstalled extension's does. The device is on
+     * Wi-Fi only when [wifi] is set, so by default the next chapter's eager preload is held.
      */
     suspend fun <T> open(
         manga: Manga,
@@ -148,6 +153,7 @@ class MangaReaderViewModelHarness private constructor(
         failing: Set<Long> = emptySet(),
         incognito: Boolean = false,
         missingSources: Set<Long> = emptySet(),
+        wifi: Boolean = false,
         onDownload: (List<Chapter>) -> Unit = {},
         onDelete: (List<Chapter>) -> Unit = {},
         onEnqueueDelete: (List<Chapter>) -> Unit = {},
@@ -157,6 +163,8 @@ class MangaReaderViewModelHarness private constructor(
         // The model starts loading from its init block, which a main dispatcher nothing advances never runs.
         Dispatchers.setMain(UnconfinedTestDispatcher())
         mockkConstructor(ChapterLoader::class)
+        mockkStatic(NETWORK_STATE)
+        every { any<Context>().activeNetworkState() } returns NetworkState(true, true, isWifi = wifi)
         coEvery { anyConstructed<ChapterLoader>().loadChapter(any(), any()) } answers {
             if (firstArg<ReaderChapter>().chapter.id in failing) throw IOException("no connection")
         }
@@ -254,11 +262,14 @@ class MangaReaderViewModelHarness private constructor(
             // A cancelled load still resumes on Main to finish, so wait for it before a test resets Main.
             withContext(NonCancellable) { modelJob?.join() }
             unmockkConstructor(ChapterLoader::class)
+            unmockkStatic(NETWORK_STATE)
         }
     }
 
     override fun close() = driver.close()
 }
+
+private const val NETWORK_STATE = "eu.kanade.tachiyomi.util.system.NetworkStateTrackerKt"
 
 /** The model loads on the IO dispatcher, which virtual time does not reach, so this waits in real time. */
 suspend fun settled(

@@ -32,6 +32,12 @@ Both readers resolve their list through shared kernels: ordering by `readingOrde
 
 The latest chapter switch wins in both readers by two mechanisms: manga's overlapping background loads go through `ChapterSwitches` (a pick, a step or the first open always lands; a page switch something newer overtook is dropped), and novels serialize switches under the model's `lane`.
 
+### Loading ahead
+
+A manga chapter from a source loads in parallel (`HttpPageLoader`): the page being read first, then its neighbours, then the rest in chunks of growing size, and a page turn cancels whatever falls out of the first two chunks. Once a chapter's pages have all loaded or failed, `ReaderViewModel.preloadNextChapterAfter` preloads the next chapter through `preload`, so a failed eager preload waits out the same cooldown as a viewer's. Both ask `canLoadAhead`: with Load ahead only on Wi-Fi on (`loadAheadOnlyOverWifi`, the default) and the device off Wi-Fi, only the page before and `preloadSize` pages after the one being read load (Pages to load ahead off Wi-Fi), and the next chapter waits for the viewer's own preload near the end. A merged series hands `canLoadAhead` to each source's `ChapterLoader` through `MergedChapterLoader`.
+
+The novel reader warms its neighbours on open whatever the network (`warmNeighbour`), so the setting is manga only; see Decisions.
+
 ### Chrome, dialogs and the sheets
 
 The chrome composables are content-neutral: `ReaderAppBars`, `ChapterNavigator`, `ReaderPageIndicator`, `VerticalReaderRail` and `ReaderActionRow`. The navigator shape is `ReaderNavigatorState`, which each provider answers, including `ReaderNavigatorShape.None` when the user hides it (the action row then draws the chapter buttons at its ends, swapped for right to left).
@@ -69,6 +75,7 @@ With `eh_use_auto_webtoon` on (the default), a manga whose reading mode is Defau
 - `app/src/main/java/reikai/presentation/reader/ViewportAutoScroll.kt`, `app/src/main/java/reikai/presentation/reader/FrameScroller.kt`, `app/src/main/java/reikai/presentation/reader/ScrollCarry.kt`, `app/src/main/java/reikai/presentation/reader/StripAutoScroll.kt`: auto-scroll.
 - `app/src/main/java/exh/util/MangaType.kt`: `mangaType`, `defaultReaderType`.
 - `app/src/main/java/reikai/presentation/reader/WebGpuRetryRules.kt`, `app/src/main/java/reikai/presentation/reader/WebGpuPageCache.kt`, `app/src/main/java/reikai/presentation/reader/WebGpuSpreadPlaceholder.kt`: the rules the WebGPU islands call.
+- `app/src/main/java/eu/kanade/tachiyomi/ui/reader/loader/HttpPageLoader.kt`: parallel page loading and the limited window off Wi-Fi.
 - `app/src/main/java/reikai/domain/reader/ChapterRetryCooldown.kt`: the wait before an unprompted retry of a failed chapter, both readers.
 - `app/src/main/java/reikai/domain/reader/ReaderProgressWrites.kt`: the order progress saves land in, both readers.
 
@@ -93,13 +100,14 @@ With `eh_use_auto_webtoon` on (the default), a manga whose reading mode is Defau
 - **The engine floor stays Mihon's**: `ChapterLoader`, the page loaders, `DownloadManager` and the read, history and track interactors, with the novel sinks beside them. The engine orchestrates; it never reimplements them.
 - **Seeking and completion are typed.** A shared integer between a paged medium and a continuous one would share storage with two meanings.
 - **A failed boundary load waits before an unprompted retry, for manga as for novels.** Retrying on the next trigger asked a failing source again on every page turn. The user's Retry and an explicit open skip the wait, since making the user wait out a wait they just overrode strands them.
+- **Load ahead only on Wi-Fi is manga only.** A novel neighbour is one text request, already the size of the limited manga window, and holding it back would make a reader on mobile data wait at every chapter seam for no real saving.
 - **Settings stay per content type.** A reader may want to skip read chapters in one library and not the other, and one value editable from two screens surprises.
 - **Auto webtoon is computed per open and never stored**, and any merge member votes. A stored guess would outlive the preference being switched off. Manga only: long strip is an image layout.
 - **Auto-scroll pauses rather than stops, and the bar never writes start-on-open.** The sheet keeps it paused, speed controls included; a speed change is judged after closing it.
 
 ## Upstream divergences
 
-Reikai patches sit in `// RK` islands in `ReaderActivity` (engine and provider wiring, `onNewIntent`, the ordering-hazard notes, the chapter sheet pick, the Retry flag on `requestPreloadChapter`) and `ReaderViewModel` (merged lists, `ChapterSwitches`, the event channel, the requested-page reset, auto webtoon, duplicate and Downloaded-only ranking, the preload cooldown, `fetchableChapterIds` for the sheet's download control, progress writes through `ReaderProgressWrites`). The image-viewer islands are the ones the content-layer Reader row names. Recorded in [upstream-sync.md](../upstream-sync.md) "Deliberate divergences", including Downloaded only applied after the duplicate ranking.
+Reikai patches sit in `// RK` islands in `ReaderActivity` (engine and provider wiring, `onNewIntent`, the ordering-hazard notes, the chapter sheet pick, the Retry flag on `requestPreloadChapter`) and `ReaderViewModel` (merged lists, `ChapterSwitches`, the event channel, the requested-page reset, auto webtoon, duplicate and Downloaded-only ranking, the preload cooldown, the next-chapter preload placed after the overtaken-switch check, `fetchableChapterIds` for the sheet's download control, progress writes through `ReaderProgressWrites`). The image-viewer islands are the ones the content-layer Reader row names. Recorded in [upstream-sync.md](../upstream-sync.md) "Deliberate divergences", including Downloaded only applied after the duplicate ranking.
 
 ## Extending
 
@@ -110,7 +118,7 @@ Reikai patches sit in `// RK` islands in `ReaderActivity` (engine and provider w
 
 ## Tests
 
-Engine and seam: `ReaderEngineTest`, `ReaderProviderConformanceTest`, `MangaReaderProviderTest`, `NovelReaderProviderTest`, `MangaViewportTest`, `ReaderIntentTest`, `ReaderLoadStateTest`, `ReaderLoadFailureConformanceTest`, `ChapterSwitchesTest`, `ReaderChapterReloadTest`, `ChapterRetryCooldownTest`, `ChapterRetryCooldownConformanceTest`, `ReaderProgressWritesTest`. Position and lists: `ReaderPositionTest`, `MangaRequestedPageTest`, `ChapterNeighboursTest`, `DuplicateChaptersTest`, `NavigableChaptersTest`, `SkipDuplicateForwardConformanceTest`, `ReaderChapterFiltersTest`, `ReaderSheetReadConformanceTest`, `ReaderSheetDownloadOfferConformanceTest`, `MarkReadOnSkipConformanceTest`, `MarkDuplicateReadConformanceTest`, `ReaderChapterGapConformanceTest`. Chrome and settings: `ReaderBottomButtonTest`, `ReaderBottomButtonsViewModelTest`, `ModeSelectionApplyTest`, `ReaderOrientationsTest`, `ViewerOrientationConformanceTest`, `ReaderDisplayFiltersTest`, `ReaderWindowSettingsTest`, `ChapterTitleTest`. Viewer islands: `WebGpuRetryRulesTest`, `WebGpuPageCacheTest`, `WebGpuSpreadPlaceholderTest`. Auto-scroll: `ScrollCarryTest`, `StripAutoScrollTest`, `NovelAutoScrollOnOpenMigrationTest`. Auto webtoon: `MangaTypeTest`.
+Engine and seam: `ReaderEngineTest`, `ReaderProviderConformanceTest`, `MangaReaderProviderTest`, `NovelReaderProviderTest`, `MangaViewportTest`, `ReaderIntentTest`, `ReaderLoadStateTest`, `ReaderLoadFailureConformanceTest`, `ChapterSwitchesTest`, `ReaderChapterReloadTest`, `ChapterRetryCooldownTest`, `ChapterRetryCooldownConformanceTest`, `ReaderProgressWritesTest`. Loading ahead: `HttpPageLoaderTest`, `ReaderLoadAheadTest`. Position and lists: `ReaderPositionTest`, `MangaRequestedPageTest`, `ChapterNeighboursTest`, `DuplicateChaptersTest`, `NavigableChaptersTest`, `SkipDuplicateForwardConformanceTest`, `ReaderChapterFiltersTest`, `ReaderSheetReadConformanceTest`, `ReaderSheetDownloadOfferConformanceTest`, `MarkReadOnSkipConformanceTest`, `MarkDuplicateReadConformanceTest`, `ReaderChapterGapConformanceTest`. Chrome and settings: `ReaderBottomButtonTest`, `ReaderBottomButtonsViewModelTest`, `ModeSelectionApplyTest`, `ReaderOrientationsTest`, `ViewerOrientationConformanceTest`, `ReaderDisplayFiltersTest`, `ReaderWindowSettingsTest`, `ChapterTitleTest`. Viewer islands: `WebGpuRetryRulesTest`, `WebGpuPageCacheTest`, `WebGpuSpreadPlaceholderTest`. Auto-scroll: `ScrollCarryTest`, `StripAutoScrollTest`, `NovelAutoScrollOnOpenMigrationTest`. Auto webtoon: `MangaTypeTest`.
 
 Run one class with `./gradlew :app:testDebugUnitTest --tests "<FullyQualifiedClassName>"`.
 
