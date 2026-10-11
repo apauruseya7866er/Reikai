@@ -7,6 +7,8 @@ import eu.kanade.tachiyomi.data.track.anilist.dto.ALOAuth
 import eu.kanade.tachiyomi.data.track.bangumi.Bangumi
 import eu.kanade.tachiyomi.data.track.bangumi.BangumiInterceptor
 import eu.kanade.tachiyomi.data.track.bangumi.dto.BGMOAuth
+import eu.kanade.tachiyomi.data.track.comick.Comick
+import eu.kanade.tachiyomi.data.track.comick.ComickInterceptor
 import eu.kanade.tachiyomi.data.track.hikka.Hikka
 import eu.kanade.tachiyomi.data.track.hikka.HikkaInterceptor
 import eu.kanade.tachiyomi.data.track.kitsu.Kitsu
@@ -107,6 +109,7 @@ class TrackerSignedOutTest {
             SignedOutCase("MangaBaka") {
                 MangaBakaInterceptor(mockk<MangaBaka> { every { restoreToken() } returns null })
             },
+            SignedOutCase("Comick") { ComickInterceptor(mockk<Comick> { every { restoreToken() } returns null }) },
             SignedOutCase("Hikka") { HikkaInterceptor(mockk<Hikka> { every { loadOAuth() } returns null }) },
             SignedOutCase("AniList") { AnilistInterceptor(mockk<Anilist>(), null) },
             SignedOutCase("Kitsu") { KitsuInterceptor(mockk<Kitsu> { every { restoreToken() } returns null }) },

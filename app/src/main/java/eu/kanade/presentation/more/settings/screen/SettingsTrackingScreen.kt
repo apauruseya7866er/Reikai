@@ -55,6 +55,7 @@ import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.anilist.AnilistApi
 import eu.kanade.tachiyomi.data.track.bangumi.BangumiApi
+import eu.kanade.tachiyomi.data.track.comick.ComickApi
 import eu.kanade.tachiyomi.data.track.hikka.HikkaApi
 import eu.kanade.tachiyomi.data.track.mangabaka.MangaBakaApi
 import eu.kanade.tachiyomi.data.track.myanimelist.MyAnimeListApi
@@ -247,6 +248,11 @@ object SettingsTrackingScreen : SearchableSettings {
                         tracker = trackerManager.mangaBaka,
                         login = { context.openInBrowser(MangaBakaApi.authUrl(), forceDefaultBrowser = true) },
                         logout = { dialog = LogoutDialog(trackerManager.mangaBaka) },
+                    ),
+                    Preference.PreferenceItem.TrackerPreference(
+                        tracker = trackerManager.comick,
+                        login = { context.openInBrowser(ComickApi.authUrl(), forceDefaultBrowser = true) },
+                        logout = { dialog = LogoutDialog(trackerManager.comick) },
                     ),
                     // RK: MangaDex MDList tracker. Browser OAuth (PKCE), callback lands in
                     // MangaDexLoginActivity; needs the MangaDex source installed + enabled to bind.

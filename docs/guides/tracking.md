@@ -13,7 +13,7 @@ Link supported tracking services in <nav to="tracking">.
 
 ## Services
 
-**Reikai** currently supports tracking with [MyAnimeList](https://myanimelist.net/), [AniList](https://anilist.co/), [Kitsu](https://kitsu.app/), [MangaUpdates](https://www.mangaupdates.com/), [Shikimori](https://shikimori.one/), [MangaBaka](https://mangabaka.org/), [Hikka](https://hikka.io/) and [Bangumi](https://bangumi.tv/), plus three services built for light novels: [RanobeDB](https://ranobedb.org/), [NovelList](https://www.novellist.co/) and [NovelUpdates](https://www.novelupdates.com/). Signing in to MangaDex adds its own **MDList** tracker.
+**Reikai** currently supports tracking with [MyAnimeList](https://myanimelist.net/), [AniList](https://anilist.co/), [Kitsu](https://kitsu.app/), [MangaUpdates](https://www.mangaupdates.com/), [Shikimori](https://shikimori.one/), [MangaBaka](https://mangabaka.org/), [Hikka](https://hikka.io/), [Bangumi](https://bangumi.tv/) and the Comick tracker, plus three services built for light novels: [RanobeDB](https://ranobedb.org/), [NovelList](https://www.novellist.co/) and [NovelUpdates](https://www.novelupdates.com/). Signing in to MangaDex adds its own **MDList** tracker.
 
 * You must add the desired tracker to each series to begin tracking.
 * Track entries privately with supported tracking services (AniList, Kitsu, MangaBaka, Bangumi).
@@ -24,7 +24,7 @@ Link supported tracking services in <nav to="tracking">.
 A tracking sheet lists only the services whose catalogue holds that kind of entry, so a manga and a novel offer different lists.
 
 * **Both**: AniList, Kitsu, MyAnimeList, MangaUpdates, Shikimori, MangaBaka and Hikka.
-* **Manga only**: Bangumi, MDList and the enhanced trackers below.
+* **Manga only**: Bangumi, the Comick tracker, MDList and the enhanced trackers below.
 * **Light novels only**: RanobeDB, NovelList and NovelUpdates. Their catalogues hold no manga, so they never appear on one.
 :::
 

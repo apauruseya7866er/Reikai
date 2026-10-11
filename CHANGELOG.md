@@ -516,6 +516,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 - **Light novels can now be tracked on RanobeDB, NovelList and NovelUpdates, three services built for novels.** Sign in through a browser window, or paste a personal access token on RanobeDB; not all of them keep a score, reading dates or an on-hold state.
 - **Every RanobeDB write replaces that series' entry on the site, clearing its custom labels, notes and volume count, and chapter progress is never sent.** Binding a novel asks first, and with Update RanobeDB while you read on, reading that moves its status writes without asking.
+- **Manga can now be tracked with the Comick tracker (from Mihon).** Upstream: mihonapp/mihon#4056.
 - **Every tracker search except NovelUpdates can now take an id, written as `id:12345`, and a Kitsu search also takes a title's web-address name, written as `id:series-name` (partly from Mihon).** Works on manga and novels alike. Upstream: mihonapp/mihon#3776, mihonapp/mihon#3792.
 - **Extensions that sync reading to their own site now hear what you read, add and remove, on manga and novels, once their own tracking setting is on (partly from Tsundoku).** A failed sync shows a message.
 - **Migrations are now passed on to extensions that sync reading to their own site, on by default with a switch under Settings -> Tracking.**

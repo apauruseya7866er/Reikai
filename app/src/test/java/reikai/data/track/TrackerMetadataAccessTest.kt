@@ -3,6 +3,7 @@ package reikai.data.track
 import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.anilist.Anilist
 import eu.kanade.tachiyomi.data.track.bangumi.Bangumi
+import eu.kanade.tachiyomi.data.track.comick.Comick
 import eu.kanade.tachiyomi.data.track.hikka.Hikka
 import eu.kanade.tachiyomi.data.track.kitsu.Kitsu
 import eu.kanade.tachiyomi.data.track.mangabaka.MangaBaka
@@ -67,6 +68,7 @@ class TrackerMetadataAccessTest {
             AccessCase("Bangumi", { Bangumi(5) }, MetadataAccess.SignedIn),
             AccessCase("MangaBaka", { MangaBaka(9) }, MetadataAccess.SignedIn),
             AccessCase("Hikka", { Hikka(10) }, MetadataAccess.SignedIn),
+            AccessCase("Comick", { Comick(12) }, MetadataAccess.SignedIn),
         )
     }
 }
