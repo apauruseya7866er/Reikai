@@ -46,16 +46,12 @@ class DownloadNotifierTest {
         verify(exactly = 0) { shown.setStyle(any()) }
     }
 
+    /**
+     * A chapter name often repeats the source title, which is stripped before the Edit info title leads. That
+     * the title is the Edit info one is pinned for both types by DownloadNoticeTitleConformanceTest.
+     */
     @Test
-    fun `an error names the manga by its Edit info title`() = runTest {
-        notifier.onError("error", "Ch 10", manga)
-
-        shade.titleOf(Notifications.ID_DOWNLOAD_CHAPTER_ERROR) shouldBe "Mine: Ch 10"
-    }
-
-    /** A chapter name often repeats the source title, which is stripped before the Edit info title leads. */
-    @Test
-    fun `the progress notice names the manga by its Edit info title`() = runTest {
+    fun `the progress notice drops the source title a chapter name repeats`() = runTest {
         val chapter = Chapter.create().copy(id = 10L, mangaId = 1L, name = "Manga - Ch 10")
         val download = Download(mockk(), manga, chapter).apply { pages = emptyList() }
 

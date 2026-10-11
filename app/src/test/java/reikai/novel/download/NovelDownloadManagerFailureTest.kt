@@ -123,20 +123,6 @@ class NovelDownloadManagerFailureTest {
         NovelDownloadStore(context, chapterRepo).restore().map { it.chapterId } shouldBe listOf(10L)
     }
 
-    /** The saver still names the chapter's file by the source title; only what the user reads changes. */
-    @Test
-    fun `the progress and error notices name the novel by its Edit info title`() = runTest {
-        manager.downloadChapters(listOf(chapter))
-        val named = mutableListOf<String?>()
-
-        manager.runQueue(
-            onProgress = { (it as? NovelDownloadProgress.Downloading)?.let { progress -> named += progress.title } },
-            onError = { novel, _, _, _ -> named += novel?.title },
-        )
-
-        named shouldBe listOf("Mine", "Mine")
-    }
-
     @Test
     fun `a chapter whose name another chapter's download holds leaves the saved queue`() = runTest {
         manager.downloadChapters(listOf(sameName))
