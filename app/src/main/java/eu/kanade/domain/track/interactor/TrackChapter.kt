@@ -6,6 +6,7 @@ import eu.kanade.domain.track.model.toDbTrack
 import eu.kanade.domain.track.model.toDomainTrack
 import eu.kanade.domain.track.service.DelayedTrackingUpdateWorker
 import eu.kanade.domain.track.store.DelayedTrackingStore
+import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -42,6 +43,9 @@ class TrackChapter(
                 if (service == null || !service.isLoggedIn || chapterNumber <= track.lastChapterRead) {
                     return@mapNotNull null
                 }
+                // RK: a server's chapter numbers belong to the source it serves, so a group row a server
+                // tracker holds on a sibling source never takes the number read here
+                if (service is EnhancedTracker && track.mangaId != mangaId) return@mapNotNull null
 
                 // RK: each result keyed by its tracker, for ChapterPushOutcome
                 async {
