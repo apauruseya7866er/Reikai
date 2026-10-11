@@ -35,7 +35,7 @@ Fetch timing is part of the contract:
 
 - `suggest` finds the best match on one source and enriches only that match.
 - `candidates` returns one search page for the override picker, with no detail or chapter fetch.
-- `peekCounts` is a display-only count: stored chapters when the candidate has them, else one source read stored nowhere. A paged novel source returns null, since its first page undercounts.
+- `peekCounts` is a display-only count: stored chapters when the candidate has them, else one source read stored nowhere. A paged novel source is read page by page, all or nothing, since its first page alone undercounts and a known undercount would let hide-without-updates drop the row.
 - `resolve` is the only call a commit depends on: it stores the target, fetches its chapters when it has none, and returns `ResolvedTarget.syncedNow` when that fetch stored chapters.
 
 Where the types differ: a manga hit is stored at search time (`networkToLocalManga`), so a manga handle always holds a row and `suggest` fetches the hit's chapter list. A novel hit is only a plugin `NovelItem` until `resolve` stores it, and `inLibrary` comes from a lookup that deliberately leaves the handle's `stored` empty. Novel `prepare()` loads the plugin host before any source is read. Novel prioritize-by-chapters walks every chapter page of each source's hit, and any failed or empty page fails the whole count, leaving the hit unranked. Both adapters count through `toSourceChapters`, so a count matches what a sync would store.

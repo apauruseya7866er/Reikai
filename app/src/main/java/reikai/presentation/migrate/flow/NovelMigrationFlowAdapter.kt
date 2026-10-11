@@ -28,6 +28,7 @@ import reikai.novel.download.NovelDownloadManager
 import reikai.novel.host.ChapterItem
 import reikai.novel.host.NovelItem
 import reikai.novel.install.LnPluginInstaller
+import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
 import reikai.novel.source.SmartNovelSearchEngine
 import reikai.presentation.migrate.PickMember
@@ -182,16 +183,19 @@ class NovelMigrationFlowAdapter(
         // then: otherwise the count peek after the search fills the one suggestion that is kept.
         if (!tuning.prioritizeByChapters) return candidate
         // Best-effort, as manga's chapter fetch is: a failed count leaves the hit unranked, not errored.
-        // All pages or none, since a partial count reads as known and hide-without-updates drops a row
-        // on it for good; the same reason peekCounts gives up on a paged list.
-        val chapters = runCatchingCancellable {
-            val parsed = source.parseNovel(match.path)
-            parsed.chapters.orEmpty() + (2..parsed.totalPages).flatMap { page ->
-                checkNotNull(source.parsePage(match.path, page.toString())) { "Page $page answered nothing" }
-                    .chapters.orEmpty()
-            }
-        }.getOrNull().orEmpty()
+        val chapters = runCatchingCancellable { source.allChapters(match.path) }.getOrNull().orEmpty()
         return candidate.withCounts(match, chapters)
+    }
+
+    /**
+     * Every page of [path]'s chapter list, or a throw. All pages or none, since a partial count reads as
+     * known and hide-without-updates drops a row on it for good.
+     */
+    private suspend fun NovelSource.allChapters(path: String): List<ChapterItem> {
+        val parsed = parseNovel(path)
+        return parsed.chapters.orEmpty() + (2..parsed.totalPages).flatMap { page ->
+            checkNotNull(parsePage(path, page.toString())) { "Page $page answered nothing" }.chapters.orEmpty()
+        }
     }
 
     override suspend fun candidates(
@@ -276,17 +280,14 @@ class NovelMigrationFlowAdapter(
     override suspend fun peekCounts(candidate: MigrationCandidate): MigrationCandidate? {
         val handle = candidate.handle as? NovelCandidateHandle ?: return null
         // A search hit leaves the handle's stored row unset (see toCandidate), so a hit already in
-        // the database is looked up here: its stored chapters answer without a network parse, and
-        // count a paged source's full list where the parse below can only give up.
+        // the database is looked up here: its stored chapters answer without a network parse.
         val stored = novelRepository.getByUrlAndSource(handle.item.path, candidate.sourceKey)
             ?.let { chapterRepository.getByNovelId(it.id) }
             .orEmpty()
         if (stored.isNotEmpty()) return candidate.withChapterCounts(stored) { it.chapterNumber }
         val source = sourceManager.get(candidate.sourceKey) ?: return null
-        val parsed = source.parseNovel(handle.item.path)
-        // A paged source's first page undercounts; unknown is more honest than a floor.
-        if (parsed.totalPages > 1) return null
-        val chapters = parsed.chapters.orEmpty()
+        // Every page, as manga's peek reads the whole list: a first page alone would undercount.
+        val chapters = source.allChapters(handle.item.path)
         if (chapters.isEmpty()) return null
         return candidate.withCounts(handle.item, chapters)
     }

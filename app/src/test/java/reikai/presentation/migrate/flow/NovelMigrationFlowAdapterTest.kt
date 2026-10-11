@@ -138,6 +138,19 @@ class NovelMigrationFlowAdapterTest {
         adapter.peekCounts(candidate)?.let { it.chapterCount to it.latestChapter } shouldBe (3 to 5.0)
     }
 
+    /** Hide-without-updates needs the count, and with prioritize-by-chapters off the peek is its only source. */
+    @Test
+    fun `the count peek counts every page of a paged chapter list`() = runTest {
+        adapter.peekCounts(hit("/title"))?.let { it.chapterCount to it.latestChapter } shouldBe (3 to 3.0)
+    }
+
+    @Test
+    fun `a failed later page leaves the count peek unknown rather than undercounted`() = runTest {
+        coEvery { source.parsePage("/title", "2") } throws IOException("timeout")
+
+        runCatching { adapter.peekCounts(hit("/title")) }.getOrNull()?.chapterCount shouldBe null
+    }
+
     @Test
     fun `the count peek counts a repeated, entity-encoded listing as a sync would`() = runTest {
         coEvery { source.parseNovel("/repeats") } returns SourceNovel(
