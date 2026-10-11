@@ -11,11 +11,14 @@ import eu.kanade.tachiyomi.data.track.CookieLoginTracker
 import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.util.system.WebViewUtil
+import eu.kanade.tachiyomi.util.system.isOnline
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
 import kotlinx.coroutines.launch
 import mihon.app.di.appGraph
+import reikai.presentation.track.TrackerError
 import reikai.presentation.track.trackerErrorMessage
+import reikai.util.runCatchingCancellable
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 
@@ -104,19 +107,27 @@ class TrackerWebViewLoginActivity : BaseActivity() {
 }
 
 /**
- * Signs [tracker] in with [credential], or signs it back out and says why the service refused, in the
- * words a failed bind or refresh uses. Null when the sign-in took.
+ * Signs [tracker] in with [credential], or says why it failed in the words a failed bind or refresh
+ * uses; null when the sign-in took.
  */
 internal suspend fun Context.cookieLoginFailure(
     tracker: Tracker,
     cookieLogin: CookieLoginTracker,
     credential: String,
-): String? = try {
-    cookieLogin.loginWithCookie(credential)
-    null
-} catch (e: Throwable) {
+): String? = runCatchingCancellable { cookieLogin.loginWithCookie(credential) }.exceptionOrNull()?.let { e ->
     // The message is the service's, never the credential.
-    logcat { "${tracker.name} cookie login rejected: ${e.message}" }
-    tracker.logout()
+    logcat { "${tracker.name} cookie login failed: ${e.message}" }
+    signOutAfterFailedLogin(tracker, e)
     trackerErrorMessage(tracker.name, e)
+}
+
+/**
+ * Signs [tracker] out after a sign-in failed with [error]. A cookie-login tracker stores nothing until the
+ * service accepts it, and its logout clears the site's cookies too, so only a refusal signs it out: a
+ * timeout, an offline check or a closed screen says nothing about the session.
+ */
+internal fun Context.signOutAfterFailedLogin(tracker: Tracker, error: Throwable) {
+    if (tracker !is CookieLoginTracker || TrackerError.of(error, isOnline()) == TrackerError.SignedOut) {
+        tracker.logout()
+    }
 }

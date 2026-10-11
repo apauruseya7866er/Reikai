@@ -62,6 +62,7 @@ import eu.kanade.tachiyomi.data.track.novelupdates.NovelUpdates
 import eu.kanade.tachiyomi.data.track.novelupdates.NovelUpdatesListMapping
 import eu.kanade.tachiyomi.data.track.shikimori.ShikimoriApi
 import eu.kanade.tachiyomi.ui.setting.track.TrackerWebViewLoginActivity
+import eu.kanade.tachiyomi.ui.setting.track.signOutAfterFailedLogin
 import eu.kanade.tachiyomi.util.system.isOnline
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toast
@@ -429,7 +430,7 @@ object SettingsTrackingScreen : SearchableSettings {
             withUIContext { context.toast(MR.strings.login_success) }
             true
         } catch (e: Throwable) {
-            tracker.logout()
+            context.signOutAfterFailedLogin(tracker, e) // RK: a cookie-login tracker only when refused
             withUIContext { context.toast(e.message.toString()) }
             false
         }
