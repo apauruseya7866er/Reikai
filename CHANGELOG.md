@@ -585,6 +585,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Novel plugin repos in Browse -> Extensions now refresh when you pull down, rather than each time you come back or install a plugin.**
 - **A downloaded manga chapter now records its upload date in its ComicInfo.xml, and the local source reads a chapter's date from it (from Mihon).** Move the folder into the local source later and the date comes with it. Upstream: mihonapp/mihon#3967, mihonapp/mihon#3970.
 - **Extension and light-novel plugin rows in Browse -> Extensions now end in plain icon buttons, with why a failed install failed one tap away beside Retry (partly from Mihon).** Upstream: mihon 8972882a3.
+- **A manga or novel chapter that is downloading now shows a wavy progress ring, which holds still while the chapter waits in the queue (from Mihon).** Upstream: mihon e562a9b4f.
 
 #### Fixed
 
