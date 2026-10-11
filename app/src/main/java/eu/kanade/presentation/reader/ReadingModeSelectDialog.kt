@@ -7,9 +7,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import dev.icerock.moko.resources.StringResource
@@ -19,7 +17,7 @@ import eu.kanade.presentation.reader.components.ModeSelectionDialog
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsViewModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
-import reikai.presentation.reader.ModeSelectionApply
+import reikai.presentation.reader.ModeSelection
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.SettingsIconGrid
 import tachiyomi.presentation.core.components.material.IconToggleButton
@@ -63,22 +61,22 @@ private fun DialogContent(
     onChangeReadingMode: (ReadingMode) -> Unit,
     onDismissRequest: () -> Unit, // RK
 ) {
-    // RK: the reader's own tap, kept apart from the highlighted mode in use, see ModeSelectionApply
-    var picked by remember { mutableStateOf<ReadingMode?>(null) }
+    // RK: the reader's own tap, kept apart from the highlighted mode in use, see ModeSelection
+    val selection = remember { ModeSelection<ReadingMode>() }
 
     ModeSelectionDialog(
         onUseDefault = { onChangeReadingMode(ReadingMode.DEFAULT) }.takeIf { readingMode != ReadingMode.DEFAULT },
         // RK: an untouched Apply writes nothing and just closes
         onApply = {
-            ModeSelectionApply.modeToApply(picked, readingMode)?.let(onChangeReadingMode) ?: onDismissRequest()
+            selection.toApply(readingMode)?.let(onChangeReadingMode) ?: onDismissRequest()
         },
     ) {
         SettingsIconGrid(MR.strings.pref_category_reading_mode) {
             items(ReadingModesWithoutDefault) { mode ->
                 IconToggleButton(
-                    checked = mode == (picked ?: resolvedReadingMode), // RK
+                    checked = selection.isChecked(mode, resolvedReadingMode), // RK
                     onCheckedChange = {
-                        picked = mode // RK
+                        selection.tap(mode) // RK
                     },
                     modifier = Modifier.fillMaxWidth(),
                     imageVector = mode.icon,

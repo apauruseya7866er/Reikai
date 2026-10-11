@@ -3,10 +3,7 @@ package reikai.presentation.reader
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.presentation.reader.components.ModeSelectionDialog
@@ -20,7 +17,7 @@ import tachiyomi.presentation.core.i18n.stringResource
  * Orientation picker for the reader's rotation button, both content types. Takes the entry's own flag
  * and hands one back, so the caller owns where it is stored; Mihon's `OrientationSelectDialog`, which
  * read the manga off a settings model, was deleted for it. The grid highlights [resolvedOrientation],
- * since Default has no tile, and Apply writes only a tile the reader tapped, see [ModeSelectionApply].
+ * since Default has no tile, and Apply writes only a tile the reader tapped, see [ModeSelection].
  */
 @Composable
 fun ReaderOrientationDialog(
@@ -31,7 +28,7 @@ fun ReaderOrientationDialog(
 ) {
     val current = ReaderOrientation.fromPreference(currentOrientation)
     val resolved = ReaderOrientation.fromPreference(resolvedOrientation)
-    var picked by remember { mutableStateOf<ReaderOrientation?>(null) }
+    val selection = remember { ModeSelection<ReaderOrientation>() }
     AdaptiveSheet(onDismissRequest = onDismiss) {
         ModeSelectionDialog(
             onUseDefault = {
@@ -39,15 +36,15 @@ fun ReaderOrientationDialog(
                 onDismiss()
             }.takeIf { current != ReaderOrientation.DEFAULT },
             onApply = {
-                ModeSelectionApply.modeToApply(picked, current)?.let { onChange(it.flagValue) }
+                selection.toApply(current)?.let { onChange(it.flagValue) }
                 onDismiss()
             },
         ) {
             SettingsIconGrid(MR.strings.rotation_type) {
                 items(readerOrientationChoices) { mode ->
                     IconToggleButton(
-                        checked = mode == (picked ?: resolved),
-                        onCheckedChange = { picked = mode },
+                        checked = selection.isChecked(mode, resolved),
+                        onCheckedChange = { selection.tap(mode) },
                         modifier = Modifier.fillMaxWidth(),
                         imageVector = mode.icon,
                         title = stringResource(mode.stringRes),
