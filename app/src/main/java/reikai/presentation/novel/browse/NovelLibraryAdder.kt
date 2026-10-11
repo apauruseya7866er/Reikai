@@ -185,7 +185,7 @@ class NovelLibraryAdder(
     /**
      * Favorite the novel and merge it into [selectedIds]'s group as ONE unit, answering its id, or null
      * when the row is gone or the write failed. Twin of `MangaLibraryAdder.joinGroup`, which carries the
-     * why; pinned by `AddToGroupConformanceTest`. An already-favorited row is not re-written: that would
+     * why, including why the picks go first; pinned by `AddToGroupConformanceTest`. An already-favorited row is not re-written: that would
      * reset dateAdded, moving the entry in a date-added sort for what the user did as a grouping change.
      */
     suspend fun joinGroup(novelId: Long, selectedIds: List<Long>): Long? {
@@ -193,7 +193,7 @@ class NovelLibraryAdder(
         val favorited = chapterSettings.rejoin(novelId, mergeManager) {
             transactions.run {
                 val ok = novel.favorite || updateNovel.awaitUpdateFavorite(novelId, favorite = true)
-                if (ok) mergeManager.merge(listOf(novelId) + selectedIds)
+                if (ok) mergeManager.merge(selectedIds + novelId)
                 ok
             }
         }

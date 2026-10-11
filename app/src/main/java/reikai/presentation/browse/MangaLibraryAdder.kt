@@ -118,15 +118,15 @@ class MangaLibraryAdder(
      * when the row is gone or the write failed. Atomic because membership is not favorite-filtered: a
      * merged copy that never got favorited feeds the group while invisible in the library, with nothing
      * able to unmerge it. The row is re-read rather than trusted from a snapshot, which would skip the
-     * write and still merge. Trackers bind once it is in. Twin of `NovelLibraryAdder.joinGroup`, pinned by
-     * `AddToGroupConformanceTest`.
+     * write and still merge. Trackers bind once it is in. The picks go first, so an ungrouped pick stays
+     * the settings owner. Twin of `NovelLibraryAdder.joinGroup`, pinned by `AddToGroupConformanceTest`.
      */
     suspend fun joinGroup(manga: Manga, selectedIds: List<Long>): Long? {
         val stored = getManga.await(manga.id) ?: return null
         val favorited = chapterSettings.rejoin(manga.id, mergeManager) {
             transactions.run {
                 val ok = stored.favorite || updateManga.awaitUpdateFavorite(manga.id, true)
-                if (ok) mergeManager.merge(listOf(manga.id) + selectedIds)
+                if (ok) mergeManager.merge(selectedIds + manga.id)
                 ok
             }
         }

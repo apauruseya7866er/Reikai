@@ -144,6 +144,32 @@ class GroupChapterSettingsConformanceTest {
             side.shownDescending(SIBLING, listOf(SIBLING)) shouldBe false
         }
 
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a new entry joining an ungrouped pick takes the pick's sort`(type: ContentType) = runTest {
+        val side = side(type).apply { pickInLibraryWithNewcomerOut() }
+
+        side.addBackIntoGroupOf(OWNER, SIBLING)
+
+        side.shownDescending(SIBLING, listOf(SIBLING)) shouldBe false
+    }
+
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a new entry joining an ungrouped pick leaves the pick the settings owner`(type: ContentType) = runTest {
+        val side = side(type).apply { pickInLibraryWithNewcomerOut() }
+
+        side.addBackIntoGroupOf(OWNER, SIBLING)
+
+        side.groupOf(OWNER).first() shouldBe SIBLING
+    }
+
+    /** [SIBLING] in the library and ungrouped, [OWNER] not yet added: the add-to-group prompt's usual pick. */
+    private suspend fun Side.pickInLibraryWithNewcomerOut() {
+        setInLibrary(SIBLING, true)
+        setInLibrary(OWNER, false)
+    }
+
     /** Merges the group, takes [OWNER] out of the library, and flips the sort through [SIBLING] to ascending. */
     private suspend fun Side.missAChangeOutsideTheLibrary() {
         GROUP.forEach { setInLibrary(it, true) }
