@@ -90,6 +90,15 @@ check "ignores a removed marker"          0 twin '-// twin of MangaFoo.bar\n+fun
 check "ignores a context-line marker"     0 twin ' // twin of MangaFoo.bar\n+fun bar() = 1\n'
 check "passes an ordinary comment"        0 twin '+// the twin rows render side by side\n'
 check "tree mode reports without failing" 0 bash "$lint" twin-pins --tree
+# The hook feeds -U0, so a block whose pin sits on an unchanged line arrives without it; the staged
+# file supplies the rest of the block.
+staged="$work/staged" && mkdir -p "$staged/src" && git -C "$staged" init -q
+printf '// Twin of Foo.bar, kept in lockstep\n// pinned by FooConformanceTest.\nfun bar() = 1\n// Twin of Foo.baz, kept in lockstep\n// with the manga side.\n' > "$staged/src/X.kt"
+git -C "$staged" add src/X.kt
+lint_abs="$(cd "$(dirname "$lint")" && pwd)/lint-docs.sh"
+staged_twin() { (cd "$staged" && printf '%b' "+++ b/src/X.kt\n@@ $1 @@\n$2" | bash "$lint_abs" twin-pins --stdin); }
+check "passes a pin on an unchanged line" 0 staged_twin '-1 +1' '+// Twin of Foo.bar, kept in lockstep\n'
+check "still catches an unpinned block"   1 staged_twin '-4 +4' '+// Twin of Foo.baz, kept in lockstep\n'
 
 echo "manifest-rows"
 check "catches a resurrected file"     1 bash "$lint" manifest-rows "$(fixture man.md '| app/src/main/java/eu/kanade/tachiyomi/App.kt | mihon | nowhere/Absent.kt |\n')"

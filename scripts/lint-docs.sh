@@ -167,14 +167,16 @@ case "$cmd" in
     # consecutive comment lines, so a pin on the line below the marker counts.
     #
     # --stdin reads a unified diff (git diff -U0) and checks the blocks its added lines form, which is
-    # the hook's feed and fails. --tree scans every tracked .kt/.kts and only reports, because the
-    # markers written before the spelling was fixed are paid off as their files are next touched.
+    # the hook's feed and fails. A -U0 hunk carries no unchanged lines, so a block it flags is re-read
+    # whole from the staged file, where a pin on an untouched line still counts. --tree scans every
+    # tracked .kt/.kts and only reports, because the markers written before the spelling was fixed are
+    # paid off as their files are next touched. span=1 prints each block's file and line range too.
     mode="${1:---stdin}"
     twin_awk='
       function flush() {
         t = tolower(text)
         if (n > 0 && t ~ /twin of|mirrors (the )?(manga|novel|mihon)|as manga does/ && t !~ /pinned by|type only|no pin:/)
-          print loc ": " first
+          print (span ? file "\t" start "\t" end "\t" : "") loc ": " first
         n = 0; text = ""
       }
       function boundary() { flush() }
@@ -185,7 +187,8 @@ case "$cmd" in
         else if (index(s, "//") > 0) { s = substr(s, index(s, "//") + 2) }
         else { flush(); next }
         sub(/\*\/[ \t]*$/, "", s)
-        if (n == 0) { loc = where; first = line }
+        end = tree ? FNR : ln - 1
+        if (n == 0) { loc = where; first = line; start = end }
         n++; text = text " " s
       }
       END { flush() }'
@@ -196,7 +199,18 @@ case "$cmd" in
         printf '%s\n' "$hits"
       fi
     else
-      hits=$(awk -v tree=0 "$twin_awk")
+      hits=""
+      while IFS=$'\t' read -r path from to hit; do
+        [ -n "$path" ] || continue
+        if blob=$(git show ":$path" 2> /dev/null); then
+          # Kept only when the same lines still form an unpinned block in the whole staged file.
+          printf '%s\n' "$blob" | awk -v tree=1 -v span=1 "$twin_awk" |
+            awk -F '\t' -v from="$from" -v to="$to" '$2 <= to && $3 >= from { found = 1 } END { exit !found }' ||
+            continue
+        fi
+        hits="$hits$hit"$'\n'
+      done <<< "$(awk -v tree=0 -v span=1 "$twin_awk")"
+      hits="${hits%$'\n'}"
       if [ -n "$hits" ]; then
         report "a twin/mirrors comment names no pin; write 'twin of X, pinned by Y' (a kernel, a capability or a ...Test), 'twin of X, type only', or 'no pin: <reason>'. See content-layer.md." "$hits"
         exit 1
