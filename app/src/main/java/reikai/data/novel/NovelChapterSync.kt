@@ -47,13 +47,16 @@ suspend fun syncChaptersWithNovelSource(
     val drafts = rawSourceChapters.toDrafts(novelId, novel.title, page)
     val draftUrls = drafts.mapTo(HashSet()) { it.url }
     // A page sync numbers the novel's whole stored list with its page in place, in page then listing
-    // order, so a chapter at a page edge reads as one list reads it, whichever page arrived first.
+    // order, so a chapter at a page edge reads as one list reads it, whichever page arrived first. Its
+    // source order is the place in that list too: a plugin's index restarts on every page, and every
+    // reading order (details, reader, stitch) sorts by source order alone.
     val listed = if (page?.toLongOrNull() == null) {
         drafts
     } else {
         dbChapters.filter { it.url !in draftUrls && it.page != page && it.page.toLongOrNull() != null }
             .plus(drafts)
             .sortedWith(compareBy({ it.page.toLong() }, { it.sourceOrder }))
+            .mapIndexed { i, chapter -> chapter.copy(sourceOrder = i.toLong()) }
     }
     // A number the user corrected replaces the source's, by the rule the manga sync applies too.
     val overridden = numberOverrides.getByOwner(ContentType.NOVELS, novelId).appliedTo(
@@ -103,11 +106,11 @@ suspend fun syncChaptersWithNovelSource(
             if (dbChapter.name != sourceChapter.name) downloadRenames += dbChapter to updated
         }
     }
-    // A chapter on another page that the page in place renumbered.
+    // A chapter on another page that the page in place renumbered or moved.
     aroundPage.forEach { chapter ->
         val dbChapter = dbByUrl.getValue(chapter.url)
-        if (chapter.chapterNumber != dbChapter.chapterNumber) {
-            toChange.add(dbChapter.copy(chapterNumber = chapter.chapterNumber))
+        if (chapter.chapterNumber != dbChapter.chapterNumber || chapter.sourceOrder != dbChapter.sourceOrder) {
+            toChange.add(dbChapter.copy(chapterNumber = chapter.chapterNumber, sourceOrder = chapter.sourceOrder))
         }
     }
 

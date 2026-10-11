@@ -17,8 +17,8 @@ import tachiyomi.data.DatabaseBindings
 import tachiyomi.domain.library.service.LibraryPreferences
 
 /**
- * A paged novel's chapters numbered page by page, in any order, against the same chapters synced as one
- * list. Paging is the novel transport alone: a manga source hands its whole list over at once.
+ * A paged novel's chapters numbered and ordered page by page, in any page order, against the same chapters
+ * synced as one list. Paging is the novel transport alone: a manga source hands its whole list over at once.
  */
 class PagedChapterNumberingTest {
 
@@ -56,6 +56,18 @@ class PagedChapterNumberingTest {
             numbers(PAGED) shouldBe numbers(WHOLE)
         }
 
+    @ParameterizedTest
+    @ValueSource(strings = ["1,2", "2,1"])
+    fun `a paged sync in either page order stores each chapter's source order as a whole-list sync does`(
+        order: String,
+    ) = runTest {
+        sync(WHOLE, PAGE_ONE + PAGE_TWO, page = null)
+
+        order.split(',').forEach { page -> sync(PAGED, if (page == "1") PAGE_ONE else PAGE_TWO, page) }
+
+        sourceOrders(PAGED) shouldBe sourceOrders(WHOLE)
+    }
+
     @Test
     fun `a page sync that renumbers a chapter on another page keeps its correction`() = runTest {
         sync(PAGED, PAGE_ONE, page = "1")
@@ -82,6 +94,9 @@ class PagedChapterNumberingTest {
 
     private suspend fun numbers(novelId: Long): Map<String, Double> =
         NovelChapterRepositoryImpl(database).getByNovelId(novelId).associate { it.url to it.chapterNumber }
+
+    private suspend fun sourceOrders(novelId: Long): Map<String, Long> =
+        NovelChapterRepositoryImpl(database).getByNovelId(novelId).associate { it.url to it.sourceOrder }
 
     private companion object {
         const val WHOLE = 1L
