@@ -72,6 +72,7 @@ class DownloadCandidatesTest {
         sibling: Row = Row(2L),
         onDisk: Set<Long> = emptySet(),
         queued: Set<Long> = emptySet(),
+        hidden: Set<Long> = emptySet(),
         action: DownloadAction = DownloadAction.UNREAD_CHAPTERS,
     ): List<Long> {
         val shown = listOf(Row(1L), Row(3L))
@@ -86,9 +87,14 @@ class DownloadCandidatesTest {
         ) { onDisk }
         return DownloadCandidates.forGroup(shown, action, flags, DownloadTargets.OWN, shown + sibling, {
             it.id
-        }, { false }) {
+        }, { it.id in hidden }) {
             it in queued
         }.map { it.id }
+    }
+
+    @Test
+    fun `a group download skips a hidden chapter`() {
+        groupDownload(hidden = setOf(1L)) shouldBe listOf(3L)
     }
 
     @Test
