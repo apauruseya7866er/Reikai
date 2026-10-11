@@ -71,6 +71,15 @@ class GalleryAdderTest {
         forceSource = source as UrlImportableSource,
     )
 
+    /** A batch add counts every success as added, so a refused library write must not read as one. */
+    @Test
+    fun `a gallery whose library write is refused is not reported as added`() = runTest {
+        library.put(1L, favorite = false)
+        library.refusedFavoriteWrites += 1L
+
+        (addGallery() is GalleryAddEvent.Fail) shouldBe true
+    }
+
     @Test
     fun `adding a gallery already in the library writes no favorite`() = runTest {
         library.put(1L, favorite = true, categories = listOf(5L))

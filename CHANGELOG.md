@@ -464,6 +464,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Light-novel sources and plugins now sit under their proper language heading, beside manga sources of that language, and show it as a short code in the migration source picker.**
 - **The sources whose details the app enhances, a large mainstream one and several adult ones, now open their settings from the extension list and from their own catalogue (partly from TachiyomiSY and Komikku).**
 - **Favorites backup now reaches your account for adult-source series added from Browse, search, batch add or a shared link.**
+- **Batch add now counts a series it could not add to your library as failed, not added.**
 - **When an adult source replaces a series with a newer version, chapters the new version already had now keep the old version's read state, bookmark and progress.**
 - **The large mainstream source the app enhances now uses the language you set as preferred in its settings for follows sync, tracking and sign-in, and follows its extension's description switches.** The final chapter in the description is on by default, as in the extension.
 - **Tapping a follows sync action while one is running now says a sync is already running, instead of silently stopping the first partway.**

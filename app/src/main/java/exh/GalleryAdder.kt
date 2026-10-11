@@ -103,7 +103,13 @@ class GalleryAdder(
                 }.manga
             }
 
-            if (fav && libraryAdder.addWithoutAsking(manga.id) != null) {
+            if (fav) {
+                // A refused write is a failure: the batch add counts every success as added
+                libraryAdder.addWithoutAsking(manga.id)
+                    ?: return GalleryAddEvent.Fail.Error(
+                        url,
+                        context.stringResource(MR.strings.gallery_adder_not_added, url),
+                    )
                 manga = manga.copy(favoriteAt = manga.favoriteAt ?: Clock.System.now())
             }
 

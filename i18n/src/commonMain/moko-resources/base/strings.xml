@@ -1862,6 +1862,7 @@
     <string name="batch_add_unknown_source_log_message">Unknown source for gallery: %1$s</string>
     <string name="batch_add_not_exist_log_message">Gallery does not exist: %1$s</string>
     <string name="gallery_adder_could_not_identify_chapter">Could not identify chapter (url: %1$s)!</string>
+    <string name="gallery_adder_not_added">Could not add to library (Gallery: %1$s)</string>
     <string name="loading_entry">Loading entry…</string>
     <string name="launching_app">Launching app…</string>
     <string name="error_with_reason">Error: %1$s</string>
