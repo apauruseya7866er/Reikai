@@ -356,7 +356,8 @@ class DownloadManager(
     suspend fun deletePendingChapters() {
         val pendingChapters = pendingDeleter.getPendingChapters()
         for ((manga, chapters) in pendingChapters) {
-            val source = sourceManager.get(manga.source) ?: continue
+            // RK: the stub names the same folder; skipping an uninstalled source lost its chapters, read clears them
+            val source = sourceManager.getOrStub(manga.source)
             deleteChapters(chapters, manga, source)
         }
     }

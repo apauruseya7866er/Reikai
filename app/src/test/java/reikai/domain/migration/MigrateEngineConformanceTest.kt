@@ -378,6 +378,15 @@ class MigrateEngineConformanceTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("engines")
+    fun `the remove-download flag deletes the downloads of an uninstalled source`(engine: MigrateEngine) = runTest {
+        val setup = Setup(sourceUninstalled = true)
+
+        engine.migrate(setup, replace = true, flags = setOf(Flag.REMOVE_DOWNLOAD)).downloadsDeleted shouldBe
+            listOf(SOURCE)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("engines")
     fun `a migration never downloads chapters onto the target`(engine: MigrateEngine) = runTest {
         // A silent re-fetch costs metered data.
         val setup = Setup(sourceChapters = listOf(Ch(1, 1.0)), targetChapters = listOf(Ch(10, 1.0)))
@@ -447,9 +456,14 @@ data class Setup(
     val viewerFlags: Long = 0,
     val sourceTrackId: Long? = null,
     val targetSourceMissing: Boolean = false,
+    /** The source entry's extension is uninstalled; the novel engine asks only for the target's plugin. */
+    val sourceUninstalled: Boolean = false,
     val carryWriteFails: Boolean = false,
     val swapFails: Boolean = false,
 )
+
+/** The manga source id no installed extension answers for, used by [Setup.sourceUninstalled]. */
+private const val UNINSTALLED_SOURCE = 5L
 
 /** The library members of [id]'s group once the migration has run: the group's, with the target added. */
 fun Setup.libraryMembersAfter(id: Long): List<Long> =
@@ -612,6 +626,8 @@ class MangaEngine : MigrateEngine {
         val source = mockk<Source>(relaxed = true)
         val sourceManager = mockk<SourceManager>()
         coEvery { sourceManager.get(any()) } returns source.takeUnless { setup.targetSourceMissing }
+        coEvery { sourceManager.get(UNINSTALLED_SOURCE) } returns null
+        coEvery { sourceManager.getOrStub(any()) } returns source
         val getChapters = mockk<GetChaptersByMangaId> {
             coEvery { await(any(), any()) } answers { chapters.values.filter { it.mangaId == firstArg<Long>() } }
         }
@@ -726,7 +742,7 @@ class MangaEngine : MigrateEngine {
         val current = Manga.create().copy(
             id = MigrateEngineConformanceTest.SOURCE,
             favoriteAt = Instant.fromEpochMilliseconds(MigrateEngineConformanceTest.SOURCE_ADDED),
-            source = 1L,
+            source = if (setup.sourceUninstalled) UNINSTALLED_SOURCE else 1L,
             url = "/1",
             notes = setup.notes,
             chapterFlags = setup.chapterFlags,

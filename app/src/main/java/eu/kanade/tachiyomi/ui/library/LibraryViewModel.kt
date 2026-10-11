@@ -18,7 +18,6 @@ import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
-import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.online.MetadataSource
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import exh.source.getMainSource
@@ -600,11 +599,9 @@ class LibraryViewModel(
 
             if (deleteChapters) {
                 targets.forEach { manga ->
-                    // RK: targets, so a merged series' sources lose downloads too
-                    val source = sourceManager.get(manga.source) as? HttpSource
-                    if (source != null) {
-                        downloadManager.deleteManga(manga, source)
-                    }
+                    // RK: targets, so a merged series' sources lose downloads too, and through the stub, which
+                    // names the same folder, an uninstalled source's too, as a novel's do
+                    downloadManager.deleteManga(manga, sourceManager.getOrStub(manga.source))
                 }
             }
         }

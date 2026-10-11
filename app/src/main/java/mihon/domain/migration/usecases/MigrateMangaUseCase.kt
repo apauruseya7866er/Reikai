@@ -185,9 +185,11 @@ class MigrateMangaUseCase(
                 ?.let { upsertTrack.awaitAll(it) }
 
             // Delete downloaded
-            if (MigrationFlag.REMOVE_DOWNLOAD in flags && currentSource != null) {
+            // RK: through the stub, which names the same folder, so a source whose extension is uninstalled,
+            // the usual reason to migrate, loses its downloads too, as a novel's does
+            if (MigrationFlag.REMOVE_DOWNLOAD in flags) {
                 // Not awaited, so a slow storage delete doesn't hold up the migration
-                scope.launch { downloadManager.deleteManga(current, currentSource) }
+                scope.launch { downloadManager.deleteManga(current, sourceManager.getOrStub(current.source)) }
             }
 
             // Update custom cover (recheck if custom cover exists)

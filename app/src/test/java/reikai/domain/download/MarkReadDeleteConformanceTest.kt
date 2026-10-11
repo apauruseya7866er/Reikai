@@ -22,6 +22,7 @@ import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.service.SourceManager
 import kotlin.time.Instant
 
 /**
@@ -51,6 +52,12 @@ class MarkReadDeleteConformanceTest {
         half.markRead(excluded = emptySet(), categoryIds = listOf(6L), bookmarked = true) shouldBe emptySet()
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("halves")
+    fun `a chapter marked read whose extension is uninstalled loses its download`(half: MarkReadHalf) = runTest {
+        half.markRead(excluded = emptySet(), categoryIds = listOf(6L), installed = false) shouldBe setOf(CHAPTER)
+    }
+
     companion object {
         const val ENTRY = 1L
         const val CHAPTER = 10L
@@ -61,14 +68,28 @@ class MarkReadDeleteConformanceTest {
 }
 
 interface MarkReadHalf {
-    /** Marks one unread chapter of an entry filed in [categoryIds] read; the ids whose download goes. */
-    suspend fun markRead(excluded: Set<String>, categoryIds: List<Long>, bookmarked: Boolean = false): Set<Long>
+    /**
+     * Marks one unread chapter of an entry filed in [categoryIds], from a source [installed] or not, read; the
+     * ids whose download goes.
+     */
+    suspend fun markRead(
+        excluded: Set<String>,
+        categoryIds: List<Long>,
+        bookmarked: Boolean = false,
+        installed: Boolean = true,
+    ): Set<Long>
 }
 
 class MangaMarkReadHalf : MarkReadHalf {
     override fun toString() = "manga"
 
-    override suspend fun markRead(excluded: Set<String>, categoryIds: List<Long>, bookmarked: Boolean): Set<Long> {
+    /** An uninstalled extension has no source, only the stub [SourceManager.getOrStub] builds from what it saved. */
+    override suspend fun markRead(
+        excluded: Set<String>,
+        categoryIds: List<Long>,
+        bookmarked: Boolean,
+        installed: Boolean,
+    ): Set<Long> {
         val preferences = DownloadPreferences(EmittingPreferenceStore())
         preferences.removeAfterMarkedAsRead.set(true)
         preferences.removeExcludeCategories.set(excluded)
@@ -96,7 +117,13 @@ class MangaMarkReadHalf : MarkReadHalf {
         }
         val setReadStatus = SetReadStatus(
             downloadPreferences = preferences,
-            deleteDownload = DeleteDownload(mockk { coEvery { get(manga.source) } returns mockk() }, downloadManager),
+            deleteDownload = DeleteDownload(
+                mockk<SourceManager> {
+                    coEvery { get(manga.source) } returns if (installed) mockk() else null
+                    coEvery { getOrStub(manga.source) } returns mockk()
+                },
+                downloadManager,
+            ),
             mangaRepository = mockk { coEvery { getMangaById(manga.id) } returns manga },
             chapterRepository = mockk { coEvery { updateAll(any()) } returns Unit },
             sourceTracker = mockk(relaxed = true),
@@ -118,7 +145,13 @@ class MangaMarkReadHalf : MarkReadHalf {
 class NovelMarkReadHalf : MarkReadHalf {
     override fun toString() = "novel"
 
-    override suspend fun markRead(excluded: Set<String>, categoryIds: List<Long>, bookmarked: Boolean): Set<Long> {
+    /** [installed] has nothing to change: the novel delete reads the folder from the novel, never its plugin. */
+    override suspend fun markRead(
+        excluded: Set<String>,
+        categoryIds: List<Long>,
+        bookmarked: Boolean,
+        installed: Boolean,
+    ): Set<Long> {
         val preferences = NovelPreferences(EmittingPreferenceStore())
         preferences.removeAfterMarkedAsRead().set(true)
         preferences.removeExcludeCategories().set(excluded)

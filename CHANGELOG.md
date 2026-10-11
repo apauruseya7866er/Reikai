@@ -596,6 +596,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Download queue counts no longer reset when you reopen the queue, or count a cancelled chapter as downloaded.**
 - **A novel chapter cancelled or deleted while it downloads, or whose novel is removed or retitled meanwhile, is no longer saved to disk anyway.**
 - **Queueing a novel chapter that is already in the download queue no longer moves it to the end of the queue after a restart.**
+- **A manga whose extension is uninstalled now loses its downloads when read chapters are auto-deleted, or when it is removed from the library or migrated with downloads deleted, as a novel does.**
 - **A downloaded novel chapter with pictures now keeps the line breaks the source draws, and its pictures show offline even when the source offers several sizes.**
 - **Downloading a novel chapter again now refetches a picture that failed before.**
 - **A novel chapter download now fails at once with the reason when the device is nearly full or the source returns the chapter empty, as manga does, instead of retrying.**
