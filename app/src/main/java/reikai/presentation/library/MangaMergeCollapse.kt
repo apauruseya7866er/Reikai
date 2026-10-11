@@ -83,6 +83,9 @@ object MangaMergeCollapse {
                     it.libraryManga.lastRead,
                     it.downloadCount,
                     it.libraryManga.manga.genre,
+                    it.libraryManga.manga.lastUpdate,
+                    it.libraryManga.latestUpload,
+                    it.libraryManga.chapterFetchedAt,
                 )
             },
             counts = mergedCounts,

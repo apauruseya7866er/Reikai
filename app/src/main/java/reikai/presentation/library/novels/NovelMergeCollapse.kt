@@ -87,7 +87,16 @@ suspend fun NovelMergeCollapse.CollapsedNovel.toLibraryRow(
     if (members.size == 1) return row
     return row.stampMergedGroup(
         members = members.map {
-            MergedRowMember(it.novel.id, it.novel.source, it.lastRead, it.downloadCount.toInt(), it.novel.genre)
+            MergedRowMember(
+                it.novel.id,
+                it.novel.source,
+                it.lastRead,
+                it.downloadCount.toInt(),
+                it.novel.genre,
+                it.novel.lastUpdate,
+                it.latestUpload,
+                it.chapterFetchedAt,
+            )
         },
         coverFallbacks = coverFallbacks.map { it.novel.asNovelCover() },
         counts = mergedCounts,

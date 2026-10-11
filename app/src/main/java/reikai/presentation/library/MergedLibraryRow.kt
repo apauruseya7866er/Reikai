@@ -12,6 +12,9 @@ data class MergedRowMember<S>(
     val lastRead: Instant?,
     val downloadCount: Int,
     val genre: List<String>?,
+    val lastUpdate: Instant?,
+    val latestUpload: Instant?,
+    val chapterFetchedAt: Instant?,
 )
 
 /**
@@ -38,9 +41,15 @@ suspend fun <S> LibraryItem.stampMergedGroup(
     return copy(
         downloadCount = downloads,
         unreadCount = unread,
-        // LastRead sorts by the most recent read across the group, so reading any source bubbles it up.
+        // The date sorts read the newest across the group, so reading or a new chapter on any source
+        // moves the card, as its chapter list and unread badge already show.
         libraryManga = libraryManga
-            .copy(lastRead = members.mapNotNull { it.lastRead }.maxOrNull())
+            .copy(
+                manga = libraryManga.manga.copy(lastUpdate = members.newest { it.lastUpdate }),
+                lastRead = members.newest { it.lastRead },
+                latestUpload = members.newest { it.latestUpload },
+                chapterFetchedAt = members.newest { it.chapterFetchedAt },
+            )
             .withGroupCounts(counts),
         relatedMangaIds = members.map { it.id },
         memberSources = sources.map { querySource(it) },
@@ -53,6 +62,9 @@ suspend fun <S> LibraryItem.stampMergedGroup(
         ),
     )
 }
+
+private inline fun <S> List<MergedRowMember<S>>.newest(date: (MergedRowMember<S>) -> Instant?): Instant? =
+    mapNotNull(date).maxOrNull()
 
 // All three from one query, so the unread they imply matches the badge. Started, Bookmarked, the Total
 // chapters sort and the read/total search terms read them.

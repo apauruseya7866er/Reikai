@@ -145,6 +145,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **A merged series' chapter list now reads straight down on manga and novels instead of alternating between its sources, and a merged novel no longer lists a chapter twice when one of its sources names it by number only, drops an apostrophe or repeats its title elsewhere.**
 - **Missing chapter warnings no longer invent gaps on a merged series, in the chapter list or between chapters in the reader, on manga and novels.**
 - **A merged series' library badge now counts each unread chapter once across all its sources, and the Unread, Started and Bookmarked filters, the sorts, search and the Continue button count the whole group too.**
+- **Sorting the library by Latest chapter, Chapter fetch date or Last update now places a merged manga or novel by its newest source, not its leading one.**
 - **Marking a merged series read from the library, or changing its categories, now applies to every source in the group.** A category only some of its sources are in shows as partly ticked and is left alone unless you change it.
 - **A merged series now downloads each chapter once, and when opened as the whole group (library, History, the All list) reads a downloaded copy from any of its sources instead of going online.** Deleting a chapter from the All list removes every source's copy.
 - **On a merged novel, downloading from the All chip now downloads the chapters All is showing.**

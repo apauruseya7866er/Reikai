@@ -71,6 +71,25 @@ class MergedLibraryRowConformanceTest {
         collapse.row(badgePrefs = allBadges.copy(unread = false)).badges.unreadCount shouldBe 0L
     }
 
+    // Entry 3 carries the newest dates and entry 1 leads, so a lead-only date cannot pass.
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("collapses")
+    fun `a merged row sorts by the newest chapter upload across the group`(collapse: MergedRowCollapse) = runTest {
+        collapse.row().libraryManga.latestUpload shouldBe memberDate(3L)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("collapses")
+    fun `a merged row sorts by the newest chapter fetch across the group`(collapse: MergedRowCollapse) = runTest {
+        collapse.row().libraryManga.chapterFetchedAt shouldBe memberDate(3L)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("collapses")
+    fun `a merged row sorts by the newest update across the group`(collapse: MergedRowCollapse) = runTest {
+        collapse.row().libraryManga.manga.lastUpdate shouldBe memberDate(3L)
+    }
+
     @ParameterizedTest(name = "{0}")
     @MethodSource("collapses")
     fun `an ungrouped row is not stamped as merged`(collapse: MergedRowCollapse) = runTest {
@@ -152,6 +171,9 @@ interface MergedRowCollapse {
  */
 private val rowMembers = mapOf(3L to (1 to 0), 2L to (0 to 3), 1L to (0 to 2))
 
+/** Each entry's chapter upload, chapter fetch and update dates, newer for a higher id. */
+private fun memberDate(id: Long) = Instant.fromEpochMilliseconds(id * 1000)
+
 private fun rowMembership(grouped: Boolean) = if (grouped) rowMembers.keys.associateWith { 7L } else emptyMap()
 
 class MangaMergedRowCollapse : MergedRowCollapse {
@@ -172,13 +194,17 @@ class MangaMergedRowCollapse : MergedRowCollapse {
             val (sourceIndex, downloads) = member
             LibraryItem(
                 libraryManga = LibraryManga(
-                    manga = Manga.create().copy(id = id, source = sourceIds[sourceIndex]),
+                    manga = Manga.create().copy(
+                        id = id,
+                        source = sourceIds[sourceIndex],
+                        lastUpdate = memberDate(id),
+                    ),
                     categories = emptyList(),
                     totalChapters = 4,
                     readCount = 1,
                     bookmarkCount = 0,
-                    latestUpload = null,
-                    chapterFetchedAt = null,
+                    latestUpload = memberDate(id),
+                    chapterFetchedAt = memberDate(id),
                     lastRead = null,
                 ),
                 downloadCount = downloads,
@@ -228,14 +254,15 @@ class NovelMergedRowCollapse : MergedRowCollapse {
                     id = id,
                     source = sourceKeys[sourceIndex],
                     favoriteAt = Instant.fromEpochMilliseconds(0L),
+                    lastUpdate = memberDate(id),
                 ),
                 categories = emptyList(),
                 totalChapters = 4,
                 readCount = 1,
                 bookmarkCount = 0,
                 downloadCount = downloads.toLong(),
-                latestUpload = null,
-                chapterFetchedAt = null,
+                latestUpload = memberDate(id),
+                chapterFetchedAt = memberDate(id),
                 lastRead = null,
             )
         }
