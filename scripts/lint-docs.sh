@@ -26,6 +26,9 @@ set -u
 # Content-source names (adult and mainstream) that must be genericized or use an approved shorthand
 # (EH / ExH / MD / CMK) in the public-facing docs. Trackers (MangaUpdates, Shikimori, AniList, ...)
 # are NOT sources and stay allowed. Extend this list as new sources get named in the repo.
+# A tracker that shares a site's name is written as "<Name> tracker", and that phrase is dropped
+# before matching, so the tracker can be named while the bare site name is still caught.
+ALLOWED_TRACKERS='comick tracker'
 DENY='e-hentai|ehentai|exhentai|nhentai|pururin|8muses|hentaifox|asmhentai|koharu|schalenetwork|mangadex|comick'
 
 # A bare '#N' auto-links to a Reikai issue. A '#' + digits not preceded by an alphanumeric; the
@@ -95,7 +98,7 @@ shift
 case "$cmd" in
   source-names)
     file="${1:?file}"; label="${2:?label}"
-    if hits=$(grep -inE "$DENY" "$file"); then
+    if hits=$(sed -E "s/($ALLOWED_TRACKERS)//Ig" "$file" | grep -inE "$DENY"); then
       report "$label names a content source; genericize it or use an approved shorthand (EH / ExH / MD / CMK). See Public-facing naming." "$hits"
       exit 1
     fi

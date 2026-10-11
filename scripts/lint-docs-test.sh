@@ -39,6 +39,12 @@ clean=$(fixture clean.md 'Nothing to see here.\n')
 echo "source-names"
 check "catches a content source"       1 bash "$lint" source-names "$(fixture names.md 'A line about nhentai.\n')" DOC
 check "passes clean prose"             0 bash "$lint" source-names "$clean" DOC
+check "passes a tracker named after a site" 0 bash "$lint" source-names "$(fixture tracker.md 'Track manga with the Comick tracker.
+')" DOC
+check "catches the site behind that tracker" 1 bash "$lint" source-names "$(fixture site.md 'Read it on Comick.
+')" DOC
+check "catches the site beside its tracker" 1 bash "$lint" source-names "$(fixture both.md 'The Comick tracker, or Comick itself.
+')" DOC
 
 echo "changelog-entries"
 check "catches a missing headline"     1 bash "$lint" changelog-entries "$(fixture bad.md '## [Unreleased]\n\n### Fixes\n\n- No bold headline here.\n')"
