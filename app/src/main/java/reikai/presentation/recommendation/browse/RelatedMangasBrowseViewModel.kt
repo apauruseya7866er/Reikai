@@ -11,22 +11,19 @@ import dev.zacsweers.metro.AssistedInject
 import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactory
 import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactoryKey
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import mihon.domain.manga.model.toDomainManga
 import reikai.domain.recommendation.PrepareRecommendationAssembly
 import reikai.domain.recommendation.RECOMMENDS_SOURCE
 import reikai.domain.recommendation.RecommendationOrigin
+import reikai.domain.recommendation.RelatedLibraryKeys
 import reikai.domain.recommendation.RelatedMangaCache
 import reikai.domain.recommendation.RelatedMangaCandidate
 import reikai.domain.recommendation.RelatedPool
+import reikai.domain.recommendation.isInLibrary
 import reikai.domain.recommendation.localIdOf
 import reikai.presentation.browse.AddOutcome
 import reikai.presentation.browse.BatchCategories
@@ -42,7 +39,6 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.service.LibraryPreferences
-import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
@@ -62,7 +58,7 @@ class RelatedMangasBrowseViewModel(
     // it. Only used for two string lookups, and app locale is set app-wide, so the strings are the same.
     private val context: Context,
     private val relatedMangaCache: RelatedMangaCache,
-    private val getFavorites: GetFavorites,
+    private val relatedLibraryKeys: RelatedLibraryKeys,
     private val libraryAdder: MangaLibraryAdder,
     private val networkToLocalManga: NetworkToLocalManga,
     private val libraryPreferences: LibraryPreferences,
@@ -92,10 +88,7 @@ class RelatedMangasBrowseViewModel(
             // finishes) fills as the pool streams, and off the library, so a title added here or anywhere
             // else stays marked through every later emission.
             val pool = relatedMangaCache.observe(mangaId)
-            val library = pool.map { entry -> entry?.fullPool.orEmpty().librarySourceIds() }
-                .distinctUntilChanged()
-                .flatMapLatest(::libraryKeys)
-            combine(pool, library) { entry, libraryKeys ->
+            combine(pool, relatedLibraryKeys.of(pool)) { entry, libraryKeys ->
                 Triple(entry?.pool ?: RelatedPool.EMPTY, entry?.isComplete, libraryKeys)
             }.collect { (related, isComplete, libraryKeys) ->
                 val candidates = related.candidates
@@ -104,8 +97,7 @@ class RelatedMangasBrowseViewModel(
                 val items = shown.map {
                     BrowseItem(
                         it,
-                        // The live keys only add what joined the library after the assembly was built.
-                        (it.manga.url to it.sourceId) in libraryKeys || assembly.hideFilter.isInLibrary(it),
+                        assembly.hideFilter.isInLibrary(it, libraryKeys),
                         hidden = assembly.hideFilter.shouldHide(it),
                     )
                 }
@@ -114,18 +106,6 @@ class RelatedMangasBrowseViewModel(
             }
         }
     }
-
-    private fun List<RelatedMangaCandidate>.librarySourceIds() =
-        map { it.sourceId }.filter { it != RECOMMENDS_SOURCE }.toSortedSet()
-
-    private fun libraryKeys(sourceIds: Set<Long>): Flow<Set<Pair<String, Long>>> =
-        if (sourceIds.isEmpty()) {
-            flowOf(emptySet())
-        } else {
-            combine(sourceIds.map { getFavorites.subscribe(it) }) { perSource ->
-                perSource.flatMap { favorites -> favorites.map { it.url to it.source } }.toSet()
-            }
-        }
 
     fun toggleShowHidden() = state.update { it.copy(showHidden = !it.showHidden) }
 

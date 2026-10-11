@@ -27,7 +27,10 @@ import reikai.domain.manga.MangaPreferences
 import reikai.domain.manga.MergedChapterProvider
 import reikai.domain.merge.ChapterUnit
 import reikai.domain.merge.renderStoredStitch
+import reikai.domain.recommendation.PrepareRecommendationAssembly
 import reikai.domain.recommendation.ReikaiRecommendationPreferences
+import reikai.domain.recommendation.RelatedLibraryKeys
+import reikai.domain.recommendation.RelatedMangaCache
 import reikai.domain.track.EntryTrackPort
 import reikai.domain.track.EntryTrackPorts
 import reikai.util.testAppScope
@@ -56,6 +59,9 @@ internal fun mangaDetailsModel(
     stitch: List<ChapterUnit> = emptyList(),
     filterChaptersForDownload: FilterChaptersForDownload = mockk(relaxed = true),
     updateMangaFromRemote: UpdateMangaFromRemote = mockk(relaxed = true),
+    relatedMangaCache: RelatedMangaCache = mockk(relaxed = true),
+    relatedLibraryKeys: RelatedLibraryKeys = mockk(relaxed = true),
+    prepareRecommendationAssembly: PrepareRecommendationAssembly = mockk(relaxed = true),
     beforeModel: () -> Unit = {},
 ): MangaViewModel {
     val prefs = InMemoryPreferenceStore()
@@ -108,9 +114,10 @@ internal fun mangaDetailsModel(
         mangaPreferences = MangaPreferences(prefs),
         relatedMangasLoader = mockk(relaxed = true),
         recommendationPreferences = ReikaiRecommendationPreferences(prefs),
-        relatedMangaCache = mockk(relaxed = true),
+        relatedMangaCache = relatedMangaCache,
+        relatedLibraryKeys = relatedLibraryKeys,
         refreshTrackerLibrary = mockk(relaxed = true),
-        prepareRecommendationAssembly = mockk(relaxed = true),
+        prepareRecommendationAssembly = prepareRecommendationAssembly,
         networkToLocalManga = mockk(relaxed = true),
         uiPreferences = UiPreferences(prefs),
         getFlatMetadataById = getFlatMetadataById,

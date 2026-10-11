@@ -31,6 +31,7 @@ import reikai.domain.recommendation.RecommendationHideFilter
 import reikai.domain.recommendation.RecommendationOrigin
 import reikai.domain.recommendation.RecommendationRanker
 import reikai.domain.recommendation.ReikaiRecommendationPreferences
+import reikai.domain.recommendation.RelatedLibraryKeys
 import reikai.domain.recommendation.RelatedMangaCache
 import reikai.domain.recommendation.RelatedMangaCandidate
 import reikai.domain.recommendation.RelatedPool
@@ -147,7 +148,7 @@ class RelatedMangasBrowseViewModelTest {
             mangaId = MANGA_ID,
             context = mockk(relaxed = true),
             relatedMangaCache = cache,
-            getFavorites = getFavorites,
+            relatedLibraryKeys = RelatedLibraryKeys(getFavorites),
             libraryAdder = library.adder,
             networkToLocalManga = mockk {
                 coEvery { this@mockk.invoke(any<Manga>()) } answers {

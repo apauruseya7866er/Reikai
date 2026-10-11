@@ -73,6 +73,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -125,11 +126,13 @@ import reikai.domain.merge.toGapNeighbour
 import reikai.domain.recommendation.PrepareRecommendationAssembly
 import reikai.domain.recommendation.RecommendationAssembly
 import reikai.domain.recommendation.ReikaiRecommendationPreferences
+import reikai.domain.recommendation.RelatedLibraryKeys
 import reikai.domain.recommendation.RelatedMangaCache
 import reikai.domain.recommendation.RelatedMangaCandidate
 import reikai.domain.recommendation.RelatedMangasLoader
 import reikai.domain.recommendation.RelatedPlacement
 import reikai.domain.recommendation.RelatedPool
+import reikai.domain.recommendation.isInLibrary
 import reikai.domain.recommendation.localIdOf
 import reikai.domain.recommendation.taste.RefreshTrackerLibrary
 import reikai.domain.track.EntryTrackPorts
@@ -245,6 +248,7 @@ class MangaViewModel(
     private val relatedMangasLoader: RelatedMangasLoader,
     private val recommendationPreferences: ReikaiRecommendationPreferences,
     private val relatedMangaCache: RelatedMangaCache,
+    private val relatedLibraryKeys: RelatedLibraryKeys,
     private val refreshTrackerLibrary: RefreshTrackerLibrary,
     private val prepareRecommendationAssembly: PrepareRecommendationAssembly,
     private val networkToLocalManga: NetworkToLocalManga,
@@ -1859,12 +1863,20 @@ class MangaViewModel(
         // Bootstrap / refresh the taste cache out of band (never on the carousel's critical path);
         // the profile read below uses whatever is already cached, the pull lands for the next open.
         viewModelScope.launchIO { refreshTrackerLibrary.refreshIfStale() }
+        val mangaId = state.manga.id
         viewModelScope.launchIO {
             // Stream switches, hide filter, ranker and taste, applied on read so a settings change is never
             // baked into the cache.
             val assembly = prepareRecommendationAssembly.await()
+            // Shown off the cache and the live library, as "See all" is, so a title added after the
+            // assembly was built still reads as in the library here.
+            val entries = relatedMangaCache.observe(mangaId)
+            launch {
+                combine(entries.filterNotNull(), relatedLibraryKeys.of(entries)) { entry, keys ->
+                    applyRelated(entry.pool, assembly, keys)
+                }.collect {}
+            }
             if (cached != null) {
-                applyRelated(cached.pool, assembly)
                 if (cached.isComplete && relatedMangaCache.isFresh(cached)) return@launchIO
             } else {
                 extras.update { it.copy(relatedLoading = true) }
@@ -1874,27 +1886,27 @@ class MangaViewModel(
             // still waiting for the chapter list. Flagging the load above first means the skeleton
             // holds the row's space meanwhile, so nothing shifts when the results land.
             awaitOwnDataLoaded()
-            val mangaId = state.manga.id
             val pool = relatedMangasLoader.load(
                 manga = state.manga.toSManga(),
                 source = source,
                 tracks = getTracksInGroup.await(state.manga.id),
                 currentGenres = state.manga.genre.orEmpty(),
-                // Each snapshot is cached (incomplete) so "See all" fills mid-load. Both puts show what the
-                // cache kept, so a stale refresh never shrinks a full pool mid-stream or empties it.
-                onUpdate = {
-                    val kept = relatedMangaCache.put(mangaId, it, isComplete = false)
-                    applyRelated(kept.pool, assembly)
-                },
+                // Each snapshot is cached (incomplete) so "See all" fills mid-load. Both puts keep what the
+                // cache holds, so a stale refresh never shrinks a full pool mid-stream or empties it.
+                onUpdate = { relatedMangaCache.put(mangaId, it, isComplete = false) },
             )
-            applyRelated(relatedMangaCache.put(mangaId, pool).pool, assembly)
+            relatedMangaCache.put(mangaId, pool)
             extras.update { it.copy(relatedLoading = false) }
         }
     }
 
-    private fun applyRelated(pool: RelatedPool, assembly: RecommendationAssembly) {
+    private fun applyRelated(
+        pool: RelatedPool,
+        assembly: RecommendationAssembly,
+        libraryKeys: Set<Pair<String, Long>>,
+    ) {
         val items = assembly.assemble(pool, cap = CAROUSEL_CAP)
-            .map { RelatedMangaItem(it, assembly.hideFilter.isInLibrary(it)) }
+            .map { RelatedMangaItem(it, assembly.hideFilter.isInLibrary(it, libraryKeys)) }
         // The count is of everything "See all" shows, which is the same assembly without the cap.
         val total = pool.candidates.count(assembly::shows)
         extras.update { it.copy(relatedItems = items, relatedTotalCount = total) }

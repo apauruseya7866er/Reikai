@@ -56,7 +56,7 @@ A pull runs from three places: `refreshIfStale` on a details open (any enabled t
 
 `BuildRecommendationHideFilter` builds two indexes per load. The library index (favorites by URL and source, their tracks by tracker and remote id plus AniList and MAL ids, their normalized titles) is always built. The status index draws from both the library's own tracks (`LocalTrackStatusMapper`) and `taste_library`, so a title tracked but not in the library is caught too. `RecommendationHideFilter.isInLibrary` matches by URL and source, then tracker id, then title. A card it marks is dimmed and badged; `hideInLibraryRecommendations` hides exactly what it marks. The four status filters (Reading and Completed, Dropped, On hold, Plan to read) hide through the status index. Every filter defaults off.
 
-See all also subscribes to the favorites of the pool's sources, so a title added after the grid opened is marked. It bulk-adds through `MangaLibraryAdder`, skipping tracker candidates and titles already favorited; its "Added N" counts only adds that landed. A grouped view sections the grid by origin in first-appearance order (`State.sections`), and range select reads the same sections.
+The carousel and See all both also subscribe to the favorites of the pool's sources (`RelatedLibraryKeys`), so a title added after the assembly was built is marked; the carousel redraws off `RelatedMangaCache.observe` for that, as See all does. It bulk-adds through `MangaLibraryAdder`, skipping tracker candidates and titles already favorited; its "Added N" counts only adds that landed. A grouped view sections the grid by origin in first-appearance order (`State.sections`), and range select reads the same sections.
 
 ### Adult content
 
