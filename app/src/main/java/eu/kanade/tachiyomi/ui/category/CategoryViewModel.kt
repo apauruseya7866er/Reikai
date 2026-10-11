@@ -10,6 +10,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.binding
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -176,26 +177,25 @@ class CategoryViewModel(
 
     /** Commit one armed delete to the DB. Per-row so each delete keeps its reorder + preference cleanup. */
     fun commitPendingDelete(batch: Long) {
-        if (batch !in pendingDelete.value) return
-        viewModelScope.launch { commitPendingDeletes(setOf(batch)) }
+        commitPendingDeletes(setOf(batch))
     }
 
     /** Commit every armed delete, for leaving the screen, where no snackbar is left to resolve them. */
     fun commitAllPendingDeletes() {
-        if (pendingDelete.value.isEmpty()) return
-        viewModelScope.launch { commitPendingDeletes(pendingDelete.value.keys) }
+        commitPendingDeletes(pendingDelete.value.keys)
     }
 
-    private suspend fun commitPendingDeletes(batches: Set<Long>) {
+    // Straight on the app scope, never through viewModelScope: on a pop Voyager clears this model before
+    // the exit animation ends and the screen's onDispose commits, so a launch there never runs.
+    private fun commitPendingDeletes(batches: Set<Long>): Job? {
         val categories = pendingDelete.value.filterKeys { it in batches }.values.flatten()
-        if (categories.isEmpty()) return
-        // RK: the deletion finishes even if the screen is left while it runs
-        appScope.launch {
+        if (categories.isEmpty()) return null
+        return appScope.launch {
             categories.forEach { category ->
                 if (!actions.delete(category)) _events.tryEmit(CategoryEvent.InternalError)
             }
             pendingDelete.update { it - batches }
-        }.join()
+        }
     }
     // RK <--
 
@@ -204,7 +204,7 @@ class CategoryViewModel(
             // RK: the drag index comes from the visible list, which hides rows pending delete, while
             // the reorder renumbers the full table; flush the pending delete first so the two lists
             // agree (dragging while the undo snackbar is up also reads as moving on from the undo).
-            commitPendingDeletes(pendingDelete.value.keys)
+            commitPendingDeletes(pendingDelete.value.keys)?.join()
             if (!actions.reorder(category, newIndex)) _events.emit(CategoryEvent.InternalError)
         }
     }

@@ -109,6 +109,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **The novel library-update and download category filters now include the Default (uncategorized) group, as manga's do.**
 - **Deleting a category now clears it from the library and Updates filters and from your collapsed categories.**
 - **Undo in Settings -> Library -> Edit categories now restores only the categories that delete removed, even after a second delete.**
+- **Categories deleted in Settings -> Library -> Edit categories now stay deleted when you go back while the Undo bar is still showing.**
 - **Settings -> Library -> Preferred sources lists the local source again, names each source's language in the order Browse uses, starts right under its tabs, and moves a source on every Up or Down tap, on manga and novels.** An uninstalled source used to swallow the tap.
 - **The library filter icon no longer lights up for a custom-interval filter whose update restriction is off.**
 - **A category you set back to the global sort now stays that way if the app is closed partway through updating from an older version.**

@@ -1,9 +1,11 @@
 package eu.kanade.tachiyomi.ui.category
 
+import androidx.lifecycle.viewModelScope
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -165,6 +167,18 @@ class CategoryViewModelTest {
         model.commitPendingDelete(events.undoBatches().single())
 
         upcomingPreferences.filterIncludedCategories.get() shouldBe listOf(b.id)
+    }
+
+    /** Voyager clears the popped screen's model before its exit animation ends and onDispose commits. */
+    @Test
+    fun `leaving the screen commits a delete after the model's scope is gone`() = runTest {
+        val model = model()
+        model.deleteCategory(a)
+        model.viewModelScope.cancel()
+
+        model.commitAllPendingDeletes()
+
+        table.value shouldBe listOf(b, c)
     }
 
     private fun List<CategoryEvent>.undoBatches() = filterIsInstance<CategoryEvent.ShowUndoSnackbar>().map { it.batch }
