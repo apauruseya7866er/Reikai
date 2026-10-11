@@ -2,6 +2,8 @@ package reikai.presentation.reader.text
 
 import android.content.Context
 import eu.kanade.domain.track.service.TrackPreferences
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import reikai.domain.merge.ChapterUnit
 import reikai.domain.merge.expandToUnits
 import reikai.domain.novel.NovelChapterRepository
@@ -27,6 +29,7 @@ class NovelChapterFinish(
     private val trackPreferences: TrackPreferences,
     private val trackNovelChapter: TrackNovelChapter,
     private val incognito: ChapterIncognito,
+    private val scope: CoroutineScope,
     private val context: Context,
 ) {
 
@@ -56,8 +59,9 @@ class NovelChapterFinish(
         }
         // Without "delete after marked as read", as in Mihon's reader: the trim behind is the reader's rule.
         setNovelReadStatus.awaitFinishedInReader(listOf(chapter) + duplicates)
+        // Launched, as manga's is: a finish runs under the reader's write lock, which crossings share.
         if (trackPreferences.autoUpdateTrack.get()) {
-            trackNovelChapter.await(context, chapter.novelId, chapter.chapterNumber)
+            scope.launch { trackNovelChapter.await(context, chapter.novelId, chapter.chapterNumber) }
         }
         trimBehind()
     }

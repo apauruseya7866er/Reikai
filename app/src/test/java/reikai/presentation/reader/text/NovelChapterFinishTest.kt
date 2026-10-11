@@ -6,7 +6,11 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import reikai.domain.merge.ChapterUnit
 import reikai.domain.novel.NovelChapterRepository
@@ -43,7 +47,7 @@ class NovelChapterFinishTest {
     private val trackNovelChapter = mockk<TrackNovelChapter>(relaxed = true)
     private val deleteAfterRead = mockk<DeleteNovelChaptersAfterRead>(relaxed = true)
 
-    private fun subject(
+    private fun TestScope.subject(
         libraryStore: InMemoryPreferenceStore = InMemoryPreferenceStore(),
         trackStore: InMemoryPreferenceStore = InMemoryPreferenceStore(),
     ) = NovelChapterFinish(
@@ -58,6 +62,7 @@ class NovelChapterFinishTest {
         trackPreferences = TrackPreferences(trackStore),
         trackNovelChapter = trackNovelChapter,
         incognito = ChapterIncognito(sourceOf = { null }, isIncognito = { false }),
+        scope = backgroundScope,
         context = mockk(relaxed = true),
     )
 
@@ -102,8 +107,22 @@ class NovelChapterFinishTest {
     @Test
     fun `finishing a chapter pushes it to the trackers when auto update is on`() = runTest {
         subject().finish(finished, memberIds = listOf(1L, 2L), stitch = stitch) {}
+        runCurrent()
 
         coVerify { trackNovelChapter.await(any(), 1L, 5.0) }
+    }
+
+    /** The push is network, and the reader's other writes and its seamless crossings wait on a finish. */
+    @Test
+    fun `finishing a chapter does not wait for the tracker push`() = runTest {
+        coEvery { trackNovelChapter.await(any(), any(), any(), any()) } coAnswers { awaitCancellation() }
+        var trimmed = false
+
+        withTimeout(1_000) {
+            subject().finish(finished, memberIds = listOf(1L, 2L), stitch = stitch) { trimmed = true }
+        }
+
+        trimmed shouldBe true
     }
 
     @Test
@@ -113,6 +132,7 @@ class NovelChapterFinishTest {
         )
 
         subject(trackStore = off).finish(finished, memberIds = listOf(1L, 2L), stitch = stitch) {}
+        runCurrent()
 
         coVerify(exactly = 0) { trackNovelChapter.await(any(), any(), any(), any()) }
     }
@@ -146,6 +166,7 @@ class NovelChapterFinishTest {
 
         finish.release(listOf(5L))
         finish.finish(finished, memberIds = listOf(1L, 2L), stitch = stitch) {}
+        runCurrent()
 
         coVerify(exactly = 2) { trackNovelChapter.await(any(), 1L, 5.0) }
     }

@@ -286,6 +286,7 @@ class NovelReaderViewModel(
         trackPreferences = trackPreferences,
         trackNovelChapter = trackNovelChapter,
         incognito = incognito,
+        scope = appScope,
         context = context,
     )
 
