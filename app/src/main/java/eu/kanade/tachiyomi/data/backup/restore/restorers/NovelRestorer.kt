@@ -187,7 +187,7 @@ class NovelRestorer(
         backupCategories: List<BackupNovelCategory>,
     ) {
         if (categoryOrders.isEmpty()) return
-        // Prefer the novel-typed row when a universal one shares its name (see remap above).
+        // Prefer the novel-typed row when a universal one shares its name, as manga's restore does.
         val dbCategoriesByName = categoryRepository.getAll(CategoryContentType.NOVEL)
             .byNamePreferring(CategoryContentType.NOVEL)
         val backupCategoriesByOrder = backupCategories.associateBy { it.order }
