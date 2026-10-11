@@ -686,7 +686,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **The What's new screen now shows the Note, Tip, Important, Warning and Caution callouts in release notes.**
 - **Settings -> About now links Reikai's website and privacy policy.**
 - **Settings -> Advanced -> Open debug menu adds debugging toggles and maintenance tools, such as hiding every cover.**
-- **A screen now explains the wait while the app updates its data after an upgrade (from Mihon).** Upstream: mihon fd4f73c90.
+- **A screen now explains the wait while the app updates its data after an upgrade (from Mihon).** It stays up for at least a second, so a quick update no longer just flashes it. Upstream: mihon fd4f73c90, b454c1b46.
 
 #### Changed
 
