@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import mihon.app.di.appGraph
 import okhttp3.Request
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -469,6 +470,19 @@ class HeadlessJsIntegrationTest {
         """.trimIndent()
 
         assertTrue(host.loadPlugin("web-storage-flag-test", plugin).webStorageUtilized)
+    }
+
+    /** The other half of the opt-in: a plugin that never asks is never handed the site's storage. */
+    @Test
+    fun aPluginNotAskingForTheSiteStorageSaysNo() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val plugin = """
+            module.exports.default = {
+              id: 'no-web-storage-test', name: 'T', site: 'https://example.org', version: '1.0.0',
+            };
+        """.trimIndent()
+
+        assertFalse(host.loadPlugin("no-web-storage-test", plugin).webStorageUtilized)
     }
 
     /**
