@@ -242,12 +242,13 @@ Clear, act, dump:
 ```powershell
 & $adb logcat -c
 # open the source, a novel, a chapter
-& $adb logcat -d 2>&1 | Select-String -Pattern "LnHost|plugin cache|OkHttp|FATAL|Exception"
+& $adb logcat -d 2>&1 | Select-String -Pattern "LnHost|LnPlugin|OkHttp|FATAL|Exception"
 ```
 
-- `LnHostBridge: loaded plugin <id> v<ver>` and the `plugin cache hit <hash>.js for <url>` line show
-  which bundle is running. The host caches by content hash, so an update that seems not to run is
-  usually a stale bundle; reinstall the plugin or refetch the repo.
+- `LnHostBridge: loaded plugin <id> v<ver>` shows which version is running. The installed script is
+  stored under its URL's hash (`<sha256(url)>.js`, `LnPluginLoader`), not its content, and changes only
+  on install or update (`LnPluginLoader: downloading plugin from <url>`), so an update that seems not
+  to run never stored a new script; reinstall the plugin or refetch the repo.
 - `OkHttp: --> GET <url>` and `<-- <code> <url>` are the plugin's requests. A 403 is a block (Cloudflare,
   a refused User-Agent); a 200 with nothing parsed is a selector problem; a missing GET is a path bug.
 - Host fetches send the device WebView's User-Agent, so covers or pages that differ from LNReader point
