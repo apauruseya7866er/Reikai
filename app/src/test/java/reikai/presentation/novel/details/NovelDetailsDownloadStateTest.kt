@@ -21,7 +21,7 @@ import reikai.presentation.reader.NovelReaderViewModelHarness
 
 /**
  * A chapter row's download mark on the novel details list follows the live queue, as manga's does
- * (MangaDetailsDownloadRowsTest). The queue only emits when it changes, so a list that loads after the
+ * (MangaViewModelSubscriptionTest). The queue only emits when it changes, so a list that loads after the
  * queue last spoke has to read what it already holds.
  */
 class NovelDetailsDownloadStateTest {
