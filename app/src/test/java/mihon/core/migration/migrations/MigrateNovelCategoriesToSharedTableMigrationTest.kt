@@ -18,8 +18,9 @@ import tachiyomi.data.category.CategoryRepositoryImpl
 
 /**
  * The migrator stamps its version only after the whole chain resolves, so a kill later in the chain
- * runs this again. The flag translation is a swap and the id shift has no ceiling, so a second run
- * must change nothing. Only the moved novel rows carry the novel flag layout.
+ * runs this again. The flag translation is a swap, so a second run must change nothing, and the id
+ * shift's ceiling keeps a run cut short from shifting an id twice. Only the moved novel rows carry the
+ * novel flag layout.
  */
 class MigrateNovelCategoriesToSharedTableMigrationTest {
 
@@ -78,13 +79,42 @@ class MigrateNovelCategoriesToSharedTableMigrationTest {
     fun `a second run leaves the shifted category ids alone`() = runTest {
         runTwice()
 
-        novelPreferences.defaultNovelCategory().get() shouldBe
-            5 + MigrateNovelCategoriesToSharedTableMigration.NOVEL_CATEGORY_ID_MIGRATION_OFFSET.toInt()
+        novelPreferences.defaultNovelCategory().get() shouldBe 5 + OFFSET.toInt()
     }
+
+    @Test
+    fun `every category-set preference shifts to the moved ids`() = runTest {
+        setPrefs().forEach { it.set(setOf("3", "0")) }
+
+        migration.invoke(MigrationContext(dryrun = false, previousVersion = 185))
+
+        setPrefs().map { it.get() } shouldBe List(5) { setOf("${3 + OFFSET}", "0") }
+    }
+
+    @Test
+    fun `an id a run cut short already shifted is not shifted again`() = runTest {
+        // The marker is only set once every preference has shifted, so a rerun meets some already moved.
+        novelPreferences.defaultNovelCategory().set(5 + OFFSET.toInt())
+        novelPreferences.novelUpdateCategories().set(setOf("3", "${7 + OFFSET}"))
+
+        migration.invoke(MigrationContext(dryrun = false, previousVersion = 185))
+
+        (novelPreferences.defaultNovelCategory().get() to novelPreferences.novelUpdateCategories().get()) shouldBe
+            ((5 + OFFSET.toInt()) to setOf("${3 + OFFSET}", "${7 + OFFSET}"))
+    }
+
+    private fun setPrefs() = listOf(
+        novelPreferences.removeExcludeCategories(),
+        novelPreferences.downloadNewChapterCategories(),
+        novelPreferences.downloadNewChapterCategoriesExclude(),
+        novelPreferences.novelUpdateCategories(),
+        novelPreferences.novelUpdateCategoriesExclude(),
+    )
 
     private companion object {
         // The novel layout's Downloaded sort type, and the manga layout's.
         const val NOVEL_DOWNLOADED = 0b100000L
         const val MANGA_DOWNLOADED = 0b100100L
+        const val OFFSET = MigrateNovelCategoriesToSharedTableMigration.NOVEL_CATEGORY_ID_MIGRATION_OFFSET
     }
 }
