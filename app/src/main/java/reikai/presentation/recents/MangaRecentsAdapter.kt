@@ -130,7 +130,8 @@ class MangaRecentsAdapter(
                 loaded = state.list != null,
             )
         }
-        readCopies.lane(rows, membership, ::missingSourcesAmong) { ids ->
+        val ownSource = { item: RecentsItem -> (item.payload as? HistoryWithRelations)?.sourceId?.toString() }
+        readCopies.lane(rows, membership, ownSource, ::missingSourcesAmong) { ids ->
             mergedChapterUnits.getCopiesAsFlow(ContentType.MANGA, ids)
         }
     }

@@ -145,11 +145,13 @@ internal class RecentsRowCopiesIndex {
 
     /**
      * [rows] re-emitted once the copies of its rows on a merged entry ([membership]) are in hand; which of
-     * their sources [missingAmong] says are not installed follows as a [changes] tick.
+     * their sources and every row's own ([ownSource]) [missingAmong] says are not installed follows as a
+     * [changes] tick.
      */
     fun lane(
         rows: Flow<RecentsLaneRows>,
         membership: Flow<Map<EntryId, Long>>,
+        ownSource: (RecentsItem) -> String?,
         missingAmong: suspend (Set<String>) -> Set<String>,
         query: (List<Long>) -> Flow<Map<Long, List<ChapterCopyRow>>>,
     ): Flow<RecentsLaneRows> = combine(rows, membership, ::Pair).flatMapLatest { (lane, groups) ->
@@ -167,8 +169,9 @@ internal class RecentsRowCopiesIndex {
             changes.tryEmit(Unit)
             // The rows go out first: answering for a novel source can wait on the first plugin load.
             emit(lane)
+            // An unmerged row's copy is its own, so its source is asked too: else it would count as installed.
             val sources = byId.values.flatten().mapTo(HashSet()) { it.ownerSource }
-            // Asked only of a merged row's sources, so a feed of none loads no novel plugin to answer.
+            lane.items.mapNotNullTo(sources, ownSource)
             missingSources = if (sources.isEmpty()) emptySet() else missingAmong(sources)
             changes.tryEmit(Unit)
         }

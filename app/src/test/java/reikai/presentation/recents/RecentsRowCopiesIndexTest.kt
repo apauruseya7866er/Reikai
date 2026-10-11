@@ -44,6 +44,24 @@ class RecentsRowCopiesIndexTest {
 
     private val noneMissing: suspend (Set<String>) -> Set<String> = { emptySet() }
 
+    /** Entry 2's own copy is on source "3"; entry 1's named copy is on "1". */
+    private val ownSource: (RecentsItem) -> String? = { if (it == aloneRow) "3" else "1" }
+
+    @Test
+    fun `a History row in no group whose source is missing offers no download`() = runTest {
+        val index = RecentsRowCopiesIndex()
+        index.lane(lane, flowOf(mapOf(merged to 7L)), ownSource, { it intersect setOf("3") }, query).toList()
+
+        recentsCopiesDownloadUi(
+            aloneRow.lane,
+            40L,
+            { index.copiesOf(40L, "t", "3", "c40", null, "/40") },
+            queued = { null },
+            progress = null,
+            isInstalled = index::isInstalled,
+        ) { false }.offered() shouldBe false
+    }
+
     /**
      * Entry 1's row download control, whose named copy (10) is on source "1", which is not installed;
      * [shared] puts copy 20 of the same chapter on source "2", which is.
@@ -53,7 +71,7 @@ class RecentsRowCopiesIndexTest {
         queued: Map<Long, Download.State> = emptyMap(),
     ): RecentsDownloadUi {
         val index = RecentsRowCopiesIndex()
-        index.lane(lane, flowOf(mapOf(merged to 7L)), { it intersect setOf("1") }) { ids ->
+        index.lane(lane, flowOf(mapOf(merged to 7L)), ownSource, { it intersect setOf("1") }) { ids ->
             flowOf(
                 ids.associateWith {
                     listOf(copy(it, it, 0)) +
@@ -78,7 +96,9 @@ class RecentsRowCopiesIndexTest {
     @Test
     fun `the rows arrive before the installed lookup answers`() = runTest {
         val rows = withTimeout(1_000) {
-            RecentsRowCopiesIndex().lane(lane, flowOf(mapOf(merged to 7L)), { awaitCancellation() }, query).first()
+            RecentsRowCopiesIndex().lane(lane, flowOf(mapOf(merged to 7L)), ownSource, {
+                awaitCancellation()
+            }, query).first()
         }
 
         rows.items shouldBe listOf(mergedRow, aloneRow)
@@ -108,7 +128,7 @@ class RecentsRowCopiesIndexTest {
     @Test
     fun `a History row whose only copy on disk is another source's reads as downloaded`() = runTest {
         val index = RecentsRowCopiesIndex()
-        index.lane(lane, flowOf(mapOf(merged to 7L)), noneMissing, query).toList()
+        index.lane(lane, flowOf(mapOf(merged to 7L)), ownSource, noneMissing, query).toList()
 
         stateOf(index, 10L, onDisk = setOf(20L)) shouldBe Download.State.DOWNLOADED
     }
@@ -116,7 +136,7 @@ class RecentsRowCopiesIndexTest {
     @Test
     fun `a row on an entry in no group answers for its own copy`() = runTest {
         val index = RecentsRowCopiesIndex()
-        index.lane(lane, flowOf(mapOf(merged to 7L)), noneMissing, query).toList()
+        index.lane(lane, flowOf(mapOf(merged to 7L)), ownSource, noneMissing, query).toList()
 
         stateOf(index, 40L, onDisk = setOf(50L)) shouldBe Download.State.NOT_DOWNLOADED
     }
@@ -124,7 +144,7 @@ class RecentsRowCopiesIndexTest {
     @Test
     fun `with merging off a row answers for its own copy`() = runTest {
         val index = RecentsRowCopiesIndex()
-        index.lane(lane, flowOf(emptyMap()), noneMissing, query).toList()
+        index.lane(lane, flowOf(emptyMap()), ownSource, noneMissing, query).toList()
 
         stateOf(index, 10L, onDisk = setOf(20L)) shouldBe Download.State.NOT_DOWNLOADED
     }
@@ -136,7 +156,7 @@ class RecentsRowCopiesIndexTest {
         var ticks = 0
         backgroundScope.launch { index.changes.collect { ticks++ } }
         backgroundScope.launch {
-            index.lane(lane, flowOf(mapOf(merged to 7L)), noneMissing) { ids ->
+            index.lane(lane, flowOf(mapOf(merged to 7L)), ownSource, noneMissing) { ids ->
                 stitched.map { done -> if (done) ids.associateWith { listOf(copy(it, it, 0)) } else emptyMap() }
             }.collect {}
         }
