@@ -36,8 +36,8 @@ class ReleasePredictionConformanceTest {
     }
 
     private suspend fun manga(case: Case): Pair<Int?, Instant?> {
-        val chapters = case.days.map { day ->
-            Chapter.create().copy(dateUpload = noon(day), dateFetch = noon(day))
+        val chapters = case.days.zip(case.fetchDays) { day, fetched ->
+            Chapter.create().copy(dateUpload = case.uploadOf(day), dateFetch = noon(fetched))
         }
         val getChapters = mockk<GetChaptersByMangaId> { coEvery { await(any(), any()) } returns chapters }
         val manga = Manga.create().copy(
@@ -50,11 +50,11 @@ class ReleasePredictionConformanceTest {
     }
 
     private suspend fun novel(case: Case): Pair<Int?, Instant?> {
-        val chapters = case.days.mapIndexed { index, day ->
+        val chapters = case.days.zip(case.fetchDays).mapIndexed { index, (day, fetched) ->
             NovelChapter(
                 id = index.toLong(), novelId = 1L, url = "/c$index", name = "c", read = false, bookmark = false,
-                lastTextProgress = 0L, chapterNumber = index.toDouble(), sourceOrder = 0L, dateFetch = noon(day),
-                dateUpload = noon(day), page = "",
+                lastTextProgress = 0L, chapterNumber = index.toDouble(), sourceOrder = 0L, dateFetch = noon(fetched),
+                dateUpload = case.uploadOf(day), page = "",
             )
         }
         val novel = Novel.create().copy(
@@ -72,6 +72,10 @@ class ReleasePredictionConformanceTest {
         val fetchInterval: Int = 0,
         val nextUpdate: Instant? = null,
         val lastUpdate: Instant? = null,
+        // When each chapter was fetched, apart from its upload day, so a type reading the two lists
+        // the other way round predicts differently.
+        val fetchDays: List<LocalDate> = days,
+        val undatedUploads: Boolean = false,
     ) {
         WEEKDAYS(
             everyDays("2019-12-02", "2020-01-20", 1)
@@ -105,9 +109,26 @@ class ReleasePredictionConformanceTest {
             fetchInterval = -5,
             lastUpdate = LocalDate.parse("2019-12-20").atStartOfDayIn(ZONE),
         ),
+
+        // Weekly uploads fetched on four days running: the uploads decide.
+        UPLOADS_AND_FETCHES_DIFFER(
+            everyDays("2019-12-04", "2019-12-25", 7),
+            LocalDate.parse("2020-01-01"),
+            fetchDays = everyDays("2019-12-22", "2019-12-25", 1),
+        ),
+
+        // No upload dates at all: the fetch dates decide.
+        UNDATED_UPLOADS(
+            everyDays("2019-12-22", "2019-12-25", 1),
+            LocalDate.parse("2020-01-01"),
+            fetchDays = everyDays("2019-12-04", "2019-12-25", 7),
+            undatedUploads = true,
+        ),
         ;
 
         val window get() = ReleaseInterval.window(today, ZONE)
+
+        fun uploadOf(day: LocalDate) = if (undatedUploads) null else noon(day)
     }
 
     private companion object {
