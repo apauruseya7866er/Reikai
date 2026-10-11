@@ -138,7 +138,7 @@ class MangaReaderViewModelHarness private constructor(
     /**
      * Opens [chapterId] of [manga], waits for the first chapter to land, then asks [probe]. [preferences]
      * seeds the store the reader, download and library settings read, by key. The page loader throws for
-     * a chapter in [failing], as a dropped connection does, and [incognito] answers for every source. A
+     * a chapter in [failing], as a dropped connection does, and the sources in [incognito] are private. A
      * source in [missingSources] resolves to a stub, as an uninstalled extension's does. The device is on
      * Wi-Fi only when [wifi] is set, so by default the next chapter's eager preload is held. A first open
      * that fails throws its error, unless [allowInitError] hands the failed state to [probe] instead.
@@ -152,7 +152,7 @@ class MangaReaderViewModelHarness private constructor(
         downloadedOnly: Boolean = false,
         sourceScoped: Boolean = false,
         failing: Set<Long> = emptySet(),
-        incognito: Boolean = false,
+        incognito: Set<Long> = emptySet(),
         missingSources: Set<Long> = emptySet(),
         wifi: Boolean = false,
         allowInitError: Boolean = false,
@@ -229,7 +229,11 @@ class MangaReaderViewModelHarness private constructor(
                 upsertHistory = mockk(relaxed = true),
                 updateChapter = UpdateChapter(chapters),
                 setMangaViewerFlags = mockk(relaxed = true),
-                getIncognitoState = mockk { coEvery { await(any<SourceKey>()) } returns incognito },
+                getIncognitoState = mockk {
+                    coEvery { await(any<SourceKey>()) } answers {
+                        (firstArg<SourceKey?>() as? SourceKey.Manga)?.id in incognito
+                    }
+                },
                 libraryPreferences = LibraryPreferences(prefs),
                 coverManager = mockk(relaxed = true),
                 updateManga = mockk(relaxed = true),

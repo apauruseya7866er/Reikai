@@ -1054,7 +1054,8 @@ class ReaderViewModel(
                 idOf = { it.id },
                 ownerOf = { it.mangaId },
             )
-            .filterNot { it.read }
+            // RK: a copy on a source in incognito is not written, as its own chapter would not be
+            .filterNot { it.read || incognito.of(it.mangaId) }
         // RK --> kept as chapters until written, so the source's own tracker hears which entry each is in
         updateChapter.awaitAll(duplicateUnreadChapters.map { ChapterUpdate(it.id) { read = true } })
         sourceTracker.readStateWritten(

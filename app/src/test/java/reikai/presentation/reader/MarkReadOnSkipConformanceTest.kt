@@ -93,7 +93,7 @@ class MarkReadOnSkipConformanceTest {
                     chapterId = left,
                     preferences = mapOf("mark_read_on_skip" to step.markOnSkip),
                     failing = if (step.loads) emptySet() else setOf(target),
-                    incognito = step.incognito,
+                    incognito = if (step.incognito) setOf(manga.source) else emptySet(),
                 ) { model, _ ->
                     // The mark is written on the IO dispatcher, which virtual time does not reach, so
                     // what the step launched is waited out before the read.

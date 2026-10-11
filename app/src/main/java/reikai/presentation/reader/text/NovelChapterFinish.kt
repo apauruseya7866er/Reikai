@@ -8,6 +8,7 @@ import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.interactor.SetNovelReadStatus
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.track.TrackNovelChapter
+import reikai.domain.reader.ChapterIncognito
 import reikai.domain.reader.duplicatesOfRead
 import tachiyomi.domain.library.service.LibraryPreferences
 
@@ -25,6 +26,7 @@ class NovelChapterFinish(
     private val libraryPreferences: LibraryPreferences,
     private val trackPreferences: TrackPreferences,
     private val trackNovelChapter: TrackNovelChapter,
+    private val incognito: ChapterIncognito,
     private val context: Context,
 ) {
 
@@ -50,7 +52,7 @@ class NovelChapterFinish(
                 numberOf = { it.chapterNumber },
                 idOf = { it.id },
                 ownerOf = { it.novelId },
-            )
+            ).filterNot { incognito.of(it.novelId) } // a private source's copy is not written, as manga's
         }
         // Without "delete after marked as read", as in Mihon's reader: the trim behind is the reader's rule.
         setNovelReadStatus.awaitFinishedInReader(listOf(chapter) + duplicates)

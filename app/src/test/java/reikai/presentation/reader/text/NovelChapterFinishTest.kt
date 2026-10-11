@@ -14,6 +14,7 @@ import reikai.domain.novel.interactor.DeleteNovelChaptersAfterRead
 import reikai.domain.novel.interactor.SetNovelReadStatus
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.track.TrackNovelChapter
+import reikai.domain.reader.ChapterIncognito
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.domain.library.service.LibraryPreferences
 import kotlin.time.Instant
@@ -56,6 +57,7 @@ class NovelChapterFinishTest {
         libraryPreferences = LibraryPreferences(libraryStore),
         trackPreferences = TrackPreferences(trackStore),
         trackNovelChapter = trackNovelChapter,
+        incognito = ChapterIncognito(sourceOf = { null }, isIncognito = { false }),
         context = mockk(relaxed = true),
     )
 
