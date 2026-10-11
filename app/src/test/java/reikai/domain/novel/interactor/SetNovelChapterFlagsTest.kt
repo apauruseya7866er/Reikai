@@ -15,6 +15,7 @@ import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapterFlags
 import reikai.domain.novel.model.NovelUpdate
 import reikai.domain.novel.model.effectiveHideChapterTitles
+import reikai.domain.novel.model.effectiveReadFilter
 import reikai.domain.novel.model.effectiveSortDescending
 import reikai.domain.novel.model.effectiveSorting
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
@@ -105,6 +106,15 @@ class SetNovelChapterFlagsTest {
         val repository = mockk<NovelRepository> { coEvery { update(capture(sent)) } returns true }
         SetNovelChapterFlags(repository, prefs).awaitClearLocalOverrides(displayed)
         displayed.copy(chapterFlags = sent.captured.chapterFlags!!).effectiveHideChapterTitles(prefs) shouldBe true
+    }
+
+    @Test
+    fun `clearing the local overrides returns the chapter filter to the global default`() = runTest {
+        val filtered = written(NovelChapterFlags.FILTER_LOCAL or NovelChapterFlags.SHOW_UNREAD) {
+            awaitClearLocalOverrides(it)
+        }
+
+        filtered.effectiveReadFilter(prefs) shouldBe 0L
     }
 
     private val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
