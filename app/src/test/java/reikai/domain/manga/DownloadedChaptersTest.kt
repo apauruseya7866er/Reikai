@@ -15,18 +15,26 @@ class DownloadedChaptersTest {
     private val second = Manga.create().copy(id = 2L, source = 20L, title = "second")
     private val local = Manga.create().copy(id = 3L, source = LocalSource.ID, title = "local")
 
-    // Each folder holds only the chapters stored under that owner, as the download cache answers.
-    private val onDisk = mapOf(first to setOf(11L), second to setOf(21L))
+    // Each owner's folder holds chapter folders by name, as the download cache matches them, so a chapter
+    // probed under another owner is found when that folder holds one of its name.
+    private val folders = mapOf(first to setOf("Ch 1"), second to setOf("Ch 2"))
     private val downloadManager = mockk<DownloadManager> {
         every { getDownloadedChapterIds(any(), any()) } answers {
-            val owned = onDisk[secondArg<Manga>()].orEmpty()
-            firstArg<List<Chapter>>().map { it.id }.filterTo(HashSet()) { it in owned }
+            val names = folders[secondArg<Manga>()].orEmpty()
+            firstArg<List<Chapter>>().filter { it.name in names }.mapTo(HashSet()) { it.id }
         }
     }
 
     @Test
     fun `each chapter is looked up in its own owner's folder`() {
-        val chapters = listOf(chapter(11L, 1L), chapter(12L, 1L), chapter(21L, 2L), chapter(22L, 2L))
+        // 12 and 22 share a name with the other owner's download, but neither is downloaded under its own.
+        val chapters =
+            listOf(
+                chapter(11L, 1L, "Ch 1"),
+                chapter(12L, 1L, "Ch 2"),
+                chapter(21L, 2L, "Ch 2"),
+                chapter(22L, 2L, "Ch 1"),
+            )
         val owners = mapOf(1L to first, 2L to second)
 
         downloadManager.downloadedChapterIds(chapters) { owners.getValue(it.mangaId) } shouldBe setOf(11L, 21L)
@@ -34,10 +42,14 @@ class DownloadedChaptersTest {
 
     @Test
     fun `a local entry's chapters are all on disk`() {
-        val chapters = listOf(chapter(31L, 3L), chapter(32L, 3L))
+        val chapters = listOf(chapter(31L, 3L, "Ch 31"), chapter(32L, 3L, "Ch 32"))
 
         downloadManager.downloadedChapterIds(chapters) { local } shouldBe setOf(31L, 32L)
     }
 
-    private fun chapter(id: Long, mangaId: Long) = Chapter.create().copy(id = id, mangaId = mangaId, name = "$id")
+    private fun chapter(id: Long, mangaId: Long, name: String) = Chapter.create().copy(
+        id = id,
+        mangaId = mangaId,
+        name = name,
+    )
 }

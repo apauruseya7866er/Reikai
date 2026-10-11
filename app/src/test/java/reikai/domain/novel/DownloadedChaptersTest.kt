@@ -15,33 +15,41 @@ class DownloadedChaptersTest {
     private val first = Novel.create().copy(id = 1L, source = "a", title = "One")
     private val second = Novel.create().copy(id = 2L, source = "b", title = "Two")
 
-    // The index answers a chapter as on disk only when it is asked under its own novel.
+    // Each novel's folder holds files by chapter name, as the real index matches them, so a chapter probed
+    // under another novel is found when that folder holds a file of its name.
+    private val folders = mapOf(first to setOf("Chapter 5"), second to setOf("Chapter 7"))
     private val cache = mockk<NovelDownloadCache> {
         every { downloadedChapterIds(any<Novel>(), any()) } answers {
-            val novel = firstArg<Novel>()
-            secondArg<List<NovelChapter>>().filter { it.novelId == novel.id }.mapTo(HashSet()) { it.id }
+            val names = folders[firstArg<Novel>()].orEmpty()
+            secondArg<List<NovelChapter>>().filter { it.name in names }.mapTo(HashSet()) { it.id }
         }
     }
 
     @Test
     fun `chapters of two novels are each found under their own novel`() {
-        val chapters = listOf(chapter(10L, novelId = 1L), chapter(20L, novelId = 2L))
+        // 21 shares its name with the first novel's download, but is not downloaded under its own.
+        val chapters = listOf(
+            chapter(10L, novelId = 1L, name = "Chapter 5"),
+            chapter(20L, novelId = 2L, name = "Chapter 7"),
+            chapter(21L, novelId = 2L, name = "Chapter 5"),
+        )
 
         cache.downloadedChapterIds(chapters, mapOf(1L to first, 2L to second)) shouldBe setOf(10L, 20L)
     }
 
     @Test
     fun `a chapter whose novel is no longer stored is not on disk`() {
-        val chapters = listOf(chapter(10L, novelId = 1L), chapter(20L, novelId = 2L))
+        val chapters =
+            listOf(chapter(10L, novelId = 1L, name = "Chapter 5"), chapter(20L, novelId = 2L, name = "Chapter 5"))
 
         cache.downloadedChapterIds(chapters, mapOf(1L to first)) shouldBe setOf(10L)
     }
 
-    private fun chapter(id: Long, novelId: Long) = NovelChapter(
+    private fun chapter(id: Long, novelId: Long, name: String) = NovelChapter(
         id = id,
         novelId = novelId,
         url = "/c/$id",
-        name = "Chapter $id",
+        name = name,
         read = false,
         bookmark = false,
         lastTextProgress = 0L,
