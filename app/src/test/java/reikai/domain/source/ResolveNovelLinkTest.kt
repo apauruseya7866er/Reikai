@@ -4,6 +4,7 @@ import android.content.Context
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import io.kotest.matchers.shouldBe
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -18,6 +19,8 @@ import reikai.data.novel.NovelChapterRepositoryImpl
 import reikai.data.novel.NovelRepositoryImpl
 import reikai.domain.chapter.NoChapterNumberOverrides
 import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelChapter
+import reikai.novel.download.NovelDownloadManager
 import reikai.novel.host.ChapterItem
 import reikai.novel.host.SourceNovel
 import reikai.novel.source.NovelExtensionFormat
@@ -44,6 +47,7 @@ class ResolveNovelLinkTest {
     private lateinit var chapters: NovelChapterRepositoryImpl
     private lateinit var coverCache: CoverCache
     private var loads = 0
+    private val downloads = mockk<NovelDownloadManager>(relaxed = true)
 
     @TempDir
     lateinit var cacheRoot: File
@@ -78,6 +82,7 @@ class ResolveNovelLinkTest {
         libraryPreferences = LibraryPreferences(InMemoryPreferenceStore()),
         chapterNumberOverrides = NoChapterNumberOverrides,
         coverCache = coverCache,
+        novelDownloadManager = { downloads },
     )
 
     private suspend fun stored(url: String, sourceId: String = "a"): Novel {
@@ -111,6 +116,29 @@ class ResolveNovelLinkTest {
         val target = resolver(source).byHook(LINK) as NovelLinkTarget.Chapter
 
         target.chapterId shouldBe chapters.getByUrlAndNovelId("/c/9", novel.id)!!.id
+    }
+
+    @Test
+    fun `a chapter link's refresh moves the download of a chapter the source retitled`() = runTest {
+        val novel = stored("/novel/1")
+        chapters.insert(
+            NovelChapter(
+                id = -1L, novelId = novel.id, url = "/c/1", name = "Old", read = false, bookmark = false,
+                lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L,
+                dateFetch = Instant.fromEpochMilliseconds(0L), dateUpload = null, page = "",
+            ),
+        )
+        val source = FakeSource(
+            "a",
+            readLink = { NovelLink.Chapter("/novel/1", "/c/9") },
+            parse = {
+                SourceNovel(it, name = "N", chapters = listOf(ChapterItem("New", "/c/1"), ChapterItem("9", "/c/9")))
+            },
+        )
+
+        resolver(source).byHook(LINK)
+
+        coVerify { downloads.renameChapter(any(), match { it.name == "Old" }, match { it.name == "New" }) }
     }
 
     @Test

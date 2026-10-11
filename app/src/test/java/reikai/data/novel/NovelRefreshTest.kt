@@ -107,7 +107,7 @@ class NovelRefreshTest {
         source: NovelSource,
         manualFetch: Boolean = false,
         preferences: LibraryPreferences = libraryPreferences,
-        downloadManager: NovelDownloadManager? = null,
+        downloadManager: NovelDownloadManager = mockk(relaxed = true),
     ) = refreshNovelFromSource(
         novel,
         source,

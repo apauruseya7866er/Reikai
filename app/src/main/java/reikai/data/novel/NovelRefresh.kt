@@ -129,7 +129,8 @@ suspend fun refreshNovelFromSource(
     libraryPreferences: LibraryPreferences,
     numberOverrides: ChapterNumberOverrideRepository,
     coverCache: CoverCache,
-    novelDownloadManager: NovelDownloadManager? = null,
+    // Required: without it a re-titled chapter or novel leaves its download behind under the old name
+    novelDownloadManager: NovelDownloadManager,
     manualFetch: Boolean = false,
     fetchWindow: ClosedRange<Instant>? = null,
     details: StoredDetails = StoredDetails.KEPT,

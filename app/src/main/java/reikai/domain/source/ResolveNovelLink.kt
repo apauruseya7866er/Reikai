@@ -9,6 +9,7 @@ import reikai.domain.chapter.ChapterNumberOverrideRepository
 import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
+import reikai.novel.download.NovelDownloadManager
 import reikai.novel.host.SourceNovel
 import reikai.novel.source.NovelLink
 import reikai.novel.source.NovelSource
@@ -35,6 +36,8 @@ class ResolveNovelLink(
     private val libraryPreferences: LibraryPreferences,
     private val chapterNumberOverrides: ChapterNumberOverrideRepository,
     private val coverCache: CoverCache,
+    // Built only by a chapter link's refresh, since building it reads the saved queue
+    private val novelDownloadManager: () -> NovelDownloadManager,
 ) {
 
     // A novel screen opening is the sanctioned retry point for a plugin that failed to load.
@@ -46,6 +49,7 @@ class ResolveNovelLink(
         libraryPreferences: LibraryPreferences,
         chapterNumberOverrides: ChapterNumberOverrideRepository,
         coverCache: CoverCache,
+        novelDownloadManager: () -> NovelDownloadManager,
     ) : this(
         {
             sourceManager.ensureLoaded()
@@ -56,6 +60,7 @@ class ResolveNovelLink(
         libraryPreferences,
         chapterNumberOverrides,
         coverCache,
+        novelDownloadManager,
     )
 
     private var loaded: List<NovelSource>? = null
@@ -126,6 +131,7 @@ class ResolveNovelLink(
                     libraryPreferences,
                     chapterNumberOverrides,
                     coverCache,
+                    novelDownloadManager(),
                 )
                 novelChapterRepository.getByUrlAndNovelId(link.chapterPath, novel.id)
             }.getOrNull()

@@ -184,6 +184,7 @@ class NovelRefreshHalf : RefreshHalf {
             LibraryPreferences(InMemoryPreferenceStore()),
             NoChapterNumberOverrides,
             coverCache = mockk(relaxed = true),
+            novelDownloadManager = mockk(relaxed = true),
         )
 
         return novels.getById(novelId)!!.let { Details(it.author, it.description, it.genre, it.status) }
