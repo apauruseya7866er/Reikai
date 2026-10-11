@@ -4,6 +4,7 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -16,6 +17,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
 import reikai.domain.library.ContentType
@@ -196,14 +198,35 @@ class MergedStitchReconcileTest {
     @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
     fun `a pass that only renumbers a chapter restitches the group`(type: ContentType) = runTest {
         val fixture = fixture(type)
+        // Untitled, so both types pair the two members' chapters on their numbers alone.
+        val group = fixture.group(listOf("" to 1.0, "" to 2.0), listOf("" to 1.0, "" to 2.0, "" to 5.0))
+        val reconcile = fixture.reconcile()
+        reconcile.await()
+        val renumbered = fixture.chapterIdsOf(fixture.membersOf(group).first()).first()
+        val newPartner = fixture.chapterIdsOf(fixture.membersOf(group).last()).last()
+
+        reconcile.afterPass { fixture.renumber(chapterId = renumbered, number = 5.0) }
+
+        unitOf(type, group, renumbered) shouldBe unitOf(type, group, newPartner)
+    }
+
+    // Manga pairs chapters on numbers alone, so only a novel's stitch reads a chapter's name.
+    @Test
+    fun `a pass that only renames a novel chapter restitches the group`() = runTest {
+        val fixture = NovelFixture()
         val group = fixture.twoSourceGroup()
         val reconcile = fixture.reconcile()
         reconcile.await()
+        val (renamed, _) = fixture.chapterIdsOf(fixture.membersOf(group).first())
+        val (formerPartner, _) = fixture.chapterIdsOf(fixture.membersOf(group).last())
 
-        reconcile.afterPass { fixture.renumber(chapterId = 1L, number = 5.0) }
+        reconcile.afterPass { fixture.rename(chapterId = renamed, name = "Chapter 1: Zulu") }
 
-        units.isStale(type, group) shouldBe false
+        unitOf(ContentType.NOVELS, group, renamed) shouldNotBe unitOf(ContentType.NOVELS, group, formerPartner)
     }
+
+    private suspend fun unitOf(type: ContentType, group: Long, chapterId: Long) =
+        units.getStitch(type, group).single { it.chapterId == chapterId }.unit
 
     @ParameterizedTest
     @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
@@ -591,6 +614,12 @@ class MergedStitchReconcileTest {
 
         override fun reorderLoaded(chapterId: Long, order: Long) {
             chapters.replaceAll { if (it.id == chapterId) it.copy(sourceOrder = order) else it }
+        }
+
+        /** What a source sync writes when a chapter is retitled: the row changes, nothing is added. */
+        suspend fun rename(chapterId: Long, name: String) {
+            driver.execute(null, "UPDATE novel_chapters SET name = '$name' WHERE _id = $chapterId", 0).await()
+            chapters.replaceAll { if (it.id == chapterId) it.copy(name = name) else it }
         }
     }
 
