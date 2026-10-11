@@ -198,7 +198,7 @@ class NovelRecentsAdapter(
         val resolved = resolveTarget(item) ?: return null
         val missing =
             missingSourcesAmong(novelRepository.ownersOf(resolved.pooled).values.mapTo(HashSet()) { it.source })
-        return resolved.toTargetRow(item.lane, id = { it.id }, project = { copies ->
+        return resolved.toTargetRow(id = { it.id }, project = { copies ->
             val ownerOf = novelRepository.ownersOf(copies)
             copies.mapNotNull { copy ->
                 val owner = ownerOf[copy.novelId] ?: return@mapNotNull null

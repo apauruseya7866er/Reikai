@@ -99,8 +99,9 @@ class RecentsTarget<T>(
 )
 
 /**
- * Merge-aware on all three lanes: a collapsed row stands for the whole group, so it must not reopen
- * what another of its sources already read. An unmerged entry passes its own list and an empty stitch.
+ * Merge-aware on the read and added lanes: a collapsed row stands for the whole group, so it must not
+ * reopen what another of its sources already read. An updated lane names its own chapter, and the
+ * engine opens that without asking here. An unmerged entry passes its own list and an empty stitch.
  * [group] and [ownSource] come in ascending reading order; only [ownSource]'s query is paid, and only
  * when the group list cannot answer. Each provider supplies its chapter reads and hidden rule.
  */
@@ -149,12 +150,12 @@ class RecentsTargetCopy(
 )
 
 /**
- * The row [lane] draws for this target, so the label, the state and the download control all describe
- * the chapter a tap opens. [project] answers every copy whose owner it can find, keyed by id, and runs
- * here rather than on the draw path; no row when it cannot answer the named chapter.
+ * The row a combined-mode read row draws for this target, the only rows that resolve one, so the label,
+ * the state and the download control all describe the chapter a tap opens. [project] answers every copy
+ * whose owner it can find, keyed by id, and runs here rather than on the draw path; no row when it
+ * cannot answer the named chapter.
  */
 internal suspend fun <T> RecentsTarget<T>.toTargetRow(
-    lane: RecentsLane,
     id: (T) -> Long,
     project: suspend (List<T>) -> Map<Long, RecentsTargetCopy>,
     download: (chapterId: Long, copies: () -> List<ChapterCopyRow>) -> RecentsDownloadUi,
@@ -173,7 +174,7 @@ internal suspend fun <T> RecentsTarget<T>.toTargetRow(
     }
     return RecentsTargetRow(
         ref = ChapterRef(chapter.owner, chapterId),
-        chapter = lane.chapterLabel(chapter.name, chapter.number),
+        chapter = RecentsChapterUi.Number(chapter.number),
         state = chapterState(
             read = marks.isRead(chapterId, chapter.read),
             bookmark = marks.isBookmarked(chapterId, chapter.bookmark),

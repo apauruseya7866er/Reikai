@@ -5,10 +5,10 @@ import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
 import reikai.domain.entry.EntryId
 import reikai.domain.merge.ChapterUnit
+import reikai.domain.merge.GroupMarks
 import reikai.domain.reader.ChapterProgress
 
 /**
@@ -27,11 +27,11 @@ class RecentsTargetRowTest {
         ChapterUnit(12L, 1, 1),
     )
 
+    /** The row a read row resolves to, through the lane's own rule. */
     private suspend fun row(
-        lane: RecentsLane,
+        lane: RecentsLane.Read,
         group: List<Copy>,
         pooled: List<Copy> = group,
-        progress: ChapterProgress = ChapterProgress.Pages(3, 10),
         onDisk: Set<Long> = emptySet(),
     ): RecentsTargetRow? = resolveRecentsTarget(
         lane = lane,
@@ -43,8 +43,26 @@ class RecentsTargetRowTest {
         read = { it.read },
         bookmark = { it.bookmark },
         isHidden = { false },
-    )?.toTargetRow(
-        lane,
+    )?.project(onDisk = onDisk)
+
+    /** The row drawn for [chapterId] once resolved, so the projection is checked apart from the rule. */
+    private suspend fun rowOf(
+        chapterId: Long,
+        group: List<Copy>,
+        pooled: List<Copy> = group,
+        progress: ChapterProgress = ChapterProgress.Pages(3, 10),
+    ): RecentsTargetRow? = RecentsTarget(
+        chapterId,
+        group.associateBy { it.id },
+        stitch,
+        pooled,
+        GroupMarks.of(pooled, pooled, stitch, { it.id }, { it.read }, { it.bookmark }),
+    ).project(progress = progress)
+
+    private suspend fun RecentsTarget<Copy>.project(
+        progress: ChapterProgress = ChapterProgress.Pages(3, 10),
+        onDisk: Set<Long> = emptySet(),
+    ): RecentsTargetRow? = toTargetRow(
         id = { it.id },
         project = { copies ->
             copies.filter { it.owner != UNKNOWN_OWNER }.associate { copy ->
@@ -97,54 +115,45 @@ class RecentsTargetRowTest {
     fun `a chapter read on another source draws read, without its progress`(progress: ChapterProgress) = runTest {
         val pooled = listOf(Copy(1, 100, read = true), Copy(11, 200))
 
-        row(updated(11), group = listOf(Copy(11, 200)), pooled = pooled, progress = progress)?.state shouldBe
+        rowOf(11, group = listOf(Copy(11, 200)), pooled = pooled, progress = progress)?.state shouldBe
             RecentsChapterState(read = true, bookmark = false, progress = null)
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("progresses")
     fun `an unread chapter keeps its progress`(progress: ChapterProgress) = runTest {
-        row(updated(11), group = listOf(Copy(11, 200)), progress = progress)?.state?.progress shouldBe progress
+        rowOf(11, group = listOf(Copy(11, 200)), progress = progress)?.state?.progress shouldBe progress
     }
 
     @Test
     fun `a chapter bookmarked on another source draws bookmarked`() = runTest {
         val pooled = listOf(Copy(1, 100, bookmark = true), Copy(11, 200))
 
-        row(updated(11), group = listOf(Copy(11, 200)), pooled = pooled)?.state?.bookmark shouldBe true
+        rowOf(11, group = listOf(Copy(11, 200)), pooled = pooled)?.state?.bookmark shouldBe true
     }
 
     @Test
     fun `a merged row opens the chapter under the source that owns it`() = runTest {
-        row(updated(11), group = listOf(Copy(11, 200)))?.ref shouldBe ChapterRef(EntryId.Manga(200), 11L)
+        rowOf(11, group = listOf(Copy(11, 200)))?.ref shouldBe ChapterRef(EntryId.Manga(200), 11L)
     }
 
     @Test
     fun `a named chapter whose owner cannot be found draws no row`() = runTest {
-        row(updated(7), group = listOf(Copy(7, UNKNOWN_OWNER))) shouldBe null
+        rowOf(7, group = listOf(Copy(7, UNKNOWN_OWNER))) shouldBe null
     }
 
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("labels")
-    fun `the chapter is labelled the way its lane labels its own`(lane: RecentsLane, label: RecentsChapterUi) =
-        runTest {
-            row(lane, group = listOf(Copy(11, 200)))?.chapter shouldBe label
-        }
+    @Test
+    fun `the chapter is labelled by its number, as a read row labels its own`() = runTest {
+        row(read(11), group = listOf(Copy(11, 200)))?.chapter shouldBe RecentsChapterUi.Number(11.0)
+    }
 
     companion object {
         private const val UNKNOWN_OWNER = 300L
 
         private fun ref(chapterId: Long) = ChapterRef(EntryId.Manga(100L), chapterId)
         private fun read(chapterId: Long) = RecentsLane.Read(ref(chapterId))
-        private fun updated(chapterId: Long) = RecentsLane.Updated(ref(chapterId))
 
         @JvmStatic
         fun progresses() = listOf(ChapterProgress.Pages(3, 10), ChapterProgress.Percent(4200))
-
-        @JvmStatic
-        fun labels() = listOf(
-            Arguments.of(updated(11), RecentsChapterUi.Named("c11")),
-            Arguments.of(read(11), RecentsChapterUi.Number(11.0)),
-        )
     }
 }

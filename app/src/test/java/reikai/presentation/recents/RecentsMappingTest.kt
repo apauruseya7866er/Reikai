@@ -63,15 +63,6 @@ class RecentsMappingTest {
         probe.added().lane shouldBe RecentsLane.Added
     }
 
-    /** Both adapters label a resolved chapter through this, so one case covers the two of them. */
-    @Test
-    fun `an update resolved onto another chapter still names it the way an update does`() {
-        val update = RecentsLane.Updated(ChapterRef(EntryId.Manga(1), 15))
-
-        update.chapterLabel(name = "Chapter 10: The start", number = 10.0) shouldBe
-            RecentsChapterUi.Named("Chapter 10: The start")
-    }
-
     @ParameterizedTest(name = "{0}")
     @MethodSource("probes")
     fun `an updated row is labelled by the chapter's name`(probe: RecentsMappingProbe) {

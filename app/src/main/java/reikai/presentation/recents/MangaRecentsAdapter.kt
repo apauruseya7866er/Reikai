@@ -201,7 +201,6 @@ class MangaRecentsAdapter(
         val (resolved, mangaById) = resolveTarget(item) ?: return null
         val missing = missingSourcesAmong(mangaById.values.mapTo(HashSet()) { it.source.toString() })
         return resolved.toTargetRow(
-            item.lane,
             id = { it.id },
             project = { copies ->
                 copies.mapNotNull { copy ->
