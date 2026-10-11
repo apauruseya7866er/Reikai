@@ -189,10 +189,6 @@ class ExtensionManager(
 
     // RK -->
 
-    /** Read straight off the map, so it holds whatever the last [findAvailableExtensions] found. */
-    fun getAvailableNovelExtensions(): List<Extension.Available> =
-        availableNovelExtensionListFlow.value.associateBy { it.pkgName }.values.toList()
-
     suspend fun getLoadedNovelExtensions(): List<Extension.Loaded> {
         initialized.await()
         return loadedNovelExtensionMapFlow.value.values.toList()
