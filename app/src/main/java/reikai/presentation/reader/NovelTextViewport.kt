@@ -235,14 +235,19 @@ class NovelTextViewport(
      * Ends a child's press once its touch is a drag. A view keeps its click and its long press for as
      * long as the finger stays inside it, and a chapter's text is as wide as the screen: a sideways
      * drag ended as a tap, and one slower than a long press selected the text under it, which stops
-     * the list seeing the finger lift and so stepped no chapter. Set on every child given a press.
+     * the list seeing the finger lift and so stepped no chapter. Set on every child given a press. The
+     * lift reaches unselectable text as a cancel, since [LinkOnlyMovementMethod] acts on any lift and
+     * never sees the drag. Selectable text keeps its lift, which ends a selection drag.
      */
-    private val dragEndsPress = View.OnTouchListener { child, _ ->
-        if (dragging) {
-            child.cancelLongPress()
-            child.isPressed = false
-        }
-        false
+    private val dragEndsPress = View.OnTouchListener { child, event ->
+        if (!dragging) return@OnTouchListener false
+        child.cancelLongPress()
+        child.isPressed = false
+        if (textSelectable || event.actionMasked != MotionEvent.ACTION_UP) return@OnTouchListener false
+        val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+        child.onTouchEvent(cancel)
+        cancel.recycle()
+        true
     }
 
     /** Only consulted for selectable text, where the Editor takes the touch and no click follows. */

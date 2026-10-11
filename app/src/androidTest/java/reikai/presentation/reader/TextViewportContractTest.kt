@@ -1600,6 +1600,21 @@ class TextViewportContractTest(private val renderer: Renderer) {
         assertEquals(link.top, textBox(JUMP_LINK).top, textSizePx())
     }
 
+    /** A touch that had a second finger is no tap, wherever its last finger lifts; a browser fires no click either. */
+    @Test
+    fun aTwoFingerTouchLiftedOnALinkDoesNotFollowIt() {
+        val target = "<p id=\"note\">$NOTE</p>"
+        open(chapter(FIRST, "<p><a href=\"#note\">$JUMP_LINK</a></p>${long("filler")}$target${long("after")}"))
+        val link = textBox(JUMP_LINK)
+        val at = viewLocation()
+        val onLink = link.centerX() - at[0]
+        // The first finger well past the link on its line, lifted first, so the last one lifts on the link.
+        twoFingerTouch(view.width - EDGE_PX, onLink, liftFirstFirst = true, y = link.centerY() - at[1])
+        settle()
+        awaitScrollStill()
+        assertEquals(link.top, textBox(JUMP_LINK).top, textSizePx())
+    }
+
     private fun tapOn(text: String) {
         val link = textBox(text)
         val at = viewLocation()
@@ -3044,9 +3059,8 @@ class TextViewportContractTest(private val renderer: Renderer) {
         event.recycle()
     }
 
-    /** Two fingers set down at [firstX] and [secondX] mid-height, neither moving, then lifted. */
-    private fun twoFingerTouch(firstX: Float, secondX: Float, liftFirstFirst: Boolean) {
-        val y = view.height / 2f
+    /** Two fingers set down at [firstX] and [secondX] at [y], mid-height unless given, neither moving, then lifted. */
+    private fun twoFingerTouch(firstX: Float, secondX: Float, liftFirstFirst: Boolean, y: Float = view.height / 2f) {
         instrumentation.runOnMainSync {
             val down = SystemClock.uptimeMillis()
             touch(MotionEvent.ACTION_DOWN, listOf(firstX), y, down, down)

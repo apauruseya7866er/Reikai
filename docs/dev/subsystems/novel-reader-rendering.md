@@ -85,7 +85,7 @@ Taps are read from an `OnItemTouchListener` above the chunks, with one tap owner
 - **Restyling a chunk holding `PrecomputedText` copies it into a `SpannableStringBuilder` first**, never `toString()`, which drops every span, and never leaves the `PrecomputedText`, which crashes the long-press drag path.
 - **The renderer checks `ChapterTextBlock.discarded`, not `isAttachedToWindow`.** A chapter queued below the reader is never attached until it has a height.
 - **A recycler never lays out an item entirely above the viewport only while the screen is full.** With a short chapter and nothing below, the layout manager scrolls a newly joined chapter into view at its placeholder height, which is why a chapter joins only once its text is set.
-- **A `TextView` queues its own click before its movement method sees a link**, so `LinkOnlyMovementMethod` cancels that click, or every link tap is also a tap zone.
+- **A `TextView` queues its own click before its movement method sees a link**, so `LinkOnlyMovementMethod` cancels that click, or every link tap is also a tap zone. It also acts on any lift, so `dragEndsPress` hands unselectable text a cancel in place of the lift of a drag or a two-finger touch.
 - **Two of tsundoku's preference reactions rebuild the whole document** (indent, spacing, text selectable), and its observer's hardcoded `drop` counts break when a preference is added. Neither is inherited; settings reach the viewport through `applySettings` and the redraw rule.
 - **A rebuild or a mode switch must not re-aim at the session's first chapter.** `load()` reads `pendingChapterId`, which only an explicit open moves.
 
