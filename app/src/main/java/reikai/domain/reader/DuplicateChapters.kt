@@ -70,14 +70,14 @@ fun <T> List<T>.downloadedOrCurrent(current: T, idOf: (T) -> Long, downloadedIds
  * skip-duplicate on, same-numbered copies removed. Hidden first, so a copy nothing shows can never be the
  * one a duplicate group keeps and take the whole number with it. For the same reason a copy in
  * [downloadedOnlyIds], the chapters on disk while Downloaded only is on (null while it is off), is kept
- * first, then one a forward step may land on ([isForwardEligible]). Both readers sort before calling this,
- * and download-ahead calls it too, so it queues what the reader stops on.
+ * first, then one a forward step may land on ([isForwardEligible]). Download-ahead calls this per page turn
+ * so it queues what the reader stops on, hence the on-disk set (a probe per chapter) is asked for lazily.
  */
 fun <T> List<T>.navigableChapters(
     current: T,
     isHidden: (T) -> Boolean,
     isForwardEligible: (T) -> Boolean,
-    downloadedOnlyIds: Set<Long>?,
+    downloadedOnlyIds: () -> Set<Long>?,
     skipDuplicates: Boolean,
     numberOf: (T) -> Double,
     idOf: (T) -> Long,
@@ -86,6 +86,7 @@ fun <T> List<T>.navigableChapters(
 ): List<T> {
     val shown = filter { idOf(it) == idOf(current) || !isHidden(it) }
     if (!skipDuplicates) return shown
+    val downloadedOnlyIds = downloadedOnlyIds()
     val rank = { chapter: T ->
         val offDisk = downloadedOnlyIds != null && idOf(chapter) !in downloadedOnlyIds
         (if (offDisk) 2 else 0) + (if (isForwardEligible(chapter)) 0 else 1)

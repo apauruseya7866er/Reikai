@@ -1225,7 +1225,7 @@ class NovelReaderViewModel(
             current,
             isHidden = isHidden,
             isForwardEligible = isForwardEligible,
-            downloadedOnlyIds = onDisk,
+            downloadedOnlyIds = { onDisk },
             skipDuplicates = novelPreferences.readerSkipDuplicateChapters().get(),
             numberOf = { it.chapterNumber },
             idOf = { it.id },

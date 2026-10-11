@@ -17,7 +17,7 @@ class NavigableChaptersTest {
     private fun List<Ch>.navigable(
         current: Ch,
         skipDuplicates: Boolean = true,
-        downloadedOnlyIds: Set<Long>? = null,
+        downloadedOnlyIds: () -> Set<Long>? = { null },
     ) = navigableChapters(
         current,
         isHidden = { it.hidden },
@@ -92,7 +92,22 @@ class NavigableChaptersTest {
     fun `with Downloaded only the copy on disk wins a duplicate group`() {
         val fiveEligible = Ch(id = 50, number = 5.0, origin = "x")
         val fiveOnDisk = Ch(id = 51, number = 5.0, origin = "y", eligible = false)
-        listOf(one, fiveEligible, fiveOnDisk).navigable(one, downloadedOnlyIds = setOf(1L, 51L)).map { it.id } shouldBe
+        listOf(one, fiveEligible, fiveOnDisk).navigable(one, downloadedOnlyIds = {
+            setOf(1L, 51L)
+        }).map { it.id } shouldBe
             listOf(1L, 51L)
+    }
+
+    /** Download-ahead asks on every page turn, and finding what is on disk probes every chapter of the group. */
+    @Test
+    fun `with skip-duplicate off what is on disk is never looked up`() {
+        var lookedUp = false
+
+        listOf(one, Ch(id = 5, number = 5.0)).navigable(one, skipDuplicates = false, downloadedOnlyIds = {
+            lookedUp = true
+            setOf(1L)
+        })
+
+        lookedUp shouldBe false
     }
 }

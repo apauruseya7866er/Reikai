@@ -324,7 +324,7 @@ class ReaderViewModel(
             current,
             isHidden = { hidden.isNotEmpty() && it.hiddenKey(mangaForChapterId(it.mangaId)) in hidden },
             isForwardEligible = isForwardEligible,
-            downloadedOnlyIds = if (basePreferences.downloadedOnly.get()) onDiskIds(chapters) else null,
+            downloadedOnlyIds = { if (basePreferences.downloadedOnly.get()) onDiskIds(chapters) else null },
             skipDuplicates = readerPreferences.skipDupe.get(),
             numberOf = { it.chapterNumber },
             idOf = { it.id },
