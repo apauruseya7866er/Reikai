@@ -411,8 +411,6 @@ class NovelReaderViewModelHarness private constructor(
             listingCover = null,
             isFromSource = false,
             novelRepo = novelRepo,
-            updateNovel = mockk(relaxed = true),
-            sourceTracker = mockk(relaxed = true),
             coverCache = mockk(relaxed = true),
             resetEntryInfo = mockk(relaxed = true),
             setNovelChapterFlags = SetNovelChapterFlags(novelRepo, novelPreferences),

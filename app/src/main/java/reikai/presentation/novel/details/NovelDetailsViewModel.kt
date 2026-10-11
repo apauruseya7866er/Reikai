@@ -106,7 +106,6 @@ import reikai.domain.novel.interactor.RemoveNovelsFromLibrary
 import reikai.domain.novel.interactor.SetCustomNovelInfo
 import reikai.domain.novel.interactor.SetNovelChapterFlags
 import reikai.domain.novel.interactor.SetNovelReadStatus
-import reikai.domain.novel.interactor.UpdateNovel
 import reikai.domain.novel.model.CustomNovelInfo
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
@@ -136,7 +135,6 @@ import reikai.domain.track.autobind.AutoBindTrackers
 import reikai.domain.track.autobind.TrackingButtonState
 import reikai.domain.track.autobind.offerTrackers
 import reikai.domain.track.autobind.trackingButtonState
-import reikai.domain.track.source.SourceTrackerDispatcher
 import reikai.novel.content.NovelWordDensity
 import reikai.novel.download.NovelDownload
 import reikai.novel.download.NovelDownloadCache
@@ -201,8 +199,6 @@ class NovelDetailsViewModel(
     @Assisted private val listingCover: String?,
     @Assisted val isFromSource: Boolean,
     private val novelRepo: NovelRepository,
-    private val updateNovel: UpdateNovel,
-    private val sourceTracker: SourceTrackerDispatcher,
     private val coverCache: CoverCache,
     private val resetEntryInfo: ResetEntryInfo,
     private val setNovelChapterFlags: SetNovelChapterFlags,
