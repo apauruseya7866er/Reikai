@@ -321,6 +321,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Retrying a manga page that failed to load, or is stuck loading, now always fetches it again (from Mihon).** Upstream: mihonapp/mihon#2986.
 - **The manga long strip no longer leaves a gap after zooming in a resized or split-screen window (from Mihon).** Upstream: mihonapp/mihon#1721.
 - **Zooming into the manga long strip with side padding no longer lets you pan out into the empty margins (from Mihon).** Upstream: mihonapp/mihon#4072.
+- **The manga long strip no longer stutters between pages, and very tall pages use far less memory (from Mihon).** Upstream: mihon b5856135c.
 - **Manga chapters from an excluded scanlator now open from History and Updates (from Mihon).** The reader's chapter list still leaves the excluded scanlator's other chapters out. Upstream: mihon 2b4b8472b.
 - **The novel reader's voice list now follows the read-aloud engine you pick.**
 - **The novel reader's chapter list now opens quickly on a grouped novel.**
