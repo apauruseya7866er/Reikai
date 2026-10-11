@@ -56,8 +56,10 @@ class NovelChapterImageInlinerTest {
 
     @Test
     fun `a picture on another site is fetched without the source's headers`() = runTest {
+        // The token each picture reached the plain client with; a picture that skips it records nothing.
+        val tokensSentElsewhere = mutableListOf<String?>()
         val plain = OkHttpClient.Builder().addInterceptor { chain ->
-            fetched += "plain:" + chain.request().url
+            tokensSentElsewhere += chain.request().header("X-Token")
             chain.proceed(chain.request())
         }.build()
         val guarded = NovelImageClient(
@@ -72,7 +74,7 @@ class NovelChapterImageInlinerTest {
 
         inlineChapterImages("""<img src="https://attacker.example/p.png">""", "https://site.example/chapter/1", guarded)
 
-        fetched.first() shouldBe "plain:https://attacker.example/p.png"
+        tokensSentElsewhere shouldBe listOf(null)
     }
 
     @Test
