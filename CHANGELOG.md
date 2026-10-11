@@ -274,11 +274,10 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Settings -> Manga reader and Settings -> Novel reader can now hide the chapter navigator, which moves the chapter buttons to the ends of the button bar.**
 - **Both readers can now put a Scroll to top button on the bottom bar, and the manga reader a Keep screen on button, as the novel reader already could.**
 - **Settings -> Novel reader now has a Scroll speed slider for auto-scroll, and novel auto-scroll now moves smoothly at that speed.**
-- **Settings -> Manga reader -> Load ahead only on Wi-Fi, on by default, saves mobile data by loading only the pages near the one you are reading (from Mihon).** Pages to load ahead off Wi-Fi sets how many. Upstream: mihonapp/mihon#2986.
 
 #### Changed
 
-- **Manga chapters from a source now load several pages at once, and on Wi-Fi the whole chapter and then the next one (from Mihon).** Upstream: mihonapp/mihon#2986.
+- **Manga chapters from a source now load several pages at once, the whole chapter and then the next one on Wi-Fi, and only the pages near yours off it (from Mihon).** Settings -> Manga reader -> Load ahead only on Wi-Fi switches the limit off, and Pages to load ahead off Wi-Fi sets it. Upstream: mihonapp/mihon#2986.
 - **The reader's settings button now opens the same sheet for manga and novels, with Reading, Appearance, Controls and Filters tabs, plus Read aloud for novels (partly from Tsundoku).** Manga keeps every setting it had, and a novel gets its own, rendering mode and text selection among them.
 - **Reader settings are now two entries, Settings -> Manga reader and Settings -> Novel reader, each holding only that reader's options.**
 - **Manhwa, manhua and webtoons now open in webtoon mode by default, which Settings -> Manga reader can switch off.** The genres from Edit info, any source of a merged series or the source's name decide it, so a series nothing marks as long strip keeps your default mode.
@@ -683,8 +682,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Both Track update errors switches moved from Settings -> Advanced to the end of the manga and novel Global update sections in Settings -> Library.**
 - **Settings -> Advanced now opens on Debugging and Help headers, with Manage notifications under Background activity.**
 - **The manga and novel Hide missing chapter indicators switches now sit together under Settings -> Library -> Behavior, each naming the content type it affects.**
-- **Settings search now finds what is on the About screen, like the licenses and the update check.** About is also sorted into Legal and Links sections.
-- **Settings search now also finds a group of settings by its heading and opens the screen at it (from Mihon).** Upstream: mihonapp/mihon#4044.
+- **Settings search now also finds a group of settings by its heading, and what is on the About screen, like the licenses and the update check (partly from Mihon).** About is also sorted into Legal and Links sections. Upstream: mihonapp/mihon#4044.
 
 #### Fixed
 
