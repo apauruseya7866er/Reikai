@@ -686,12 +686,13 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **The What's new screen now shows the Note, Tip, Important, Warning and Caution callouts in release notes.**
 - **Settings -> About now links Reikai's website and privacy policy.**
 - **Settings -> Advanced -> Open debug menu adds debugging toggles and maintenance tools, such as hiding every cover.**
+- **The app update screen can now skip a version, so Reikai stops offering that release (from Mihon).** On Nightly each build is its own version, so a newer one asks again. Upstream: mihon fc20410ce.
 - **A screen now explains the wait while the app updates its data after an upgrade (from Mihon).** It stays up for at least a second, so a quick update no longer just flashes it. Upstream: mihon fd4f73c90, b454c1b46.
 
 #### Changed
 
 - **Updating the app now happens on the update screen itself, with the download progress on the button (from Mihon).** Tap once more when it finishes to install. Upstream: mihonapp/mihon#3669, mihonapp/mihon#3707.
-- **Reikai now checks for app and extension updates every time you open it from cold, instead of waiting days between checks (from Mihon).** Upstream: mihonapp/mihon#3658.
+- **Reikai now checks for app and extension updates every time you open it from cold, and for app updates every 6 hours while it stays open, instead of waiting days between checks (from Mihon).** Upstream: mihonapp/mihon#3658, mihon d58130a5f.
 - **Icons across the app, notifications and the bottom bar included, are now drawn in Google's newer Material Symbols style (from Mihon).** A few Reikai-only icons, like the novel reader's text-alignment controls and the star ratings, keep their current look. Upstream: mihonapp/mihon#3873, mihonapp/mihon#4057.
 - **A Nightly build's help links now open the Nightly docs at reikai.app.**
 - **The pre-release channel is now called Nightly and has a teal icon, so it is easy to tell apart from the stable app (partly from Mihon).** Downloads keep their file names and installs are unaffected. Upstream: mihonapp/mihon#3760.
