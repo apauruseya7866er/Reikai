@@ -1,5 +1,6 @@
 package reikai.presentation.novel.details
 
+import androidx.compose.material3.SnackbarData
 import androidx.compose.ui.graphics.Color
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldContainExactly
@@ -77,6 +78,27 @@ class NovelDetailsFetchTest {
         }
 
         state shouldBe NovelDetailsState.Failed("no connection")
+    }
+
+    @Test
+    fun `a novel opened from browsing whose source lists no chapters says so`() = runTest {
+        val shown = NovelReaderViewModelHarness.create(testScheduler).use { harness ->
+            harness.source("alpha").details = { SourceNovel(path = NEW_URL, name = "New") }
+            harness.openDetails("alpha", NEW_URL).snackbarWithin(10_000)
+        }
+
+        (shown != null) shouldBe true
+    }
+
+    @Test
+    fun `a stored novel with no chapters whose source cannot answer says why`() = runTest {
+        val message = NovelReaderViewModelHarness.create(testScheduler).use { harness ->
+            val source = harness.source("alpha")
+            source.details = { throw IOException("no connection") }
+            harness.openDetails(harness.novel(source)).snackbarWithin(10_000)?.visuals?.message
+        }
+
+        message shouldBe "no connection"
     }
 
     @Test
@@ -244,6 +266,19 @@ class NovelDetailsFetchTest {
     ): NovelDetailsState.Loaded = withContext(Dispatchers.Default) {
         withTimeout(10_000) { state.filterIsInstance<NovelDetailsState.Loaded>().first(predicate) }
     }
+
+    // The first fetch runs on the real IO dispatcher, so the wait is in real time.
+    private suspend fun NovelDetailsViewModel.snackbarWithin(millis: Long): SnackbarData? =
+        withContext(Dispatchers.Default) {
+            withTimeoutOrNull(millis) {
+                var data = snackbarHostState.currentSnackbarData
+                while (data == null) {
+                    delay(20)
+                    data = snackbarHostState.currentSnackbarData
+                }
+                data
+            }
+        }
 
     private suspend fun NovelDetailsViewModel.awaitState(
         predicate: (NovelDetailsState) -> Boolean,

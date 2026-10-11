@@ -19,7 +19,6 @@ import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
-import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.data.track.Tracker
@@ -179,6 +178,7 @@ import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.chapter.model.NoChaptersException
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.track.model.Track
 import tachiyomi.i18n.MR
@@ -476,7 +476,15 @@ class NovelDetailsViewModel(
             }
             is SourceLookup.Resolved -> if (stored == null || chapterRepo.getByNovelId(stored.id).isEmpty()) {
                 runCatchingCancellable { fetchAndSync(lookup.source, stored) }
-                    .onFailure { e -> failure.value = with(context) { e.formattedMessage } }
+                    .onFailure { e ->
+                        val message = with(context) { e.refreshFailureMessage() }
+                        // A stored row still shows, so the reason goes in a snackbar, as manga's first fetch does.
+                        if (novelRepo.getByUrlAndSource(novelUrl, sourceId) == null) {
+                            failure.value = message
+                        } else {
+                            withUIContext { snackbarHostState.showSnackbar(message) }
+                        }
+                    }
             }
         }
     }
@@ -785,12 +793,12 @@ class NovelDetailsViewModel(
 
     /** parseNovel + persist the source's metadata + sync the first page's chapters, then
      *  predict the next update. The reactive flow then re-emits the updated novel/chapter list. A novel
-     *  opened from Browse is inserted non-favorite. Returns the persisted novel (carries the refreshed
-     *  `totalPages`). */
-    private suspend fun fetchAndSync(src: NovelSource, existing: Novel?): Novel? {
+     *  opened from Browse is inserted non-favorite. Throws [NoChaptersException] once stored when an
+     *  unpaged source lists no chapter, as manga's first fetch does. */
+    private suspend fun fetchAndSync(src: NovelSource, existing: Novel?) {
         val sourceNovel = src.parseNovel(existing?.url ?: novelUrl)
         if (existing == null) {
-            return insertOpenedNovel(
+            insertOpenedNovel(
                 sourceNovel,
                 src.id,
                 novelRepo,
@@ -799,19 +807,21 @@ class NovelDetailsViewModel(
                 chapterNumberOverrides,
                 downloadManager,
             )
+        } else {
+            val parsed = sourceNovel.toNovel(sourceId = src.id, favorite = existing.favorite)
+            val target =
+                storeRefreshedNovel(existing, parsed, novelRepo, libraryPreferences, downloadManager, coverCache)
+            syncOpenedChapters(
+                sourceNovel,
+                target,
+                novelRepo,
+                chapterRepo,
+                libraryPreferences,
+                chapterNumberOverrides,
+                downloadManager,
+            )
         }
-        val parsed = sourceNovel.toNovel(sourceId = src.id, favorite = existing.favorite)
-        val target = storeRefreshedNovel(existing, parsed, novelRepo, libraryPreferences, downloadManager, coverCache)
-        syncOpenedChapters(
-            sourceNovel,
-            target,
-            novelRepo,
-            chapterRepo,
-            libraryPreferences,
-            chapterNumberOverrides,
-            downloadManager,
-        )
-        return target
+        if (sourceNovel.chapters.isNullOrEmpty() && sourceNovel.totalPages <= 1) throw NoChaptersException()
     }
 
     /** Lazily fetch a paged source's page when it has no stored rows yet. Skipped while a filter is

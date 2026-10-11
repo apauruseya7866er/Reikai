@@ -383,7 +383,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Signing in to a site in WebView now also signs in the light-novel plugins that could not see that login before, once you close the WebView.** The plugin picks it up on its next request.
 - **WebView and Share on a light-novel plugin's novel now open the page the plugin names for it.**
 - **Adding a novel from its details page now files it in your default novel category, and every novel screen uses manga's category picker, with its Edit categories shortcut.** With no categories yet, the picker offers to make one.
-- **Refreshing a novel or updating the novel library now says why a novel failed, as manga does, including No chapters found and a source that is no longer installed.**
+- **Opening or refreshing a novel, or updating the novel library, now says why a novel failed, as manga does, including No chapters found and a source that is no longer installed.**
 - **A light-novel source that is no longer installed now shows by its name instead of its id, marked Not installed in your language.** That covers its catalogue, novel page, reader, merged source switcher, Migrate tab, migration list, download queue, update failures and restore warning and log (not for older backups).
 - **A novel's new-chapter notification no longer replaces or dismisses a manga's, a big novel library update keeps its summary and leaves no stray status-bar icon, and tapping the novel summary now opens Updates, as manga's does.**
 - **Updating the novel library now tells you when an update is already running, instead of claiming it started a new one.**
