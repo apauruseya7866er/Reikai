@@ -132,9 +132,16 @@ class NovelSourceManager(
      *  manga stub keeps the language it was stored with. */
     suspend fun langOf(id: String): String = identityOf(id).lang.orEmpty()
 
-    /** A source's name, icon and language by [resolveSourceIdentity], without loading the plugins. */
-    suspend fun identityOf(id: String): LnSourceIdentity =
-        resolveSourceIdentity(id, getWithoutPlugins(id)?.identity(), prefs.seenNovelSources().get()[id])
+    /**
+     * A source's name, icon and language by [resolveSourceIdentity], without loading the plugins. The seen
+     * record is a JSON preference decoded on every read, and the library names every row's source, so it
+     * is read only for a source that is not installed, the one case it can decide.
+     */
+    suspend fun identityOf(id: String): LnSourceIdentity {
+        val installed = getWithoutPlugins(id)?.identity()
+        val seen = if (installed == null) prefs.seenNovelSources().get()[id] else null
+        return resolveSourceIdentity(id, installed, seen)
+    }
 
     /** A registered source without loading the plugins first: for a caller only an app's source or an
      *  already loaded plugin serves, as [nameOf] is. */

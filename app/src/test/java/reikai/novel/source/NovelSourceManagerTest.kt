@@ -113,6 +113,23 @@ class NovelSourceManagerTest {
         manager.nameOf("tachiyomi:7") shouldBe "App 7"
     }
 
+    /** The seen record is a JSON preference decoded on every read, and the library names every row's source. */
+    @Test
+    fun `naming an installed source leaves the seen record unread`() = runTest {
+        manager.register(
+            mockk<NovelSource> {
+                every { id } returns "plugin"
+                every { name } returns "Plugin"
+                every { iconUrl } returns null
+                every { lang } returns "en"
+            },
+        )
+
+        manager.nameOf("plugin")
+
+        verify(exactly = 0) { seen.get() }
+    }
+
     @Test
     fun `a source no longer installed is named as it was last seen`() = runTest {
         every { seen.get() } returns mapOf("gone" to LnSourceIdentity(name = "Old Name"))

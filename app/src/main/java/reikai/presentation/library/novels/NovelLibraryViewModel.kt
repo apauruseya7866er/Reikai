@@ -324,9 +324,15 @@ class NovelLibraryViewModel(
         val overlay = customInfo.associateBy { it.novelId }
         // Build the shared library row BEFORE filtering and sorting, so both content types reach the
         // shared kernels at the same point in the type chain (the manga library already builds first).
+        // Resolved once per source: a library holds far more novels than sources.
+        val querySources = HashMap<String, LibraryQuerySource>()
         val allItems = groups.map { group ->
             // An uninstalled source still gets a badge, as a manga group keeps its stub member.
-            group.toLibraryRow(settings.badges, settings.merge.showSourceIcons, ::querySource) {
+            group.toLibraryRow(
+                settings.badges,
+                settings.merge.showSourceIcons,
+                { source -> querySources.getOrPut(source) { querySource(source) } },
+            ) {
                 novelSourceBadge(sourceManager.get(it), iconsBySite)
             }
         }
@@ -505,17 +511,18 @@ class NovelLibraryViewModel(
         .sortedByCategoryPref(reikaiLibraryPreferences)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(), emptyList())
 
-    /** A novel's human-readable source name for search, by the one rule [NovelSourceManager.nameOf] keeps. */
-    private suspend fun novelSourceName(source: String): String = sourceManager.nameOf(source)
-
     // One novel source as the search terms read it, for the row's own source and every merged member's, so
-    // the two cannot resolve a name or language differently.
-    private suspend fun querySource(source: String) = LibraryQuerySource(
-        key = source,
-        name = novelSourceName(source).lowercase(),
-        language = sourceManager.langOf(source),
-        isLocal = false,
-    )
+    // the two cannot resolve a name or language differently. One identity read for both, by the rule
+    // NovelSourceManager.nameOf and langOf keep.
+    private suspend fun querySource(source: String): LibraryQuerySource {
+        val identity = sourceManager.identityOf(source)
+        return LibraryQuerySource(
+            key = source,
+            name = identity.name.lowercase(),
+            language = identity.lang.orEmpty(),
+            isLocal = false,
+        )
+    }
 
     private data class LibrarySettings(
         val badges: LibraryBadgePrefs,

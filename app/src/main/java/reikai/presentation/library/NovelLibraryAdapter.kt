@@ -102,12 +102,16 @@ class NovelLibraryAdapter(
 
     override suspend fun dynamicGroupingFeed(groupType: Int): DynamicGroupingFeed {
         val state = model.state.value
+        // Resolved once per source: a library holds far more novels than sources.
+        val names = HashMap<String, String>()
         return libraryDynamicGroupingFeed(
             rows = state.favorites,
             groupType = groupType,
             // The slug is the encoded disambiguator; the name is the label.
             sourceOf = { row ->
-                state.novelById[row.id]?.novel?.source?.let { novelSourceManager.nameOf(it) to it }
+                state.novelById[row.id]?.novel?.source?.let {
+                    names.getOrPut(it) { novelSourceManager.nameOf(it) } to it
+                }
             },
             groupTracks = { row -> state.tracksByRep[row.id].orEmpty() },
             loggedInTrackerIds = trackerManager.loggedInTrackers().mapTo(mutableSetOf()) { it.id },
