@@ -133,7 +133,8 @@ class NovelUpdates(id: Long) :
     override suspend fun pushUnread(track: Track, unread: List<NovelChapter>): Track? {
         if (!trackPreferences.novelUpdatesUnreadPush.get()) return null
         val novelId = track.remote_id.toString()
-        val onSite = api.readNotes(novelId)?.let { progressFrom(it.notes) }
+        // Read as push reads it, so a note that does not parse fails before the bookmark moves.
+        val onSite = progressFrom((api.readNotes(novelId) ?: unrecognisedPage()).notes)
         // Called after the unread is written, so this is what is still read.
         val chapters = groupChapters(track.manga_id)
         val stillRead = highestStillRead(chapters, { it.read }, { it.chapterNumber })?.chapterNumber

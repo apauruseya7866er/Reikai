@@ -59,7 +59,7 @@ class NovelUpdatesPushTest {
         """<li class="sp_li_chp"><a href="//www.novelupdates.com/group/g/"></a>""" +
             """<a href="//www.novelupdates.com/extnu/${10 + number}/">Chapter $number</a></li>"""
 
-    // The note reads progress 5 (plus WordPress's trailing 0), chapters 6 and 7 are posted, every write lands.
+    // The note reads progress 5 (plus WordPress's trailing 0), chapters 4, 6 and 7 are posted, every write lands.
     private val site = OkHttpClient.Builder().addInterceptor { chain ->
         val request = chain.request()
         val form = request.body as? FormBody
@@ -68,7 +68,7 @@ class NovelUpdatesPushTest {
         val refused = action == "wi_notestagsfic" && notesRefused
         val body = when (action) {
             "wi_notestagsfic" -> if (notesUnreadable) "<html>not a note</html>" else NOTE
-            "nd_getchapters" -> "<ol>${releaseRow(6)}${releaseRow(7)}</ol>"
+            "nd_getchapters" -> "<ol>${releaseRow(4)}${releaseRow(6)}${releaseRow(7)}</ol>"
             else -> ""
         }
         Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
@@ -158,6 +158,24 @@ class NovelUpdatesPushTest {
         shouldThrowExactly<IOException> {
             NovelUpdates(TrackerManager.NOVELUPDATES).update(track(6.0), didReadChapter = false)
         }
+    }
+
+    @Test
+    fun `an unread whose note does not parse leaves the site's bookmark where it was`() = runTest {
+        notesUnreadable = true
+
+        runCatching {
+            NovelUpdates(TrackerManager.NOVELUPDATES).pushUnread(track(5.0), listOf(chapter(SOURCE_A, 5)))
+        }
+
+        askedFor.none { it == "/readinglist_update.php" } shouldBe true
+    }
+
+    @Test
+    fun `an unread moves the site's bookmark back to the highest chapter still read`() = runTest {
+        NovelUpdates(TrackerManager.NOVELUPDATES).pushUnread(track(5.0), listOf(chapter(SOURCE_A, 5)))
+
+        askedFor.count { it == "/readinglist_update.php" } shouldBe 1
     }
 
     private companion object {
