@@ -25,6 +25,7 @@ import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.interactor.GetNextNovelChapter
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
+import reikai.domain.novel.model.NovelChapterFlags
 import reikai.presentation.novel.details.novelShownRows
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.TriState
@@ -32,15 +33,22 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import kotlin.time.Instant
 
-/** Where one content type's resume opens, on one surface, given which chapter urls the user hid. */
-class ResumeCase(private val label: String, val resume: suspend (hiddenUrls: Set<String>) -> Long?) {
+/**
+ * Where one content type's resume opens, on one surface, given which chapter urls the user hid and
+ * whether the series' own chapter filter shows bookmarked chapters only.
+ */
+class ResumeCase(
+    private val label: String,
+    val resume: suspend (hiddenUrls: Set<String>, bookmarkedOnly: Boolean) -> Long?,
+) {
     override fun toString() = label
 }
 
 /**
  * The library continue button and a series page's Resume over both content types, with chapters 1 and
- * 2 unread. A hidden chapter is passed over while another is unread. When every unread chapter is
- * hidden the first of them still opens, so neither button goes dead.
+ * 2 unread and only chapter 2 bookmarked. A hidden chapter is passed over while another is unread. When
+ * every unread chapter is hidden the first of them still opens, so neither button goes dead. A chapter
+ * the series' own filter hides from its list is never opened.
  */
 class HiddenChapterResumeConformanceTest {
 
@@ -59,14 +67,21 @@ class HiddenChapterResumeConformanceTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("cases")
     fun `a hidden chapter is passed over for the next unread`(case: ResumeCase) = runTest {
-        case.resume(setOf("u1")) shouldBe 2L
+        case.resume(setOf("u1"), false) shouldBe 2L
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("cases")
     fun `the first hidden chapter still opens when nothing else is unread`(case: ResumeCase) = runTest {
-        case.resume(setOf("u1", "u2")) shouldBe 1L
+        case.resume(setOf("u1", "u2"), false) shouldBe 1L
     }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("cases")
+    fun `a series filtered to bookmarked chapters resumes at the first bookmarked unread`(case: ResumeCase) =
+        runTest {
+            case.resume(emptySet(), true) shouldBe 2L
+        }
 
     @Test
     fun `the key matches what hiding a chapter has always stored`() {
@@ -76,19 +91,29 @@ class HiddenChapterResumeConformanceTest {
 
     companion object {
         private const val DOWNLOADED_FILTER_FILE = "eu.kanade.domain.manga.model.MangaKt"
+        private const val BOOKMARKED_ONLY = NovelChapterFlags.FILTER_LOCAL or NovelChapterFlags.SHOW_BOOKMARKED
 
-        private val manga = Manga.create().copy(id = 1L, source = 7L)
+        private fun manga(bookmarkedOnly: Boolean) = Manga.create().copy(
+            id = 1L,
+            source = 7L,
+            chapterFlags = if (bookmarkedOnly) Manga.CHAPTER_SHOW_BOOKMARKED else 0L,
+        )
         private val mangaChapters = listOf(1L, 2L).map {
             Chapter.create().copy(
                 id = it,
                 mangaId = 1L,
                 url = "u$it",
+                bookmark = it == 2L,
                 chapterNumber = it.toDouble(),
                 // A manga source lists newest first, so chapter 1 is read first.
                 sourceOrder = 10L - it,
             )
         }
-        private val novel = Novel.create().copy(id = 1L, source = "ln-source")
+        private fun novel(bookmarkedOnly: Boolean) = Novel.create().copy(
+            id = 1L,
+            source = "ln-source",
+            chapterFlags = if (bookmarkedOnly) BOOKMARKED_ONLY else 0L,
+        )
         private val novelChapters = listOf(1L, 2L).map {
             NovelChapter(
                 id = it,
@@ -96,7 +121,7 @@ class HiddenChapterResumeConformanceTest {
                 url = "u$it",
                 name = "Ch $it",
                 read = false,
-                bookmark = false,
+                bookmark = it == 2L,
                 lastTextProgress = 0L,
                 chapterNumber = it.toDouble(),
                 sourceOrder = it,
@@ -111,19 +136,20 @@ class HiddenChapterResumeConformanceTest {
         private fun novelKeys(hiddenUrls: Set<String>) =
             hiddenUrls.mapTo(HashSet()) { hiddenChapterKey("ln-source", it) }
 
-        private val mangaLibrary = ResumeCase("manga library") { hiddenUrls ->
-            mangaChapters.getNextUnread(manga, mockk(), hiddenKeys = mangaKeys(hiddenUrls))?.id
+        private val mangaLibrary = ResumeCase("manga library") { hiddenUrls, bookmarkedOnly ->
+            mangaChapters.getNextUnread(manga(bookmarkedOnly), mockk(), hiddenKeys = mangaKeys(hiddenUrls))?.id
         }
 
-        private val mangaDetails = ResumeCase("manga details") { hiddenUrls ->
+        private val mangaDetails = ResumeCase("manga details") { hiddenUrls, bookmarkedOnly ->
             val hiddenKeys = mangaKeys(hiddenUrls)
+            val manga = manga(bookmarkedOnly)
             mangaChapters.map {
-                ChapterList.Item(it, Download.State.NOT_DOWNLOADED, 0, isRead = false, isBookmarked = false)
+                ChapterList.Item(it, Download.State.NOT_DOWNLOADED, 0, isRead = false, isBookmarked = it.bookmark)
             }
                 .getNextUnread(manga) { it.chapter.hiddenKey(manga) in hiddenKeys }?.id
         }
 
-        private val novelLibrary = ResumeCase("novel library") { hiddenUrls ->
+        private val novelLibrary = ResumeCase("novel library") { hiddenUrls, bookmarkedOnly ->
             val preferences = NovelPreferences(
                 InMemoryPreferenceStore(
                     sequenceOf(
@@ -136,7 +162,7 @@ class HiddenChapterResumeConformanceTest {
                 ),
             )
             val chapterRepository = mockk<NovelChapterRepository> { coEvery { getByNovelId(1L) } returns novelChapters }
-            val novelRepository = mockk<NovelRepository> { coEvery { getById(1L) } returns novel }
+            val novelRepository = mockk<NovelRepository> { coEvery { getById(1L) } returns novel(bookmarkedOnly) }
             val mergeManager = mockk<NovelMergeManager> { coEvery { computeRelatedIds(1L) } returns longArrayOf(1L) }
             GetNextNovelChapter(
                 chapterRepository,
@@ -149,10 +175,10 @@ class HiddenChapterResumeConformanceTest {
                 .awaitFirstUnreadInGroup(1L, downloadedOnly = false) { _, _ -> emptySet() }?.id
         }
 
-        private val novelDetails = ResumeCase("novel details") { hiddenUrls ->
+        private val novelDetails = ResumeCase("novel details") { hiddenUrls, bookmarkedOnly ->
             novelShownRows(
                 novelChapters,
-                novel,
+                novel(bookmarkedOnly),
                 NovelPreferences(InMemoryPreferenceStore()),
                 hiddenKeys = novelKeys(hiddenUrls),
                 showHiddenRequested = false,

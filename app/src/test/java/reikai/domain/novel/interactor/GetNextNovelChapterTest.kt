@@ -49,7 +49,6 @@ class GetNextNovelChapterTest {
         read: Boolean,
         novelId: Long = 1L,
         name: String = "Ch $order",
-        bookmark: Boolean = false,
     ) =
         NovelChapter(
             id = id,
@@ -57,7 +56,7 @@ class GetNextNovelChapterTest {
             url = "u$id",
             name = name,
             read = read,
-            bookmark = bookmark,
+            bookmark = false,
             lastTextProgress = 0L,
             chapterNumber = order.toDouble(),
             sourceOrder = order,
@@ -169,20 +168,8 @@ class GetNextNovelChapterTest {
         resume() shouldBe 11L
     }
 
-    // The novel's own chapter filters narrow what the button may open, as the manga library's
-    // getNextUnread and the novel details button already do.
-
-    @Test
-    fun `a novel filtered to bookmarked chapters resumes at the first bookmarked unread`() = runTest {
-        coEvery { novelRepository.getById(1L) } returns Novel.create()
-            .copy(chapterFlags = NovelChapterFlags.FILTER_LOCAL or NovelChapterFlags.SHOW_BOOKMARKED)
-        coEvery { chapterRepository.getByNovelId(1L) } returns listOf(
-            chapter(10, 0, read = false),
-            chapter(11, 1, read = false, bookmark = true),
-        )
-
-        resume() shouldBe 11L
-    }
+    // The novel's own chapter filters narrow what the button may open; the bookmarked filter is pinned
+    // over both types in HiddenChapterResumeConformanceTest.
 
     @Test
     fun `downloaded only resumes at the first downloaded unread`() = runTest {
