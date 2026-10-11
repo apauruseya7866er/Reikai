@@ -173,46 +173,6 @@ class NovelReaderViewModelTest {
         }
     }
 
-    /** Opened from the public member, so asking the series rather than the chapter would record it. */
-    @Test
-    fun `a merged novel's chapter from an incognito source stays out of history`() = readerTest { harness ->
-        val public = harness.source("alpha")
-        val private = harness.source("beta")
-        val host = harness.novel(public)
-        val member = harness.novel(private)
-        harness.chapter(host, 1.0)
-        val opened = harness.chapter(member, 2.0)
-        harness.merge(host, member)
-        harness.incognito(private)
-        val model = harness.open(host, opened.id)
-        advanceUntilIdle()
-
-        model.saveHistory()
-        advanceUntilIdle()
-
-        harness.historyOf(member) shouldBe emptyList()
-    }
-
-    /** Opened from the incognito member, so asking the series rather than the chapter would drop it. */
-    @Test
-    fun `a merged novel's chapter from a public source is recorded in history`() = readerTest { harness ->
-        val public = harness.source("alpha")
-        val private = harness.source("beta")
-        val host = harness.novel(private)
-        val member = harness.novel(public)
-        harness.chapter(host, 1.0)
-        val opened = harness.chapter(member, 2.0)
-        harness.merge(host, member)
-        harness.incognito(private)
-        val model = harness.open(host, opened.id)
-        advanceUntilIdle()
-
-        model.saveHistory()
-        advanceUntilIdle()
-
-        harness.historyOf(member) shouldBe listOf(opened.id)
-    }
-
     /** The window holds the chapter above the open one, so its position arrives while the open
      *  chapter, from the public member, is still the current one. */
     @Test

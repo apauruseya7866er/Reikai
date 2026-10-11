@@ -43,6 +43,7 @@ import tachiyomi.core.common.preference.Preference
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.chapter.ChapterRepositoryImpl
+import tachiyomi.data.history.HistoryRepositoryImpl
 import tachiyomi.data.manga.MangaRepositoryImpl
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
@@ -50,6 +51,7 @@ import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.history.interactor.GetNextChapters
+import tachiyomi.domain.history.interactor.UpsertHistory
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
@@ -80,6 +82,7 @@ class MangaReaderViewModelHarness private constructor(
 
     private val mangas = MangaRepositoryImpl(database)
     private val chapters = ChapterRepositoryImpl(database)
+    private val history = HistoryRepositoryImpl(database)
     private val titles = mutableMapOf<Long, String>()
 
     /** Stores a manga under a chosen [id], so a test can name its chapters' owners. */
@@ -127,6 +130,9 @@ class MangaReaderViewModelHarness private constructor(
 
     /** [id] as the database holds it now. */
     suspend fun stored(id: Long): Chapter = chapters.getChapterById(id)!!
+
+    /** The chapters of [mangaId] the reader recorded in History. */
+    suspend fun historyOf(mangaId: Long): List<Long> = history.getHistoryByMangaId(mangaId).map { it.chapterId }
 
     /** A group of [manga] alone, as the provider resolves an unmerged series. */
     suspend fun single(manga: Manga): MergedChapterProvider.Group = MergedChapterProvider.Group(
@@ -226,7 +232,7 @@ class MangaReaderViewModelHarness private constructor(
                 getCustomMangaInfo = mockk { every { subscribe(any()) } returns flowOf(null) },
                 getChaptersByMangaId = GetChaptersByMangaId(chapters),
                 getNextChapters = GetNextChapters(GetChaptersByMangaId(chapters), getManga, mockk(relaxed = true)),
-                upsertHistory = mockk(relaxed = true),
+                upsertHistory = UpsertHistory(history),
                 updateChapter = UpdateChapter(chapters),
                 setMangaViewerFlags = mockk(relaxed = true),
                 getIncognitoState = mockk {
