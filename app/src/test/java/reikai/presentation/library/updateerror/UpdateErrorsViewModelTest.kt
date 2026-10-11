@@ -13,12 +13,15 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkObject
 import io.mockk.unmockkStatic
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -29,7 +32,9 @@ import reikai.domain.library.ContentType
 import reikai.domain.library.updateerror.LibraryUpdateError
 import reikai.domain.novel.model.CustomNovelInfo
 import reikai.domain.novel.updateerror.NovelUpdateError
+import reikai.novel.source.NovelSourceManager
 import tachiyomi.domain.manga.model.CustomMangaInfo
+import kotlin.time.Duration.Companion.seconds
 
 class UpdateErrorsViewModelTest {
 
@@ -148,6 +153,19 @@ class UpdateErrorsViewModelTest {
         viewModel.titles() shouldBe listOf("Mine")
     }
 
+    /** A row names its source from the seen-sources record, so loading every plugin first buys nothing. */
+    @Test
+    fun `the list shows without waiting for the novel plugins to load`() = runTest {
+        val novelSources = mockk<NovelSourceManager>(relaxed = true) {
+            coEvery { ensureLoaded() } coAnswers { awaitCancellation() }
+        }
+        val viewModel = viewModel(ContentType.ALL, novels = listOf(novelError(1L, "404")), novelSources = novelSources)
+
+        withContext(Dispatchers.Default) {
+            withTimeout(5.seconds) { viewModel.titles() }
+        } shouldBe listOf("n1")
+    }
+
     private suspend fun UpdateErrorsViewModel.titles() =
         (state.first { it is UpdateErrorsScreenState.Success } as UpdateErrorsScreenState.Success)
             .entries.map { it.title }
@@ -165,6 +183,7 @@ class UpdateErrorsViewModelTest {
         manga: List<LibraryUpdateError> = emptyList(),
         novels: List<NovelUpdateError> = emptyList(),
         custom: Map<EntryId, EntryCustomInfo> = emptyMap(),
+        novelSources: NovelSourceManager = mockk(relaxed = true),
     ) = UpdateErrorsViewModel(
         initialContentType = chip,
         getLibraryUpdateErrors = mockk { every { subscribeAll() } returns flowOf(manga) },
@@ -172,7 +191,7 @@ class UpdateErrorsViewModelTest {
         getNovelUpdateErrors = mockk { every { subscribeAll() } returns flowOf(novels) },
         deleteNovelUpdateErrors = mockk(relaxed = true),
         sourceManager = mockk(relaxed = true),
-        novelSourceManager = mockk(relaxed = true),
+        novelSourceManager = novelSources,
         getEntryCustomInfo = mockk { every { subscribeAll() } returns flowOf(custom) },
     )
 
