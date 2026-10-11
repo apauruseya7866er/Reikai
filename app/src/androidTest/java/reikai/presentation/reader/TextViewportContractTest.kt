@@ -1227,6 +1227,18 @@ class TextViewportContractTest(private val renderer: Renderer) {
         assertEquals(SAVED_PERCENT.toFloat(), firstReported(FIRST), LANDING_SLACK_PERCENT)
     }
 
+    /** The veil over a saved place still waiting for its pictures holds touches, which would cancel the landing. */
+    @Test
+    fun aTapWhileASavedPlaceWaitsForItsPicturesIsHeld() {
+        runBlocking(Dispatchers.Main) {
+            viewport.load(illustratedChapter(SAVED_PERCENT, held = true), readerTestSettings)
+        }
+        awaitWhile { !textShown() }
+        tap(view.width / 2f, view.height / 2f)
+        Thread.sleep(QUIET_MS)
+        assertEquals(0, menuToggles.get())
+    }
+
     /** Until its pictures land a long illustrated chapter measures short, and would be read on opening. */
     @Test
     fun anIllustratedChapterSaysNothingAboutItsEndWhileItsPicturesLoad() {

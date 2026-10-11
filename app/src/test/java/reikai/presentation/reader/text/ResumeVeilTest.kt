@@ -62,13 +62,4 @@ class ResumeVeilTest {
 
         drawn shouldBe emptyList()
     }
-
-    @Test
-    fun `touches are held while the veil is up`() {
-        val veil = ResumeVeil {}
-
-        veil.set(true)
-
-        veil.isUp shouldBe true
-    }
 }
