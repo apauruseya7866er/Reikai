@@ -29,4 +29,9 @@ data class NovelChapter(
     val page: String,
     /** The translation group the source names, as manga's `scanlator`; null when it names none. */
     val scanlator: String? = null,
+    /**
+     * What number recognition starts from: the plugin's own number, -1 for none. Null for a row written
+     * without one (a restore), which stores its [chapterNumber] in its place.
+     */
+    val rawChapterNumber: Double? = null,
 ) : Serializable

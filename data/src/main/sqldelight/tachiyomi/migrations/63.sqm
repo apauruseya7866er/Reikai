@@ -1,0 +1,5 @@
+-- What number recognition starts from for each novel chapter, so a page sync can number the novel's
+-- whole stored list. A stored row takes its stored number until its page syncs again.
+ALTER TABLE novel_chapters ADD COLUMN raw_chapter_number REAL;
+
+UPDATE novel_chapters SET raw_chapter_number = chapter_number;

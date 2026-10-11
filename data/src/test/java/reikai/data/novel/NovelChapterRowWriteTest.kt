@@ -47,6 +47,7 @@ class NovelChapterRowWriteTest {
         ),
         dateUpload = null,
         page = "",
+        rawChapterNumber = 1.0,
     )
 
     /** A value in every column that differs from [blank]'s, so a column a write leaves out shows. */
@@ -54,7 +55,7 @@ class NovelChapterRowWriteTest {
         novelId = 2L, url = "other-url", name = "other", read = true, bookmark = true, lastTextProgress = 55L,
         chapterNumber = 9.5, sourceOrder = 4L, dateFetch = Instant.fromEpochMilliseconds(3000L),
         dateUpload = Instant.fromEpochMilliseconds(4000L), page = "2",
-        scanlator = "Group",
+        scanlator = "Group", rawChapterNumber = -1.0,
     )
 
     @Test
@@ -64,6 +65,13 @@ class NovelChapterRowWriteTest {
         val id = repository.insert(written)!!
 
         repository.getById(id) shouldBe written.copy(id = id)
+    }
+
+    @Test
+    fun `a chapter written without a raw number, as a restore writes one, starts from its stored number`() = runTest {
+        val id = repository.insert(blank.copy(chapterNumber = 7.0, rawChapterNumber = null))!!
+
+        repository.getById(id)?.rawChapterNumber shouldBe 7.0
     }
 
     @Test

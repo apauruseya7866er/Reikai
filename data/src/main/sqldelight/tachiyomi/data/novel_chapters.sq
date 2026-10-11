@@ -8,6 +8,8 @@ import kotlin.time.Instant;
 --    paged-novel sources whose chapter lists span multiple endpoints; empty string when the
 --    source doesn't expose this metadata.
 -- `scanlator` is the translation group the source names, as on manga's table (53.sqm).
+-- `raw_chapter_number` is what number recognition starts from: the plugin's own number, -1 for none.
+-- A row stored before it was recorded holds its stored number until its page syncs again (63.sqm).
 CREATE TABLE novel_chapters(
     _id INTEGER NOT NULL PRIMARY KEY,
     novel_id INTEGER NOT NULL,
@@ -23,6 +25,7 @@ CREATE TABLE novel_chapters(
     page TEXT NOT NULL DEFAULT '',
     is_downloaded INTEGER AS Boolean NOT NULL DEFAULT 0,
     scanlator TEXT,
+    raw_chapter_number REAL,
     FOREIGN KEY(novel_id) REFERENCES novels (_id)
     ON DELETE CASCADE
 );
@@ -77,8 +80,8 @@ WHERE url = :url AND novel_id = :novelId
 LIMIT 1;
 
 insert:
-INSERT INTO novel_chapters (novel_id, url, name, read, bookmark, last_text_progress, chapter_number, source_order, date_fetch, date_upload, page, scanlator)
-VALUES (:novelId, :url, :name, :read, :bookmark, :lastTextProgress, :chapterNumber, :sourceOrder, :dateFetch, :dateUpload, :page, :scanlator);
+INSERT INTO novel_chapters (novel_id, url, name, read, bookmark, last_text_progress, chapter_number, source_order, date_fetch, date_upload, page, scanlator, raw_chapter_number)
+VALUES (:novelId, :url, :name, :read, :bookmark, :lastTextProgress, :chapterNumber, :sourceOrder, :dateFetch, :dateUpload, :page, :scanlator, :rawChapterNumber);
 
 update:
 UPDATE novel_chapters SET
@@ -93,7 +96,8 @@ UPDATE novel_chapters SET
     date_fetch = coalesce(:dateFetch, date_fetch),
     date_upload = coalesce(:dateUpload, date_upload),
     page = coalesce(:page, page),
-    scanlator = coalesce(:scanlator, scanlator)
+    scanlator = coalesce(:scanlator, scanlator),
+    raw_chapter_number = coalesce(:rawChapterNumber, raw_chapter_number)
 WHERE _id = :chapterId;
 
 delete:

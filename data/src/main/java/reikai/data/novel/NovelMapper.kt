@@ -287,6 +287,7 @@ fun mapNovelChapter(
     page: String,
     @Suppress("UNUSED_PARAMETER") isDownloaded: Boolean,
     scanlator: String?,
+    rawChapterNumber: Double?,
 ): NovelChapter = NovelChapter(
     id = id,
     novelId = novelId,
@@ -302,4 +303,5 @@ fun mapNovelChapter(
     page = page,
     // is_downloaded column ignored: downloaded state now comes from NovelDownloadCache (disk).
     scanlator = scanlator,
+    rawChapterNumber = rawChapterNumber,
 )

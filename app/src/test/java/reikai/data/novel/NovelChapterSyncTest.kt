@@ -53,7 +53,7 @@ class NovelChapterSyncTest {
         id = id, novelId = 1L, url = url, name = "name", read = read, bookmark = bookmark,
         lastTextProgress = 0L, chapterNumber = number, sourceOrder = 0L,
         dateFetch = Instant.fromEpochMilliseconds(dateFetch), dateUpload = dateUpload.toInstantOrNull(),
-        page = "", scanlator = scanlator,
+        page = "", scanlator = scanlator, rawChapterNumber = number,
     )
 
     private fun srcItem(
