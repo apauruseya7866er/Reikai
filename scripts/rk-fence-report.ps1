@@ -68,6 +68,10 @@ $differing = for ($i = 0; $i -lt $shared.Count; $i++) {
 $tmp = [IO.Path]::GetTempFileName()
 $unfenced = [ordered]@{}
 $rewrites = New-Object System.Collections.Generic.List[string]
+# PowerShell decodes git's output in the console codepage, which mangles every non-ASCII character in
+# the upstream copy, so each line carrying one would diff as a Reikai edit.
+$consoleEncoding = [Console]::OutputEncoding
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 try {
     foreach ($path in $differing) {
         $full = Join-Path $repoRoot $path
@@ -135,6 +139,7 @@ try {
         }
     }
 } finally {
+    [Console]::OutputEncoding = $consoleEncoding
     Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
 }
 
