@@ -1181,7 +1181,10 @@ class NovelDetailsViewModel(
         dismissDialog()
     }
 
-    /** Bound trackers eligible for "Fill from tracker", spanning the merge group (mirrors RefreshNovelTracks). */
+    /**
+     * Bound trackers eligible for "Fill from tracker", spanning the merge group: twin of the manga details
+     * model's, pinned by [buildTrackerAutofillCandidates].
+     */
     suspend fun autofillCandidates(): List<Pair<Track, Tracker>> {
         val novelId = (state.value as? NovelDetailsState.Loaded)?.novel?.id ?: return emptyList()
         return buildTrackerAutofillCandidates(getNovelTracks.awaitGroup(novelId).map { it.toUiTrack() }, trackerManager)
