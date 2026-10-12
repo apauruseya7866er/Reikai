@@ -326,18 +326,6 @@ class CloudflareInterceptor(
                     }
                 }
 
-                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                    // Not handling it kills the app, failing the bypass is enough
-                    logcat(LogPriority.ERROR) {
-                        "WebView renderer gone during Cloudflare bypass: crashed=${detail.didCrash()}, " +
-                            "priority=${detail.rendererPriorityAtExit()}, url=$origRequestUrl"
-                    }
-                    isRenderProcessGone = true
-                    solve.get()?.cancel() // RK: the solve's timers would press keys on a dead page
-                    latch.countDown()
-                    return true
-                }
-
                 override fun onReceivedHttpError(
                     view: WebView?,
                     request: WebResourceRequest?,
@@ -352,6 +340,18 @@ class CloudflareInterceptor(
                             latch.countDown()
                         }
                     }
+                }
+
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                    // Not handling it kills the app, failing the bypass is enough
+                    logcat(LogPriority.ERROR) {
+                        "WebView renderer gone during Cloudflare bypass: crashed=${detail.didCrash()}, " +
+                            "priority=${detail.rendererPriorityAtExit()}, url=$origRequestUrl"
+                    }
+                    isRenderProcessGone = true
+                    solve.get()?.cancel() // RK: the solve's timers would press keys on a dead page
+                    latch.countDown()
+                    return true
                 }
             }
 
