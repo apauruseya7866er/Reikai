@@ -70,7 +70,8 @@ FROM novels
 WHERE favorite_at IS NOT NULL
 AND source = :source;
 
--- Novel twin of manga.sq getReadMangaNotInLibrary (last_text_progress replaces last_page_read).
+-- Novel twin of manga.sq getReadMangaNotInLibrary, pinned by NonLibraryEntryConformanceTest
+-- (last_text_progress replaces last_page_read).
 -- Backs the read-entries backup option, so read history survives e.g. a replace-migration that
 -- unfavorited the old novel.
 getReadNovelsNotInLibrary:
@@ -82,8 +83,8 @@ WHERE favorite_at IS NULL AND _id IN (
     WHERE read = 1 OR last_text_progress != 0
 );
 
--- Novel twin of manga.sq getSourceIdsWithNonLibraryManga, backing the Clear database screen's
--- novel section. Source ids are the lnreader plugin String ids.
+-- Novel twin of manga.sq getSourceIdsWithNonLibraryManga, pinned by NonLibraryEntryConformanceTest,
+-- backing the Clear database screen's novel section. Source ids are the lnreader plugin String ids.
 getSourcesWithNonLibraryNovel:
 SELECT source, COUNT(*) AS novel_count
 FROM novels
@@ -98,9 +99,9 @@ FROM novels
 WHERE favorite_at IS NOT NULL
 GROUP BY source;
 
--- Novel twin of manga.sq deleteNonLibraryManga. The keep-read guard mirrors
--- getReadNovelsNotInLibrary above: a chapter marked read or with a mid-chapter position counts as
--- progress. Child rows (chapters, category junctions, tracks, custom info, update errors, merge
+-- Novel twin of manga.sq deleteNonLibraryManga, pinned by NonLibraryEntryConformanceTest. The keep-read
+-- guard matches getReadNovelsNotInLibrary above: a chapter marked read or with a mid-chapter position
+-- counts as progress. Child rows (chapters, category junctions, tracks, custom info, update errors, merge
 -- memberships) go via their ON DELETE CASCADE foreign keys; the app driver enables enforcement.
 deleteNonLibraryNovel:
 DELETE FROM novels

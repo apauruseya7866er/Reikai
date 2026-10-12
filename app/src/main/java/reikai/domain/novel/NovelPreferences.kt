@@ -218,7 +218,7 @@ class NovelPreferences(
     fun readerSkipDuplicateChapters() = preferenceStore.getBoolean("ln_reader_skip_duplicate_chapters", false)
 
     /**
-     * Forward-only skips, the novel twins of the manga reader's `skipRead` / `skipFiltered`. Their own
+     * Forward-only skips, twin of the manga reader's `skipRead` / `skipFiltered`, type only. Their own
      * keys rather than the manga ones, so a reader can skip read chapters in one library and not the
      * other; the defaults match manga's so the two behave alike until someone changes one.
      */

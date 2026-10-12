@@ -70,9 +70,10 @@ class FeedSavedSearchRepositoryImpl(
     }
 }
 
-/** Null when the stored source key no longer parses, the twin of the rule in SavedSearchRepositoryImpl.
- *  Both halves are pinned by their own "a row whose stored source no longer parses is left out" case,
- *  each asserting the good rows beside it survive. */
+/**
+ * Null when the stored source key no longer parses: twin of the rule in SavedSearchRepositoryImpl,
+ * pinned by UnparseableSourceKeyTest.
+ */
 private fun Feed_saved_search.toDomain(): FeedSavedSearch? =
     SourceKey.parse(source_key)?.let {
         FeedSavedSearch(

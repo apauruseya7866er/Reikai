@@ -180,20 +180,6 @@ class FeedSavedSearchRepositoryTest {
     }
 
     @Test
-    fun `a row whose stored source no longer parses is left out`() = runTest {
-        // Beside a good row: one unreadable row must cost its own place in the feed and no other.
-        repository.insert(mangaSource, savedSearchId = null, global = true)
-        driver.execute(
-            null,
-            "INSERT INTO feed_saved_search(source_key, saved_search, global, feed_order) " +
-                "VALUES ('not a source key', NULL, 1, 9)",
-            0,
-        ).await()
-
-        repository.getAll().map { it.sourceKey } shouldBe listOf(mangaSource)
-    }
-
-    @Test
     fun `deleting a row leaves the saved search it pointed at`() = runTest {
         val searchId = savedSearches.insert(mangaSource, "Ongoing", null, null)
         val rowId = repository.insert(mangaSource, savedSearchId = searchId, global = true)

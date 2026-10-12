@@ -100,16 +100,6 @@ class SavedSearchRepositoryTest {
     }
 
     @Test
-    fun `a row whose stored source no longer parses is left out`() = runTest {
-        // Beside a good row on purpose: corruption must cost that one chip and leave the rest, which
-        // a list holding only the broken row cannot tell apart from failing whole.
-        repository.insert(mangaSource, "Fine", null, null)
-        database.saved_searchQueries.insert("not a source key", "Broken", null, null)
-
-        repository.getAll().map { it.name } shouldBe listOf("Fine")
-    }
-
-    @Test
     fun `getAll returns searches of both content types`() = runTest {
         repository.insert(mangaSource, "Manga one", null, null)
         repository.insert(novelSource, "Novel one", null, null)
