@@ -84,6 +84,8 @@ Backups carry saved searches and feed rows (fields 715, 716) by value, not by id
 
 `NovelSourceManager.get` and `getAll` await the first plugin load once and never retry; a failed plugin is retried only where a novel screen opens and where an update or download run starts, which call `ensureLoaded` directly. A screen that shows whether a source is installed reads `loadedSources()`. Every call into an app's catalogue runs through `appSourceCall`, on IO, rethrowing a `LinkageError` from an outdated app as an `Exception` so it fails the call instead of crashing.
 
+**A failed request a source swallowed.** A plugin and an IReader extension read a site's error page as a real one, so a down site lists nothing. Each listing, search, novel and chapter call runs with a `FetchFailures` element (`FetchFailures.kt`), which the plugin host (from the bridge's `fetchFailure`, an error status counting as a failure) and IReader's ktor send interceptor record into. A call that comes back empty, meaning no novels, no chapters or blank text, throws the recorded failure, so it reads "HTTP error 521" as a manga source's `awaitSuccess` does. A call that found something keeps it. A tachiyomi-format app needs none of this, since its own `awaitSuccess` already fails the call.
+
 **Identity.** Novel sources are text ids: a plugin's own id, or `tachiyomi:<id>` / `ireader:<id>` from the running source object. The two ecosystems share 26 numeric ids, and seven more collide with manga sources, so a bare number is never an id. A download folder is the id through `DiskUtil.buildValidFilename`.
 
 ### The extension pipeline
@@ -130,8 +132,8 @@ Trust is Mihon's: a store's signing key covers its extensions, a keyless store's
 - `app/src/main/java/reikai/presentation/browse/catalogue/SavedSearchViewModel.kt` and `SavedSearchDialogs.kt`.
 - `app/src/main/java/reikai/presentation/browse/feed/FeedViewModel.kt`, `FeedProvider.kt`, `ReikaiFeedTab.kt`, `FeedOrderList.kt`.
 - `app/src/main/java/eu/kanade/tachiyomi/data/backup/create/creators/FeedBackupCreator.kt` and `restore/restorers/FeedRestorer.kt`.
-- `app/src/main/java/reikai/novel/source/NovelSource.kt` (`NovelSource`, `appSourceCall`), `NovelSourceCapabilities.kt` (`NovelFilters`), `NovelSourceManager.kt` (`loadedSources`).
-- `app/src/main/java/reikai/novel/source/LnPluginSource.kt`, `TachiyomiNovelSource.kt`, `ireader/IReaderNovelSource.kt`, `ireader/IReaderHostServices.kt`, `ireader/MadaraChapterEndpoint.kt`.
+- `app/src/main/java/reikai/novel/source/NovelSource.kt` (`NovelSource`, `appSourceCall`), `NovelSourceCapabilities.kt` (`NovelFilters`), `NovelSourceManager.kt` (`loadedSources`), `FetchFailures.kt` (the swallowed-failure rule).
+- `app/src/main/java/reikai/novel/source/LnPluginSource.kt`, `TachiyomiNovelSource.kt`, `ireader/IReaderNovelSource.kt`, `ireader/IReaderHostServices.kt`, `ireader/IReaderHttpClients.kt`, `ireader/MadaraChapterEndpoint.kt`.
 - `app/src/main/java/reikai/novel/network/NovelImageRequests.kt` and `app/src/main/java/reikai/domain/source/NovelIconHints.kt`.
 - `source-api/src/main/kotlin/eu/kanade/tachiyomi/source/Source.kt` (`fetchPageText`), `SourceTracker.kt`, `RateLimited.kt`.
 - `app/src/main/java/eu/kanade/tachiyomi/extension/util/ExtensionLoader.kt`, `app/src/main/java/eu/kanade/tachiyomi/extension/ExtensionManager.kt` (`readStores`), `domain/src/main/java/eu/kanade/tachiyomi/extension/model/Extension.kt` (`Kind`, `fromFeatures`, `fromIndex`, `canComeFrom`).
@@ -155,6 +157,7 @@ Trust is Mihon's: a store's signing key covers its extensions, a keyless store's
 - **Never key a novel source by a bare number.** Ids collide across the two APK ecosystems and with manga sources; a tsundoku-format extension's own settings file is `source_<number>`, which a manga extension for the same site shares, and no host choice can prevent that.
 - **Never add a parallel extension loader.** Store, install, trust, signature and library-version checks exist once, in Mihon's pipeline, as `// RK` islands; novel kinds split off in `ExtensionManager`, not in each reader.
 - **APK chapter text is untrusted input**, sanitized like plugin output.
+- **A new novel source call that can come back empty runs through `listingOrFailedFetch`, `novelOrFailedFetch` or `chapterOrFailedFetch`**, or a down site reads as an empty catalogue again. The IReader interceptor finds the element in the extension's own coroutine, so an extension that fetches outside it (its own scope, a blocking call) records nothing.
 - **One scan or load pass at a time, on each side.** `ExtensionManager.loadMutex` serializes the APK scans and `LnPluginInstaller.loadMutex` the plugin loads, because each pass assigns its maps wholesale from a store list read when it started; a slow pass landing late would undo a re-trust or reload. The pair stands in for a conformance test.
 - **Keep IReader's API at 1.5.1** until an upgrade is checked: its `main` branch adds copies of `eu.kanade.tachiyomi` classes that clash with Reikai's source-api.
 - **R8 must keep what extensions call by name**: `ireader`, `io.ktor`, `kotlinx.io`, `com.fleeksoft.ksoup`, Kermit and `kotlinx.datetime` in `app/proguard-rules.pro`, and `SourceTracker`, `RateLimited` with their `DefaultImpls` and `source.online.**` in `source-api/consumer-proguard.pro`. Verify on a minified build.

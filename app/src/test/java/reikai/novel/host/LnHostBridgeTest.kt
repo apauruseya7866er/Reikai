@@ -1,7 +1,13 @@
 package reikai.novel.host
 
+import eu.kanade.tachiyomi.network.HttpException
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.mockk
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Test
 
 /**
@@ -49,4 +55,31 @@ class LnHostBridgeTest {
 
         resolved shouldBe 0
     }
+
+    @Test
+    fun `an error status is reported as the failure the plugin's call carries`() {
+        var failure: Throwable? = null
+
+        answering(521).runFetch("https://example.org/browse", "{}") { failure = it }
+
+        failure.shouldBeInstanceOf<HttpException>().code shouldBe 521
+    }
+
+    @Test
+    fun `an answered request reports no failure`() {
+        var failure: Throwable? = null
+
+        answering(200).runFetch("https://example.org/browse", "{}") { failure = it }
+
+        failure shouldBe null
+    }
+
+    // Answers every request with [code] itself, so no request reaches the network.
+    private fun answering(code: Int) = LnHostBridge(
+        preferenceStore = mockk(relaxed = true),
+        client = OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(code).message("")
+                .body("<html></html>".toResponseBody()).build()
+        }.build(),
+    ) { "agent" }
 }

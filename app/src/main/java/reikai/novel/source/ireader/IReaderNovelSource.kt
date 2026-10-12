@@ -30,6 +30,9 @@ import reikai.novel.source.NovelPageFetch
 import reikai.novel.source.NovelPageKind
 import reikai.novel.source.appSourceCall
 import reikai.novel.source.chapterNumberOf
+import reikai.novel.source.chapterOrFailedFetch
+import reikai.novel.source.listingOrFailedFetch
+import reikai.novel.source.novelOrFailedFetch
 import reikai.novel.source.releaseTimeOf
 import reikai.util.runCatchingCancellable
 
@@ -82,23 +85,25 @@ class IReaderNovelSource(
                 NovelListing.Popular -> listings.firstOrNull()
                 NovelListing.Latest -> listings.getOrNull(1)
             }
-            source.getMangaList(chosen, page).toPage()
+            listingOrFailedFetch { source.getMangaList(chosen, page).toPage() }
         }
 
     override suspend fun search(query: String, page: Int, filters: NovelFilterState?): NovelItemsPage =
         appSourceCall {
             val picked = (filters as? NovelFilterState.Filters)?.list ?: toMihonFilters(source.getFilters())
-            source.getMangaList(toIReaderFilters(picked, query), page).toPage()
+            listingOrFailedFetch { source.getMangaList(toIReaderFilters(picked, query), page).toPage() }
         }
 
     override suspend fun parseNovel(novelPath: String): SourceNovel = appSourceCall {
-        val novel = source.getMangaDetails(MangaInfo(key = novelPath, title = ""), emptyList())
-        val chapters = source.getChapterList(novel.copy(key = novelPath), emptyList())
-        novel.toSourceNovel(novelPath, chapters.map { it.toChapterItem() })
+        novelOrFailedFetch {
+            val novel = source.getMangaDetails(MangaInfo(key = novelPath, title = ""), emptyList())
+            val chapters = source.getChapterList(novel.copy(key = novelPath), emptyList())
+            novel.toSourceNovel(novelPath, chapters.map { it.toChapterItem() })
+        }
     }
 
     override suspend fun parseChapter(chapterPath: String): String = appSourceCall {
-        chapterHtml(chapterPath, emptyList())
+        chapterOrFailedFetch { chapterHtml(chapterPath, emptyList()) }
     }
 
     // A source takes a page the user loaded through the Fetch commands it declares, the way through

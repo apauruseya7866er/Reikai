@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -35,6 +36,7 @@ import kotlinx.serialization.json.put
 import logcat.LogPriority
 import mihon.core.metro.AppCoroutineScope
 import reikai.novel.network.deviceWebViewUserAgent
+import reikai.novel.source.FetchFailures
 import reikai.novel.source.WEB_STORAGE_KEY_PREFIX
 import reikai.quickjs.createQuickJs
 import reikai.util.runCatchingCancellable
@@ -92,8 +94,9 @@ class LnPluginHost(
         var callSeq = 0L
         var loadArgs: LoadArgs? = null
 
-        // The last fetch this slot's current call saw fail. JS receives only its message, so a failed
-        // call re-attaches it as the cause, which is how an error message tells offline from a plugin bug.
+        // The last fetch this slot's current call saw fail, a status of 400 or more included. JS receives
+        // only its message, so a failed call re-attaches it as the cause, which is how an error message tells
+        // offline from a plugin bug, and a call that answers hands it to its caller's FetchFailures.
         @Volatile
         var fetchFailure: Throwable? = null
 
@@ -438,6 +441,7 @@ class LnPluginHost(
                 if (!result.ok) {
                     throw LnPluginException(result.error ?: "$method failed without message", slot.fetchFailure)
                 }
+                slot.fetchFailure?.let { currentCoroutineContext()[FetchFailures]?.record(it) }
                 result.value ?: JsonNull
             }
         }

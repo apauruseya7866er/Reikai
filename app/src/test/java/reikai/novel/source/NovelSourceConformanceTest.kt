@@ -2,6 +2,7 @@ package reikai.novel.source
 
 import androidx.paging.PagingSource
 import eu.kanade.tachiyomi.extension.model.Extension
+import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -24,6 +25,7 @@ import ireader.core.source.model.Listing
 import ireader.core.source.model.MangaInfo
 import ireader.core.source.model.MangasPageInfo
 import ireader.core.source.model.Text
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.test.runTest
 import mihon.domain.extension.model.ContentWarning
 import org.junit.jupiter.api.Test
@@ -87,6 +89,40 @@ class NovelSourceConformanceTest {
     @EnumSource(Kind::class)
     fun `a searched novel's name is decoded`(kind: Kind) = runTest {
         source(kind).search("query", page = 1, filters = null).items.single().name shouldBe DECODED
+    }
+
+    // A down site answers with an error page, which a plugin or an IReader extension parses into nothing.
+    // A manga source's awaitSuccess reports the status instead, and every novel kind owes the same.
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a listing whose request failed reports the failure, not an empty page`(kind: Kind) = runTest {
+        shouldThrow<HttpException> { failing(kind).browse(NovelListing.Popular, page = 1, filters = null) }
+            .code shouldBe 521
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a search whose request failed reports the failure, not an empty page`(kind: Kind) = runTest {
+        shouldThrow<HttpException> { failing(kind).search("query", page = 1, filters = null) }.code shouldBe 521
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a novel whose request failed reports the failure, not an empty chapter list`(kind: Kind) = runTest {
+        shouldThrow<HttpException> { failing(kind).parseNovel("novel") }.code shouldBe 521
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a chapter whose request failed reports the failure, not an empty text`(kind: Kind) = runTest {
+        shouldThrow<HttpException> { failing(kind).parseChapter("c1") }.code shouldBe 521
+    }
+
+    // Unsupported for an app catalogue: its awaitSuccess fails the call on any failed request, as manga's does.
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["PLUGIN", "IREADER"])
+    fun `a request that failed beside a found result keeps the result`(kind: Kind) = runTest {
+        failing(kind, finding = true).browse(NovelListing.Popular, page = 1, filters = null).items.size shouldBe 1
     }
 
     /** Owed by the adapters that convert a native chapter; a plugin hands its own fields over as they are. */
@@ -293,6 +329,50 @@ class NovelSourceConformanceTest {
         Kind.PLUGIN -> LnPluginSource(pluginHost(), LnPluginInfo(id = "p", name = "P", lang = "English"))
         Kind.APP -> TachiyomiNovelSource(catalogue(), app())
         Kind.IREADER -> IReaderNovelSource(iReaderCatalogue(), app(Extension.Kind.IREADER))
+    }
+
+    // Each kind's transport reporting a 521: the plugin host and the IReader client record it on the call,
+    // an app catalogue throws it from awaitSuccess. [finding] answers with one novel all the same.
+    private fun failing(kind: Kind, finding: Boolean = false): NovelSource {
+        val found = if (finding) 1 else 0
+        return when (kind) {
+            Kind.PLUGIN -> LnPluginSource(
+                mockk<LnPluginHost> {
+                    coEvery { popularNovels("p", any(), any()) } coAnswers
+                        { failed { List(found) { NovelItem("n", "n") } } }
+                    coEvery { searchNovels("p", any(), any()) } coAnswers { failed { emptyList() } }
+                    coEvery { parseNovel("p", any()) } coAnswers { failed { SourceNovel(path = "novel") } }
+                    coEvery { parseChapter("p", any()) } coAnswers { failed { "" } }
+                },
+                LnPluginInfo(id = "p", name = "P", lang = "English"),
+            )
+            Kind.IREADER -> IReaderNovelSource(
+                iReaderCatalogue().also {
+                    coEvery { it.getMangaList(any<Listing>(), any()) } coAnswers
+                        { failed { MangasPageInfo(List(found) { MangaInfo(key = "n", title = "n") }, false) } }
+                    coEvery { it.getMangaList(any<List<IReaderFilter<*>>>(), any()) } coAnswers
+                        { failed { MangasPageInfo(emptyList(), false) } }
+                    coEvery { it.getChapterList(any(), any()) } coAnswers { failed { emptyList() } }
+                    coEvery { it.getPageList(any(), any()) } coAnswers { failed { emptyList() } }
+                },
+                app(Extension.Kind.IREADER),
+            )
+            Kind.APP -> TachiyomiNovelSource(
+                catalogue().also {
+                    coEvery { it.getPopularManga(any()) } throws HttpException(521)
+                    coEvery { it.getSearchManga(any(), any(), any()) } throws HttpException(521)
+                    coEvery { it.getMangaUpdate(any(), any(), any(), any()) } throws HttpException(521)
+                    coEvery { it.getPageList(any()) } throws HttpException(521)
+                },
+                app(),
+            )
+        }
+    }
+
+    // The call's FetchFailures must be there to record into, or the source never installed it.
+    private suspend fun <T> failed(answer: () -> T): T {
+        currentCoroutineContext()[FetchFailures]!!.record(HttpException(521))
+        return answer()
     }
 
     private val listing = object : Listing("Latest") {}

@@ -3,11 +3,14 @@ package reikai.novel.source.ireader
 import android.content.Context
 import io.ktor.client.HttpClient
 import io.ktor.client.HttpClientConfig
+import io.ktor.client.call.HttpClientCall
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.engine.okhttp.OkHttpConfig
+import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.cookies.AcceptAllCookiesStorage
 import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.plugins.plugin
 import io.ktor.http.HttpHeaders
 import io.ktor.serialization.gson.gson
 import io.ktor.util.appendIfNameAbsent
@@ -18,7 +21,11 @@ import ireader.core.http.NetworkConfig
 import ireader.core.http.SSLConfiguration
 import ireader.core.http.WebViewCookieJar
 import ireader.core.http.WebViewManger
+import kotlinx.coroutines.currentCoroutineContext
 import okhttp3.OkHttpClient
+import reikai.novel.source.FetchFailures
+import reikai.novel.source.httpFailure
+import kotlin.coroutines.cancellation.CancellationException
 
 /**
  * The HTTP half of what an IReader extension is built with. Both clients run over Reikai's own OkHttp
@@ -60,5 +67,19 @@ class IReaderHttpClients(
             engine { preconfigured = okHttp }
             defaultRequest { headers.appendIfNameAbsent(HttpHeaders.UserAgent, userAgent()) }
             configure()
+        }.apply { plugin(HttpSend).intercept { request -> recordingFailure { execute(request) } } }
+
+    // Ktor hands an extension an error page as an answer, so the source call is told of it (FetchFailures).
+    // The send runs in the extension's own coroutine, which carries the call's element.
+    private suspend fun recordingFailure(send: suspend () -> HttpClientCall): HttpClientCall {
+        val failures = currentCoroutineContext()[FetchFailures]
+        val call = try {
+            send()
+        } catch (e: Exception) {
+            if (e !is CancellationException) failures?.record(e)
+            throw e
         }
+        httpFailure(call.response.status.value)?.let { failures?.record(it) }
+        return call
+    }
 }

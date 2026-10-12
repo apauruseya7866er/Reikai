@@ -15,6 +15,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import reikai.novel.network.applyNovelDefaults
+import reikai.novel.source.httpFailure
 import reikai.novel.source.lnStorageScope
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.util.system.logcat
@@ -73,6 +74,8 @@ class LnHostBridge(
                 }
             }
             val res = client.newCall(builder.build()).execute()
+            // A browser's fetch resolves on an error status too, so the plugin gets the page as it is.
+            httpFailure(res.code)?.let(onFailure)
             // Final URL after redirects. lnreader's Response shim exposes this as `response.url`;
             // the Madara plugin family compares it to the request host to detect Cloudflare/captcha
             // redirects, and crashes on `undefined.split('/')` if it's missing.

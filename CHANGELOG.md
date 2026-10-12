@@ -452,6 +452,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Manga sources that work out their pages with JavaScript now show those pages again, where some chapters opened empty or failed to load.**
 - **Scrolling to the end of a source's catalogue no longer shows a "No results found" error over the titles already listed.**
 - **Browsing a source, searching in Global search, the feed or a migration, or opening a series while offline now says "No Internet connection" instead of a raw host error, on manga and novels.** The manga reader's failed pages say it too.
+- **A light-novel site that is down now shows its HTTP error, as a manga source does, instead of "No results found" or "No chapters found".** This covers browsing, search, opening a novel, library updates and chapters, for plugins and IReader extensions.
 - **A manga added from Browse, global search, the feed, recommendations, batch add, a shared link or a follows sync now takes your default chapter settings, and adding one again keeps its date added and chapter settings (partly from Mihon).** The last three also use your default category. Upstream: mihon f8fff318b.
 - **The Browse sources filter now covers manga and light novels from any chip, with a Manga / Novels switch between the two halves.**
 - **Testing FlareSolverr no longer leaves sources looping on a Cloudflare challenge, and resetting your user agent under Settings -> Advanced fixes one that already is.**

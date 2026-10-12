@@ -1,6 +1,8 @@
 package reikai.novel.source.ireader
 
+import eu.kanade.tachiyomi.network.HttpException
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import io.ktor.client.call.body
 import io.ktor.client.request.forms.submitForm
 import io.ktor.client.request.get
@@ -10,6 +12,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.Parameters
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -17,6 +20,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.Test
+import reikai.novel.source.FetchFailures
 
 class IReaderHttpClientsTest {
 
@@ -90,6 +94,41 @@ class IReaderHttpClientsTest {
 
         response.bodyAsText() shouldBe CHAPTER_LIST
     }
+
+    @Test
+    fun `an error page an extension is handed is reported to the source call`() = runTest {
+        val failures = FetchFailures()
+
+        withContext(failures) { answering(521).default.get("https://example.org/novel") }
+
+        failures.last.shouldBeInstanceOf<HttpException>().code shouldBe 521
+    }
+
+    @Test
+    fun `the cloudflare client reports an error page too`() = runTest {
+        val failures = FetchFailures()
+
+        withContext(failures) { answering(503).cloudflareClient.get("https://example.org/novel") }
+
+        failures.last.shouldBeInstanceOf<HttpException>().code shouldBe 503
+    }
+
+    @Test
+    fun `an answered request reports no failure`() = runTest {
+        val failures = FetchFailures()
+
+        withContext(failures) { answering(200).default.get("https://example.org/novel") }
+
+        failures.last shouldBe null
+    }
+
+    private fun answering(code: Int) = IReaderHttpClients(
+        mockk(),
+        OkHttpClient.Builder().addInterceptor { chain ->
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1).code(code).message("")
+                .body("<html></html>".toResponseBody()).build()
+        }.build(),
+    ) { "app-agent" }
 
     private companion object {
         const val CHAPTER_LIST = """<li class="wp-manga-chapter"><a href="x">Chapter 1</a></li>"""
