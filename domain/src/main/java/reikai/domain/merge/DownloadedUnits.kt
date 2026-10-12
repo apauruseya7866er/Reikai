@@ -50,3 +50,20 @@ fun downloadedUnitsByGroup(
             .size
     }
 }
+
+/**
+ * The same count over a library's [entries]: only a grouped entry ([membership] keyed by entry id) that
+ * has downloaded something is an owner, so [rowsFor] reads the member chapters of those alone.
+ */
+suspend fun <T> downloadedUnitsByGroup(
+    entries: List<T>,
+    membership: Map<Long, Long>,
+    idOf: (T) -> Long,
+    downloadCountOf: (T) -> Long,
+    rowsFor: suspend (owners: Set<Long>) -> Map<Long, List<DownloadUnitRow>>,
+    isDownloaded: (owner: T, row: DownloadUnitRow) -> Boolean,
+): Map<Long, Int> {
+    val owners = entries.filter { downloadCountOf(it) > 0 && idOf(it) in membership }.associateBy(idOf)
+    if (owners.isEmpty()) return emptyMap()
+    return downloadedUnitsByGroup(rowsFor(owners.keys), owners.keys) { isDownloaded(owners.getValue(it.ownerId), it) }
+}

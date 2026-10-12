@@ -1,6 +1,7 @@
 package reikai.domain.merge
 
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 
@@ -58,6 +59,24 @@ class DownloadedUnitsTest {
         }
 
         probed.distinct() shouldBe listOf(1L)
+    }
+
+    @Test
+    @DisplayName("only a grouped library entry with downloads has its chapters read")
+    fun onlyGroupedEntriesWithDownloadsAreRead() = runTest {
+        // Entry id to download count: 1 grouped with downloads, 2 grouped without, 3 ungrouped with.
+        val library = listOf(1L to 4L, 2L to 0L, 3L to 2L)
+        var read: Set<Long>? = null
+
+        downloadedUnitsByGroup(
+            entries = library,
+            membership = mapOf(1L to 7L, 2L to 7L),
+            idOf = { it.first },
+            downloadCountOf = { it.second },
+            rowsFor = { owners -> mapOf(7L to rows).also { read = owners } },
+        ) { _, _ -> true }
+
+        read shouldBe setOf(1L)
     }
 
     @Test

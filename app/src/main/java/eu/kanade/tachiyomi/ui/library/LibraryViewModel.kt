@@ -433,15 +433,14 @@ class LibraryViewModel(
         items: List<LibraryItem>,
         membership: Map<Long, Long>,
     ): Map<Long, Int> {
-        val mangaById = items
-            .filter { it.downloadCount > 0 && it.libraryManga.manga.id in membership }
-            .associate { it.libraryManga.manga.id to it.libraryManga.manga }
-        if (mangaById.isEmpty()) return emptyMap()
         return downloadedUnitsByGroup(
-            rowsByGroup = mergedChapterUnitRepository.getDownloadUnits(ContentType.MANGA, mangaById.keys),
-            ownersWithDownloads = mangaById.keys,
-        ) { row ->
-            val owner = mangaById.getValue(row.ownerId)
+            entries = items,
+            membership = membership,
+            idOf = { it.libraryManga.manga.id },
+            downloadCountOf = { it.downloadCount.toLong() },
+            rowsFor = { mergedChapterUnitRepository.getDownloadUnits(ContentType.MANGA, it) },
+        ) { item, row ->
+            val owner = item.libraryManga.manga
             downloadManager.isChapterDownloaded(
                 row.chapterName,
                 row.scanlator,

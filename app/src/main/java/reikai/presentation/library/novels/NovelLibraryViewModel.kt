@@ -256,15 +256,14 @@ class NovelLibraryViewModel(
         library: List<LibraryNovel>,
         membership: Map<Long, Long>,
     ): Map<Long, Int> {
-        val novelById = library
-            .filter { it.downloadCount > 0 && it.novel.id in membership }
-            .associate { it.novel.id to it.novel }
-        if (novelById.isEmpty()) return emptyMap()
         return downloadedUnitsByGroup(
-            rowsByGroup = mergedChapterUnitRepository.getDownloadUnits(ContentType.NOVELS, novelById.keys),
-            ownersWithDownloads = novelById.keys,
-        ) { row ->
-            val owner = novelById.getValue(row.ownerId)
+            entries = library,
+            membership = membership,
+            idOf = { it.novel.id },
+            downloadCountOf = { it.downloadCount },
+            rowsFor = { mergedChapterUnitRepository.getDownloadUnits(ContentType.NOVELS, it) },
+        ) { item, row ->
+            val owner = item.novel
             novelDownloadCache.isChapterDownloaded(owner.source, owner.title, row.chapterName, row.chapterUrl)
         }
     }
