@@ -3,8 +3,10 @@ package eu.kanade.tachiyomi.data.backup
 import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.data.backup.models.BackupKitsuNativeScale
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
+import eu.kanade.tachiyomi.data.backup.models.BackupMergeGroupsStored
 import eu.kanade.tachiyomi.data.backup.models.BackupNovel
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelTracking
+import eu.kanade.tachiyomi.data.backup.models.BackupSortOverridesStored
 import eu.kanade.tachiyomi.data.backup.models.BackupTracking
 import eu.kanade.tachiyomi.data.backup.restore.RestoreOptions
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaRestorer
@@ -33,6 +35,21 @@ class KitsuScoreRestoreConformanceTest {
     @EnumSource(Type::class)
     fun `a backup marked as on Kitsu's scale keeps its Kitsu score`(type: Type) = runTest {
         val backup = Backup(backupManga = emptyList(), backupKitsuNativeScale = BackupKitsuNativeScale())
+        restoredKitsuScore(type, backup.with(type, 7.5)) shouldBe 7.5
+    }
+
+    // 38.sqm moved Kitsu to the native scale before either marker was first written.
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `a backup with the sort-override marker keeps its Kitsu score`(type: Type) = runTest {
+        val backup = Backup(backupManga = emptyList(), backupSortOverridesStored = BackupSortOverridesStored())
+        restoredKitsuScore(type, backup.with(type, 7.5)) shouldBe 7.5
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `a backup with the stored-groups marker keeps its Kitsu score`(type: Type) = runTest {
+        val backup = Backup(backupManga = emptyList(), backupMergeGroupsStored = BackupMergeGroupsStored())
         restoredKitsuScore(type, backup.with(type, 7.5)) shouldBe 7.5
     }
 

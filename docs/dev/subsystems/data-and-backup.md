@@ -48,7 +48,7 @@ An entry is matched by `url + source` or inserted, and its children re-link by s
 
 Preferences split by path. `PreferenceRestorer.restoreApp` wraps the generic write in `AppPreferenceCarry`, which carries retired keys into their replacements and skips keys a backup someone else made must not set (JS snippets, WebView dev tools, the installed plugin list, the extension installer, app-state keys). `restoreSource` runs the generic write alone, so Source settings never reach an app setting. Category-id settings of both types are translated by category name to the ids just minted.
 
-Kitsu scores are stored on Kitsu's native 2 to 20 scale, and were stored out of 10 before; `38.sqm` doubles the device's own rows, but a restore runs no migration. So pass 1 also decodes each entry's tracks alone (`mangaTrackScores`, `novelTrackScores` in `KitsuBackupScores.kt`) and `KitsuBackupScoreScale.of` decides once for the whole file: the 720 marker, or any Kitsu score above 10 on either type, means the native scale, and otherwise every Kitsu score of both types is doubled as it is decoded in pass 2 (`rescaleKitsu`).
+Kitsu scores are stored on Kitsu's native 2 to 20 scale, and were stored out of 10 before; `38.sqm` doubles the device's own rows, but a restore runs no migration. So pass 1 also decodes each entry's tracks alone (`mangaTrackScores`, `novelTrackScores` in `KitsuBackupScores.kt`) and `KitsuBackupScoreScale.of` decides once for the whole file: the 720 marker, the 719 or 718 marker (both first written after `38.sqm`), or any Kitsu score above 10 on either type, means the native scale, and otherwise every Kitsu score of both types is doubled as it is decoded in pass 2 (`rescaleKitsu`). Doubled wrongly, when every Kitsu score in the file is 10 or lower: a backup from Reikai nightlies r1525 to r2424, one from r2648 or r2682 that carries only field 717, and a Mihon backup written since Mihon moved to the 2 to 20 scale.
 
 A novel's title display took its own local-override bit in `46.sqm`, which gave it to every novel whose sort bit was set. A backup with neither field 719 nor any field 717 entry predates the bit, so each novel it inserts gets the same remap as it is decoded (`withDisplayBitFromSort`, pinned against `46.sqm` by `SchemaChainMigrationTest` and `NovelDisplayBitRestoreTest`). A novel already on the device keeps its own flags.
 
@@ -66,7 +66,7 @@ A restore installs nothing. `BackupFileValidator.validate` lists, before the res
 | 715, 716 | Saved searches and feed rows, keyed by serialized `SourceKey` |
 | 717 | Each backed-up novel source's name, the twin of Mihon's 101 |
 | 718 | Marker: every merge group is stored (absent in 0.3.x) |
-| 719 | Marker: category flags carry the sort-override bit (absent from Mihon and pre-0.3.0 Reikai) |
+| 719 | Marker: category flags carry the sort-override bit (absent from Mihon and Reikai 0.3.2 and older) |
 | 720 | Marker: Kitsu scores are on Kitsu's native 2 to 20 scale (absent from Mihon and Reikai 0.3.2 and older) |
 
 Inside entries, custom info rides at Komikku's and Yokai's `BackupManga` numbers (602, 603, 800 to 805), which `BackupNovel` reuses (`BackupCustomInfoFields`); `BackupChapter` adds `pageCount` (700) and `sourceChapterNumber` (701); `BackupCategory` adds `hidden` (900, Komikku's) and `contentType` (8001).
@@ -110,7 +110,7 @@ Inside entries, custom info rides at Komikku's and Yokai's `BackupManga` numbers
 - **The restore keeps the further chapter progress, not the backup's.** Mihon's rule could rewind the device; both types share the kernel.
 - **The stitch cache is carried through the dedupe, not wiped.** Wiping it restitched every group on first open; the stale checks already find the groups the merge changed.
 - **Download folders merge after the migrations, not inside one.** `MainActivity` blocks the main thread on migrations, and a large copy would hold the splash and restart on the next launch if killed.
-- **An unmarked backup's Kitsu scores are taken as out of 10 unless one is above 10.** Mihon's backups carry no marker and write the 2 to 20 scale, so a Mihon file whose Kitsu scores all sit at 10 or under is doubled wrongly; the score test catches every Mihon file with one Kitsu rating above 5 out of 10. Void if every supported source app writes the 2 to 20 scale or carries the marker.
+- **A backup with none of the 718, 719 and 720 markers has its Kitsu scores taken as out of 10 unless one is above 10.** Mihon's backups carry no marker and write the 2 to 20 scale, so a Mihon file whose Kitsu scores all sit at 10 or under is doubled wrongly, as is a file from the Reikai nightlies listed under Restoring; the score test catches every such file with one Kitsu rating above 5 out of 10. Void if every supported source app writes the 2 to 20 scale or carries the marker.
 - **A backup names novel sources without loading plugins.** `NovelSourceManager.nameOf` answers from the registry, then the last-seen record, then the id, so an automatic backup never evaluates every plugin.
 - **No in-place import from a Yokai-era database.** Reikai's `applicationId` is `app.reikai`, so a Yokai install meets it only as a separate app; the route is backup and restore, and a Yokai `.tachibk` restores through the normal pipeline (its per-category sort, field 800 on categories, is not read).
 

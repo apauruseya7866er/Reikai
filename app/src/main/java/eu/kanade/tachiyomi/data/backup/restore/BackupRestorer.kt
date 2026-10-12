@@ -312,7 +312,11 @@ class BackupRestorer(
             mergeGroupsStored = mergeGroupsStored,
             sortOverridesStored = sortOverridesStored,
             novelDisplayBitStored = sortOverridesStored || novelSourceNames.isNotEmpty(),
-            kitsuScoreScale = KitsuBackupScoreScale.of(kitsuNativeScale, trackScores),
+            // 38.sqm moved Kitsu to the native scale before either of the other two markers was written.
+            kitsuScoreScale = KitsuBackupScoreScale.of(
+                kitsuNativeScale || sortOverridesStored || mergeGroupsStored,
+                trackScores,
+            ),
             backupMangaUnmerges = backupMangaUnmerges,
             backupNovelUnmerges = backupNovelUnmerges,
         )
