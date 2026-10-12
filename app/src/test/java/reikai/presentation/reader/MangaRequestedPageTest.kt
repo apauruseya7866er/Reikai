@@ -2,14 +2,19 @@ package reikai.presentation.reader
 
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -47,6 +52,38 @@ class MangaRequestedPageTest {
             becameCurrent(model, finished)
             finished.requestedPage
         } shouldBe 0
+    }
+
+    // A page turn's save is held back for a moment, so the stored page still lags it here. The tests run on a
+    // scheduler of their own, so the model's held save is never skipped forward while they wait.
+    @Test
+    fun `a reading mode change right after a page turn reopens on that page`() = runTest(
+        StandardTestDispatcher(TestCoroutineScheduler()),
+    ) {
+        onFinishedChapter { model, _ ->
+            val current = model.state.value.viewerChapters!!.currChapter
+            model.onPageSelected(loadedPages(current, 10)[5])
+            model.setMangaReadingMode(ReadingMode.WEBTOON)
+            reloaded(model)
+            current.requestedPage
+        } shouldBe 5
+    }
+
+    @Test
+    fun `an orientation change right after a page turn reopens on that page`() = runTest(
+        StandardTestDispatcher(TestCoroutineScheduler()),
+    ) {
+        onFinishedChapter { model, _ ->
+            val current = model.state.value.viewerChapters!!.currChapter
+            model.onPageSelected(loadedPages(current, 10)[5])
+            model.setMangaOrientationType(ReaderOrientation.PORTRAIT)
+            reloaded(model)
+            current.requestedPage
+        } shouldBe 5
+    }
+
+    private suspend fun reloaded(model: ReaderViewModel) = withContext(Dispatchers.Default) {
+        withTimeout(10_000) { model.eventFlow.first { it is ReaderViewModel.Event.ReloadViewerChapters } }
     }
 
     /** Chapter 1 read, opened on chapter 2 with Resume reading position off; [probe] gets chapter 1. */

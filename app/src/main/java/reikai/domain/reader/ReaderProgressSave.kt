@@ -38,6 +38,9 @@ class ReaderProgressSave<K : Any, V>(
         }
     }
 
+    /** The position held for [key], which is newer than anything stored for it. */
+    fun heldFor(key: K): V? = held.get()?.takeIf { it.first == key }?.second
+
     /** Writes the held position now, if there is one. */
     fun flush() {
         delayed?.cancel()

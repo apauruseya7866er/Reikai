@@ -398,6 +398,10 @@ class ReaderViewModel(
         progressWrites.launch { updateChapterProgress(page.chapter, page) }
     }
 
+    // RK: the chapter's last page, counting one still held back, which its lastPageRead lags until written
+    private fun ReaderChapter.lastSelectedPage(): Int =
+        progressSave.heldFor(chapter.id)?.index ?: chapter.lastPageRead
+
     private var chapterToDownload: Download? = null
 
     // RK: which overlapping chapter switch may land. Main thread only.
@@ -550,7 +554,7 @@ class ReaderViewModel(
                         currentChapter.chapter.read,
                         readerPreferences.preserveReadingPosition.get(),
                     ) -> {
-                        currentChapter.requestedPage = currentChapter.chapter.lastPageRead
+                        currentChapter.requestedPage = currentChapter.lastSelectedPage() // RK
                     }
                     // A finished chapter is left alone, as upstream does: paging back into one keeps the
                     // page on screen. Opening one at its start is loadAdjacent's, a pick or a step.
@@ -1292,7 +1296,7 @@ class ReaderViewModel(
                 // because the collector that normally does it never runs.
                 // Save current page
                 val currChapter = currChapters.currChapter
-                currChapter.requestedPage = currChapter.chapter.lastPageRead
+                currChapter.requestedPage = currChapter.lastSelectedPage() // RK
 
                 mutableState.update { it.copy(manga = updatedManga) }
                 eventChannel.send(Event.ReloadViewerChapters)
@@ -1329,7 +1333,7 @@ class ReaderViewModel(
                 // RK: same re-emit and hand-stamp as setMangaReadingMode, for the same reason.
                 // Save current page
                 val currChapter = currChapters.currChapter
-                currChapter.requestedPage = currChapter.chapter.lastPageRead
+                currChapter.requestedPage = currChapter.lastSelectedPage() // RK
 
                 mutableState.update { it.copy(manga = updatedManga) }
                 eventChannel.send(Event.SetOrientation(getMangaOrientation()))
