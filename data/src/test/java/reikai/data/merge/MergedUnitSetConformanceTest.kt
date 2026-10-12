@@ -76,6 +76,18 @@ class MergedUnitSetConformanceTest {
         answers(type, group) shouldBe Answers(1, setOf(1L, 2L), setOf(1L), setOf(10L))
     }
 
+    // The download read picks one of two queries by cost, so both must leave out the same copies.
+    @ParameterizedTest
+    @EnumSource(names = ["MANGA", "NOVELS"])
+    fun `the download read through the owner index returns what reading every row does`(type: ContentType) =
+        runTest {
+            stitchedGroup(type, otherCopy = 20L, otherOwner = 2L)
+            val owners = setOf(1L, 3L)
+
+            units.downloadUnitRows(type, owners, readAll = false) shouldBe
+                units.downloadUnitRows(type, owners, readAll = true)
+        }
+
     private suspend fun answers(type: ContentType, group: Long): Answers {
         val entriesWithUnread = when (type) {
             ContentType.NOVELS -> recents.subscribeNovelIdsWithUnread(mergingEnabled = true)
@@ -84,7 +96,7 @@ class MergedUnitSetConformanceTest {
         return Answers(
             unread = units.getGroupCounts(type)[group]?.unread,
             entriesWithUnread = entriesWithUnread,
-            downloadOwners = units.getDownloadUnitsAsFlow(type).first()[group].orEmpty().mapTo(HashSet()) {
+            downloadOwners = units.getDownloadUnits(type, setOf(1L, 2L, 3L))[group].orEmpty().mapTo(HashSet()) {
                 it.ownerId
             },
             copiesOfChapter10 = units.getCopiesAsFlow(type, listOf(10L)).first()[10L].orEmpty()

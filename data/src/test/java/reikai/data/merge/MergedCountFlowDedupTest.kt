@@ -55,7 +55,7 @@ class MergedCountFlowDedupTest {
         stitchedGroup(probe.type)
 
         emissionsAcross(probe.subscribe(units)) {
-            write(probe.type, chapterRow(probe.type, id = 40, owner = 4, number = 1.0))
+            write(chapterTable(probe.type), chapterRow(probe.type, id = 40, owner = 4, number = 1.0))
         } shouldBe 1
     }
 
@@ -64,7 +64,7 @@ class MergedCountFlowDedupTest {
     fun `a write the count reads still emits`(probe: CountProbe) = runTest {
         stitchedGroup(probe.type)
 
-        emissionsAcross(probe.subscribe(units)) { write(probe.type, probe.countedWrite) } shouldBe 2
+        emissionsAcross(probe.subscribe(units)) { write(probe.countedTable, probe.countedWrite) } shouldBe 2
     }
 
     /** How many times [flow] emitted, counting the emission on collection, across [write]. */
@@ -78,9 +78,9 @@ class MergedCountFlowDedupTest {
     }
 
     /** A raw write announced the way a generated query announces one, by the table it touched. */
-    private suspend fun write(type: ContentType, sql: String) {
+    private suspend fun write(table: String, sql: String) {
         driver.execute(null, sql, 0).await()
-        driver.notifyListeners(chapterTable(type))
+        driver.notifyListeners(table)
     }
 
     private suspend fun stitchedGroup(type: ContentType) {
@@ -126,12 +126,14 @@ class MergedCountFlowDedupTest {
         val subscribe: (MergedChapterUnitRepositoryImpl) -> Flow<*>,
         /** A write that changes what [subscribe] carries. */
         val countedWrite: String,
+        /** The table [countedWrite] touches. */
+        val countedTable: String = chapterTable(type),
     ) {
         override fun toString() = "$label, $type"
     }
 
     companion object {
-        private fun chapterTable(type: ContentType) = if (type == ContentType.NOVELS) "novel_chapters" else "chapter"
+        fun chapterTable(type: ContentType) = if (type == ContentType.NOVELS) "novel_chapters" else "chapter"
 
         private fun chapterRow(type: ContentType, id: Long, owner: Long, number: Double) =
             if (type == ContentType.NOVELS) {
@@ -151,19 +153,16 @@ class MergedCountFlowDedupTest {
             "UPDATE chapter SET user_bookmark = 1 WHERE id = 10"
         }
 
-        private fun renameChapter10(type: ContentType) = if (type == ContentType.NOVELS) {
-            "UPDATE novel_chapters SET name = 'renamed' WHERE _id = 10"
-        } else {
-            "UPDATE chapter SET remote_name = 'renamed' WHERE id = 10"
-        }
-
         @JvmStatic
-        fun probes() = listOf(ContentType.MANGA, ContentType.NOVELS).flatMap { type ->
-            listOf(
-                CountProbe("group counts", type, { it.getGroupCountsAsFlow(type) }, bookmarkChapter10(type)),
-                CountProbe("download units", type, { it.getDownloadUnitsAsFlow(type) }, renameChapter10(type)),
-            )
+        fun probes() = listOf(ContentType.MANGA, ContentType.NOVELS).map { type ->
+            CountProbe("group counts", type, { it.getGroupCountsAsFlow(type) }, bookmarkChapter10(type))
         } + CountProbe(
+            "stitch writes",
+            ContentType.MANGA,
+            { it.getStitchWritesAsFlow() },
+            "UPDATE merged_group_ranking SET ranking = ranking",
+            countedTable = "merged_group_ranking",
+        ) + CountProbe(
             "recognized chapter counts",
             ContentType.MANGA,
             { it.getRecognizedChapterCountsAsFlow() },

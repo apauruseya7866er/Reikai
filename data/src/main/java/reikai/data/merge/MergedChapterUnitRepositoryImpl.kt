@@ -1,7 +1,9 @@
 package reikai.data.merge
 
 import app.cash.sqldelight.async.coroutines.awaitAsList
+import app.cash.sqldelight.async.coroutines.awaitAsOne
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
+import app.cash.sqldelight.coroutines.asFlow
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
@@ -18,6 +20,7 @@ import reikai.domain.merge.DownloadUnitRow
 import reikai.domain.merge.MergedChapterUnitRepository
 import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
 import reikai.domain.merge.MergedGroupCounts
+import tachiyomi.core.common.util.lang.pausedWhileUnsubscribed
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
 
@@ -71,15 +74,60 @@ class MergedChapterUnitRepositoryImpl(
             }
         }
 
-    override fun getDownloadUnitsAsFlow(contentType: ContentType): Flow<Map<Long, List<DownloadUnitRow>>> =
+    override suspend fun getDownloadUnits(
+        contentType: ContentType,
+        ownerIds: Set<Long>,
+    ): Map<Long, List<DownloadUnitRow>> {
+        if (ownerIds.isEmpty()) return emptyMap()
+        val memberCount = when (contentType) {
+            ContentType.NOVELS -> queries.mergedNovelLibraryMemberCount()
+            else -> queries.mergedLibraryMemberCount()
+        }.awaitAsOne()
+        val readAll = ownerIds.size >= memberCount * READ_ALL_SHARE
+        return downloadUnitRows(contentType, ownerIds, readAll).groupBy { it.groupId }
+    }
+
+    /** [ownerIds]' rows, through the owner index or by reading every row and keeping theirs. */
+    internal suspend fun downloadUnitRows(
+        contentType: ContentType,
+        ownerIds: Set<Long>,
+        readAll: Boolean,
+    ): List<DownloadUnitRow> =
+        if (readAll) {
+            downloadUnitsQuery(contentType, null).awaitAsList().filter { it.ownerId in ownerIds }
+        } else {
+            ownerIds.chunked(MAX_IDS_PER_QUERY).flatMap { downloadUnitsQuery(contentType, it).awaitAsList() }
+        }
+
+    private fun downloadUnitsQuery(contentType: ContentType, ownerIds: Collection<Long>?) =
         when (contentType) {
-            ContentType.NOVELS -> queries.downloadUnitsByGroupNovel { groupId, unit, ownerId, name, url ->
-                DownloadUnitRow(groupId, unit!!.toInt(), ownerId, name, scanlator = null, chapterUrl = url)
+            ContentType.NOVELS -> when (ownerIds) {
+                null -> queries.downloadUnitsByGroupNovel(::novelDownloadUnit)
+                else -> queries.downloadUnitsOfNovelOwners(ownerIds, ::novelDownloadUnit)
             }
-            else -> queries.downloadUnitsByGroup { groupId, unit, ownerId, name, scanlator, url ->
-                DownloadUnitRow(groupId, unit!!.toInt(), ownerId, name, scanlator, url)
+            else -> when (ownerIds) {
+                null -> queries.downloadUnitsByGroup(::mangaDownloadUnit)
+                else -> queries.downloadUnitsOfOwners(ownerIds, ::mangaDownloadUnit)
             }
-        }.subscribeToList().map { rows -> rows.groupBy { it.groupId } }.distinctUntilChanged()
+        }
+
+    private fun mangaDownloadUnit(
+        groupId: Long,
+        unit: Long?,
+        ownerId: Long,
+        name: String,
+        scanlator: String?,
+        url: String,
+    ) =
+        DownloadUnitRow(groupId, unit!!.toInt(), ownerId, name, scanlator, url)
+
+    private fun novelDownloadUnit(groupId: Long, unit: Long?, ownerId: Long, name: String, url: String) =
+        DownloadUnitRow(groupId, unit!!.toInt(), ownerId, name, scanlator = null, chapterUrl = url)
+
+    // Not deduplicated: a restitch that only re-pairs chapters leaves every count as it was, and this is
+    // what tells the library its download badge needs probing again.
+    override fun getStitchWritesAsFlow(): Flow<Unit> =
+        queries.storedRankings().asFlow().pausedWhileUnsubscribed().map { }
 
     override fun getCopiesAsFlow(
         contentType: ContentType,
@@ -179,5 +227,14 @@ class MergedChapterUnitRepositoryImpl(
                 else -> queries.insertRanking(groupId, ranking)
             }
         }
+    }
+
+    private companion object {
+        // The owners' share of the grouped library members at which reading every row is the cheaper
+        // read. Measured on 300 groups of three 1000-chapter members, see merged-series.md.
+        const val READ_ALL_SHARE = 0.5
+
+        // Under SQLite's 999-variable limit on older Android versions.
+        const val MAX_IDS_PER_QUERY = 500
     }
 }

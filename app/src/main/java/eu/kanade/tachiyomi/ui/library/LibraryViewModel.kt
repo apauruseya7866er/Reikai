@@ -56,7 +56,6 @@ import reikai.domain.manga.downloadedChapterIds
 import reikai.domain.manga.groupFlags
 import reikai.domain.manga.inReadingOrder
 import reikai.domain.merge.DownloadTargets
-import reikai.domain.merge.DownloadUnitRow
 import reikai.domain.merge.MergeGroupRepository
 import reikai.domain.merge.MergeScope
 import reikai.domain.merge.MergedChapterUnitRepository
@@ -412,7 +411,7 @@ class LibraryViewModel(
                 // RK: the same treatment for downloads, which summing the members double-counted for
                 //     every chapter two of them hold.
                 mergedDownloadsByGroup = if (mergePrefs.mergingEnabled) {
-                    mergedDownloadCounts(items, mergePrefs.downloadUnits)
+                    mergedDownloadCounts(items, mergePrefs.membership)
                 } else {
                     emptyMap()
                 },
@@ -427,18 +426,19 @@ class LibraryViewModel(
     // RK -->
 
     /**
-     * RK: merged chapters with a copy on disk, per group. Members that have downloaded nothing are
-     * never probed, so a library whose merged entries hold no downloads pays nothing here at all.
+     * RK: merged chapters with a copy on disk, per group. Only grouped members that have downloaded
+     * something are read and probed, so a library whose merged entries hold no downloads pays nothing.
      */
-    private fun mergedDownloadCounts(
+    private suspend fun mergedDownloadCounts(
         items: List<LibraryItem>,
-        rowsByGroup: Map<Long, List<DownloadUnitRow>>,
+        membership: Map<Long, Long>,
     ): Map<Long, Int> {
-        val withDownloads = items.filter { it.downloadCount > 0 }
-        if (withDownloads.isEmpty()) return emptyMap()
-        val mangaById = withDownloads.associate { it.libraryManga.manga.id to it.libraryManga.manga }
+        val mangaById = items
+            .filter { it.downloadCount > 0 && it.libraryManga.manga.id in membership }
+            .associate { it.libraryManga.manga.id to it.libraryManga.manga }
+        if (mangaById.isEmpty()) return emptyMap()
         return downloadedUnitsByGroup(
-            rowsByGroup = rowsByGroup,
+            rowsByGroup = mergedChapterUnitRepository.getDownloadUnits(ContentType.MANGA, mangaById.keys),
             ownersWithDownloads = mangaById.keys,
         ) { row ->
             val owner = mangaById.getValue(row.ownerId)

@@ -4,7 +4,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
-import reikai.domain.merge.DownloadUnitRow
 import reikai.domain.merge.MergeGroupRepository
 import reikai.domain.merge.MergedChapterUnitRepository
 import reikai.domain.merge.MergedGroupCounts
@@ -25,8 +24,6 @@ data class MergeCollapseInputs<S>(
     /** Per group, the stored stitch's counts. A group absent from the map has not been stitched yet,
      *  which is not the same as having nothing read or nothing left to read. */
     val mergedCounts: Map<Long, MergedGroupCounts>,
-    /** Per group, its member chapters, for the download badge to probe. */
-    val downloadUnits: Map<Long, List<DownloadUnitRow>>,
 )
 
 fun <S> mergeCollapseInputsFlow(
@@ -45,12 +42,12 @@ fun <S> mergeCollapseInputsFlow(
     reikaiLibraryPreferences.showMergeSourceIcons.changes(),
     preferredSources,
     // Folded in rather than read while collapsing: reconciliation writes the stitch while the library is
-    // already on screen, and nothing else makes this flow re-emit when it lands.
+    // already on screen, and nothing else makes this flow re-emit when it lands. The stitch signal covers a
+    // restitch the counts cannot see, after which the library's download read is stale.
     combine(
         mergedChapterUnitRepository.getGroupCountsAsFlow(contentType),
-        mergedChapterUnitRepository.getDownloadUnitsAsFlow(contentType),
-        ::Pair,
-    ),
-) { (membership, overrideRankings), mergingEnabled, showSourceIcons, preferred, (counts, units) ->
-    MergeCollapseInputs(membership, mergingEnabled, showSourceIcons, overrideRankings, preferred, counts, units)
+        mergedChapterUnitRepository.getStitchWritesAsFlow(),
+    ) { counts, _ -> counts },
+) { (membership, overrideRankings), mergingEnabled, showSourceIcons, preferred, counts ->
+    MergeCollapseInputs(membership, mergingEnabled, showSourceIcons, overrideRankings, preferred, counts)
 }

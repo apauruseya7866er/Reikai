@@ -34,7 +34,6 @@ import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.manga.AdultContentChecker
 import reikai.domain.merge.DownloadTargets
-import reikai.domain.merge.DownloadUnitRow
 import reikai.domain.merge.MergeGroupRepository
 import reikai.domain.merge.MergeScope
 import reikai.domain.merge.MergedChapterUnitRepository
@@ -249,19 +248,20 @@ class NovelLibraryViewModel(
     }
 
     /**
-     * Merged chapters with a copy on disk, per group. Members that have downloaded nothing are never
-     * probed, so a library whose merged novels hold no downloads pays nothing here at all. Twin of the
+     * Merged chapters with a copy on disk, per group. Only grouped members that have downloaded something
+     * are read and probed, so a library whose merged novels hold no downloads pays nothing. Twin of the
      * manga library's, pinned by [downloadedUnitsByGroup].
      */
-    private fun mergedDownloadCounts(
+    private suspend fun mergedDownloadCounts(
         library: List<LibraryNovel>,
-        rowsByGroup: Map<Long, List<DownloadUnitRow>>,
+        membership: Map<Long, Long>,
     ): Map<Long, Int> {
-        val withDownloads = library.filter { it.downloadCount > 0 }
-        if (withDownloads.isEmpty()) return emptyMap()
-        val novelById = withDownloads.associate { it.novel.id to it.novel }
+        val novelById = library
+            .filter { it.downloadCount > 0 && it.novel.id in membership }
+            .associate { it.novel.id to it.novel }
+        if (novelById.isEmpty()) return emptyMap()
         return downloadedUnitsByGroup(
-            rowsByGroup = rowsByGroup,
+            rowsByGroup = mergedChapterUnitRepository.getDownloadUnits(ContentType.NOVELS, novelById.keys),
             ownersWithDownloads = novelById.keys,
         ) { row ->
             val owner = novelById.getValue(row.ownerId)
@@ -296,7 +296,7 @@ class NovelLibraryViewModel(
             settings.merge.preferredSources,
             mergedCountsByGroup = settings.merge.mergedCounts,
             mergedDownloadsByGroup = if (settings.merge.mergingEnabled) {
-                mergedDownloadCounts(withCounts, settings.merge.downloadUnits)
+                mergedDownloadCounts(withCounts, settings.merge.membership)
             } else {
                 emptyMap()
             },

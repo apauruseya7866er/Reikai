@@ -377,6 +377,33 @@ downloadUnitsByGroupNovel:
 SELECT groupId, unit, ownerId, name, url
 FROM mergedNovelCountedUnitView;
 
+-- downloadUnitsByGroup for :ownerIds only, through the chapter table's owner index, so its cost follows
+-- the chapters of the members asked about rather than every merged chapter.
+downloadUnitsOfOwners:
+SELECT groupId, unit, ownerId, name, scanlator, url
+FROM mergedCountedUnitView
+WHERE ownerId IN :ownerIds;
+
+downloadUnitsOfNovelOwners:
+SELECT groupId, unit, ownerId, name, url
+FROM mergedNovelCountedUnitView
+WHERE ownerId IN :ownerIds;
+
+-- How many grouped members are in the library, which the download read weighs its owners against.
+mergedLibraryMemberCount:
+SELECT count(*)
+FROM merge_group_manga MGM
+JOIN manga M
+ON M.id = MGM.manga_id
+AND M.user_favorite_at IS NOT NULL;
+
+mergedNovelLibraryMemberCount:
+SELECT count(*)
+FROM merge_group_novel MGN
+JOIN novels N
+ON N._id = MGN.novel_id
+AND N.favorite_at IS NOT NULL;
+
 -- For each of :chapterIds the stitch places, every copy of the same merged chapter its group holds, the
 -- chapter itself always included, with what a download probe needs. The other copies are only the
 -- counted ones (mergedCountedUnitView), the same rows downloadUnitsByGroup counts, so a recents row and

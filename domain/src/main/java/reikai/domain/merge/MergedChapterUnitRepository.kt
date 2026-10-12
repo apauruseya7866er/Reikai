@@ -45,19 +45,23 @@ interface MergedChapterUnitRepository {
     fun getGroupCountsAsFlow(contentType: ContentType): Flow<Map<Long, MergedGroupCounts>>
 
     /**
-     * Every merged group's member chapters, keyed by group, with what a download probe needs to find
-     * the file. Whether one is on disk lives on disk, not here, so the count is the caller's to take:
-     * it probes these rows and counts the merged chapters that answer.
-     *
-     * A flow, not a read, emitting only when the rows changed: they change only when the chapters behind
-     * a group do, while the library re-emits on far more than that, including once per finished download.
+     * The merged chapters [ownerIds] hold as counted copies, keyed by group, with what a download probe
+     * needs to find the file. Whether one is on disk lives on disk, not here, so the count is the caller's
+     * to take: it probes these rows and counts the merged chapters that answer. A caller passes only the
+     * members that have downloaded something, since no other member can hold a copy.
      */
-    fun getDownloadUnitsAsFlow(contentType: ContentType): Flow<Map<Long, List<DownloadUnitRow>>>
+    suspend fun getDownloadUnits(contentType: ContentType, ownerIds: Set<Long>): Map<Long, List<DownloadUnitRow>>
+
+    /**
+     * Emits on collection and after every stitch written, whether or not anything it stores changed, so a
+     * reader of [getDownloadUnits] knows to read again after a restitch the counts cannot see.
+     */
+    fun getStitchWritesAsFlow(): Flow<Unit>
 
     /**
      * Every library copy of each of [chapterIds]' merged chapters, keyed by the chapter asked for: what a
      * row naming one copy probes to say whether the copy a tap opens is on disk. Besides that chapter, the
-     * same copies [getDownloadUnitsAsFlow] counts. The chapter asked for is always among its own copies,
+     * same copies [getDownloadUnits] counts. The chapter asked for is always among its own copies,
      * even off the library or under an excluded scanlator, since callers look it up by id. A chapter no
      * stitched group places has no entry.
      */
