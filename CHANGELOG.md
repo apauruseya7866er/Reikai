@@ -233,6 +233,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Chapter selection on a manga or novel page now acts only on the chapters your filters show, and extending a range no longer re-adds a chapter you deselected.** Mark previous as read follows your filters too, and range selection works the same on both.
 - **Missing chapter warnings no longer invent gaps on a merged series, or count a chapter the series lists elsewhere or that you hid or filtered out, in the chapter list or between chapters in the reader, on manga and novels.** The header counts each missing number once.
 - **Refreshing a manga's or novel's chapters no longer fails with the app language set to Arabic or another language with its own digits (from Mihon).** Upstream: mihon 8457fb91e.
+- **On tablets, the Resume button on a manga or novel page no longer sits under the taskbar (from Mihon).** Upstream: mihon c279291e2.
 - **A series whose site shows a placeholder until its cover loads now keeps its real cover.** A series already stuck on the placeholder takes its cover back from its source's listing.
 - **On a manga or novel page, a series with no predicted next update now shows N/A instead of Soon (from Mihon).** Upstream: mihon 44c1e1915.
 - **Refreshing a manga no longer blanks its author, artist, description or status when its source sends none.**
