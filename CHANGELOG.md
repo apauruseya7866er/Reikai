@@ -300,6 +300,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Fixed
 
+- **Resuming a manga chapter in the right to left reader no longer sometimes opens the next chapter partway through and saves your progress to it (from Mihon).** Upstream: mihon 51b61a36e.
 - **Read chapters no longer vanish from the manga reader's chapter list, and swiping back from a chapter you just finished reaches the previous one, read or not.** Tapping a read chapter in the list opens it.
 - **Download ahead in both readers now fetches only the chapters the reader will actually reach next.** It took read chapters on novels, hidden chapters and skipped duplicates on manga, and on a grouped manga the order its sources were stitched in rather than your chapter sort.
 - **Skip duplicate chapters now removes duplicates from a novel's chapter list as it does for manga, and no longer folds chapters with no number, like a prologue and an afterword, into one in either reader.**
