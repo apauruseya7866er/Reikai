@@ -1,7 +1,6 @@
 package reikai.presentation.details
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -13,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
@@ -52,7 +52,7 @@ fun EntryDetailsTwoPaneScaffold(
     fabIsResume: Boolean,
     onFabClick: () -> Unit,
     topBar: @Composable (modifier: Modifier) -> Unit,
-    bottomActionMenu: @Composable () -> Unit,
+    bottomActionMenu: @Composable (modifier: Modifier) -> Unit,
     startContent: LazyListScope.(appBarPadding: Dp) -> Unit,
     endContent: LazyListScope.() -> Unit,
 ) {
@@ -65,11 +65,9 @@ fun EntryDetailsTwoPaneScaffold(
 
     Scaffold(
         topBar = { topBar(Modifier.onSizeChanged { topBarHeight = it.height }) },
-        bottomBar = {
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.BottomEnd) {
-                bottomActionMenu()
-            }
-        },
+        // Aligned by its own modifier: a wrapper would always be laid out, and the scaffold then drops the
+        // navigation bar inset under the FAB.
+        bottomBar = { bottomActionMenu(Modifier.fillMaxWidth().wrapContentWidth(Alignment.End)) },
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         floatingActionButton = {
             EntryDetailsFab(

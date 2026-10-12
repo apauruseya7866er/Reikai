@@ -213,7 +213,7 @@ private fun EntryDetailsLargeContent(
         topBar = { modifier ->
             EntryDetailsToolbar(state, behavior, nav, web, { 1f }, { 1f }, modifier)
         },
-        bottomActionMenu = { EntryDetailsSelectionBar(state, behavior, fillFraction = 0.5f) },
+        bottomActionMenu = { modifier -> EntryDetailsSelectionBar(state, behavior, fillFraction = 0.5f, modifier) },
         startContent = { appBarPadding ->
             entryInfoBlock(
                 state,

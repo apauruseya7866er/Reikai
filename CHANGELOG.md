@@ -83,7 +83,6 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **The app no longer freezes on the Library while light-novel plugins are being set up.** It could hang long enough for Android to offer to close it, most often on a slow or freshly started device.
 - **Scrolling the single-list library is smoother in large libraries.**
 - **Typing quickly into the Library, Recents or a source's catalogue search no longer scrambles or drops characters.**
-- **A library update now always checks a manga or novel added without ever being opened, whatever your Smart update restrictions, and fetches the manga's missing details (from Mihon).** Upstream: mihonapp/mihon#3179.
 - **Backing out of the category picker no longer adds a novel anyway, and a failed add no longer leaves a manga or novel filed under a category it never joined.** Nothing is written until the add completes.
 - **Hidden chapters are no longer opened by the library's continue button, a series' Resume button or Recents, or queued by downloads from a library selection, on manga and novels.** A hidden chapter still opens when it is the only one left unread.
 - **Searching from another screen, Open random entry, Update category and a second tap on the Library button now act on the library chip you are looking at, not always on manga.**
@@ -232,6 +231,8 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 - **Chapter selection on a manga or novel page now acts only on the chapters your filters show, and extending a range no longer re-adds a chapter you deselected.** Mark previous as read follows your filters too, and range selection works the same on both.
 - **Missing chapter warnings no longer invent gaps on a merged series, or count a chapter the series lists elsewhere or that you hid or filtered out, in the chapter list or between chapters in the reader, on manga and novels.** The header counts each missing number once.
+- **Refreshing a manga's or novel's chapters no longer fails with the app language set to Arabic or another language with its own digits (from Mihon).** Upstream: mihon 8457fb91e.
+- **On tablets, the Resume button on a manga or novel page no longer sits under the taskbar (from Mihon).** Upstream: mihon c279291e2.
 - **A series whose site shows a placeholder until its cover loads now keeps its real cover.** A series already stuck on the placeholder takes its cover back from its source's listing.
 - **On a manga or novel page, a series with no predicted next update now shows N/A instead of Soon (from Mihon).** Upstream: mihon 44c1e1915.
 - **Refreshing a manga no longer blanks its author, artist, description or status when its source sends none.**
@@ -299,6 +300,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Fixed
 
+- **Resuming a manga chapter in the right to left reader no longer sometimes opens the next chapter partway through and saves your progress to it (from Mihon).** Upstream: mihon 51b61a36e.
 - **Read chapters no longer vanish from the manga reader's chapter list, and swiping back from a chapter you just finished reaches the previous one, read or not.** Tapping a read chapter in the list opens it.
 - **Download ahead in both readers now fetches only the chapters the reader will actually reach next.** It took read chapters on novels, hidden chapters and skipped duplicates on manga, and on a grouped manga the order its sources were stitched in rather than your chapter sort.
 - **Skip duplicate chapters now removes duplicates from a novel's chapter list as it does for manga, and no longer folds chapters with no number, like a prologue and an afterword, into one in either reader.**
@@ -594,6 +596,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Fixed
 
+- **Updating an extension while others are installing no longer crashes the app (from Mihon).** Upstream: mihon 07b9fb695.
 - **An outdated manga extension no longer crashes the app when you browse it or open one of its series (partly from Tsundoku).** It shows an error instead. Upstream: tsundoku-otaku/tsundoku#398.
 - **"After reading automatically delete" now also deletes the copies that "Mark duplicate read chapter as read" marked read along with a chapter, on manga and novels (partly from Mihon).** On a merged series that is only the copies paired with the chapter. Upstream: mihonapp/mihon#3030.
 - **A queued manga or novel chapter that its source removes is now taken out of the download queue instead of failing there (partly from Mihon).** Upstream: mihonapp/mihon#3845.
@@ -711,6 +714,8 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Fixed
 
+- **The app no longer crashes on start on some Samsung devices running Android 9 to 11 (from Mihon).** Upstream: mihon abb126ad2.
+- **When WebView stops working, the app now stays open and closes only the page, in WebView, sign-in pages and the novel reader's WebView mode (from Mihon).** Upstream: mihon 649fc83ff.
 - **The app update check no longer offers an older release as an update or misses a newer one, and no longer fails on a build with a longer version number.**
 - **Moving between screens after Android restored the app in the background no longer risks a crash (from Komikku).**
 - **A failure in background work that outlives its screen, such as saving the download index or installing an extension, no longer crashes the app (from Mihon).** It is logged and reported instead. Upstream: mihon f9c5fa901.

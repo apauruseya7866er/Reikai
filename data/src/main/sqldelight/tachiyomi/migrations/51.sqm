@@ -19,6 +19,9 @@ WHERE (source, url) IN (
     HAVING count(*) > 1
 );
 
+-- Moving the chapters looks each one's novel up here, as 50.sqm does for manga, so it is indexed the same way
+CREATE INDEX duplicate_novels_id_index ON duplicate_novels(_id);
+
 -- Recorded for what lives outside the database under a novel's id or title, as 50.sqm records manga
 INSERT INTO dedupe_merged_ids(content_type, discarded_id, survivor_id, discarded_title)
 SELECT 1, D._id, D.keep_id, N.title

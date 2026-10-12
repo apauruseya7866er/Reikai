@@ -7,6 +7,8 @@ import eu.kanade.domain.manga.model.downloadedFilter
 import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.getNameForMangaInfo
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.detailsDownloadManager
@@ -70,6 +72,10 @@ class MergedDownloadCopyConformanceTest {
         every { any<Manga>().downloadedFilter } returns TriState.DISABLED
         mockkObject(DebugToggles.ENABLE_EXH_ROOT_REDIRECT)
         every { DebugToggles.ENABLE_EXH_ROOT_REDIRECT.enabled } returns DebugToggles.ENABLE_EXH_ROOT_REDIRECT.default
+        // A header naming one source reads the language preferences off Injekt, which no test registers. A
+        // state published before the chips resolve names one, and a throw there stops the adapter's state.
+        mockkStatic(SOURCE_EXTENSIONS_FILE)
+        every { any<Source>().getNameForMangaInfo() } returns "source"
     }
 
     @AfterEach
@@ -280,6 +286,7 @@ class MergedDownloadCopyConformanceTest {
 
     private companion object {
         const val DOWNLOADED_FILTER_FILE = "eu.kanade.domain.manga.model.MangaKt"
+        const val SOURCE_EXTENSIONS_FILE = "eu.kanade.tachiyomi.source.SourceExtensionsKt"
         const val M = 1L
         const val A = 2L
         const val M_SOURCE = 10L

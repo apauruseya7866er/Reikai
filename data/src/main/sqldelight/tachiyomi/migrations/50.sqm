@@ -11,6 +11,44 @@ import kotlinx.serialization.json.JsonObject;
 -- pointing at a dropped table. Duplicate novels are merged separately, by 51.sqm.
 
 -- ---------------------------------------------------------------------------------------------------------
+-- orphans
+-- ---------------------------------------------------------------------------------------------------------
+
+-- Rows pointing at an entry, chapter or category that no longer exists were written while foreign keys weren't
+-- enforced. Nothing can reach them, and copied over they'd fail the foreign key check that ends the migration.
+DELETE FROM chapters WHERE manga_id NOT IN (SELECT _id FROM mangas);
+DELETE FROM history WHERE chapter_id NOT IN (SELECT _id FROM chapters);
+DELETE FROM mangas_categories
+WHERE manga_id NOT IN (SELECT _id FROM mangas) OR category_id NOT IN (SELECT _id FROM categories);
+DELETE FROM manga_sync WHERE manga_id NOT IN (SELECT _id FROM mangas);
+DELETE FROM excluded_scanlators WHERE manga_id NOT IN (SELECT _id FROM mangas);
+
+-- Reikai: the check covers every table, so every other one with a foreign key at this version goes the same
+-- way, novels included. Each key cascades on delete, so this removes only what enforcement would have.
+DELETE FROM novel_chapters WHERE novel_id NOT IN (SELECT _id FROM novels);
+DELETE FROM novel_history WHERE chapter_id NOT IN (SELECT _id FROM novel_chapters);
+DELETE FROM novels_categories
+WHERE novel_id NOT IN (SELECT _id FROM novels) OR category_id NOT IN (SELECT _id FROM categories);
+DELETE FROM novel_tracks WHERE novel_id NOT IN (SELECT _id FROM novels);
+DELETE FROM novel_update_errors WHERE novel_id NOT IN (SELECT _id FROM novels);
+DELETE FROM custom_novel_info WHERE novel_id NOT IN (SELECT _id FROM novels);
+DELETE FROM custom_manga_info WHERE manga_id NOT IN (SELECT _id FROM mangas);
+DELETE FROM library_update_errors WHERE manga_id NOT IN (SELECT _id FROM mangas);
+DELETE FROM search_metadata WHERE manga_id NOT IN (SELECT _id FROM mangas);
+DELETE FROM search_tags WHERE manga_id NOT IN (SELECT _id FROM mangas);
+DELETE FROM search_titles WHERE manga_id NOT IN (SELECT _id FROM mangas);
+DELETE FROM merge_group_manga
+WHERE manga_id NOT IN (SELECT _id FROM mangas) OR group_id NOT IN (SELECT _id FROM merge_group);
+DELETE FROM merge_group_novel
+WHERE novel_id NOT IN (SELECT _id FROM novels) OR group_id NOT IN (SELECT _id FROM merge_group);
+DELETE FROM merged_chapter_unit
+WHERE chapter_id NOT IN (SELECT _id FROM chapters) OR group_id NOT IN (SELECT _id FROM merge_group);
+DELETE FROM merged_novel_chapter_unit
+WHERE chapter_id NOT IN (SELECT _id FROM novel_chapters) OR group_id NOT IN (SELECT _id FROM merge_group);
+DELETE FROM merged_group_ranking WHERE group_id NOT IN (SELECT _id FROM merge_group);
+DELETE FROM feed_saved_search WHERE saved_search NOT IN (SELECT _id FROM saved_search);
+
+-- ---------------------------------------------------------------------------------------------------------
 -- table - manga
 -- ---------------------------------------------------------------------------------------------------------
 
@@ -44,6 +82,9 @@ WHERE (source, url) IN (
     GROUP BY source, url
     HAVING count(*) > 1
 );
+
+-- Moving the chapters looks each one's entry up here, which without an index scans the whole table per chapter
+CREATE INDEX duplicate_mangas_id_index ON duplicate_mangas(_id);
 
 UPDATE mangas
 SET favorite_at = merged.favorite_at,

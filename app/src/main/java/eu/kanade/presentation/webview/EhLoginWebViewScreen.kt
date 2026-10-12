@@ -1,6 +1,7 @@
 package eu.kanade.presentation.webview
 
 import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +35,7 @@ import eu.kanade.tachiyomi.util.system.setDefaultSettings
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.rounded.Close
 import reikai.presentation.webview.WebViewLoadingBar
+import reikai.presentation.webview.closeOnRendererGone
 import reikai.util.isDebugInspectorBuild
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Button
@@ -82,6 +84,9 @@ fun EhLoginWebViewScreen(
                     super.onPageFinished(view, url)
                     onPageFinished(view, url ?: return)
                 }
+
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean =
+                    view.context.closeOnRendererGone(detail, onUp)
             }
         }
         var showAdvancedOptions by rememberSaveable {

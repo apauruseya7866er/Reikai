@@ -1,6 +1,7 @@
 package reikai.presentation.reader
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.Context
 import android.graphics.drawable.ColorDrawable
 import android.os.Handler
@@ -166,6 +167,9 @@ class NovelWebViewport(
     /** Whether the touch on screen went down under the veil, which keeps all of it from the page. */
     private var touchHeld = false
 
+    /** Set when the renderer dies, after which the WebView takes nothing but destroy(). */
+    private var rendererGone = false
+
     private val webView = WebView(context).apply {
         setDefaultSettings()
         WebView.setWebContentsDebuggingEnabled(webContentsDebugging(devTools, context.isDebugInspectorBuild()))
@@ -180,7 +184,13 @@ class NovelWebViewport(
                 }
             }
         }
-        webViewClient = NovelChapterNavigationClient(context, { loadedBaseUrl }, webImages, scope) { image ->
+        webViewClient = NovelChapterNavigationClient(
+            context,
+            { loadedBaseUrl },
+            webImages,
+            scope,
+            onRendererGone = ::closeReader,
+        ) { image ->
             // The text renderer's fetch and cache, so switching modes downloads nothing again.
             fetchNovelImage(
                 image,
@@ -272,12 +282,20 @@ class NovelWebViewport(
         gate.close()
         dropPendingCalls()
         scope.cancel()
-        webView.stopLoading()
-        // The bridge captures the host and is called off the main thread, so drop it before teardown.
+        if (!rendererGone) {
+            webView.stopLoading()
+            // The bridge captures the host and is called off the main thread, so drop it before teardown.
+            webView.removeJavascriptInterface(NovelWebBridge.NAME)
+        }
         // destroy() on an attached WebView is undefined and pins the hierarchy, hence the detach.
-        webView.removeJavascriptInterface(NovelWebBridge.NAME)
         (webView.parent as? ViewGroup)?.removeView(webView)
         webView.destroy()
+    }
+
+    /** A dead renderer closes the reader, as the in-app browser closes its page. */
+    private fun closeReader() {
+        rendererGone = true
+        (context as? Activity)?.finish()
     }
 
     override fun handleKeyEvent(event: KeyEvent): Boolean {
