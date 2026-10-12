@@ -1,6 +1,5 @@
 package reikai.presentation.category
 
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -29,6 +28,7 @@ import reikai.domain.category.categoriesForContentType
 import reikai.domain.category.mergeCategorySelection
 import reikai.domain.library.ContentType
 import reikai.presentation.components.ContentTypeFilterChips
+import reikai.presentation.components.rememberChipScrollState
 import tachiyomi.core.common.preference.TriState
 import tachiyomi.domain.category.model.Category
 import tachiyomi.i18n.MR
@@ -118,11 +118,7 @@ private fun CategoryFilterDialog(
                     modifier = Modifier
                         .heightIn(max = 420.dp)
                         // Starts at the top when the chip shows the other type's categories.
-                        .verticalScroll(
-                            rememberSaveable(chipContentType, saver = ScrollState.Saver) {
-                                ScrollState(0)
-                            },
-                        ),
+                        .verticalScroll(rememberChipScrollState(chipContentType)),
                 ) {
                     CategoryTriStateRows(
                         categories = categoriesForContentType(categories, chipContentType),

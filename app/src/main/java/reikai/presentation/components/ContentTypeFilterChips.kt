@@ -1,5 +1,6 @@
 package reikai.presentation.components
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -63,3 +64,8 @@ fun ContentTypeFilterChips(
 @Composable
 fun rememberChipListState(selected: ContentType): LazyListState =
     rememberSaveable(selected, saver = LazyListState.Saver) { LazyListState() }
+
+/** [rememberChipListState] for a plain scrolling column under the chip row. */
+@Composable
+fun rememberChipScrollState(selected: ContentType): ScrollState =
+    rememberSaveable(selected, saver = ScrollState.Saver) { ScrollState(0) }
