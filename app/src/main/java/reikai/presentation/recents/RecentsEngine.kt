@@ -103,8 +103,8 @@ class RecentsEngine(
 
     companion object {
         /**
-         * Anything derived over a provider holds that provider's feed subscription open, so it stops
-         * once nothing renders it. The window matches the history models the read lane runs through.
+         * Anything derived over a provider holds that provider's subscriber gate open, so its database
+         * updates keep arriving; it stops once nothing renders it, and the gate then pauses them. The window matches the history models the read lane runs through.
          * A value a verb reads synchronously stays eager instead: unsubscribed, `value` is the seed.
          */
         private val OVER_PROVIDERS = SharingStarted.WhileSubscribed(5.seconds)

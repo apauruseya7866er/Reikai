@@ -15,7 +15,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.WhileSubscribed
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -23,6 +22,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.plus
 import logcat.LogPriority
 import reikai.domain.category.RecentsSurface
 import reikai.domain.category.recentsCategoryFilterFlow
@@ -30,6 +30,7 @@ import reikai.domain.entry.overlayCustomInfo
 import reikai.domain.entry.withCustomInfo
 import reikai.domain.source.ReikaiSourcePreferences
 import reikai.presentation.history.emptyOnFailure
+import tachiyomi.core.common.util.lang.SubscriberGate
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
@@ -51,6 +52,8 @@ class HistoryViewModel(
     // RK: the building surface's category filter, one selection covering both content types.
     private val reikaiSourcePreferences: ReikaiSourcePreferences,
 ) : ViewModel() {
+
+    private val subscriberGate = SubscriberGate()
 
     // RK --> the factory the assisted surface needs, so a bare metroViewModel() cannot build this.
     @AssistedFactory
@@ -93,11 +96,11 @@ class HistoryViewModel(
             //     read by the shared screen and by the recents read lane; an empty seed would make both
             //     announce an empty history a tick before the query answers. A failed query therefore
             //     has to emit its empty list itself (emptyOnFailure), or the tab loads for good.
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
+            .stateIn(viewModelScope + subscriberGate, SharingStarted.Eagerly, null)
 
     val state: StateFlow<State> = history
         .map { State(list = it) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State())
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
 
     // RK: the latest manga read, which the seam resumes from. Reads the unfiltered query rather than
     //     the rendered feed, so a category filter cannot change what resume opens.

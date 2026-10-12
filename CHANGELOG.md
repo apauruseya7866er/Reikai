@@ -737,7 +737,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - Every date in the database is stored as an instant with unknown dates left empty, on manga and novels alike (from Mihon, mihon 44c1e1915).
 - The manga reader saves your page once you settle on it instead of on every page turn, by the same rule and delay the novel reader uses; finishing a chapter and pausing the app still save at once (from Mihon, mihonapp/mihon#4071).
 - The manga reader works on the stored chapter directly instead of a legacy copy, and a backup's page position out of range is clamped on restore (from Mihon, mihon e21414b22).
-- From Mihon: list screens stop querying a few seconds after you leave them (mihonapp/mihon#3716 through mihonapp/mihon#3762), and installed extensions are read off the main thread during a cold start (mihonapp/mihon#3788).
+- From Mihon: installed extensions are read off the main thread during a cold start (mihonapp/mihon#3788).
 - Novel plugin settings load and save off the main thread, and Updates, History and Recents no longer start the novel downloader while they show only manga.
 - Opening a source while the app is still starting now waits for the extension list instead of reading a half-built one, for manga and novels (partly from Mihon, mihonapp/mihon#3841, mihonapp/mihon#3869).
 - A novel shortcut sent by another app now opens only a light novel already saved in Reikai, as Mihon's manga shortcut does.
@@ -769,7 +769,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - The manga and novel libraries read each entry's last read time without joining history to every chapter, so they refresh faster (partly from Mihon, mihon 5df78e305).
 - Manga chapter lists and Updates look up queued and downloaded chapters once per list instead of once per chapter, and download progress no longer polls for a chapter's pages (from Mihon, mihon fb8e640d6, mihon 9a6dea804).
 - Rows that show the same manga or novel cover at once now share one load and decode of it (partly from Mihon, mihon 1f85a5a8d).
-- Manga and novel details pages stop reading their chapters, trackers and filters from the database a few seconds after you leave them, rather than until they close (partly from Mihon, mihon 7ff97761b).
+- Screens you return to come back faster: lists and details pages keep their last state while hidden and pause database updates until you return, for manga and novels (partly from Mihon, mihonapp/mihon#3716 through mihonapp/mihon#3762, mihonapp/mihon#4071).
 - Settings search no longer rebuilds its index on every key, and the download and manga and novel library update notifications redraw at most twice a second (partly from Mihon, mihonapp/mihon#4071).
 
 ## [0.3.2]

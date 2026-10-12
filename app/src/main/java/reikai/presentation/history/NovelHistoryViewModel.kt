@@ -15,7 +15,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.WhileSubscribed
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -23,6 +22,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.plus
 import logcat.LogPriority
 import reikai.domain.category.RecentsSurface
 import reikai.domain.category.recentsCategoryFilterFlow
@@ -33,6 +33,7 @@ import reikai.domain.novel.interactor.GetNovelHistory
 import reikai.domain.novel.interactor.RemoveNovelHistory
 import reikai.domain.novel.model.NovelHistoryWithRelations
 import reikai.domain.source.ReikaiSourcePreferences
+import tachiyomi.core.common.util.lang.SubscriberGate
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
@@ -55,6 +56,8 @@ class NovelHistoryViewModel(
     private val removeNovelHistory: RemoveNovelHistory,
     private val sourcePreferences: ReikaiSourcePreferences,
 ) : ViewModel() {
+
+    private val subscriberGate = SubscriberGate()
 
     /** Assisted, so a bare metroViewModel() cannot build this; the surface is the tab's. */
     @AssistedFactory
@@ -93,11 +96,11 @@ class NovelHistoryViewModel(
             }
             // Null is this feed's "not loaded yet", read by the shared screen and by the recents read
             // lane. Its manga twin seeds the same way and for the same reason.
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
+            .stateIn(viewModelScope + subscriberGate, SharingStarted.Eagerly, null)
 
     val state: StateFlow<State> = history
         .map { State(list = it) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State())
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
 
     /** The latest novel read, which the seam resumes from. Unfiltered, unlike the feed above. */
     suspend fun getLast(): NovelHistoryWithRelations? = getNovelHistory.getLast()

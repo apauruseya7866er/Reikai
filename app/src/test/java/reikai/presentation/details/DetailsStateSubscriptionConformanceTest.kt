@@ -3,6 +3,7 @@ package reikai.presentation.details
 import androidx.lifecycle.ViewModelStore
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import eu.kanade.domain.manga.model.downloadedFilter
+import eu.kanade.tachiyomi.ui.manga.MangaViewModel
 import eu.kanade.tachiyomi.ui.manga.mangaDetailsModel
 import eu.kanade.tachiyomi.ui.manga.seedManga
 import exh.debug.DebugToggles
@@ -13,7 +14,9 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
@@ -30,6 +33,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
+import reikai.presentation.novel.details.NovelDetailsState
 import reikai.presentation.reader.NovelReaderViewModelHarness
 import reikai.util.mockIoDispatcher
 import tachiyomi.core.common.preference.TriState
@@ -38,28 +42,32 @@ import tachiyomi.data.DatabaseBindings
 import tachiyomi.data.chapter.ChapterRepositoryImpl
 import tachiyomi.data.manga.MangaRepositoryImpl
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.manga.model.Manga
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.seconds
 
 /**
- * Each details model holds its chapter queries open only while its state is collected, plus five seconds,
- * as upstream's stateIn(WhileSubscribed(5.seconds)) does: one rule, pinned once over both types. Each probe
- * opens a real model and counts live collectors of the opened entry's chapter query. The models hard-code
- * Dispatchers.IO (and manga Default), so both point at the test dispatcher to keep time virtual.
+ * Each details model keeps running while its screen is hidden, but holds database updates back from its
+ * state once nothing has collected it for five seconds, and delivers them when collected again (upstream's
+ * SubscriberGate). One rule, pinned once over both types, by marking the opened entry's one chapter read.
+ * The models hard-code Dispatchers.IO (and manga Default), so both point at the test dispatcher.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class DetailsStateSubscriptionConformanceTest {
 
-    /** A details model opened on one stored entry with nothing collecting its state yet. */
+    /** A details model opened on one stored entry with one unread chapter and nothing collecting its state. */
     interface Probe {
-        suspend fun opened(
-            scope: TestScope,
-            dispatcher: TestDispatcher,
-            block: suspend (state: Flow<*>, activeQueries: () -> Int) -> Unit,
-        )
+        suspend fun opened(scope: TestScope, dispatcher: TestDispatcher, block: suspend (Opened) -> Unit)
     }
+
+    class Opened(
+        val state: StateFlow<*>,
+        val markRead: suspend () -> Unit,
+        val shownRead: () -> Boolean,
+        val activeQueries: () -> Int,
+    )
 
     private val dispatcher = StandardTestDispatcher()
 
@@ -82,56 +90,67 @@ class DetailsStateSubscriptionConformanceTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("probes")
-    fun `nothing collecting the state leaves the chapter query unsubscribed`(probe: Probe) = runTest(dispatcher) {
-        probe.opened(this, dispatcher) { _, active ->
-            advanceUntilIdle()
+    fun `the chapter query stays open after the last collector leaves`(probe: Probe) = runTest(dispatcher) {
+        probe.opened(this, dispatcher) { opened ->
+            collectThenLeave(opened, 60.seconds.inWholeMilliseconds)
 
-            active() shouldBe 0
+            opened.activeQueries() shouldBe 1
         }
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("probes")
-    fun `a collected state holds the chapter query open`(probe: Probe) = runTest(dispatcher) {
-        probe.opened(this, dispatcher) { state, active ->
-            backgroundScope.launch { state.collect {} }
+    fun `a write made five seconds after the last collector left is held back`(probe: Probe) =
+        runTest(dispatcher) {
+            probe.opened(this, dispatcher) { opened ->
+                collectThenLeave(opened, 5.seconds.inWholeMilliseconds)
+
+                opened.markRead()
+                advanceUntilIdle()
+
+                opened.shownRead() shouldBe false
+            }
+        }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a held write reaches the state once it is collected again`(probe: Probe) = runTest(dispatcher) {
+        probe.opened(this, dispatcher) { opened ->
+            collectThenLeave(opened, 5.seconds.inWholeMilliseconds)
+            opened.markRead()
             advanceUntilIdle()
 
-            active() shouldBe 1
+            // advanceUntilIdle alone would not start a background collector with nothing else queued
+            backgroundScope.launch { opened.state.collect {} }
+            runCurrent()
+            advanceUntilIdle()
+
+            opened.shownRead() shouldBe true
         }
     }
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("probes")
-    fun `the chapter query is still held just under five seconds after the last collector leaves`(probe: Probe) =
+    fun `a write just under five seconds after the last collector left still reaches the state`(probe: Probe) =
         runTest(dispatcher) {
-            probe.opened(this, dispatcher) { state, active ->
-                val collector = launch { state.collect {} }
-                advanceUntilIdle()
+            probe.opened(this, dispatcher) { opened ->
+                collectThenLeave(opened, 4.9.seconds.inWholeMilliseconds)
 
-                collector.cancel()
-                advanceTimeBy(4.9.seconds)
+                opened.markRead()
                 runCurrent()
 
-                active() shouldBe 1
+                opened.shownRead() shouldBe true
             }
         }
 
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("probes")
-    fun `the chapter query is released five seconds after the last collector leaves`(probe: Probe) =
-        runTest(dispatcher) {
-            probe.opened(this, dispatcher) { state, active ->
-                val collector = launch { state.collect {} }
-                advanceUntilIdle()
-
-                collector.cancel()
-                advanceTimeBy(5.seconds)
-                runCurrent()
-
-                active() shouldBe 0
-            }
-        }
+    /** Collects the state until it has loaded, stops, then lets [afterMs] of virtual time pass. */
+    private suspend fun TestScope.collectThenLeave(opened: Opened, afterMs: Long) {
+        val collector: Job = launch { opened.state.collect {} }
+        advanceUntilIdle()
+        collector.cancel()
+        advanceTimeBy(afterMs)
+        runCurrent()
+    }
 
     companion object {
         private const val DOWNLOADED_FILTER_FILE = "eu.kanade.domain.manga.model.MangaKt"
@@ -143,16 +162,12 @@ class DetailsStateSubscriptionConformanceTest {
     class MangaProbe : Probe {
         override fun toString() = "manga"
 
-        override suspend fun opened(
-            scope: TestScope,
-            dispatcher: TestDispatcher,
-            block: suspend (state: Flow<*>, activeQueries: () -> Int) -> Unit,
-        ) {
+        override suspend fun opened(scope: TestScope, dispatcher: TestDispatcher, block: suspend (Opened) -> Unit) {
             val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
             Database.Schema.create(driver).await()
             val database = DatabaseBindings.providesDatabase(driver)
             val chapters = CountingChapters(ChapterRepositoryImpl(database), watched = MANGA_ID)
-            driver.seedManga(MANGA_ID, chapterId = 10L)
+            driver.seedManga(MANGA_ID, chapterId = CHAPTER_ID)
             val store = ViewModelStore()
             try {
                 val model = mangaDetailsModel(
@@ -163,7 +178,16 @@ class DetailsStateSubscriptionConformanceTest {
                 ) {
                     every { Dispatchers.Default } returns dispatcher
                 }.also { store.put("manga", it) }
-                block(model.state, chapters.active::get)
+                block(
+                    Opened(
+                        model.state,
+                        markRead = { chapters.update(ChapterUpdate(CHAPTER_ID) { read = true }) },
+                        shownRead = {
+                            (model.state.value as MangaViewModel.State.Success).chapters.single().chapter.read
+                        },
+                        activeQueries = chapters.active::get,
+                    ),
+                )
             } finally {
                 store.clear()
                 scope.advanceUntilIdle()
@@ -190,20 +214,30 @@ class DetailsStateSubscriptionConformanceTest {
 
         private companion object {
             const val MANGA_ID = 1L
+            const val CHAPTER_ID = 10L
         }
     }
 
     class NovelProbe : Probe {
         override fun toString() = "novel"
 
-        override suspend fun opened(
-            scope: TestScope,
-            dispatcher: TestDispatcher,
-            block: suspend (state: Flow<*>, activeQueries: () -> Int) -> Unit,
-        ) = NovelReaderViewModelHarness.create(scope.testScheduler).use { harness ->
-            val novel = harness.novel(harness.source("alpha"))
-            harness.chapter(novel, 1.0)
-            block(harness.openDetails(novel, shown = false).state, harness.chapterQueries::get)
-        }
+        override suspend fun opened(scope: TestScope, dispatcher: TestDispatcher, block: suspend (Opened) -> Unit) =
+            NovelReaderViewModelHarness.create(scope.testScheduler).use { harness ->
+                val novel = harness.novel(harness.source("alpha"))
+                val chapter = harness.chapter(novel, 1.0)
+                val model = harness.openDetails(novel, shown = false)
+                block(
+                    Opened(
+                        model.state,
+                        markRead = { harness.markRead(chapter) },
+                        shownRead = {
+                            val loaded = model.state.value as NovelDetailsState.Loaded
+                            val row = loaded.chapters.single()
+                            loaded.marks.isRead(row.id, row.read)
+                        },
+                        activeQueries = harness.chapterQueries::get,
+                    ),
+                )
+            }
     }
 }

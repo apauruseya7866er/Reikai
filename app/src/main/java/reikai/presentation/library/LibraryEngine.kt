@@ -174,8 +174,9 @@ class LibraryEngine(
         }
             // The transform sorts and buckets the whole library; keep it off the main thread.
             .flowOn(Dispatchers.Default)
-            // Shared while subscribed, because this is what holds both providers' feeds open: eager here
-            // means the models query for as long as the app runs. The chip and the display config below
+            // Shared while subscribed, because this is what holds both providers' subscriber gates open:
+            // eager here would keep the models' queries re-running on every write for as long as the app
+            // runs, hidden or not. The chip and the display config below
             // stay eager instead, on the rule the recents engine states: a value a verb reads
             // synchronously is not shared while subscribed. `randomEntry` reads this one, and it holds
             // because a share that has emitted keeps its last value after the window closes.

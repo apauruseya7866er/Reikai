@@ -16,7 +16,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.WhileSubscribed
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
@@ -25,6 +24,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.plus
 import reikai.domain.category.RecentsCategoryFilter
 import reikai.domain.category.RecentsSurface
 import reikai.domain.category.recentsCategoryFilterFlow
@@ -42,6 +42,8 @@ import reikai.novel.download.NovelDownloadCache
 import reikai.novel.download.NovelDownloadManager
 import reikai.novel.download.toDownloadState
 import tachiyomi.core.common.preference.TriState
+import tachiyomi.core.common.util.lang.SubscriberGate
+import tachiyomi.core.common.util.lang.pausedWhileUnsubscribed
 import tachiyomi.domain.manga.model.applyFilter
 import tachiyomi.domain.updates.service.UpdatesPreferences
 import kotlin.time.Duration.Companion.seconds
@@ -66,6 +68,8 @@ class NovelUpdatesViewModel(
     // Per-entry custom title/cover overrides, overlaid on the displayed rows (display-only).
     private val getCustomNovelInfo: GetCustomNovelInfo,
 ) : ViewModel() {
+
+    private val subscriberGate = SubscriberGate()
 
     /** Assisted, so a bare metroViewModel() cannot build this; the surface is the tab's. */
     @AssistedFactory
@@ -105,12 +109,12 @@ class NovelUpdatesViewModel(
     private val updateItems: StateFlow<List<NovelUpdatesItem>?> = combine(
         feedFlow(),
         // Wrapped so the manager is built on first collection, not when this property initializes.
-        flow { emitAll(downloadManagerProvider().queueState) },
+        flow { emitAll(downloadManagerProvider().queueState) }.pausedWhileUnsubscribed(),
         // Downloaded stays a Kotlin filter: download state is on disk, not in the database.
         updatesPreferences.filterDownloaded.changes(),
         getCustomNovelInfo.subscribeAll(),
         // Re-emit when a download/delete changes the disk index so the row icon refreshes.
-        novelDownloadCache.changes,
+        novelDownloadCache.changes.pausedWhileUnsubscribed(),
     ) { updates, queue, filterDownloaded, customInfo, _ ->
         val queueById = queue.associate { it.chapterId to it.state.toDownloadState() }
         updates
@@ -135,11 +139,11 @@ class NovelUpdatesViewModel(
             }
     }
         .flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
+        .stateIn(viewModelScope + subscriberGate, SharingStarted.Eagerly, null)
 
     val state: StateFlow<State> = updateItems
         .map { State(isLoading = it == null, items = it.orEmpty()) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State())
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
 
     /** Everything the feed query answers. Scanlator-exclusion is manga-only, so it has no twin here. */
     private data class SqlFilters(

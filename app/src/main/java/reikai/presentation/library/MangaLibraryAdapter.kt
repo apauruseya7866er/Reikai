@@ -77,9 +77,9 @@ class MangaLibraryAdapter(
         libraryFilterAxes(libraryPreferences, reikaiLibraryPreferences, updateRestrictions)
 
     // Shared while subscribed, not eagerly: an eager share here is a permanent subscriber on the model,
-    // which would hold its own WhileSubscribed window open for the model's whole life and make its
-    // conversion buy nothing. The tab collects both adapters at once, so the inactive content type
-    // still stays warm for an instant chip swap.
+    // which would hold its subscriber gate open for the model's whole life, so its database updates would
+    // never pause while the tab is hidden. The tab collects both adapters at once, so the inactive content
+    // type still stays warm for an instant chip swap.
     override val state: StateFlow<LibraryScreenState> =
         model.state
             .map { it.toNeutral() }

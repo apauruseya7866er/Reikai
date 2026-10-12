@@ -32,7 +32,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.WhileSubscribed
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
@@ -50,6 +49,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import mihon.core.metro.AppCoroutineScope
 import reikai.data.coil.extractCoverColor
 import reikai.data.coil.seedColor
@@ -175,8 +175,10 @@ import reikai.presentation.selection.SelectionState
 import reikai.util.runCatchingCancellable
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.CheckboxState
+import tachiyomi.core.common.util.lang.SubscriberGate
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchUI
+import tachiyomi.core.common.util.lang.pausedWhileUnsubscribed
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.chapter.model.NoChaptersException
@@ -237,6 +239,8 @@ class NovelDetailsViewModel(
     private val autoBindTrackers: AutoBindTrackers,
     private val downloadedTexts: NovelDownloadedTexts,
 ) : ViewModel() {
+
+    private val subscriberGate = SubscriberGate()
 
     // Building the manager restores the persisted queue and can start the download worker, so it is
     // resolved on first read rather than at construction: every read sits inside a coroutine, which
@@ -379,6 +383,7 @@ class NovelDetailsViewModel(
     /** The live queue's states. Only the active ones (queued/downloading/error) live here; a finished download
      *  is read from [NovelDetailsState.Loaded.downloadedChapterIds] (disk-derived) instead. */
     private val downloadStates = flow { emitAll(downloadManager.queueState) }
+        .pausedWhileUnsubscribed()
         .map { queue -> queue.associate { it.chapterId to it.state.toDownloadState() } }
 
     /** The action-row Tracking button, counted by the tracking sheet's own offer rule, the one the manga
@@ -430,7 +435,7 @@ class NovelDetailsViewModel(
             ?: NovelDetailsState.Loading
     }
         .flowOn(Dispatchers.IO)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), NovelDetailsState.Loading)
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), NovelDetailsState.Loading)
 
     init {
         // Eager, unlike the state: the merge verbs read the group synchronously.
@@ -581,7 +586,7 @@ class NovelDetailsViewModel(
         // downloaded state is disk-derived now, not a chapter-row flow).
         return combine(
             combine(flows) { pairs -> pairs.toMap() },
-            novelDownloadCache.changes,
+            novelDownloadCache.changes.pausedWhileUnsubscribed(),
         ) { byNovel, _ -> byNovel }.mapLatest { byNovel ->
             // Read off the stored stitch, the same rows the library badge counts, rather than
             // stitching again here where the two could come to different answers.
@@ -674,7 +679,7 @@ class NovelDetailsViewModel(
         return combine(
             chapterFlow,
             otherPages,
-            novelDownloadCache.changes,
+            novelDownloadCache.changes.pausedWhileUnsubscribed(),
             siblingChapters,
             anchorSource,
         ) { chapters, allPages, _, siblings, _ -> Triple(chapters, allPages ?: chapters, siblings) }

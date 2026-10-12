@@ -27,7 +27,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.WhileSubscribed
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
@@ -37,6 +36,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import kotlinx.coroutines.withContext
 import mihon.core.common.utils.mutate
 import mihon.core.metro.AppCoroutineScope
@@ -86,7 +86,9 @@ import reikai.presentation.library.mergedGroupTracks
 import reikai.presentation.library.toQueryOverlay
 import reikai.presentation.library.withCustomInfo
 import tachiyomi.core.common.preference.TriState
+import tachiyomi.core.common.util.lang.SubscriberGate
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.pausedWhileUnsubscribed
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.chapter.interactor.GetBookmarkedChaptersByMangaId
@@ -153,6 +155,8 @@ class LibraryViewModel(
     private val adultContentChecker: AdultContentChecker,
     // RK <--
 ) : ViewModel() {
+
+    private val subscriberGate = SubscriberGate()
 
     private val searchQuery = MutableStateFlow<String?>(null)
 
@@ -243,7 +247,7 @@ class LibraryViewModel(
             .flowOn(Dispatchers.Default)
             // RK: seeded null, which the derived state reads as still loading. The shared assembly emits
             //     a tick after this one; LibraryTab keeps loading until it lands.
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
+            .stateIn(viewModelScope + subscriberGate, SharingStarted.Eagerly, null)
 
     // RK --> selection, dialogs and category grouping moved to the shared library engine, so state reads
     //     the row data alone
@@ -261,7 +265,7 @@ class LibraryViewModel(
             libraryData = libraryData ?: LibraryData(),
         )
     }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State())
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
     // RK <--
 
     // RK -->
@@ -354,7 +358,7 @@ class LibraryViewModel(
         return combine(
             getLibraryManga.subscribe(),
             libraryBadgePrefsFlow(libraryPreferences, reikaiLibraryPreferences), // RK
-            downloadCache.changes,
+            downloadCache.changes.pausedWhileUnsubscribed(),
             // RK --> re-collapse when the merge inputs change. The recognized chapter counts are the ones
             //     the stitch ranks its trunk on, so the row and the details list lead on one source.
             mergeCollapseInputsFlow(

@@ -67,7 +67,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.WhileSubscribed
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -88,6 +87,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import logcat.LogPriority
 import mihon.core.metro.AppCoroutineScope
 import mihon.domain.chapter.interactor.FilterChaptersForDownload
@@ -178,7 +178,9 @@ import reikai.util.runCatchingCancellable
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.TriState
+import tachiyomi.core.common.util.lang.SubscriberGate
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.pausedWhileUnsubscribed
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.category.model.Category
@@ -272,6 +274,8 @@ class MangaViewModel(
     private val chapterSettings: MangaChapterSettings,
     // RK <--
 ) : ViewModel() {
+
+    private val subscriberGate = SubscriberGate()
 
     val snackbarHostState = SnackbarHostState()
     private val addToLibraryOffer = AddToLibraryOffer(snackbarHostState, context) // RK
@@ -407,8 +411,8 @@ class MangaViewModel(
         // A download, the queue or a hide only re-renders the loaded rows, as upstream's combine does.
         .loadThenRenderOn(
             merge(
-                downloadCache.changes,
-                downloadManager.queueState,
+                downloadCache.changes.pausedWhileUnsubscribed(),
+                downloadManager.queueState.pausedWhileUnsubscribed(),
                 hiddenChaptersPref.changes(),
                 showHiddenFlow,
             ),
@@ -516,7 +520,7 @@ class MangaViewModel(
         chapterView,
         mergeInputs, // RK
         trackers,
-        combine(chapterSelection, queuedDownloadStates, ::Pair),
+        combine(chapterSelection, queuedDownloadStates.pausedWhileUnsubscribed(), ::Pair),
         combine(dialog, isRefreshingData, extras, ::Triple), // RK: extras
     ) {
             view,
@@ -594,7 +598,7 @@ class MangaViewModel(
             it.missingChapterCount // RK
         }
         .flowOn(Dispatchers.IO)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State.Loading)
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State.Loading)
 
     // RK --> cover-based theming
     val themeCoverBased = uiPreferences.themeCoverBased.get()

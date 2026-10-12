@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.WhileSubscribed
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
@@ -26,6 +25,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import mihon.core.metro.AppCoroutineScope
 import mihon.domain.library.model.search.QueryNode
 import reikai.domain.category.GetNovelCategories
@@ -90,7 +90,9 @@ import reikai.presentation.library.toQueryOverlay
 import reikai.presentation.library.withCustomInfo
 import reikai.util.runCatchingCancellable
 import tachiyomi.core.common.preference.TriState
+import tachiyomi.core.common.util.lang.SubscriberGate
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.pausedWhileUnsubscribed
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.track.model.Track
@@ -137,6 +139,8 @@ class NovelLibraryViewModel(
     private val adultContentChecker: AdultContentChecker,
 ) : ViewModel() {
 
+    private val subscriberGate = SubscriberGate()
+
     private val searchQuery = MutableStateFlow<String?>(null)
 
     private val groupCategories = NovelGroupCategories(getNovelCategories, setNovelCategories)
@@ -161,7 +165,7 @@ class NovelLibraryViewModel(
                 novelRepository.getLibraryNovelAsFlow()
                     .combine(sourceManager.sources) { library, _ -> library }
                     // Re-emit when a download/delete changes the disk index so the badge + filter refresh.
-                    .combine(novelDownloadCache.changes) { library, _ -> library },
+                    .combine(novelDownloadCache.changes.pausedWhileUnsubscribed()) { library, _ -> library },
                 getCustomNovelInfo.subscribeAll(),
                 // Whole-library novel tracks (novelId -> tracks) ride with the library so a bind/unbind
                 // re-sinks the tracker filter/sort/group, read only while one of those uses them.
@@ -188,7 +192,7 @@ class NovelLibraryViewModel(
             buildState(library, customInfo, tracks, search, settings)
         }
             .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
+            .stateIn(viewModelScope + subscriberGate, SharingStarted.Eagerly, null)
 
     val state: StateFlow<State> = combine(built, searchQuery) { built, searchQuery ->
         // The query comes from its own holder, never from [built]: that lags the user by a debounce plus
@@ -196,7 +200,7 @@ class NovelLibraryViewModel(
         // fast keystrokes. The selection is not here at all; the engine owns it.
         (built ?: State()).copy(searchQuery = searchQuery)
     }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State())
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
 
     init {
         // Load the plugin host so the library can resolve each novel's source (lang + source-icon

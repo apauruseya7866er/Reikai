@@ -130,7 +130,7 @@ Cases where Reikai knowingly does not match `refs/mihon`, so a future syncer doe
 
 - **`UpdatesViewModel` has no chapter verbs, and five constructor parameters fewer than upstream.** Mark read, bookmark, download and delete live in `MangaRecentsChapterActions`, which every recents surface builds, History included, so a sync that touches upstream's `markUpdatesRead`, `bookmarkUpdates`, `downloadChapters` or `deleteChapters` ports the change there instead. Upstream's cancel patched the row's progress by hand; here an `// RK` island in `init` drops a progress override once its chapter leaves the queue.
 
-- **Both History feeds seed `null` where upstream seeds an empty list.** `HistoryViewModel` and `NovelHistoryViewModel` share their feed with `WhileSubscribed`, and the seed is the value the screen sees before the query answers. Upstream uses `emptyList()` while leaving `State.list` nullable, so its own loading branch stopped firing; Reikai seeds `null`, which is what the shared recents screen and its read lane both read as "not loaded yet". Keep the null when syncing either file, or an empty history flashes on screen a tick before the rows arrive.
+- **Both History feeds seed `null` where upstream seeds an empty list.** `HistoryViewModel` and `NovelHistoryViewModel` share their feed through `stateIn`, and the seed is the value the screen sees before the query answers. Upstream uses `emptyList()` while leaving `State.list` nullable, so its own loading branch stopped firing; Reikai seeds `null`, which is what the shared recents screen and its read lane both read as "not loaded yet". Keep the null when syncing either file, or an empty history flashes on screen a tick before the rows arrive.
 
 - **`MigrateMangaUseCase` carries reading history onto the matched chapters, which Mihon does not.** Under the chapter flag, each target chapter matched by number takes the source chapter's history row, the carry Komikku inherited from TachiyomiSY, merged onto the target's own row through `mergedHistory` (the later read, the longer time) where Komikku overwrites the read time and adds the duration, so a retried row adds no time and a newer read on the target stays. Without it a migrated series drops to the bottom of the Last read sort and leaves its History entries behind. Fenced `// RK`; the novel engine carries the same through `computeHistoryMigration`, and `MigrateEngineConformanceTest` pins both.
 
@@ -196,7 +196,7 @@ Newest first. "Base" is the `refs/mihon` SHA Reikai is synced through; "Reikai" 
 | `d1e71ab58` | `chore: sync Mihon webgpuviewer 52` | 2026-10-09 | webgpuviewer 52 and wide-page zoom matching a decoded neighbour (mihonapp/mihon#4051) |
 | `a80027ff3` | `chore: sync Mihon Material Symbols icons` | 2026-10-09 | Remaining icons moved to Material Symbols, notification drawables generated (mihonapp/mihon#4057); MangaBaka-first tracker order (mihon `dd46413e1`) declined by owner ruling, premise: Reikai keeps its own tracker order, revisit only if the owner asks; its fastlane text N/A |
 | `ab7ee00c4` | `chore: sync Mihon R8 shrinking of app code` | 2026-10-08 | R8 shrinks app code (mihon `06d612811`) |
-| `6a329386c` | `714dbfe25` | 2026-10-08 | `MangaViewModel` collects while subscribed (mihon `7ff97761b`) |
+| `6a329386c` | `714dbfe25` | 2026-10-08 | `MangaViewModel` collects while subscribed (mihon `7ff97761b`), superseded by the subscriber gate (mihonapp/mihon#4071) |
 | `9a6dea804` | `b867fd6f4`..`b3afc9d4e` | 2026-10-08 | Database, library view, folder names, downloader, covers and backup fixes over `7aacaa349..ab7ee00c4` |
 | `7aacaa349` | `70cae98d5`..`48ff63e60` | 2026-10-07 | Nothing new; closes the pass |
 | `98ba69305` (unchanged) | `chore: sync Mihon *Job to *Worker rename` | 2026-10-06 | `*Job` workers renamed `*Worker` (mihon `db45dda52`), ported ahead |
@@ -244,13 +244,13 @@ Newest first. "Base" is the `refs/mihon` SHA Reikai is synced through; "Reikai" 
 | `b2015d1ef` | `f674e77bf` | 2026-08-20 | Metro DI (mihonapp/mihon#3608) |
 | `1e5b1dc5e` (unchanged) | `b055a23a5` | 2026-08-20 | Baseline profile regenerations |
 | `1e5b1dc5e` | `7f50306ae` | 2026-08-16 | Filter icon state (mihonapp/mihon#3772), tracker `id:` search, extensions load off main, okhttp 5.5.0 |
-| `ed30766a9` (unchanged) | `fcc272543` | 2026-08-15 | Library models collect while subscribed (mihonapp/mihon#3762) |
-| `ed30766a9` (unchanged) | `bc119615d` | 2026-08-15 | Updates feeds collect while subscribed (mihonapp/mihon#3761) |
+| `ed30766a9` (unchanged) | `fcc272543` | 2026-08-15 | Library models collect while subscribed (mihonapp/mihon#3762), superseded by the subscriber gate (mihonapp/mihon#4071) |
+| `ed30766a9` (unchanged) | `bc119615d` | 2026-08-15 | Updates feeds collect while subscribed (mihonapp/mihon#3761), superseded by the subscriber gate (mihonapp/mihon#4071) |
 | `ed30766a9` | `262d247a1` | 2026-08-15 | WebGPU reader colours (mihonapp/mihon#3765) |
 | `b1efee47f` | `ef15fca50`..`0511203a7` | 2026-08-14 | StateViewModel removed (mihonapp/mihon#3763); kim 0.36.0 |
 | `77e88a215` | `77c57bc51` | 2026-08-14 | High quality WebGPU renderer (mihonapp/mihon#3388); bumps |
 | `db7f1663b` | `1d78b0a3c` | 2026-08-13 | Rest of collect-only-while-subscribed; MangaBaka score steps; bumps |
-| `ed274e26f` (unchanged) | `ac0fe5d17` | 2026-08-11 | History feeds collect while subscribed (mihonapp/mihon#3728) |
+| `ed274e26f` (unchanged) | `ac0fe5d17` | 2026-08-11 | History feeds collect while subscribed (mihonapp/mihon#3728), superseded by the subscriber gate (mihonapp/mihon#4071) |
 | `ed274e26f` (unchanged) | `0e193a338` | 2026-08-08 | Updates category filter, query half (mihonapp/mihon#3589) |
 | `ed274e26f` | `ddeb1a67d`..`668c0f3d5` | 2026-08-08 | java.time to kotlinx.datetime (mihonapp/mihon#3001) and two dependents |
 | `0648e2eaa` | `abd21736f`..`8dd714baa` | 2026-08-08 | Toolchain, R8 keeps, tracker, WebView, updater, category and Upcoming fixes, translations |

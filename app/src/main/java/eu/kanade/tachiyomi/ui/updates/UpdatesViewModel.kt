@@ -19,7 +19,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.WhileSubscribed
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -29,6 +28,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.minus
@@ -39,7 +39,9 @@ import reikai.domain.entry.overlayCustomInfo
 import reikai.domain.entry.withCustomInfo
 import reikai.domain.source.ReikaiSourcePreferences
 import tachiyomi.core.common.preference.TriState
+import tachiyomi.core.common.util.lang.SubscriberGate
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.pausedWhileUnsubscribed
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetCustomMangaInfo
@@ -67,6 +69,8 @@ class UpdatesViewModel(
     // RK: the building surface's category filter, one selection covering both content types, in SQL.
     private val reikaiSourcePreferences: ReikaiSourcePreferences,
 ) : ViewModel() {
+
+    private val subscriberGate = SubscriberGate()
 
     // RK --> the factory the assisted surface needs, so a bare metroViewModel() cannot build this.
     @AssistedFactory
@@ -114,8 +118,8 @@ class UpdatesViewModel(
                     excludedCategories = categories.exclude,
                 ).distinctUntilChanged()
             },
-        downloadCache.changes,
-        downloadManager.queueState,
+        downloadCache.changes.pausedWhileUnsubscribed(),
+        downloadManager.queueState.pausedWhileUnsubscribed(),
         // needed for Kotlin filters (downloaded)
         getUpdatesItemPreferenceFlow().distinctUntilChanged { old, new ->
             old.filterDownloaded == new.filterDownloaded
@@ -137,16 +141,19 @@ class UpdatesViewModel(
         // RK: seeded null for the same reason the history feeds are, and read the same way: the
         //     recents updated lane turns it into `loaded`, so an empty seed would announce an empty
         //     Updates tab a tick before the query answers.
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
+        .stateIn(viewModelScope + subscriberGate, SharingStarted.Eagerly, null)
 
-    val state: StateFlow<State> = combine(updateItems, queuedDownloadStates) { items, downloads ->
+    val state: StateFlow<State> = combine(updateItems, queuedDownloadStates.pausedWhileUnsubscribed()) {
+            items,
+            downloads,
+        ->
         State(
             isLoading = items == null,
             items = items.orEmpty().applyDownloadOverrides(downloads),
         )
     }
         .flowOn(Dispatchers.Default)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State())
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
 
     // RK: init and updateDownloadState sit below the feed here, upstream has them above it
     init {
