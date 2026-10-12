@@ -510,13 +510,17 @@ class RecentsEngine(
         when (val decision = provider.addDecision(entry)) {
             null, AddDecision.Remove -> Unit
             is AddDecision.ConfirmDuplicate -> openDialog(RecentsDialog.Duplicate(entry, decision.duplicates))
-            AddDecision.Add -> runAdd(entry)
+            AddDecision.Add -> promptForCategories(entry, provider.addToLibrary(entry))
         }
     }
 
+    // Asks again past the duplicate prompt, since the entry can reach the library while the prompt is open.
     internal suspend fun runAdd(entry: EntryId) {
         val provider = providersByType[entry.contentType] ?: return
-        promptForCategories(entry, provider.addToLibrary(entry))
+        when (provider.addDecision(entry)) {
+            null, AddDecision.Remove -> Unit
+            else -> promptForCategories(entry, provider.addToLibrary(entry))
+        }
     }
 
     // A group add files into the group's categories, so it never asks.

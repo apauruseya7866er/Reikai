@@ -1014,6 +1014,18 @@ class RecentsEngineTest {
         manga.addedEntry shouldBe null
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("contentTypes")
+    fun `an add confirmed past the duplicate prompt leaves an entry already in the library alone`(
+        type: ContentType,
+    ) = runTest {
+        val fake = provider(type, decision = AddDecision.Remove)
+
+        engine(listOf(fake)).runAdd(if (type == ContentType.MANGA) manga1 else novel1)
+
+        fake.addedEntry shouldBe null
+    }
+
     @Test
     fun `an entry that has gone is not added`() = runTest {
         val manga = provider(ContentType.MANGA, decision = null)

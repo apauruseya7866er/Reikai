@@ -111,7 +111,8 @@ interface RecentsBehavior {
     /**
      * Adds [entry] through the shared add sequence, so a row adds the same way every other surface does.
      * Answers a category prompt rather than raising one: the engine owns the surface's one dialog slot,
-     * so a provider never asks anything itself.
+     * so a provider never asks anything itself. The engine never calls it for an entry already in the
+     * library, whose add would toggle the favorite back off.
      */
     suspend fun addToLibrary(entry: EntryId): AddFavoriteResult
 

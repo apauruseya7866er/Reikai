@@ -288,9 +288,6 @@ class MangaRecentsAdapter(
 
     override suspend fun addToLibrary(entry: EntryId): AddFavoriteResult {
         val manga = mangaOf(entry) ?: return AddFavoriteResult.Failed
-        // Already there: the shared add toggles the favorite, so running it again would remove the
-        // entry and reset its dateAdded. The engine's remove branch normally catches this first.
-        if (manga.favorite) return AddFavoriteResult.Added
         return mangaLibraryAdder.resolveAddFavorite(manga)
     }
 

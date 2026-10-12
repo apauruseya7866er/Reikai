@@ -268,9 +268,6 @@ class NovelRecentsAdapter(
 
     override suspend fun addToLibrary(entry: EntryId): AddFavoriteResult {
         val novel = novelOf(entry) ?: return AddFavoriteResult.Failed
-        // Same guard as the manga twin: re-adding a row that is already in the library would refile
-        // its categories over whatever the user has since chosen.
-        if (novel.favorite) return AddFavoriteResult.Added
         return novelLibraryAdder.addStoredToLibrary(novel.id)
     }
 
