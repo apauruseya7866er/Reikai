@@ -16,6 +16,7 @@ import reikai.domain.novel.LnInstalledPluginMetadata
 import reikai.domain.novel.NovelPreferences
 import reikai.novel.registry.LnRegistryEntry
 import reikai.novel.registry.LnRegistryFetcher
+import reikai.novel.registry.LnRepoRegistries
 import reikai.presentation.recents.EmittingPreferenceStore
 
 class LnPluginUpdateCheckerTest {
@@ -41,7 +42,12 @@ class LnPluginUpdateCheckerTest {
     }
 
     private fun checker(fetcher: LnRegistryFetcher) =
-        LnPluginUpdateChecker(fetcher, prefs, LnPluginUpdateNotifier(context, mockk(), prefs))
+        LnPluginUpdateChecker(
+            fetcher,
+            LnRepoRegistries(fetcher, prefs),
+            prefs,
+            LnPluginUpdateNotifier(context, mockk(), prefs),
+        )
 
     private fun repos(vararg listings: Pair<String, List<LnRegistryEntry>?>): LnRegistryFetcher {
         prefs.addedRepoUrls().set(listings.map { it.first }.toSet())

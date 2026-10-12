@@ -72,7 +72,7 @@ fun pluginRepos(results: Map<String, LnRepoResult>): Map<String, String> {
  * when first needed and when it is added, and again only on [refresh], so reopening a screen or
  * installing a plugin downloads nothing. Each repo keeps its own outcome, so an unreachable repo is
  * told apart from an empty one. The update check and the post-restore trust check fetch on their
- * own, because both need the registry as it is now.
+ * own, because both need the registry as it is now; the update check hands what it read to [accept].
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Inject
@@ -105,6 +105,21 @@ class LnRepoRegistries(
         prefs.addedRepoUrls().set(prefs.addedRepoUrls().get() + repoUrl)
         rememberIcons(entries)
         Result.success(Unit)
+    }
+
+    /**
+     * Keeps what a fresher fetch of the added repos read, as Mihon's update check replaces the available
+     * extensions, so the screens and the Browse badge they recompute show the newest registries.
+     */
+    suspend fun accept(fetched: Map<String, LnRepoResult>) {
+        if (fetched.isEmpty()) return
+        mutex.withLock {
+            val kept = loaded.value.orEmpty()
+            fetched.values.forEach { if (it is LnRepoResult.Reached) rememberIcons(it.entries) }
+            loaded.value = prefs.addedRepoUrls().get()
+                .mapNotNull { repo -> (fetched[repo] ?: kept[repo])?.let { repo to it } }
+                .toMap()
+        }
     }
 
     fun remove(repoUrl: String) {

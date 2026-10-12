@@ -9,6 +9,7 @@ import reikai.domain.novel.NovelPreferences
 import reikai.novel.install.canonicalizePluginUrl
 import reikai.novel.registry.LnRegistryEntry
 import reikai.novel.registry.LnRegistryFetcher
+import reikai.novel.registry.LnRepoRegistries
 import reikai.novel.registry.LnRepoResult
 import reikai.novel.registry.fetchEach
 import reikai.util.runCatchingCancellable
@@ -27,6 +28,7 @@ import java.util.concurrent.TimeUnit
 @SingleIn(AppScope::class)
 class LnPluginUpdateChecker(
     private val fetcher: LnRegistryFetcher,
+    private val registries: LnRepoRegistries,
     private val prefs: NovelPreferences,
     private val notifier: LnPluginUpdateNotifier,
 ) {
@@ -36,6 +38,8 @@ class LnPluginUpdateChecker(
         val repos = prefs.addedRepoUrls().get()
         val installedUrls = prefs.installedPluginUrls().get()
         val fetched = if (repos.isEmpty() || installedUrls.isEmpty()) emptyMap() else fetcher.fetchEach(repos)
+        // The screens recompute the badge from their registries, so they must not keep an older copy.
+        registries.accept(fetched)
         val found = findPluginUpdates(
             installedUrls,
             prefs.installedPluginMetadata().get(),
