@@ -78,6 +78,7 @@ import reikai.presentation.browse.sourceLanguageName
 import reikai.presentation.components.ContentTypeBadge
 import reikai.presentation.components.ContentTypeFilterChips
 import reikai.presentation.components.TypeBadge
+import reikai.presentation.components.rememberChipListState
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.FastScrollLazyColumn
 import tachiyomi.presentation.core.components.material.PullRefresh
@@ -248,7 +249,10 @@ private fun ExtensionsList(
     var failedPlugin by remember { mutableStateOf<LnPluginLoadFailure?>(null) }
     var installError by remember { mutableStateOf<InstallStep.Error?>(null) }
 
-    FastScrollLazyColumn(contentPadding = contentPadding + topSmallPaddingValues) {
+    FastScrollLazyColumn(
+        state = rememberChipListState(state.contentType),
+        contentPadding = contentPadding + topSmallPaddingValues,
+    ) {
         if (!installGranted && state.needsInstallPermission) {
             item(key = "extension-permissions-warning") {
                 WarningBanner(

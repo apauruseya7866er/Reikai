@@ -31,6 +31,7 @@ import reikai.presentation.browse.rememberEntryGestures
 import reikai.presentation.browse.rememberMixedBulkSelection
 import reikai.presentation.browse.startAdd
 import reikai.presentation.components.HeaderTabRow
+import reikai.presentation.components.rememberChipListState
 import reikai.presentation.novel.globalsearch.NovelGlobalSearchViewModel
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -163,7 +164,7 @@ class EntryGlobalSearchScreen(
                 }
                 null -> Unit
             }
-            LazyColumn(contentPadding = contentPadding) {
+            LazyColumn(state = rememberChipListState(state.contentType), contentPadding = contentPadding) {
                 items(state.visibleRows.size, key = { state.visibleRows[it].key.toString() }) { index ->
                     val row = state.visibleRows[index]
                     val gestures = rememberEntryGestures(

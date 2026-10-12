@@ -46,6 +46,7 @@ import reikai.presentation.browse.ReikaiBrowseViewModel
 import reikai.presentation.browse.components.NovelSourceIcon
 import reikai.presentation.components.ContentTypeBadge
 import reikai.presentation.components.ContentTypeFilterChips
+import reikai.presentation.components.rememberChipListState
 import reikai.presentation.migrate.flow.EntryMigrationFavoritesScreen
 import tachiyomi.core.common.Constants
 import tachiyomi.domain.source.model.Source
@@ -141,7 +142,10 @@ private fun MigrateSourcesList(
     onToggleSortingDirection: () -> Unit,
 ) {
     val context = LocalContext.current
-    ScrollbarLazyColumn(contentPadding = contentPadding + topSmallPaddingValues) {
+    ScrollbarLazyColumn(
+        state = rememberChipListState(state.contentType),
+        contentPadding = contentPadding + topSmallPaddingValues,
+    ) {
         stickyHeader(key = STICKY_HEADER_KEY_PREFIX) {
             MigrateSortHeader(
                 sortingMode = state.sortingMode,

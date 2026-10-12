@@ -3,6 +3,7 @@ package reikai.presentation.browse.source
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -45,6 +46,7 @@ import reikai.presentation.browse.globalsearch.EntryGlobalSearchScreen
 import reikai.presentation.browse.sourceLanguageLabel
 import reikai.presentation.components.ContentTypeBadge
 import reikai.presentation.components.ContentTypeFilterChips
+import reikai.presentation.components.rememberChipListState
 import tachiyomi.domain.source.model.Source
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.ScrollbarLazyColumn
@@ -117,6 +119,7 @@ fun Screen.reikaiSourcesTab(browseViewModel: ReikaiBrowseViewModel): TabContent 
                     )
                     else -> SourcesList(
                         items = state.items,
+                        listState = rememberChipListState(state.contentType),
                         showContentType = state.contentType == ContentType.ALL,
                         showsFormat = state.showsFormat,
                         showLatest = state.showLatest,
@@ -171,6 +174,7 @@ private fun SourcesList(
     /** Novel sources of more than one packaging are listed, so each row names its own. */
     showsFormat: Boolean,
     showLatest: Boolean,
+    listState: LazyListState,
     contentPadding: PaddingValues,
     /** The row that was tapped, and whether it was its Latest button rather than the row. */
     onClickItem: (BrowseSourceRow, Boolean) -> Unit,
@@ -178,7 +182,7 @@ private fun SourcesList(
     onLongClickItem: (BrowseSourceRow) -> Unit,
 ) {
     val context = LocalContext.current
-    ScrollbarLazyColumn(contentPadding = contentPadding + topSmallPaddingValues) {
+    ScrollbarLazyColumn(state = listState, contentPadding = contentPadding + topSmallPaddingValues) {
         items(
             items = items,
             contentType = {

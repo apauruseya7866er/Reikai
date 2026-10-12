@@ -43,6 +43,7 @@ import reikai.domain.library.ContentType
 import reikai.domain.novel.model.NovelCover
 import reikai.presentation.components.ContentTypeFilterChips
 import reikai.presentation.components.libraryRefreshMessage
+import reikai.presentation.components.rememberChipListState
 import reikai.presentation.migrate.flow.EntryMigrationSourcePickScreen
 import reikai.presentation.novel.details.NovelScreen
 import tachiyomi.core.common.i18n.stringResource
@@ -160,7 +161,10 @@ class UpdateErrorsScreen(
                     return@Column
                 }
 
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = rememberChipListState(successState.contentType),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
                     successState.groups.forEach { group ->
                         item(key = "header-${group.message}") {
                             Text(
