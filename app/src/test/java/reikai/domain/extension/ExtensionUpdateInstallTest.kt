@@ -45,6 +45,33 @@ class ExtensionUpdateInstallTest {
     }
 
     @Test
+    fun `cancelling the update while the refetch runs stops it without an error`() = runTest {
+        val fetching = CompletableDeferred<Unit>()
+        var errors = 0
+        val steps = mutableListOf<InstallStep>()
+        val update = backgroundScope.launch {
+            installUpdate({ null }, { fetching.await() }, { errors++.let { unreachable } }, { flowOf() }).toList(steps)
+        }
+        runCurrent()
+
+        update.cancel()
+        runCurrent()
+
+        (errors to steps) shouldBe (0 to listOf<InstallStep>(InstallStep.Pending))
+    }
+
+    @Test
+    fun `a refetch that fails still ends on the unreachable error`() = runTest {
+        val steps = mutableListOf<InstallStep>()
+        backgroundScope.launch {
+            installUpdate({ null }, { error("HTTP 503") }, { unreachable }, { flowOf() }).toList(steps)
+        }
+        runCurrent()
+
+        steps shouldBe listOf(InstallStep.Pending, unreachable)
+    }
+
+    @Test
     fun `an update the refetch lists is installed`() = runTest {
         var listed: Extension.Available? = null
         val steps = installUpdate(

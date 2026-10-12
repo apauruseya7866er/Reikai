@@ -434,13 +434,7 @@ class ExtensionManager(
     }
 
     // RK: shared, so Update all over the rows a store outage left without a listing fetches once
-    private val listingRefetch = SharedRefresh {
-        try {
-            setAvailableExtensions(fetchExtensions())
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e)
-        }
-    }
+    private val listingRefetch = SharedRefresh { setAvailableExtensions(fetchExtensions()) }
 
     fun cancelInstallUpdateExtension(extension: Extension) {
         installer.cancelInstall(extension.pkgName)

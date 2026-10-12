@@ -8,6 +8,9 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import logcat.LogPriority
+import reikai.util.runCatchingCancellable
+import tachiyomi.core.common.util.system.logcat
 
 /**
  * Installs what [findUpdate] returns, fetching the listings again through [refetch] first when the held
@@ -23,7 +26,8 @@ fun installUpdate(
 ): Flow<InstallStep> = flow {
     val update = findUpdate() ?: run {
         emit(InstallStep.Pending)
-        refetch()
+        // A cancelled update stops here; only a failed fetch falls through to the error.
+        runCatchingCancellable { refetch() }.onFailure { logcat(LogPriority.ERROR, it) }
         findUpdate()
     }
     if (update == null) emitAll(MutableStateFlow(unreachable())) else emitAll(install(update))
