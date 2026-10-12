@@ -238,8 +238,9 @@ class MergedChapterUnitRepositoryImpl(
 
     private companion object {
         // The owners' share of the grouped library members at which reading every row is the cheaper
-        // read. Measured on 300 groups of three 1000-chapter members, see merged-series.md.
-        const val READ_ALL_SHARE = 0.5
+        // read, measured with each member's chapter rows interleaved, as years of updates leave them
+        // (rows stored in one block favour the narrow read further). See merged-series.md.
+        const val READ_ALL_SHARE = 0.3
 
         // Under SQLite's 999-variable limit on older Android versions.
         const val MAX_IDS_PER_QUERY = 500
