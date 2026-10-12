@@ -38,10 +38,11 @@ echo "$stripped" | grep -qE '#[0-9]+([^0-9A-Za-z]|$)' \
 #    receipt for the DRY rule in code-quality.md. Tests are exempt, and a declaration the diff also
 #    removes (an edited signature, a moved file) is not new; scripts/kotlin-decls.sh decides both.
 #    The diff is the staged index, or with REIKAI_COMMIT set the commit's own, which is how CI checks a
-#    commit already made: its checkout stages nothing.
+#    commit already made: its checkout stages nothing. A revert (git's own "This reverts commit <sha>"
+#    line) owes none: what it adds back is the code before a commit that already carried its receipt.
 diff_src=(--cached)
 [ -n "${REIKAI_COMMIT:-}" ] && diff_src=("$REIKAI_COMMIT^" "$REIKAI_COMMIT")
-if [ -f scripts/kotlin-decls.sh ]; then
+if [ -f scripts/kotlin-decls.sh ] && ! echo "$msg" | grep -qE '^This reverts commit [0-9a-f]{7,40}'; then
   reuse_files=$(git diff "${diff_src[@]}" --name-only --diff-filter=ACMR -- '*.kt' \
     | grep -E '(^|/)(reikai|exh)/' | grep -vE '/src/(test|androidTest)/' || true)
   if [ -n "$reuse_files" ]; then
