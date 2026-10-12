@@ -53,7 +53,8 @@ class ComickApi(
                     "User-Agent",
                     buildString {
                         append("Reikai/v${BuildConfig.VERSION_NAME} ") // RK: identifies as Reikai
-                        append("(${BuildConfig.APPLICATION_ID} ${BuildConfig.COMMIT_SHA}) ") // RK: upstream has a stray ")"
+                        // RK: upstream has a stray ")" after the application id
+                        append("(${BuildConfig.APPLICATION_ID} ${BuildConfig.COMMIT_SHA}) ")
                         append("(Android) (https://github.com/mihonapp/mihon)")
                     },
                 )
