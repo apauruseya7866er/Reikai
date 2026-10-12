@@ -1,7 +1,37 @@
 # Cross-file token clones in Reikai-owned Kotlin and RK islands that predate their check or were
 # kept on purpose. One per line: file A, file B, hash of the normalised tokens (tab-separated).
 # Regenerate with: pwsh scripts/dup-check.ps1 -UpdateBaseline, and say in the commit why a new one
-# is kept.
+# is kept. -UpdateBaseline writes back only the four lines above: restore the reasons below after
+# regenerating, and add one for a new pair group.
+#
+# Why each pair group is kept:
+# - Backup creators and models (Manga/Novel BackupCreator, BackupManga/BackupNovel, custom info): the
+#   proto shapes share field numbers on purpose; pinned by BackupCustomInfoConformanceTest and
+#   BackupDatesConformanceTest.
+# - DownloadStore / NovelDownloadStore: upstream's queue store copied for the separate novel engine,
+#   which content-layer.md keeps apart from Mihon's.
+# - NovelListApi / RanobeDbApi: tracker API client scaffolding (auth, request and paging setup).
+# - AsmHentai, HentaiFox, Koharu, NHentai, NHentaiNet, MangaType / MangaLewd: Komikku-shaped
+#   delegated sources and helpers, kept in upstream shape so a re-port diffs cleanly.
+# - Workers (EHentaiUpdateWorker, MangaDexSyncWorker, NovelUpdateWorker, TrackerRefreshWorker):
+#   WorkManager setup, the foreground notice and constraints.
+# - MangaViewModel / NovelDetailsViewModel / NovelLibraryViewModel / NovelReaderViewModel: DI
+#   constructor lists and the details engine twin behind the shared details contract.
+# - MigrateMangaUseCase / MigrateNovelUseCase: engine twins, pinned by MigrateEngineConformanceTest.
+# - Update-error interactors and repositories: engine twins over separate tables, pinned by
+#   UpdateErrorConformanceTest.
+# - CustomMangaInfo / CustomNovelInfo repositories: engine twins, pinned by ResetEntryInfoConformanceTest
+#   and BackupCustomInfoConformanceTest.
+# - Group stitchers and chapter aggregation: engine twins, pinned by MergedTrunkConformanceTest and
+#   MergedCountConformanceTest.
+# - PropagateTrackerLinks / PropagateNovelTrackerLinks: both forward to the handOutGroupTrackers kernel.
+# - RemoveMangaFromLibrary / RemoveNovelsFromLibrary: pinned by EntryLibraryRemovalConformanceTest.
+# - Entry, library, migration and recents adapters, TachiyomiNovelSource / IReaderNovelSource:
+#   adapter forwarders, one per engine or source kind, each the only seam to its side.
+# - Preference holders and settings screens (ReikaiLibraryPreferences, ReikaiRecommendationPreferences,
+#   EntryDisplayPage, ReikaiLibrarySettings, SettingsMangaReaderScreen, SettingsRecommendationsScreen):
+#   preference declarations and settings DSL lists.
+# - SavedSearchDialogs / FeedDialogs: dialog scaffolding around different fields.
 app/src/main/java/eu/kanade/presentation/more/settings/screen/SettingsMangaReaderScreen.kt	app/src/main/java/reikai/presentation/recommendation/SettingsRecommendationsScreen.kt	4c95e27df5c79ab2
 app/src/main/java/eu/kanade/tachiyomi/data/backup/create/creators/MangaBackupCreator.kt	app/src/main/java/eu/kanade/tachiyomi/data/backup/create/creators/NovelBackupCreator.kt	c7dbc2f375ec0b4d
 app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupCustomMangaInfo.kt	app/src/main/java/eu/kanade/tachiyomi/data/backup/models/BackupCustomNovelInfo.kt	3f25b0ac5f1f9294
