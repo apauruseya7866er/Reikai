@@ -247,12 +247,20 @@ public static class DupDetector {
 $clones = [DupDetector]::Find($files.ToArray(), $texts.ToArray(), $MinTokens)
 
 if ($UpdateBaseline) {
-    $header = @(
-        '# Cross-file token clones in Reikai-owned Kotlin and RK islands that predate their check or were'
-        '# kept on purpose. One per line: file A, file B, hash of the normalised tokens (tab-separated).'
-        '# Regenerate with: pwsh scripts/dup-check.ps1 -UpdateBaseline, and say in the commit why a new one'
-        '# is kept.'
-    )
+    # The comment header carries the reason each pair group is kept, so a regenerate keeps it as written.
+    $header = if (Test-Path -LiteralPath $baselinePath) {
+        @(Get-Content -LiteralPath $baselinePath | Where-Object { $_.StartsWith('#') })
+    } else {
+        @()
+    }
+    if ($header.Count -eq 0) {
+        $header = @(
+            '# Cross-file token clones in Reikai-owned Kotlin and RK islands that predate their check or were'
+            '# kept on purpose. One per line: file A, file B, hash of the normalised tokens (tab-separated).'
+            '# Regenerate with: pwsh scripts/dup-check.ps1 -UpdateBaseline, and say in the commit why a new one'
+            '# is kept.'
+        )
+    }
     $keys = @($clones | ForEach-Object Key | Sort-Object -Unique)
     # LF on every platform, so a baseline regenerated on Windows diffs cleanly against one from CI.
     [System.IO.File]::WriteAllText($baselinePath, ((@($header) + $keys) -join "`n") + "`n")

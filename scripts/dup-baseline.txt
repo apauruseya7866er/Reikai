@@ -1,8 +1,8 @@
 # Cross-file token clones in Reikai-owned Kotlin and RK islands that predate their check or were
 # kept on purpose. One per line: file A, file B, hash of the normalised tokens (tab-separated).
 # Regenerate with: pwsh scripts/dup-check.ps1 -UpdateBaseline, and say in the commit why a new one
-# is kept. -UpdateBaseline writes back only the four lines above: restore the reasons below after
-# regenerating, and add one for a new pair group.
+# is kept. -UpdateBaseline keeps this comment header as written: add a reason below for a new pair
+# group.
 #
 # Why each pair group is kept:
 # - Backup creators and models (Manga/Novel BackupCreator, BackupManga/BackupNovel, custom info): the
