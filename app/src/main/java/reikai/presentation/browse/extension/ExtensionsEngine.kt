@@ -72,6 +72,12 @@ class ExtensionsEngine(
                     snapshots[i].rows.orEmpty().any { contentType.includes(it.key.contentType) }
             },
             showsFormat = NovelExtensionFormat.tellsApart(shown.map { it.key.format }),
+            // Over the shown rows, which are what Update all touches.
+            updatesByType = if (contentType == ContentType.ALL) {
+                shown.filter { it.section == ExtensionSection.Updates }.groupingBy { it.key.contentType }.eachCount()
+            } else {
+                emptyMap()
+            },
             items = sectionExtensions(shown),
         )
     }
@@ -124,6 +130,8 @@ class ExtensionsEngine(
         val needsInstallPermission: Boolean = false,
         /** Novel rows of more than one packaging are on screen, so each row names its own. */
         val showsFormat: Boolean = false,
+        /** Pending updates per content type, under the All chip only, so the header says what Update all covers. */
+        val updatesByType: Map<ContentType, Int> = emptyMap(),
         override val items: List<ExtensionsListItem> = emptyList(),
     ) : ProviderList {
         val isSearching get() = !query.isNullOrBlank()

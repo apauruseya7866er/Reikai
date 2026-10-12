@@ -430,7 +430,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Changed
 
-- **Browse -> Sources, Extensions and Migrate now each show manga and light-novel sources in one list, grouped by language, with the chips filtering that list and each row saying which kind it is.** Extensions share one Update all for pending updates, and Migrate's sort controls cover the whole list.
+- **Browse -> Sources, Extensions and Migrate now each show manga and light-novel sources in one list, grouped by language, with the chips filtering that list and each row saying which kind it is.** Extensions share one Update all, counting each kind under All, and Migrate's sort covers the whole list.
 - **Global search now searches manga and light-novel sources in one run, with All / Manga / Novels tabs, and a selection can add manga and novels to your library together.** Categories are asked for once per kind, since the two libraries keep their own.
 - **Settings -> Browse and sources now picks which extensions load by content warning, Safe, Mixed or 18+, instead of one NSFW switch, and your NSFW choice carries over (from Mihon).** It applies without a restart and can skip installed ones. Upstream: mihonapp/mihon#3951, mihonapp/mihon#3952, mihonapp/mihon#3954.
 - **The Sources list now keeps one "Last used" source across manga and light novels, and it starts empty after this update until you next open a source.** Opening a source while incognito leaves it unchanged.

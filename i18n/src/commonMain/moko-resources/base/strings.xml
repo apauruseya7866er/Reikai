@@ -563,6 +563,8 @@
       <!-- Extension section -->
     <string name="multi_lang">Multi</string>
     <string name="ext_updates_pending">Updates pending</string>
+    <!-- RK: the All chip's Updates header, counted per content type -->
+    <string name="ext_updates_pending_by_type">Updates pending (%1$s)</string>
     <string name="ext_update">Update</string>
     <string name="ext_update_all">Update all</string>
     <string name="ext_obsolete">Orphaned</string>

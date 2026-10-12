@@ -101,6 +101,30 @@ class ExtensionsEngineTest {
         state.showsFormat shouldBe false
     }
 
+    @Test
+    fun `the All chip counts pending updates per content type`() = runTest(dispatcher) {
+        val state = settledState(
+            ContentType.ALL,
+            FakeProvider(apks, listOf(update(ExtensionKey.Manga("m")), row(ExtensionKey.Manga("installed")))),
+            FakeProvider(
+                setOf(ContentType.NOVELS),
+                listOf(update(ExtensionKey.Novel("a")), update(ExtensionKey.Novel("b"))),
+            ),
+        )
+
+        state.updatesByType shouldBe mapOf(ContentType.MANGA to 1, ContentType.NOVELS to 2)
+    }
+
+    @Test
+    fun `a single type's chip counts no pending updates per type`() = runTest(dispatcher) {
+        val state = settledState(
+            ContentType.NOVELS,
+            FakeProvider(setOf(ContentType.NOVELS), listOf(update(ExtensionKey.Novel("a")))),
+        )
+
+        state.updatesByType shouldBe emptyMap()
+    }
+
     private suspend fun TestScope.settledState(
         chip: ContentType,
         vararg providers: ExtensionsProvider,
@@ -119,11 +143,13 @@ class ExtensionsEngineTest {
 
     private fun ExtensionsEngine.State.rows() = items.filterIsInstance<ExtensionsListItem.Row>().map { it.row }
 
-    private fun row(key: ExtensionKey) = BrowseExtensionRow(
+    private fun update(key: ExtensionKey) = row(key, ExtensionSection.Updates)
+
+    private fun row(key: ExtensionKey, section: ExtensionSection = ExtensionSection.Installed) = BrowseExtensionRow(
         key = key,
         name = key.toString(),
         lang = "en",
-        section = ExtensionSection.Installed,
+        section = section,
         needsAttention = false,
         searchTerms = emptyList(),
         searchIds = emptyList(),

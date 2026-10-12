@@ -86,6 +86,7 @@ import tachiyomi.presentation.core.components.FastScrollLazyColumn
 import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.components.material.topSmallPaddingValues
+import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
@@ -291,7 +292,7 @@ private fun ExtensionsList(
         ) { item ->
             when (item) {
                 is ExtensionsListItem.Header ->
-                    ExtensionsSectionHeader(item.section, onUpdateAll, Modifier.animateItem())
+                    ExtensionsSectionHeader(item.section, state.updatesByType, onUpdateAll, Modifier.animateItem())
                 is ExtensionsListItem.Row -> {
                     val badge: @Composable () -> Unit = {
                         // One pill at most: a phone row has no room for a type and a format side by side.
@@ -414,13 +415,14 @@ private fun ExtensionsList(
 @Composable
 private fun ExtensionsSectionHeader(
     section: ExtensionSection,
+    updatesByType: Map<ContentType, Int>,
     onUpdateAll: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BrowseSectionHeader(
         modifier = modifier,
         title = when (section) {
-            ExtensionSection.Updates -> stringResource(MR.strings.ext_updates_pending)
+            ExtensionSection.Updates -> updatesPendingTitle(updatesByType)
             ExtensionSection.NotLoaded -> stringResource(MR.strings.ext_not_loaded)
             ExtensionSection.Installed -> stringResource(MR.strings.ext_installed)
             is ExtensionSection.Available -> browseLanguageLabel(section.lang, LocalContext.current)
@@ -434,6 +436,22 @@ private fun ExtensionsSectionHeader(
             }
         },
     )
+}
+
+/** Under the All chip, the counts per content type, so it is clear Update all covers each of them. */
+@Composable
+private fun updatesPendingTitle(updatesByType: Map<ContentType, Int>): String {
+    val manga = updatesByType[ContentType.MANGA]?.let { pluralStringResource(MR.plurals.bulk_selected_manga, it, it) }
+    val novels = updatesByType[ContentType.NOVELS]?.let {
+        pluralStringResource(MR.plurals.bulk_selected_novels, it, it)
+    }
+    val counts = if (manga != null && novels != null) {
+        stringResource(MR.strings.bulk_selected_types, manga, novels)
+    } else {
+        manga ?: novels
+    }
+    return counts?.let { stringResource(MR.strings.ext_updates_pending_by_type, it) }
+        ?: stringResource(MR.strings.ext_updates_pending)
 }
 
 @Composable
