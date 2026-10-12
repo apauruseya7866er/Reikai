@@ -7,10 +7,12 @@ import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -21,6 +23,7 @@ import reikai.domain.novel.NovelPreferences
 import reikai.domain.source.ReikaiSourcePreferences
 import reikai.domain.source.ToggleNovelSource
 import reikai.novel.install.LnPluginInstaller
+import reikai.novel.registry.LnRepoRegistries
 import reikai.novel.source.NovelSourceManager
 import reikai.novel.source.novelApp
 import reikai.novel.source.novelCatalogue
@@ -59,7 +62,17 @@ class NovelSourceListsLoadTest {
 
     @Test
     fun `the Sources filter opens with the novel apps' catalogues`() = runTest {
-        val model = main.track(NovelSourcesFilterViewModel(manager, preferences, ToggleNovelSource(preferences)))
+        val model = main.track(
+            NovelSourcesFilterViewModel(
+                manager,
+                preferences,
+                ToggleNovelSource(preferences),
+                registries = mockk<LnRepoRegistries> { every { results } returns flowOf(emptyMap()) },
+                extensionManager = mockk<ExtensionManager> {
+                    every { availableNovelExtensionsFlow } returns MutableStateFlow(emptyList())
+                },
+            ),
+        )
 
         firstAfterScan { model.state.filterIsInstance<NovelSourcesFilterViewModel.State.Success>().first() }
             .items.flatMap { it.second }.map { it.id } shouldBe listOf("tachiyomi:7")

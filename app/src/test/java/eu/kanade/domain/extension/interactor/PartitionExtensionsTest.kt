@@ -13,7 +13,7 @@ class PartitionExtensionsTest {
     @Test
     fun `a pending update names the version its store lists`() {
         val extensions = partitionExtensions(
-            enabledLanguages = null,
+            isShown = { true },
             enabledContentWarnings = ContentWarning.entries.toSet(),
             installed = listOf(installed("app", "1.6.7", hasUpdate = true), installed("other", "1.0.0")),
             failed = emptyList(),
@@ -27,7 +27,7 @@ class PartitionExtensionsTest {
     @Test
     fun `a pending update names the version the store signing the apk lists, not another store's`() {
         val extensions = partitionExtensions(
-            enabledLanguages = null,
+            isShown = { true },
             enabledContentWarnings = ContentWarning.entries.toSet(),
             installed = listOf(installed("app", "1.6.7", hasUpdate = true)),
             failed = emptyList(),
@@ -41,7 +41,7 @@ class PartitionExtensionsTest {
     @Test
     fun `a not-loaded extension with an update pending is listed with the updates`() {
         val extensions = partitionExtensions(
-            enabledLanguages = null,
+            isShown = { true },
             enabledContentWarnings = ContentWarning.entries.toSet(),
             installed = emptyList(),
             failed = listOf(failed("app", hasUpdate = true), failed("other")),
@@ -56,7 +56,7 @@ class PartitionExtensionsTest {
     @Test
     fun `a not-loaded extension's pending update names the version its store lists`() {
         val extensions = partitionExtensions(
-            enabledLanguages = null,
+            isShown = { true },
             enabledContentWarnings = ContentWarning.entries.toSet(),
             installed = emptyList(),
             failed = listOf(failed("app", hasUpdate = true)),
@@ -70,7 +70,7 @@ class PartitionExtensionsTest {
     @Test
     fun `a listing from a store whose key does not sign the installed apk is offered beside it`() {
         val extensions = partitionExtensions(
-            enabledLanguages = null,
+            isShown = { true },
             enabledContentWarnings = ContentWarning.entries.toSet(),
             installed = listOf(installed("app", "1.0.0")),
             failed = emptyList(),
@@ -84,7 +84,7 @@ class PartitionExtensionsTest {
     @Test
     fun `a keyless store's listing of an installed extension is not offered again`() {
         val extensions = partitionExtensions(
-            enabledLanguages = null,
+            isShown = { true },
             enabledContentWarnings = ContentWarning.entries.toSet(),
             installed = listOf(installed("app", "1.0.0")),
             failed = emptyList(),
@@ -93,6 +93,26 @@ class PartitionExtensionsTest {
         )
 
         extensions.available shouldBe emptyList()
+    }
+
+    @Test
+    fun `a listing's sources in a hidden language are not offered`() {
+        val multi = offered("app", "1.0.0").let {
+            it.copy(
+                sources =
+                it.sources + Extension.Available.Source(id = 2, lang = "ja", name = "app ja", baseUrl = ""),
+            )
+        }
+        val extensions = partitionExtensions(
+            isShown = { it != "ja" },
+            enabledContentWarnings = ContentWarning.entries.toSet(),
+            installed = emptyList(),
+            failed = emptyList(),
+            offered = listOf(multi),
+            storeKeys = setOf(KEY),
+        )
+
+        extensions.available.map { it.lang } shouldBe listOf("en")
     }
 
     private fun failed(pkg: String, hasUpdate: Boolean = false) = Extension.NotLoaded(

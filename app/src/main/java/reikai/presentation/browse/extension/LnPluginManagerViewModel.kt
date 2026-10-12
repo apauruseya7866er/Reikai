@@ -26,6 +26,7 @@ import mihon.core.metro.AppCoroutineScope
 import reikai.domain.extension.repoNameFromAddress
 import reikai.domain.novel.LnInstalledPluginMetadata
 import reikai.domain.novel.NovelPreferences
+import reikai.domain.source.ReikaiSourcePreferences
 import reikai.novel.install.LnPluginInstaller
 import reikai.novel.install.LnPluginLoadFailure
 import reikai.novel.install.canonicalizePluginUrl
@@ -36,6 +37,7 @@ import reikai.novel.registry.pluginRepos
 import reikai.novel.source.LnPluginSource
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
+import reikai.novel.source.isInDisabledNovelLanguage
 import reikai.novel.update.LnPluginUpdate
 import reikai.novel.update.LnPluginUpdateNotifier
 import reikai.novel.update.LnPluginUpdates
@@ -61,6 +63,7 @@ class LnPluginManagerViewModel(
     private val updateNotifier: LnPluginUpdateNotifier,
     // Uninstalls are deletes, which closing the Extensions screen must not cut off.
     @AppCoroutineScope private val appScope: CoroutineScope,
+    sourcePreferences: ReikaiSourcePreferences,
 ) : ViewModel() {
 
     /** Canonical URLs with an install in flight, and the last error per URL. */
@@ -75,6 +78,7 @@ class LnPluginManagerViewModel(
         registries.results,
         prefs.installedPluginUrls().changes(),
         prefs.installedPluginMetadata().changes(),
+        sourcePreferences.disabledNovelLanguages.changes(),
         ::repoFetch,
     )
         // Keep the Browse badge in sync with what the user is looking at.
@@ -112,6 +116,7 @@ class LnPluginManagerViewModel(
         results: Map<String, LnRepoResult>,
         installedUrls: Set<String>,
         metadata: Map<String, LnInstalledPluginMetadata>,
+        disabledLanguages: Set<String>,
     ): RepoFetch {
         // Merge in repo order, so first-write-wins on URL collisions matches the install/check surfaces.
         val registries = results.values.map { (it as? LnRepoResult.Reached)?.entries.orEmpty() }
@@ -120,7 +125,9 @@ class LnPluginManagerViewModel(
         val repoByUrl = pluginRepos(results).mapValues { repoNameFromAddress(it.value).first }
         return RepoFetch(
             hasRepos = results.isNotEmpty(),
-            available = byUrl.filterKeys { it !in installedUrls }.values.toList(),
+            // The novel sources' language filter narrows what is offered, as manga's does for extensions.
+            available = byUrl.filterKeys { it !in installedUrls }.values
+                .filterNot { it.lang.isInDisabledNovelLanguage(disabledLanguages) },
             found = findPluginUpdates(
                 installedUrls,
                 metadata,

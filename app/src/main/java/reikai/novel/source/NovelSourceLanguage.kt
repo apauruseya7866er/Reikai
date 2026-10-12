@@ -14,12 +14,15 @@ fun String.toLangCode(): String {
 }
 
 /**
- * Whether a language the user switched off covers this source. The saved set is normalised because a
- * switch saved before plugins and app sources were grouped together holds whichever of "English" or
- * "en" its list showed.
+ * Whether a novel language the user switched off covers this declared language, a source's or a
+ * listing's. Both sides are normalised because a switch saved before plugins and app sources were
+ * grouped together holds whichever of "English" or "en" its list showed, and a registry declares names.
  */
-fun NovelSource.isInDisabledLanguage(disabled: Set<String>): Boolean =
-    lang in disabled.mapTo(HashSet()) { it.toLangCode() }
+fun String.isInDisabledNovelLanguage(disabled: Set<String>): Boolean =
+    toLangCode() in disabled.mapTo(HashSet()) { it.toLangCode() }
+
+/** Whether a language the user switched off covers this source, see [isInDisabledNovelLanguage]. */
+fun NovelSource.isInDisabledLanguage(disabled: Set<String>): Boolean = lang.isInDisabledNovelLanguage(disabled)
 
 /** Whether the user switched this source off, by its own id or by its language. */
 fun NovelSource.isDisabled(disabledIds: Set<String>, disabledLangs: Set<String>): Boolean =

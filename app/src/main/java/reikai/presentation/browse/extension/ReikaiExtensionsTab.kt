@@ -74,6 +74,7 @@ import reikai.presentation.browse.components.failedInstall
 import reikai.presentation.browse.components.retryInstall
 import reikai.presentation.browse.extension.details.NovelPluginDetailsScreen
 import reikai.presentation.browse.repos.RepositoriesScreen
+import reikai.presentation.browse.source.EntrySourcesFilterScreen
 import reikai.presentation.browse.sourceLanguageName
 import reikai.presentation.components.ContentTypeBadge
 import reikai.presentation.components.ContentTypeFilterChips
@@ -124,13 +125,21 @@ fun Screen.reikaiExtensionsTab(
         titleRes = MR.strings.label_extensions,
         badgeNumber = totalCount.takeIf { it > 0 },
         searchEnabled = true,
-        actions = listOfNotNull(
-            // Mihon's manga extension-language filter; it does nothing for novel plugins, so hide it
-            // on the Novels chip, matching the Sources tab's content-type-aware filter.
+        actions = listOf(
+            // Each type's own language filter: Mihon's extension-language screen for manga, and for
+            // novels the novel sources' filter, whose languages narrow the plugins and apps offered.
             AppBar.OverflowAction(
                 title = stringResource(MR.strings.action_filter),
-                onClick = { navigator.push(ExtensionFilterScreen()) },
-            ).takeIf { contentType.includes(ContentType.MANGA) },
+                onClick = {
+                    navigator.push(
+                        if (contentType == ContentType.NOVELS) {
+                            EntrySourcesFilterScreen(ContentType.NOVELS)
+                        } else {
+                            ExtensionFilterScreen()
+                        },
+                    )
+                },
+            ),
             AppBar.OverflowAction(
                 title = stringResource(MR.strings.repos),
                 onClick = openRepos,

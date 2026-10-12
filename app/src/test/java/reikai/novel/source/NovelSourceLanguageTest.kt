@@ -68,6 +68,11 @@ class NovelSourceLanguageTest {
     }
 
     @Test
+    fun `a listing declaring its language by name is covered by the code switched off`() {
+        "Español".isInDisabledNovelLanguage(setOf("es")) shouldBe true
+    }
+
+    @Test
     fun `another language switched off leaves a source on`() {
         source("en").isInDisabledLanguage(setOf("es")) shouldBe false
     }

@@ -14,9 +14,10 @@ import mihon.domain.extension.model.ContentWarning
 import mihon.domain.extension.model.ExtensionStore
 import mihon.domain.extension.repository.ExtensionStoreRepository
 import org.junit.jupiter.params.ParameterizedTest
-import org.junit.jupiter.params.provider.CsvSource
 import org.junit.jupiter.params.provider.EnumSource
 import reikai.domain.extension.NO_SIGNING_KEY
+import reikai.domain.source.ReikaiSourcePreferences
+import reikai.presentation.recents.EmittingPreferenceStore
 
 /** Manga and novel apks are sorted into the Extensions sections by one rule. */
 class GetExtensionsByTypeTest {
@@ -61,16 +62,16 @@ class GetExtensionsByTypeTest {
         extensions.updateVersions shouldBe mapOf("pkg.a" to "2")
     }
 
-    /** The language filter is the manga list's own; the Novels chip hides it, so novels keep every language. */
+    /** Manga keeps the languages switched on, novels drop the ones the novel sources filter switched off. */
     @ParameterizedTest
-    @CsvSource("MANGA, 1", "TACHIYOMI_NOVEL, 2", "IREADER, 2")
-    fun `only manga is narrowed to the enabled languages`(kind: Extension.Kind, shown: Int) = runTest {
+    @EnumSource(Extension.Kind::class)
+    fun `each kind is narrowed by its own language filter`(kind: Extension.Kind) = runTest {
         val extensions = subscribe(
             kind,
             available = listOf(available("pkg.en", "en", kind), available("pkg.ja", "ja", kind)),
         )
 
-        extensions.available.size shouldBe shown
+        extensions.available.map { it.name } shouldBe listOf("pkg.en")
     }
 
     private suspend fun subscribe(
@@ -94,6 +95,10 @@ class GetExtensionsByTypeTest {
         },
         extensionStoreRepository = mockk<ExtensionStoreRepository> {
             every { getAllAsFlow() } returns flowOf(stores)
+        },
+        // Saved under the registry's own name for Japanese, which the filter reads as its code.
+        reikaiPreferences = ReikaiSourcePreferences(EmittingPreferenceStore()).apply {
+            disabledNovelLanguages.set(setOf("日本語"))
         },
     ).subscribe(kind).first()
 

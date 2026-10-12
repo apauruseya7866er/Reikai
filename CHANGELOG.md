@@ -612,6 +612,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Retrying a failed manga chapter, from the download queue or the reader's chapter list, now puts it back in the queue instead of leaving it failed, even while other chapters are downloading.**
 - **Extensions from a store that cannot be reached no longer show as Orphaned or lose their update badges.**
 - **Update on an extension whose store could not be reached now tries the store again and says when it still can't, instead of doing nothing.** The update notice no longer lists those extensions.
+- **Filter in Browse -> Extensions now works on the Novels chip, hiding the plugins and novel extension apps offered in languages you switch off.** It lists every language the repos offer, and the same switches apply to novel sources.
 - **Light-novel plugin update badges and the update notice now stay while a plugin repo cannot be reached, including when the app opens offline.**
 - **Marking a chapter read with delete-after-read on no longer deletes its download in a category excluded from removal, and a queued novel chapter marked read now leaves the queue (partly from Komikku).**
 - **With Downloaded only on, a novel's chapter list and reader now show only downloaded chapters, as manga's do.**

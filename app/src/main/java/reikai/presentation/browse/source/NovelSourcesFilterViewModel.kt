@@ -8,15 +8,19 @@ import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.binding
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import eu.kanade.tachiyomi.extension.ExtensionManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.WhileSubscribed
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import reikai.domain.source.ReikaiSourcePreferences
 import reikai.domain.source.ToggleNovelSource
+import reikai.novel.registry.LnRepoRegistries
+import reikai.novel.registry.LnRepoResult
 import reikai.novel.source.NovelExtensionFormat
 import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
@@ -27,10 +31,11 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * Backs the bulk novel source filter screen: lists every installed light-novel source grouped by
- * language, with a per-language switch toggling [ReikaiSourcePreferences.disabledNovelLanguages]
- * and per-source checkboxes toggling [ReikaiSourcePreferences.disabledNovelSources] (mirroring
- * Mihon's manga sources filter). A disabled source or language is hidden from the Sources tab and
- * global search, so this screen is where they are re-enabled.
+ * language, and every language the plugin repos and novel app stores offer, with a per-language
+ * switch toggling [ReikaiSourcePreferences.disabledNovelLanguages] and per-source checkboxes toggling
+ * [ReikaiSourcePreferences.disabledNovelSources] (mirroring Mihon's manga sources filter). A disabled
+ * source or language is hidden from the Sources tab and global search, and a disabled language from
+ * what Extensions offers, so this screen is where they are re-enabled.
  */
 @Inject
 @ViewModelKey
@@ -39,15 +44,28 @@ class NovelSourcesFilterViewModel(
     manager: NovelSourceManager,
     private val sourcePreferences: ReikaiSourcePreferences,
     private val toggleNovelSource: ToggleNovelSource,
+    registries: LnRepoRegistries,
+    extensionManager: ExtensionManager,
 ) : ViewModel() {
+
+    // What the plugin repos and the novel app stores offer, so a language can be switched off before
+    // anything of it is installed. Seeded empty, so the screen never waits on a repo download.
+    private val listedLanguages = combine(
+        registries.results.onStart { emit(emptyMap()) },
+        extensionManager.availableNovelExtensionsFlow,
+    ) { results, apps ->
+        results.values.flatMap { (it as? LnRepoResult.Reached)?.entries.orEmpty().map { entry -> entry.lang } } +
+            apps.flatMap { app -> app.sources.map { it.lang } }
+    }
 
     val state: StateFlow<State> = combine(
         manager.loadedSources(),
+        listedLanguages,
         sourcePreferences.disabledNovelSources.changes(),
         sourcePreferences.disabledNovelLanguages.changes(),
-    ) { sources, disabled, disabledLanguages ->
+    ) { sources, listed, disabled, disabledLanguages ->
         State.Success(
-            items = groupByLanguage(sources, ::compareBrowseLanguages),
+            items = filterLanguages(sources, listed),
             disabledSources = disabled,
             disabledLanguages = disabledLanguages.mapTo(HashSet()) { it.toLangCode() },
         )
@@ -80,4 +98,18 @@ class NovelSourcesFilterViewModel(
             val showsFormat: Boolean = NovelExtensionFormat.tellsApart(items.flatMap { it.second }.map { it.format })
         }
     }
+}
+
+/**
+ * The installed [sources] by language, plus each language a listing declares with nothing installed in
+ * it, as Mihon's extension filter lists every language its stores offer.
+ */
+internal fun filterLanguages(
+    sources: List<NovelSource>,
+    listed: Collection<String>,
+): List<Pair<String, List<NovelSource>>> {
+    val installed = groupByLanguage(sources, ::compareBrowseLanguages).toMap()
+    return (installed.keys + listed.map { it.toLangCode() })
+        .sortedWith(::compareBrowseLanguages)
+        .map { it to installed[it].orEmpty() }
 }

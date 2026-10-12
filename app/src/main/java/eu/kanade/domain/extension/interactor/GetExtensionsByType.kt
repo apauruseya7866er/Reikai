@@ -7,16 +7,20 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.model.Extension
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import mihon.domain.extension.model.ContentWarning
 import mihon.domain.extension.repository.ExtensionStoreRepository
 import reikai.domain.extension.hasSigningKey
 import reikai.domain.extension.signingKeys
+import reikai.domain.source.ReikaiSourcePreferences
+import reikai.novel.source.isInDisabledNovelLanguage
 
 @Inject
 class GetExtensionsByType(
     private val preferences: SourcePreferences,
     private val extensionManager: ExtensionManager,
     private val extensionStoreRepository: ExtensionStoreRepository, // RK
+    private val reikaiPreferences: ReikaiSourcePreferences, // RK: the novel language filter
 ) {
 
     // RK --> one partition for both apk kinds, over each kind's own lists
@@ -24,16 +28,24 @@ class GetExtensionsByType(
         val enabledContentWarnings = preferences.enabledContentWarnings.get()
         val isManga = kind == Extension.Kind.MANGA
 
+        // Each kind's own language filter: manga's allow list, the novel sources' deny list.
+        val isShown: Flow<(String) -> Boolean> = if (isManga) {
+            preferences.enabledLanguages.changes().map { enabled -> { lang -> lang in enabled } }
+        } else {
+            reikaiPreferences.disabledNovelLanguages.changes().map { disabled ->
+                { lang -> !lang.isInDisabledNovelLanguage(disabled) }
+            }
+        }
+
         return combine(
-            preferences.enabledLanguages.changes(),
+            isShown,
             if (isManga) extensionManager.loadedExtensionsFlow else extensionManager.loadedNovelExtensionsFlow,
             if (isManga) extensionManager.notLoadedExtensionsFlow else extensionManager.notLoadedNovelExtensionsFlow,
             if (isManga) extensionManager.availableExtensionsFlow else extensionManager.availableNovelExtensionsFlow,
             extensionStoreRepository.getAllAsFlow(),
-        ) { enabledLanguages, loaded, notLoaded, available, stores ->
-            // The language filter is the manga list's own, so it has nothing to say about novels.
+        ) { isShown, loaded, notLoaded, available, stores ->
             partitionExtensions(
-                if (isManga) enabledLanguages else null,
+                isShown,
                 enabledContentWarnings,
                 loaded,
                 notLoaded,
@@ -45,9 +57,9 @@ class GetExtensionsByType(
     // RK <--
 }
 
-// RK --> the interactor's partition, lifted out so both kinds share it; null languages keep every language
+// RK --> the interactor's partition, lifted out so both kinds share it; [isShown] is the language filter
 internal fun partitionExtensions(
-    enabledLanguages: Set<String>?,
+    isShown: (lang: String) -> Boolean,
     enabledContentWarnings: Set<ContentWarning>,
     installed: List<Extension.Loaded>,
     failed: List<Extension.NotLoaded>,
@@ -71,7 +83,7 @@ internal fun partitionExtensions(
                 extension.contentWarning in enabledContentWarnings
         }
         .flatMap { ext ->
-            ext.sources.filter { enabledLanguages == null || it.lang in enabledLanguages }
+            ext.sources.filter { isShown(it.lang) }
                 .map {
                     ext.copy(
                         name = it.name,

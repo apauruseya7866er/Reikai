@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.RegisterExtension
 import reikai.domain.novel.LnInstalledPluginMetadata
 import reikai.domain.novel.NovelPreferences
+import reikai.domain.source.ReikaiSourcePreferences
 import reikai.novel.install.LnPluginInstaller
 import reikai.novel.install.LnPluginLoadFailure
 import reikai.novel.registry.LnRegistryEntry
@@ -45,6 +46,7 @@ class LnPluginManagerViewModelTest {
     private val manager = mockk<NovelSourceManager> { every { loadedSources() } returns flowOf(emptyList()) }
     private val registries = LnRepoRegistries(installer, prefs)
     private val appScope = testAppScope()
+    private val sourcePreferences = ReikaiSourcePreferences(EmittingPreferenceStore())
 
     // Every model is tracked: its fetches run on IO under a stop timeout and otherwise outlive the test.
     @JvmField
@@ -53,7 +55,15 @@ class LnPluginManagerViewModelTest {
 
     private fun model() =
         main.track(
-            LnPluginManagerViewModel(manager, installer, registries, prefs, mockk(relaxed = true), appScope),
+            LnPluginManagerViewModel(
+                manager,
+                installer,
+                registries,
+                prefs,
+                mockk(relaxed = true),
+                appScope,
+                sourcePreferences,
+            ),
         )
 
     @BeforeEach
@@ -90,6 +100,19 @@ class LnPluginManagerViewModelTest {
         watching.cancel()
 
         model.state.value.available shouldBe listOf(ENTRY)
+    }
+
+    @Test
+    fun `a plugin in a language switched off for novel sources is not offered`() = runTest(dispatcher) {
+        // Saved as the code while the registry declares the language by name.
+        sourcePreferences.disabledNovelLanguages.set(setOf("en"))
+        val model = model()
+
+        val watching = launch { model.state.collect {} }
+        advanceUntilIdle()
+        watching.cancel()
+
+        model.state.value.available shouldBe emptyList()
     }
 
     @Test
