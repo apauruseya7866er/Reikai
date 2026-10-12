@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import eu.kanade.domain.manga.model.downloadedFilter
+import eu.kanade.tachiyomi.source.Source
+import eu.kanade.tachiyomi.source.getNameForMangaInfo
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.manga.mangaDetailsModel
@@ -59,6 +61,10 @@ class UnifiedViewMemberConformanceTest {
         every { any<Manga>().downloadedFilter } returns TriState.DISABLED
         mockkObject(DebugToggles.ENABLE_EXH_ROOT_REDIRECT)
         every { DebugToggles.ENABLE_EXH_ROOT_REDIRECT.enabled } returns DebugToggles.ENABLE_EXH_ROOT_REDIRECT.default
+        // A header naming one source reads the language preferences off Injekt, which no test registers. A
+        // state published before the chips resolve names one, and a throw there stops the adapter's state.
+        mockkStatic(SOURCE_EXTENSIONS_FILE)
+        every { any<Source>().getNameForMangaInfo() } returns "source"
     }
 
     @AfterEach
@@ -188,6 +194,7 @@ class UnifiedViewMemberConformanceTest {
 
     private companion object {
         const val DOWNLOADED_FILTER_FILE = "eu.kanade.domain.manga.model.MangaKt"
+        const val SOURCE_EXTENSIONS_FILE = "eu.kanade.tachiyomi.source.SourceExtensionsKt"
 
         /** Each member is next due on its own day, so the interval shown names its member. */
         fun dueAt(index: Int): Long = (index + 1) * 86_400_000L
