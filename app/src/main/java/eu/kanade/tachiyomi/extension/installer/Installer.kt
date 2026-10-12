@@ -25,6 +25,7 @@ abstract class Installer(private val service: Service) {
 
     private var waitingInstall = AtomicReference<Entry?>(null)
 
+    // Guarded by itself: cancellation comes from any thread, not only main
     // RK: a set (not a list) so an extension can't get queued twice (from Komikku 94eac94ce7).
     private val queue = Collections.synchronizedSet(mutableSetOf<Entry>())
 
@@ -104,20 +105,22 @@ abstract class Installer(private val service: Service) {
         if (!ready) {
             return
         }
-        if (queue.isEmpty()) {
-            service.stopSelf()
-            return
+        val nextEntry = synchronized(queue) {
+            if (queue.isEmpty()) {
+                service.stopSelf()
+                return
+            }
+            val first = queue.first()
+            if (!waitingInstall.compareAndSet(null, first)) return
+            queue.remove(first) // RK: remove by entry, not index (queue is now a set)
+            first
         }
-        val nextEntry = queue.first()
-        if (waitingInstall.compareAndSet(null, nextEntry)) {
-            queue.remove(nextEntry) // RK: remove by entry, not index (queue is now a set)
-            // RK: an entry that hands off to the system's confirm dialog only finishes when that
-            //     dialog answers. Left unanswered nothing ever calls continueQueue, so the service
-            //     holds its foreground slot until Android takes the process down. Give up first.
-            stallHandler.removeCallbacks(giveUp)
-            stallHandler.postDelayed(giveUp, STALLED_INSTALL_TIMEOUT_MS)
-            processEntry(nextEntry)
-        }
+        // RK: an entry that hands off to the system's confirm dialog only finishes when that
+        //     dialog answers. Left unanswered nothing ever calls continueQueue, so the service
+        //     holds its foreground slot until Android takes the process down. Give up first.
+        stallHandler.removeCallbacks(giveUp)
+        stallHandler.postDelayed(giveUp, STALLED_INSTALL_TIMEOUT_MS)
+        processEntry(nextEntry)
     }
 
     /**
@@ -135,13 +138,13 @@ abstract class Installer(private val service: Service) {
                 InstallStep.Error("The installer stopped before this one finished"),
             )
         }
-        queue.forEach {
+        val remaining = synchronized(queue) { queue.toList().also { queue.clear() } }
+        remaining.forEach {
             extensionManager.updateInstallStep(
                 it.downloadId,
                 InstallStep.Error("The installer stopped before it got to this one"),
             )
         }
-        queue.clear()
     }
 
     protected fun getActiveEntry(): Entry? = waitingInstall.load()

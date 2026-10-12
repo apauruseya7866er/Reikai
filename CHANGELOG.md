@@ -596,6 +596,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Fixed
 
+- **Updating an extension while others are installing no longer crashes the app (from Mihon).** Upstream: mihon 07b9fb695.
 - **An outdated manga extension no longer crashes the app when you browse it or open one of its series (partly from Tsundoku).** It shows an error instead. Upstream: tsundoku-otaku/tsundoku#398.
 - **"After reading automatically delete" now also deletes the copies that "Mark duplicate read chapter as read" marked read along with a chapter, on manga and novels (partly from Mihon).** On a merged series that is only the copies paired with the chapter. Upstream: mihonapp/mihon#3030.
 - **A queued manga or novel chapter that its source removes is now taken out of the download queue instead of failing there (partly from Mihon).** Upstream: mihonapp/mihon#3845.
