@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.LnInstalledPluginMetadata
 import reikai.domain.novel.NovelPreferences
+import reikai.novel.install.LnPluginInstaller
 import reikai.novel.registry.LnRegistryEntry
 import reikai.novel.registry.LnRegistryFetcher
 import reikai.novel.registry.LnRepoRegistries
@@ -45,6 +46,7 @@ class LnPluginUpdateCheckerTest {
         LnPluginUpdateChecker(
             fetcher,
             LnRepoRegistries(fetcher, prefs),
+            LnPluginInstaller(mockk(), mockk(), mockk(relaxed = true), prefs, mockk()),
             prefs,
             LnPluginUpdateNotifier(context, mockk(), prefs),
         )
@@ -123,6 +125,23 @@ class LnPluginUpdateCheckerTest {
     fun `an update at the installed URL is offered while an unrelated repo is down`() = runTest {
         checker(repos(homeRepo to listOf(atInstalledUrl), otherRepo to null)).checkAndRecord()
             .map { it.entry } shouldContainExactly listOf(atInstalledUrl)
+    }
+
+    @Test
+    fun `a check records the repo listing an installed plugin`() = runTest {
+        checker(repos(homeRepo to listOf(atInstalledUrl), otherRepo to emptyList())).checkAndRecord()
+
+        prefs.installedPluginMetadata().get().getValue(pluginUrl).repoUrl shouldBe homeRepo
+    }
+
+    /** As an apk waits out only the stores it can come from (KindListing). */
+    @Test
+    fun `a plugin its own repo dropped clears its badge while an unrelated repo is down`() = runTest {
+        checker(repos(homeRepo to listOf(atInstalledUrl), otherRepo to emptyList())).checkAndRecord()
+
+        checker(repos(homeRepo to emptyList(), otherRepo to null)).checkAndRecord()
+
+        prefs.pendingPluginUpdates().get().shouldBeEmpty()
     }
 
     private fun entry(version: String, url: String) =

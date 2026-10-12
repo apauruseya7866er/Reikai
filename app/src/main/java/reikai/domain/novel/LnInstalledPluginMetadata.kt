@@ -16,4 +16,9 @@ data class LnInstalledPluginMetadata(
     val version: String? = null,
     val lang: String? = null,
     val customCssUrl: String? = null,
+    /**
+     * The added repo last seen listing this URL, recorded by the update check, so a plugin waits out
+     * only its own repo's outage. Null until a check sees it listed.
+     */
+    val repoUrl: String? = null,
 )

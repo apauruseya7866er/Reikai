@@ -54,7 +54,13 @@ class LnPluginUpdateBadgeTest {
         every { getSystemService(any<String>()) } returns mockk<NotificationManager>(relaxed = true)
     }
     private val notifier = LnPluginUpdateNotifier(context, mockk(), prefs)
-    private val checker = LnPluginUpdateChecker(fetcher, registries, prefs, notifier)
+    private val checker = LnPluginUpdateChecker(
+        fetcher,
+        registries,
+        LnPluginInstaller(mockk(), mockk(), mockk(relaxed = true), prefs, mockk()),
+        prefs,
+        notifier,
+    )
 
     private fun model() = main.track(
         LnPluginManagerViewModel(

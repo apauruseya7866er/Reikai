@@ -6,6 +6,7 @@ import dev.zacsweers.metro.SingleIn
 import logcat.LogPriority
 import reikai.domain.novel.LnInstalledPluginMetadata
 import reikai.domain.novel.NovelPreferences
+import reikai.novel.install.LnPluginInstaller
 import reikai.novel.install.canonicalizePluginUrl
 import reikai.novel.registry.LnRegistryEntry
 import reikai.novel.registry.LnRegistryFetcher
@@ -29,6 +30,7 @@ import java.util.concurrent.TimeUnit
 class LnPluginUpdateChecker(
     private val fetcher: LnRegistryFetcher,
     private val registries: LnRepoRegistries,
+    private val installer: LnPluginInstaller,
     private val prefs: NovelPreferences,
     private val notifier: LnPluginUpdateNotifier,
 ) {
@@ -40,11 +42,12 @@ class LnPluginUpdateChecker(
         val fetched = if (repos.isEmpty() || installedUrls.isEmpty()) emptyMap() else fetcher.fetchEach(repos)
         // The screens recompute the badge from their registries, so they must not keep an older copy.
         registries.accept(fetched)
+        installer.recordRepos(fetched)
         val found = findPluginUpdates(
             installedUrls,
             prefs.installedPluginMetadata().get(),
             fetched.values.flatMap { (it as? LnRepoResult.Reached)?.entries.orEmpty() },
-            everyRepoReached = fetched.values.all { it is LnRepoResult.Reached },
+            unreachable = fetched.filterValues { it !is LnRepoResult.Reached }.keys,
         )
         notifier.setPending(found)
         // With no repo answering nothing was learned, so the next launch or Browse open checks again.
@@ -78,8 +81,8 @@ data class LnPluginUpdate(
 
 /**
  * What one check found: the [updates] to offer, and the [undecided] plugin ids that no answering repo
- * settles while another repo is down. An undecided plugin keeps the badge it had ([pendingIds]), as an
- * extension app keeps its statuses through a store outage (KindListing).
+ * settles while the plugin's own repo is down. An undecided plugin keeps the badge it had ([pendingIds]).
+ * twin of KindListing, pinned by FindPluginUpdatesTest
  */
 data class LnPluginUpdates(
     val updates: List<LnPluginUpdate>,
@@ -94,14 +97,15 @@ data class LnPluginUpdates(
  * The installed plugins a repo offers a newer version of, matched by plugin id since a repo can publish
  * a new version at a new URL. Where several repos list the id, the listing at the installed URL decides,
  * because accepting another repo's entry replaces the installed script with that repo's. With no such
- * listing the highest version wins, a tie going to the earlier repo in [entries], but only once
- * [everyRepoReached]: a repo that is down looks the same as one that stopped listing the plugin.
+ * listing the highest version wins, a tie going to the earlier repo in [entries], but only once the
+ * plugin's own repo answered (every repo, before a check has recorded one): a repo that is down looks
+ * the same as one that stopped listing the plugin. [unreachable] are the added repos that did not answer.
  */
 fun findPluginUpdates(
     installedUrls: Set<String>,
     metadata: Map<String, LnInstalledPluginMetadata>,
     entries: List<LnRegistryEntry>,
-    everyRepoReached: Boolean,
+    unreachable: Set<String>,
 ): LnPluginUpdates {
     val byId = entries.groupBy { it.id }
     val undecided = HashSet<String>()
@@ -111,7 +115,7 @@ fun findPluginUpdates(
             val installedVersion = record.version ?: return@mapNotNull null
             val listings = byId[record.pluginId].orEmpty()
             val entry = listings.firstOrNull { canonicalizePluginUrl(it.url) == url }
-                ?: if (everyRepoReached) {
+                ?: if (record.repoUrl?.let { it !in unreachable } ?: unreachable.isEmpty()) {
                     listings.maxWithOrNull { a, b -> LnPluginVersion.compare(a.version, b.version) }
                 } else {
                     undecided += record.pluginId

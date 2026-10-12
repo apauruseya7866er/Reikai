@@ -132,7 +132,7 @@ class LnPluginManagerViewModel(
                 installedUrls,
                 metadata,
                 registries.flatten(),
-                everyRepoReached = results.values.all { it is LnRepoResult.Reached },
+                unreachable = results.filterValues { it !is LnRepoResult.Reached }.keys,
             ),
             installedVersions = metadata.values
                 .mapNotNull { meta -> meta.version?.let { meta.pluginId to it } }

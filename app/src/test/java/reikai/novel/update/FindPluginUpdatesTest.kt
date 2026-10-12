@@ -17,7 +17,7 @@ class FindPluginUpdatesTest {
     fun `a newer version at a new URL is an update of the installed plugin`() {
         val newer = entry(version = "1.1.0", url = "https://repo.test/v2/novelbin.js")
 
-        findPluginUpdates(setOf(installedUrl), metadata, listOf(newer), everyRepoReached = true).updates.map {
+        findPluginUpdates(setOf(installedUrl), metadata, listOf(newer), unreachable = emptySet()).updates.map {
             it.entry
         } shouldContainExactly
             listOf(newer)
@@ -27,7 +27,7 @@ class FindPluginUpdatesTest {
     fun `the version already installed is not an update`() {
         val same = entry(version = "1.0.0", url = installedUrl)
 
-        findPluginUpdates(setOf(installedUrl), metadata, listOf(same), everyRepoReached = true).updates.shouldBeEmpty()
+        findPluginUpdates(setOf(installedUrl), metadata, listOf(same), unreachable = emptySet()).updates.shouldBeEmpty()
     }
 
     @Test
@@ -35,7 +35,7 @@ class FindPluginUpdatesTest {
         val newer = entry(version = "1.2.0", url = installedUrl)
         val entries = listOf(entry(version = "0.9.0", url = otherRepoUrl), newer)
 
-        findPluginUpdates(setOf(installedUrl), metadata, entries, everyRepoReached = true).updates.map {
+        findPluginUpdates(setOf(installedUrl), metadata, entries, unreachable = emptySet()).updates.map {
             it.entry
         } shouldContainExactly
             listOf(newer)
@@ -46,7 +46,7 @@ class FindPluginUpdatesTest {
         val newer = entry(version = "1.2.0", url = installedUrl)
         val entries = listOf(entry(version = "1.1.5", url = otherRepoUrl), newer)
 
-        findPluginUpdates(setOf(installedUrl), metadata, entries, everyRepoReached = true).updates.map {
+        findPluginUpdates(setOf(installedUrl), metadata, entries, unreachable = emptySet()).updates.map {
             it.entry
         } shouldContainExactly
             listOf(newer)
@@ -57,7 +57,7 @@ class FindPluginUpdatesTest {
     fun `a listing at the installed URL keeps another repo from moving the plugin`() {
         val entries = listOf(entry(version = "1.3.0", url = otherRepoUrl), entry(version = "1.0.0", url = installedUrl))
 
-        findPluginUpdates(setOf(installedUrl), metadata, entries, everyRepoReached = true).updates.shouldBeEmpty()
+        findPluginUpdates(setOf(installedUrl), metadata, entries, unreachable = emptySet()).updates.shouldBeEmpty()
     }
 
     @Test
@@ -65,7 +65,7 @@ class FindPluginUpdatesTest {
         val newest = entry(version = "1.2.0", url = "https://repo.test/v2/novelbin.js")
         val entries = listOf(entry(version = "1.1.0", url = otherRepoUrl), newest)
 
-        findPluginUpdates(setOf(installedUrl), metadata, entries, everyRepoReached = true).updates.map {
+        findPluginUpdates(setOf(installedUrl), metadata, entries, unreachable = emptySet()).updates.map {
             it.entry
         } shouldContainExactly
             listOf(newest)
@@ -76,7 +76,12 @@ class FindPluginUpdatesTest {
     fun `with a repo unreachable no other repo's version is offered`() {
         val entries = listOf(entry(version = "1.3.0", url = otherRepoUrl))
 
-        findPluginUpdates(setOf(installedUrl), metadata, entries, everyRepoReached = false).updates.shouldBeEmpty()
+        findPluginUpdates(
+            setOf(installedUrl),
+            metadata,
+            entries,
+            unreachable = setOf(OTHER_REPO),
+        ).updates.shouldBeEmpty()
     }
 
     @Test
@@ -84,10 +89,27 @@ class FindPluginUpdatesTest {
         val first = entry(version = "1.2.0", url = otherRepoUrl)
         val entries = listOf(first, entry(version = "1.2.0", url = "https://repo.test/v2/novelbin.js"))
 
-        findPluginUpdates(setOf(installedUrl), metadata, entries, everyRepoReached = true).updates.map {
+        findPluginUpdates(setOf(installedUrl), metadata, entries, unreachable = emptySet()).updates.map {
             it.entry
         } shouldContainExactly
             listOf(first)
+    }
+
+    /** As an apk waits out only the stores it can come from (KindListing). */
+    @Test
+    fun `a plugin its own repo answered without clears its badge while an unrelated repo is down`() {
+        val ownRepoKnown = mapOf(installedUrl to metadata.getValue(installedUrl).copy(repoUrl = HOME_REPO))
+
+        findPluginUpdates(setOf(installedUrl), ownRepoKnown, emptyList(), unreachable = setOf(OTHER_REPO))
+            .pendingIds(previous = setOf("novelbin")).shouldBeEmpty()
+    }
+
+    @Test
+    fun `a plugin whose own repo is down keeps its badge`() {
+        val ownRepoKnown = mapOf(installedUrl to metadata.getValue(installedUrl).copy(repoUrl = HOME_REPO))
+
+        findPluginUpdates(setOf(installedUrl), ownRepoKnown, emptyList(), unreachable = setOf(HOME_REPO))
+            .pendingIds(previous = setOf("novelbin")) shouldContainExactly setOf("novelbin")
     }
 
     private fun entry(version: String, url: String) = LnRegistryEntry(
@@ -98,4 +120,9 @@ class FindPluginUpdatesTest {
         lang = "English",
         url = url,
     )
+
+    private companion object {
+        const val HOME_REPO = "https://repo.test/plugins.min.json"
+        const val OTHER_REPO = "https://other.test/plugins.min.json"
+    }
 }

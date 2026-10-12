@@ -28,6 +28,7 @@ import reikai.novel.registry.LnRegistryEntry
 import reikai.novel.registry.LnRegistryFetcher
 import reikai.novel.registry.LnRepoResult
 import reikai.novel.registry.fetchEach
+import reikai.novel.registry.pluginRepos
 import reikai.novel.source.LnPluginSource
 import reikai.novel.source.NovelChapterStylesheet
 import reikai.novel.source.NovelSourceManager
@@ -133,7 +134,11 @@ class LnPluginInstaller(
             val currentMetadata = prefs.installedPluginMetadata().get()
             val stale = currentMetadata.filterValues { it.pluginId == info.id }.keys - canonical
             val record = (metadata ?: LnInstalledPluginMetadata(pluginId = info.id))
-                .copy(pluginId = info.id, version = info.version ?: metadata?.version)
+                .copy(
+                    pluginId = info.id,
+                    version = info.version ?: metadata?.version,
+                    repoUrl = metadata?.repoUrl ?: currentMetadata[canonical]?.repoUrl,
+                )
             prefs.installedPluginUrls().set(prefs.installedPluginUrls().get() - stale + canonical)
             prefs.installedPluginMetadata().set(currentMetadata - stale + (canonical to record))
             manager.register(source)
@@ -273,6 +278,22 @@ class LnPluginInstaller(
         val record = current[url] ?: LnInstalledPluginMetadata(pluginId = source.id)
         if (record.version == version) return
         prefs.installedPluginMetadata().set(current + (url to record.copy(version = version)))
+    }
+
+    /**
+     * Records which added repo lists each installed URL in [results], so an update check later waits out
+     * only that repo's outage (findPluginUpdates). A URL no repo lists keeps the repo it had.
+     */
+    suspend fun recordRepos(results: Map<String, LnRepoResult>) {
+        val listedBy = pluginRepos(results)
+        if (listedBy.isEmpty()) return
+        registryMutex.withLock {
+            val current = prefs.installedPluginMetadata().get()
+            val updated = current.mapValues { (url, record) ->
+                listedBy[url]?.let { record.copy(repoUrl = it) } ?: record
+            }
+            if (updated != current) prefs.installedPluginMetadata().set(updated)
+        }
     }
 
     /**
