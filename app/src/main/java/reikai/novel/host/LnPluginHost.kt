@@ -201,6 +201,36 @@ class LnPluginHost(
         // would take over that plugin's engine and storage, sign-in included.
         expectedId: String? = null,
     ): LnPluginInfo = withPluginTimeout(LOAD_TIMEOUT_MS, "loadPlugin") {
+        val info = readInfo(pluginId, source, iconUrl, lang, expectedId)
+        // Retain the args under the plugin's CANONICAL id (callMethod is keyed by it, which can
+        // differ from the URL-derived pluginId), and drop a live engine still running the previous
+        // code so the next call re-loads fresh.
+        val slot = pluginSlots.getOrPut(info.id) { EngineSlot(info.id) }
+        slot.mutex.withLock {
+            slot.loadArgs = LoadArgs(pluginId, source, iconUrl, lang)
+            closeLocked(slot)
+        }
+        info
+    }
+
+    /** What [source] says about itself, read without making it the plugin's script: no call reaches it. */
+    suspend fun inspectPlugin(
+        pluginId: String,
+        source: String,
+        iconUrl: String? = null,
+        lang: String? = null,
+        expectedId: String? = null,
+    ): LnPluginInfo = withPluginTimeout(LOAD_TIMEOUT_MS, "inspectPlugin") {
+        readInfo(pluginId, source, iconUrl, lang, expectedId)
+    }
+
+    private suspend fun readInfo(
+        pluginId: String,
+        source: String,
+        iconUrl: String?,
+        lang: String?,
+        expectedId: String?,
+    ): LnPluginInfo {
         val info = loaderSlot.mutex.withLock {
             loaderSlot.onThread {
                 val infoJson = loaderSlot.engine().evaluate<String>(
@@ -215,15 +245,7 @@ class LnPluginHost(
         if (expectedId != null && info.id != expectedId) {
             throw LnPluginException("now declares the id ${info.id}, installed as $expectedId")
         }
-        // Retain the args under the plugin's CANONICAL id (callMethod is keyed by it, which can
-        // differ from the URL-derived pluginId), and drop a live engine still running the previous
-        // code so the next call re-loads fresh.
-        val slot = pluginSlots.getOrPut(info.id) { EngineSlot(info.id) }
-        slot.mutex.withLock {
-            slot.loadArgs = LoadArgs(pluginId, source, iconUrl, lang)
-            closeLocked(slot)
-        }
-        info
+        return info
     }
 
     suspend fun popularNovels(pluginId: String, pageNo: Int, optionsJson: String = "{}"): List<NovelItem> {

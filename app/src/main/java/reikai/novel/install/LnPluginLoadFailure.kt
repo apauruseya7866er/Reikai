@@ -29,7 +29,7 @@ data class LnPluginLoadFailure(
         /** The root cause in words, where the reason has one to name. */
         val message: String?
 
-        /** No script is stored for it and fetching it again threw, so nothing runs until it is installed again. */
+        /** No script is stored and its installed version could not be fetched again, so nothing runs until a reinstall. */
         data class Missing(override val message: String) : Reason
 
         /** The plugin ran, but what it says about itself could not be read. */
@@ -82,6 +82,6 @@ val LnPluginLoadFailure.Reason.description: StringResource
         is LnPluginLoadFailure.Reason.Failed -> MR.strings.ext_load_failed_message
     }
 
-/** An installed plugin whose script is not stored and could not be fetched from its URL again. */
+/** An installed plugin whose script is not stored and could not be fetched again at its installed version. */
 class LnPluginScriptMissingException(url: String, cause: Throwable) :
     Exception("no installed script for $url", cause)

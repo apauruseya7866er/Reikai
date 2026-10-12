@@ -189,7 +189,7 @@ class LnPluginInstaller(
         if (url !in prefs.installedPluginUrls().get()) return null
         val loaded = runCatchingCancellable {
             val stored = loader.installed(url)
-            val src = stored ?: downloadMissingScript(url)
+            val src = stored ?: downloadMissingScript(url, metadata)
             val info = host.loadPlugin(scopeIdFromUrl(url), src, metadata?.iconUrl, metadata?.lang, metadata?.pluginId)
             if (stored == null) loader.store(url, src)
             // A missing script means the stylesheet went with it, so it is fetched again with it.
@@ -247,12 +247,20 @@ class LnPluginInstaller(
 
     /**
      * Fetch the script for an installed plugin this device has none stored for, which a cleared data dir
-     * loses, so the plugin is not left listed as installed with nothing able to run until the reader
-     * reinstalls it by hand. Trust is unchanged: the URL is one the user installed. A fetch that fails
-     * still reports the script as missing.
+     * loses, so the plugin is not left listed as installed with nothing able to run. A plugin URL serves
+     * the repo's newest script, so it is taken only when it is the version recorded as installed: any
+     * other would be an update the user never chose, and is reported missing for a reinstall by tap.
      */
-    private suspend fun downloadMissingScript(url: String): String =
-        runCatchingCancellable { loader.download(url) }.getOrElse { throw LnPluginScriptMissingException(url, it) }
+    private suspend fun downloadMissingScript(url: String, metadata: LnInstalledPluginMetadata?): String {
+        val recorded = metadata?.version
+            ?: throw LnPluginScriptMissingException(url, IllegalStateException("no installed version recorded"))
+        return runCatchingCancellable {
+            val script = loader.download(url)
+            val served = host.inspectPlugin(scopeIdFromUrl(url), script, expectedId = metadata.pluginId).version
+            check(served == recorded) { "the repo now serves version $served, installed $recorded" }
+            script
+        }.getOrElse { throw LnPluginScriptMissingException(url, it) }
+    }
 
     /**
      * Records the version a plugin reports for itself, which is the one actually running. The repo's
