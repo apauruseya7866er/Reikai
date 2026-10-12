@@ -39,9 +39,8 @@ class NovelDownloadQueueProvider(
         downloadManager.downloadingNovelId,
         downloadManager.completions.counts,
     ) { _, downloadingId, completed ->
-        // The flag before the queue, and the live queue rather than this emission's, which may predate the restore
-        val restored = downloadManager.isQueueRestored
-        QueueRead(downloadManager.queueState.value, downloadingId, completed, restored)
+        val (queue, restored) = readQueueAfterRestore({ downloadManager.isQueueRestored }, downloadManager.queueState)
+        QueueRead(queue, downloadingId, completed, restored)
     }
         .mapLatest { (queue, downloadingId, completed, restored) ->
             val queued = queue.mapTo(HashSet()) { it.novelId }

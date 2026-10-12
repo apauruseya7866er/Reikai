@@ -34,9 +34,8 @@ class MangaDownloadQueueProvider(
         downloader.completions.counts,
         downloadManager.queuedDownloadChanges().onStart { emit(Unit) },
     ) { _, running, sourceLimit, completed, _ ->
-        // The flag before the queue, and the live queue rather than this emission's, which may predate the restore
-        val restored = downloadManager.isQueueRestored
-        snapshotOf(downloadManager.queueState.value, if (running) sourceLimit else 0, completed, restored)
+        val (queue, restored) = readQueueAfterRestore({ downloadManager.isQueueRestored }, downloadManager.queueState)
+        snapshotOf(queue, if (running) sourceLimit else 0, completed, restored)
     }
         // A pass over the whole queue per status change and progress sample, as the novel provider does.
         .flowOn(Dispatchers.Default)

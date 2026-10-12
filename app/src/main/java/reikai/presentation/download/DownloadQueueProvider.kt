@@ -2,6 +2,7 @@ package reikai.presentation.download
 
 import cafe.adriel.voyager.core.screen.Screen
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 import reikai.domain.library.ContentType
 
 /**
@@ -40,4 +41,14 @@ interface DownloadQueueProvider {
     fun start()
 
     suspend fun sort(key: DownloadQueueSortKey, descending: Boolean)
+}
+
+/**
+ * The queue a snapshot draws and whether the saved queue was restored yet. The flag is read before the
+ * live queue, never the queue an emission carried, which may predate the restore: read the other way, a
+ * restore landing between the two reads pairs the old empty queue with a finished restore.
+ */
+internal fun <Q> readQueueAfterRestore(isQueueRestored: () -> Boolean, queue: StateFlow<Q>): Pair<Q, Boolean> {
+    val restored = isQueueRestored()
+    return queue.value to restored
 }
