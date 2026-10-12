@@ -34,8 +34,10 @@ import reikai.novel.source.NovelSourceManager
 import reikai.presentation.recents.EmittingPreferenceStore
 import reikai.util.testAppScope
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import tachiyomi.domain.chapter.interactor.GetChapterSummaryByMangaId
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.model.ChapterSummary
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.interactor.NetworkToLocalManga
@@ -141,6 +143,20 @@ class MigrationAdapterConformanceTest {
         probe.adapter().loadEntries(listOf(ENTRY_ID)).single().sourceName shouldBe OLD_NAME
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `an entry shows its stored chapter count and highest number`(probe: Probe) = runTest {
+        val entry = probe.adapter(chapters = 3).loadEntries(listOf(ENTRY_ID)).single()
+
+        (entry.chapterCount to entry.latestChapter) shouldBe (3 to 3.0)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `an entry whose chapters carry no recognized number shows no latest chapter`(probe: Probe) = runTest {
+        probe.adapter(chapters = 2, unnumbered = true).loadEntries(listOf(ENTRY_ID)).single().latestChapter shouldBe null
+    }
+
     companion object {
         const val ENTRY_ID = 1L
         const val PICK_ID = 2L
@@ -154,6 +170,15 @@ class MigrationAdapterConformanceTest {
 
         @JvmStatic
         fun probes() = listOf(MangaProbe, NovelProbe)
+
+        /** The number the stored chapter at [index] carries; -1 is the recognizer finding none. */
+        fun storedNumber(index: Int, unnumbered: Boolean) = if (unnumbered) -1.0 else index + 1.0
+
+        /** What the database counts over [count] stored chapters numbered by [storedNumber]. */
+        fun storedSummary(count: Int, unnumbered: Boolean) = ChapterSummary(
+            chapterCount = count.toLong(),
+            latestChapterNumber = (0..<count).maxOfOrNull { storedNumber(it, unnumbered) },
+        )
     }
 }
 
@@ -166,6 +191,7 @@ sealed interface Probe {
         listing: List<String> = emptyList(),
         chapters: Int = 1,
         sourceChapters: List<String> = emptyList(),
+        unnumbered: Boolean = false,
     ): MigrationFlowAdapter
 
     /** The stored entry as the flow loads it, placed on [onSource]. */
@@ -192,7 +218,12 @@ object MangaProbe : Probe {
         thumbnailUrl = "cover",
     )
 
-    override fun adapter(listing: List<String>, chapters: Int, sourceChapters: List<String>): MigrationFlowAdapter {
+    override fun adapter(
+        listing: List<String>,
+        chapters: Int,
+        sourceChapters: List<String>,
+        unnumbered: Boolean,
+    ): MigrationFlowAdapter {
         val rows = mutableMapOf(stored.id to stored, picked.id to picked)
         var synced = false
         val catalogue = mockk<HttpSource>(relaxed = true) {
@@ -239,8 +270,16 @@ object MangaProbe : Probe {
             getChaptersByMangaId = mockk<GetChaptersByMangaId> {
                 coEvery { await(any(), any()) } answers {
                     List(if (synced) sourceChapters.size else chapters) {
-                        Chapter.create().copy(id = it + 1L, chapterNumber = it + 1.0)
+                        Chapter.create().copy(
+                            id = it + 1L,
+                            chapterNumber = MigrationAdapterConformanceTest.storedNumber(it, unnumbered),
+                        )
                     }
+                }
+            },
+            getChapterSummaryByMangaId = mockk<GetChapterSummaryByMangaId> {
+                coEvery { await(any()) } answers {
+                    MigrationAdapterConformanceTest.storedSummary(if (synced) sourceChapters.size else chapters, unnumbered)
                 }
             },
             networkToLocalManga = mockk<NetworkToLocalManga> {
@@ -294,7 +333,12 @@ object NovelProbe : Probe {
         title = "Picked",
     )
 
-    override fun adapter(listing: List<String>, chapters: Int, sourceChapters: List<String>): MigrationFlowAdapter {
+    override fun adapter(
+        listing: List<String>,
+        chapters: Int,
+        sourceChapters: List<String>,
+        unnumbered: Boolean,
+    ): MigrationFlowAdapter {
         val rows = mutableMapOf(stored.id to stored, picked.id to picked)
         var synced = false
         val targetSource = mockk<NovelSource>(relaxed = true) {
@@ -338,7 +382,12 @@ object NovelProbe : Probe {
             },
             chapterRepository = mockk<NovelChapterRepository> {
                 coEvery { getByNovelId(any()) } answers {
-                    List(if (synced) sourceChapters.size else chapters) { storedChapter(firstArg(), it + 1.0) }
+                    List(if (synced) sourceChapters.size else chapters) {
+                        storedChapter(firstArg(), MigrationAdapterConformanceTest.storedNumber(it, unnumbered))
+                    }
+                }
+                coEvery { getChapterSummaryByNovelId(any()) } answers {
+                    MigrationAdapterConformanceTest.storedSummary(if (synced) sourceChapters.size else chapters, unnumbered)
                 }
             },
             // Real, not relaxed: a relaxed Preference cannot answer get() with a Boolean.

@@ -24,6 +24,7 @@ import reikai.domain.manga.MangaMergeManager
 import reikai.domain.source.listedManga
 import reikai.presentation.migrate.PickMember
 import reikai.util.runCatchingCancellable
+import tachiyomi.domain.chapter.interactor.GetChapterSummaryByMangaId
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.interactor.GetManga
@@ -44,6 +45,7 @@ class MangaMigrationFlowAdapter(
     private val sourcePreferences: SourcePreferences,
     private val getManga: GetManga,
     private val getChaptersByMangaId: GetChaptersByMangaId,
+    private val getChapterSummaryByMangaId: GetChapterSummaryByMangaId,
     private val networkToLocalManga: NetworkToLocalManga,
     private val coverCache: CoverCache,
     private val downloadManager: DownloadManager,
@@ -100,7 +102,7 @@ class MangaMigrationFlowAdapter(
                 coverData = manga.asMangaCover(),
                 payload = MigrationPayload.OfManga(manga),
                 sourceName = sourceDisplayName(manga.source.toString()),
-                chapterCount = getChaptersByMangaId.await(manga.id).size,
+                chapterCount = getChapterSummaryByMangaId.await(manga.id).chapterCount.toInt(),
             )
         }
 
@@ -140,14 +142,14 @@ class MangaMigrationFlowAdapter(
     override suspend fun loadEntries(ids: List<Long>): List<MigrationEntry> {
         return ids.mapNotNull { id ->
             val manga = getManga.await(id) ?: return@mapNotNull null
-            val chapters = getChaptersByMangaId.await(id)
+            val summary = getChapterSummaryByMangaId.await(id)
             MigrationEntry(
                 id = EntryId.Manga(id),
                 title = manga.title,
                 sourceKey = "${manga.source}",
                 sourceName = sourceDisplayName("${manga.source}"),
-                chapterCount = chapters.size,
-                latestChapter = chapters.latestChapterNumber { it.chapterNumber },
+                chapterCount = summary.chapterCount.toInt(),
+                latestChapter = shownLatestChapter(summary.latestChapterNumber),
                 cover = manga.asMangaCover(),
                 payload = MigrationPayload.OfManga(manga),
             )

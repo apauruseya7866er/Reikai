@@ -503,6 +503,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 - **Migrating a manga or novel with its chapters now carries your reading history and the page you reached in each chapter.** Its History entries and its place in the library's Last read sort follow it to the new source.
 - **Migrating no longer fetches a newly matched target's chapter list twice, once to show its counts and again to migrate onto it.**
+- **The migration list now opens faster for manga and novels with long chapter lists (from Mihon).** Upstream: mihonapp/mihon#4071.
 - **Single-entry migration search now refuses a match with no chapters before the migrate dialog opens, as the batch list does.**
 - **Choosing what a manga migrates to now browses the source the normal way, with chips, filters and your grid layout, as light novels already did.**
 

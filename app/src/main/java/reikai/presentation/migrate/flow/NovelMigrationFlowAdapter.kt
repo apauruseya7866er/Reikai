@@ -106,7 +106,7 @@ class NovelMigrationFlowAdapter(
                 coverData = novel.asNovelCover(),
                 payload = MigrationPayload.OfNovel(novel),
                 sourceName = sourceDisplayName(novel.source),
-                chapterCount = chapterRepository.getByNovelId(novel.id).size,
+                chapterCount = chapterRepository.getChapterSummaryByNovelId(novel.id).chapterCount.toInt(),
             )
         }
 
@@ -147,14 +147,14 @@ class NovelMigrationFlowAdapter(
     override suspend fun loadEntries(ids: List<Long>): List<MigrationEntry> {
         return ids.mapNotNull { id ->
             val novel = novelRepository.getById(id) ?: return@mapNotNull null
-            val chapters = chapterRepository.getByNovelId(id)
+            val summary = chapterRepository.getChapterSummaryByNovelId(id)
             MigrationEntry(
                 id = EntryId.Novel(id),
                 title = novel.title,
                 sourceKey = novel.source,
                 sourceName = sourceDisplayName(novel.source),
-                chapterCount = chapters.size,
-                latestChapter = chapters.latestChapterNumber { it.chapterNumber },
+                chapterCount = summary.chapterCount.toInt(),
+                latestChapter = shownLatestChapter(summary.latestChapterNumber),
                 cover = novel.asNovelCover(),
                 payload = MigrationPayload.OfNovel(novel),
             )

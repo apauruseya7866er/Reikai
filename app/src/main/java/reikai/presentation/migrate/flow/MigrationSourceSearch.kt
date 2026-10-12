@@ -73,7 +73,10 @@ val StripResult.hasSomethingToSay: Boolean
  * through this, so the rule has one place to be wrong.
  */
 inline fun <T> List<T>.latestChapterNumber(number: (T) -> Double): Double? =
-    maxOfOrNull(number)?.takeIf(::isRecognizedChapterNumber)
+    shownLatestChapter(maxOfOrNull(number))
+
+/** [highest], an entry's highest chapter number counted in the database, as [latestChapterNumber] shows it. */
+fun shownLatestChapter(highest: Double?): Double? = highest?.takeIf(::isRecognizedChapterNumber)
 
 /**
  * The chosen target sources: the [saved] order, else the [pinned] sources, else everything

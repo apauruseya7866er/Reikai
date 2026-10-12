@@ -15,6 +15,7 @@ import reikai.domain.novel.model.NovelChapter
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
+import tachiyomi.domain.chapter.model.ChapterSummary
 
 @Inject
 @SingleIn(AppScope::class)
@@ -33,6 +34,11 @@ class NovelChapterRepositoryImpl(
     override fun getByNovelIdAndPageAsFlow(novelId: Long, page: String): Flow<List<NovelChapter>> =
         database.novel_chaptersQueries.getByNovelIdAndPage(novelId, page, ::mapNovelChapter).subscribeToList()
             .distinctUntilChanged()
+
+    override suspend fun getChapterSummaryByNovelId(novelId: Long): ChapterSummary =
+        database.novel_chaptersQueries.getChapterSummaryByNovelId(novelId) { total, latestChapterNumber ->
+            ChapterSummary(chapterCount = total, latestChapterNumber = latestChapterNumber)
+        }.awaitAsOne()
 
     override suspend fun getDistinctPages(novelId: Long): List<String> =
         database.novel_chaptersQueries.getDistinctPages(novelId).awaitAsList()

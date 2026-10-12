@@ -2,6 +2,7 @@ package reikai.domain.novel
 
 import kotlinx.coroutines.flow.Flow
 import reikai.domain.novel.model.NovelChapter
+import tachiyomi.domain.chapter.model.ChapterSummary
 
 interface NovelChapterRepository {
     suspend fun getByNovelId(novelId: Long): List<NovelChapter>
@@ -14,6 +15,9 @@ interface NovelChapterRepository {
      * only when they change: drives the lazy per-page chapter list.
      */
     fun getByNovelIdAndPageAsFlow(novelId: Long, page: String): Flow<List<NovelChapter>>
+
+    /** How many chapters [novelId] has and its highest number, without loading them. */
+    suspend fun getChapterSummaryByNovelId(novelId: Long): ChapterSummary
 
     /** Distinct non-empty page labels, for the page selector of label-grouped sources. */
     suspend fun getDistinctPages(novelId: Long): List<String>

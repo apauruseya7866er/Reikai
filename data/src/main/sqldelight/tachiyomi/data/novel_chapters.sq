@@ -43,6 +43,13 @@ FROM novel_chapters
 WHERE novel_id = :novelId
 ORDER BY source_order;
 
+-- How many chapters and the highest number, counted here so the migration list loads no chapter rows,
+-- as chapter.sq's getChapterSummaryByMangaId does for manga.
+getChapterSummaryByNovelId:
+SELECT count(*) AS total, max(chapter_number) AS latestChapterNumber
+FROM novel_chapters
+WHERE novel_id = :novelId;
+
 -- Chapters for one page of a paged source (page = the transport index "1".."N"), or one volume
 -- label for label-grouped sources. Drives the lazy per-page chapter list on the details screen.
 getByNovelIdAndPage:
