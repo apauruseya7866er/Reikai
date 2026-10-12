@@ -255,6 +255,15 @@ class DownloadManager(
         return cache.getDownloadCount(manga)
     }
 
+    /**
+     * Returns the amount of downloaded chapters for each of the given manga, keyed by manga id.
+     *
+     * @param manga the manga to check.
+     */
+    fun getDownloadCounts(manga: List<Manga>): Map<Long, Int> {
+        return cache.getDownloadCounts(manga)
+    }
+
     suspend fun cancelQueuedDownloads(downloads: List<Download>) {
         removeFromDownloadQueue(downloads.map { it.chapter }) // RK: the rule below, which empties a paused queue
     }

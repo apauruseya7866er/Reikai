@@ -39,8 +39,8 @@ fun compareMigrateRows(
         when {
             a.isStub != b.isStub -> if (a.isStub) -1 else 1
             mode == SetMigrateSorting.Mode.TOTAL -> a.count.compareTo(b.count)
-            // A collator, so an accented name lands where the reader's own language puts it.
-            else -> a.name.lowercase().compareToWithCollator(b.name.lowercase())
+            // A collator, so an accented name lands where the reader's own language puts it; it ignores case too.
+            else -> a.name.compareToWithCollator(b.name)
         }
     }
     return when (direction) {

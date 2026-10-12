@@ -47,6 +47,13 @@ class LibrarySortComparatorTest {
         sortedIds(rows, LibrarySortMode.Alphabetical) shouldBe listOf(2L, 1L, 3L)
     }
 
+    // Code-point order would put "Banana" first, since every capital sorts before every lowercase letter.
+    @Test
+    fun `alphabetical ignores case where code-point order would not`() {
+        val rows = listOf(Row(1, "Banana"), Row(2, "apple"), Row(3, "Cherry"))
+        sortedIds(rows, LibrarySortMode.Alphabetical) shouldBe listOf(2L, 1L, 3L)
+    }
+
     @Test
     fun `alphabetical descending reverses`() {
         val rows = listOf(Row(1, "Alpha"), Row(2, "beta"), Row(3, "gamma"))

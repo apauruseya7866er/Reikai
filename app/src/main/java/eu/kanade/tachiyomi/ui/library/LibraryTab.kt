@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.library
 
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.graphics.res.animatedVectorResource
 import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
@@ -768,6 +769,8 @@ data object LibraryTab : Tab {
                 (context as? MainActivity)?.ready = true
             }
         }
+        // Lets startup be measured up to the library, not just its loading screen
+        ReportDrawnWhen { !activeIsLoading } // RK: whichever content type the chip shows
 
         LaunchedEffect(Unit) {
             // RK: through the seam, so a search sent from another screen lands on the library of its type.

@@ -58,9 +58,8 @@ fun <T> librarySortComparator(
     randomSeed: Long,
     fields: LibrarySortFields<T>,
 ): Comparator<T> {
-    val tiebreak = Comparator<T> { a, b ->
-        fields.title(a).lowercase().compareToWithCollator(fields.title(b).lowercase())
-    }
+    // The collator already ignores case, and lowercasing on every comparison is slow on large libraries
+    val tiebreak = Comparator<T> { a, b -> fields.title(a).compareToWithCollator(fields.title(b)) }
 
     // UnreadCount and Random fold direction in themselves, so they bypass the generic reversal below.
     when (mode) {
