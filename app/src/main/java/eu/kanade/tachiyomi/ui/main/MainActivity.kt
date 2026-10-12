@@ -181,6 +181,9 @@ class MainActivity : BaseActivity() {
             Migrator.awaitAndRelease()
             isAppMigrating.value = false
         }
+        // Uncaught on purpose: a failed database migration otherwise leaves the migrating screen up for good,
+        // while the crash screen tells what went wrong and lets the logs be shared
+        lifecycleScope.launch { databaseRepository.awaitOpen() }
 
         // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079
         // RK: the launcher's only; a backup or link opened from another app lands in that app's task

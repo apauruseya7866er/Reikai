@@ -146,6 +146,23 @@ class SchemaChainMigrationTest {
         migrate().shouldBeEmpty()
     }
 
+    // Rows written while foreign keys went unenforced, the history row hanging off the orphaned chapter.
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `rows left pointing at a missing entry do not fail the upgrade`(type: Type) = runTest {
+        exec("INSERT INTO categories(_id, name, sort, flags, content_type) VALUES (5, 'A', 1, 0, 0)")
+        exec(type.chapter(id = 10, entryId = 9, url = "/c/1", read = true))
+        exec("INSERT INTO ${type.historyTable}(chapter_id, last_read, time_read) VALUES (10, 500, 60)")
+        exec("INSERT INTO ${type.categoryTable}(${type.ownerColumn}, category_id) VALUES (9, 5)")
+        exec(
+            "INSERT INTO ${type.trackTable}(${type.ownerColumn}, sync_id, remote_id, title, last_chapter_read, " +
+                "total_chapters, status, score, remote_url, start_date, finish_date) " +
+                "VALUES (9, 1, 7, 't', 1, 0, 0, 0, 'u', 0, 0)",
+        )
+
+        migrate().shouldBeEmpty()
+    }
+
     // Novel only: migration 65 clears every manga stitch, so the chain end cannot show a manga one kept.
     @Test
     fun `a novel merge group the dedupe did not touch keeps its stitch`() = runTest {
