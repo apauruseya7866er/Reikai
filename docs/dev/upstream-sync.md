@@ -179,6 +179,7 @@ Newest first. "Base" is the `refs/mihon` SHA Reikai is synced through; "Reikai" 
 
 | Base (mihon) | Reikai | Date | Ported |
 |---|---|---|---|
+| `143a060ac` | `chore: sync Mihon baseline profiles (mihon 8912ef5b5)` | 2026-10-12 | Regenerated baseline profiles taken verbatim (they already carried Reikai's UpsertTrack rename, so the drift is gone); the v0.21.0 release commit (versions, issue templates, Mihon's changelog) N/A |
 | `b5856135c` | `chore: sync Mihon long strip page strips (mihon b5856135c)` | 2026-10-12 | Long strip pages drawn in strips, ending the stutter between pages; WebGpu viewers untouched |
 | `039138ce9` | `feat(track): add the Comick tracker (mihon 039138ce9)` | 2026-10-12 | Comick tracker (mihonapp/mihon#4056), manga only (search pins manga, ids are comic ids); adapted to TrackerSignedOutException, Reikai's user agent (upstream's stray parenthesis dropped), withIOContext/withUIContext, the id: search; Fill from tracker added |
 | `35bd0a4b3` | `chore: sync Mihon long strip zoom bounds (mihon 35bd0a4b3)` | 2026-10-12 | Long strip side padding no longer counted in zoom bounds (mihonapp/mihon#4072) |
