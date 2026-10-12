@@ -1534,9 +1534,8 @@ class NovelDetailsViewModel(
             // pages a paged source is not showing.
             val downloadedIds = loaded.downloadedChapterIds + downloadedIdsFor(available)
             val queued = downloadManager.queueState.value.mapTo(HashSet()) { it.chapterId }
-            // Queued as its row shows it: through the copy its download fetches, as manga's toolbar reads it.
             val queuedIds = available.mapNotNullTo(HashSet()) { row ->
-                row.id.takeIf { loaded.downloadTargets.queuedFor(row.id) { id -> id.takeIf(queued::contains) } != null }
+                row.id.takeIf { DownloadCandidates.isQueuedCopy(loaded.downloadTargets, row.id, queued::contains) }
             }
             val targets = selectChaptersForDownloadAction(
                 available,

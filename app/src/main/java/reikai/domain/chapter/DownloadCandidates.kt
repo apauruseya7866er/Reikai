@@ -59,8 +59,12 @@ object DownloadCandidates {
         isQueued: (Long) -> Boolean,
     ): List<T> {
         val picks = forAction(inReadingOrder, action, flags::isRead, flags::isBookmarked, isHidden) {
-            flags.isDownloaded(it) || targets.queuedFor(id(it)) { chapterId -> chapterId.takeIf(isQueued) } != null
+            flags.isDownloaded(it) || isQueuedCopy(targets, id(it), isQueued)
         }
         return targets.of(picks, pooled, id)
     }
+
+    /** Whether chapter [id] is queued as its row shows it: its own entry, else the copy its download fetches. */
+    fun isQueuedCopy(targets: DownloadTargets, id: Long, isQueued: (Long) -> Boolean): Boolean =
+        targets.queuedFor(id) { chapterId -> chapterId.takeIf(isQueued) } != null
 }
