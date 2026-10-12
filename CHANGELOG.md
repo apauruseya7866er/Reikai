@@ -465,6 +465,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **Browse, global search, the feed and migration search now show a novel in your library with your library's cover, including a custom one, as they do for manga.**
 - **Adding a light novel from Browse now keeps the cover already loaded instead of downloading it again.**
 - **The Hide entries already in library setting now applies to novel sources too.** Browsing keeps loading further pages when everything on a page is already in your library.
+- **Adding a manga or novel to your library from Browse, global search or the feed now says so when the add fails, instead of closing as if it worked.**
 - **Peeking at a possible duplicate no longer throws away the add you were making.** Long-press opens it, and the same question is waiting when you come back.
 - **The duplicate warning when adding a novel now also catches a library novel tracked to the same tracker entry, shows the artist, flags a source that is no longer installed and offers a one-tap Migrate, as manga's already does.** Migrate moves progress, categories, cover and tracking to the new source.
 - **Adding a manga no longer flags an unrelated library manga as a duplicate because both are tracked on a tracker that gives no entry id (from Mihon).** Upstream: mihonapp/mihon#4008.

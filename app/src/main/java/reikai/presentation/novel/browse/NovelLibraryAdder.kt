@@ -24,6 +24,7 @@ import reikai.novel.source.NovelSourceManager
 import reikai.presentation.browse.AddDecision
 import reikai.presentation.browse.AddFavoriteResult
 import reikai.presentation.browse.AddOutcome
+import reikai.presentation.browse.AddStep
 import reikai.presentation.browse.DuplicatePrompt
 import reikai.presentation.browse.addEntry
 import reikai.presentation.browse.addEntryOrPrompt
@@ -31,6 +32,7 @@ import reikai.presentation.browse.components.EntrySourceLabel
 import reikai.presentation.browse.decideAdd
 import reikai.presentation.browse.duplicatePrompt
 import reikai.presentation.browse.finishAdd
+import reikai.presentation.browse.step
 import reikai.presentation.library.reikaiSortCategories
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.mapAsCheckboxState
@@ -38,7 +40,7 @@ import tachiyomi.domain.category.model.Category
 
 /**
  * The novel add-to-library orchestration every surface shares. Stateless: each browse step returns the
- * next [NovelBrowseDialog] to show, or null to close, and [NovelAddFlow] holds it. The source id is
+ * next [AddStep], a [NovelBrowseDialog] to show or the add's end, and [NovelAddFlow] holds it. The source id is
  * passed per call, since a global search or a feed has one per result.
  */
 @Inject
@@ -63,7 +65,7 @@ class NovelLibraryAdder(
      * Decide a long press: remove, confirm a possible duplicate, or add. Decided on the stored row, as
      * `MangaLibraryAdder.onLongClick` is, pinned by `EntryAddFlowConformanceTest`.
      */
-    suspend fun onLongClick(item: NovelItem, sourceId: String): NovelBrowseDialog? {
+    suspend fun onLongClick(item: NovelItem, sourceId: String): AddStep<NovelBrowseDialog> {
         val decision = decideAdd(
             inLibrary = isInLibrary(item, sourceId),
             // -1: the item isn't favorited yet, so there's no library row to exclude (a non-favorite
@@ -71,8 +73,9 @@ class NovelLibraryAdder(
             findDuplicates = { findDuplicates(-1L, item.name) },
         )
         return when (decision) {
-            AddDecision.Remove -> NovelBrowseDialog.RemoveNovel(item, sourceId)
-            is AddDecision.ConfirmDuplicate -> NovelBrowseDialog.AddDuplicate(item, sourceId, decision.duplicates)
+            AddDecision.Remove -> AddStep.Ask(NovelBrowseDialog.RemoveNovel(item, sourceId))
+            is AddDecision.ConfirmDuplicate ->
+                AddStep.Ask(NovelBrowseDialog.AddDuplicate(item, sourceId, decision.duplicates))
             AddDecision.Add -> addToLibrary(item, sourceId)
         }
     }
@@ -100,14 +103,14 @@ class NovelLibraryAdder(
      * row is only created by the favorite step, so a picker returned here is still pending: nothing is
      * written until its confirm reaches [confirmCategories].
      */
-    suspend fun addToLibrary(item: NovelItem, sourceId: String): NovelBrowseDialog? {
+    suspend fun addToLibrary(item: NovelItem, sourceId: String): AddStep<NovelBrowseDialog> {
         val outcome = addEntry(
             resolveCategories = { landingCategories(novelRepository.getByUrlAndSource(item.path, sourceId)?.id) },
             favorite = { favoriteReturningId(item, sourceId) },
             fileCategories = { id, categoryIds -> applyCategories(id, categoryIds) },
         )
-        if (outcome != AddOutcome.NeedsCategoryChoice) return null
-        return NovelBrowseDialog.ChangeCategory(item, sourceId, categoryPickerPrompt(item, sourceId))
+        if (outcome != AddOutcome.NeedsCategoryChoice) return outcome.step
+        return AddStep.Ask(NovelBrowseDialog.ChangeCategory(item, sourceId, categoryPickerPrompt(item, sourceId)))
     }
 
     /**
@@ -149,9 +152,9 @@ class NovelLibraryAdder(
      * filed in the group's categories, so it never asks. The row is inserted first, unfavorited, since
      * the merge needs its id; an insert on its own leaves nothing a user can see.
      */
-    suspend fun addToExistingGroup(item: NovelItem, sourceId: String, selectedIds: List<Long>) {
-        val storedId = materialize(item, sourceId)?.id ?: return
-        addEntry(
+    suspend fun addToExistingGroup(item: NovelItem, sourceId: String, selectedIds: List<Long>): AddOutcome {
+        val storedId = materialize(item, sourceId)?.id ?: return AddOutcome.Failed
+        return addEntry(
             resolveCategories = { groupCategoryIdsOf(selectedIds) },
             favorite = { joinGroup(storedId, selectedIds) },
             fileCategories = { id, categoryIds -> applyCategories(id, categoryIds) },

@@ -1299,6 +1299,7 @@
     <string name="hopper_action_random">Random</string>
     <string name="hopper_action_random_global">Random (global)</string>
     <string name="add_to_library">Add to library</string>
+    <string name="add_to_library_failed">Couldn\'t add to library</string>
     <string name="in_library">In library</string>
     <!-- missing confirm menu after Compose rewrite #7901 -->
     <string name="remove_from_library">Remove from library</string>

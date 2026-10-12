@@ -18,6 +18,7 @@ import reikai.domain.novel.interactor.SetNovelCategories
 import reikai.domain.novel.interactor.UpdateNovel
 import reikai.domain.novel.model.Novel
 import reikai.novel.host.NovelItem
+import reikai.presentation.browse.AddStep
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.domain.category.model.Category
 
@@ -117,7 +118,8 @@ class NovelLibraryAdderTest {
         val dialog = adder(userCategories = listOf(category(3L)), defaultCategoryId = -1)
             .addToLibrary(item, sourceId = "src")
 
-        dialog shouldBe NovelBrowseDialog.ChangeCategory(item, "src", listOf(CheckboxState.State.None(category(3L))))
+        dialog shouldBe
+            AddStep.Ask(NovelBrowseDialog.ChangeCategory(item, "src", listOf(CheckboxState.State.None(category(3L)))))
     }
 
     @Test

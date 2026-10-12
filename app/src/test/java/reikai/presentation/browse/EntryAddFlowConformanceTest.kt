@@ -6,6 +6,9 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
@@ -13,6 +16,7 @@ import reikai.novel.host.NovelItem
 import reikai.presentation.novel.browse.NovelAddFlow
 import reikai.presentation.novel.details.NovelScreen
 import tachiyomi.domain.manga.model.Manga
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Instant
 
 /**
@@ -130,6 +134,31 @@ class EntryAddFlowConformanceTest {
         (prompt.groupIdByEntryId to prompt.suggestGroup) shouldBe (mapOf(duplicate to DUPLICATE_GROUP) to true)
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a picker confirm whose favorite write fails says the add failed`(probe: AddFlowProbe) = runTest {
+        val failures = probe.watchFailures(this)
+        probe.storeEntry(inLibrary = false)
+        probe.refuseFavoriteWrites()
+        probe.pressEntry()
+
+        probe.act { flow.confirmCategories(listOf(PICKED_CATEGORY)) }
+
+        failures.get() shouldBe 1
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `an add that lands says nothing`(probe: AddFlowProbe) = runTest {
+        val failures = probe.watchFailures(this)
+        probe.storeEntry(inLibrary = false)
+        probe.pressEntry()
+
+        probe.act { flow.confirmCategories(listOf(PICKED_CATEGORY)) }
+
+        failures.get() shouldBe 0
+    }
+
     companion object {
         const val PICKED_CATEGORY = 3L
         const val DUPLICATE_GROUP = 70L
@@ -153,6 +182,9 @@ abstract class AddFlowProbe {
     abstract fun storeEntry(inLibrary: Boolean)
     abstract fun storeOther(inLibrary: Boolean)
 
+    /** The database refuses the entry's favorite write, as a failed update does. */
+    abstract fun refuseFavoriteWrites()
+
     /** Stores a library entry the duplicate lookup lists, answering its id. */
     abstract fun storeDuplicate(): Long
 
@@ -168,6 +200,18 @@ abstract class AddFlowProbe {
     /** What the duplicate card's screen addresses, and what it should. */
     abstract fun openedDuplicate(duplicateId: Long): Any?
     abstract val expectedDuplicate: Any
+
+    /**
+     * Counts the flow's failures from now on. Unconfined, so the count moves on the emitting thread
+     * before the step [act] waits for has finished.
+     */
+    fun watchFailures(test: TestScope): AtomicInteger {
+        val count = AtomicInteger()
+        test.backgroundScope.launch(UnconfinedTestDispatcher(test.testScheduler)) {
+            flow.failures.collect { count.incrementAndGet() }
+        }
+        return count
+    }
 
     suspend fun pressEntry() = act { longPressEntry() }
     suspend fun pressOther() = act { longPressOther() }
@@ -197,6 +241,10 @@ class MangaAddFlowProbe : AddFlowProbe() {
 
     override fun storeOther(inLibrary: Boolean) {
         library.insert(listed(OTHER).copy(favoriteAt = Instant.fromEpochMilliseconds(100L).takeIf { inLibrary }))
+    }
+
+    override fun refuseFavoriteWrites() {
+        library.refusedFavoriteWrites += ENTRY
     }
 
     override fun storeDuplicate(): Long {
@@ -243,6 +291,10 @@ class NovelAddFlowProbe : AddFlowProbe() {
 
     override fun storeOther(inLibrary: Boolean) {
         library.put(OTHER, other.path, favorite = inLibrary)
+    }
+
+    override fun refuseFavoriteWrites() {
+        library.refusedFavoriteWrites += ENTRY
     }
 
     override fun storeDuplicate(): Long {

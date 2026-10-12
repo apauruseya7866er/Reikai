@@ -61,17 +61,17 @@ class MangaLibraryAdder(
      * the list that drew [manga] may predate an add or a removal made elsewhere. Twin of
      * `NovelLibraryAdder.onLongClick`, pinned by `EntryAddFlowConformanceTest`.
      */
-    suspend fun onLongClick(manga: Manga): MangaAddDialog? {
+    suspend fun onLongClick(manga: Manga): AddStep<MangaAddDialog> {
         val decision = decideAdd(inLibrary = isInLibrary(manga.id)) { findDuplicates(manga) }
         return when (decision) {
-            AddDecision.Remove -> MangaAddDialog.Remove(manga)
-            is AddDecision.ConfirmDuplicate -> MangaAddDialog.AddDuplicate(manga, decision.duplicates)
+            AddDecision.Remove -> AddStep.Ask(MangaAddDialog.Remove(manga))
+            is AddDecision.ConfirmDuplicate -> AddStep.Ask(MangaAddDialog.AddDuplicate(manga, decision.duplicates))
             AddDecision.Add -> addToLibrary(manga)
         }
     }
 
     /** A browse add, answering the picker to raise when there is no usable default category. */
-    suspend fun addToLibrary(manga: Manga): MangaAddDialog? = resolveAddFavorite(manga).pickerFor(manga)
+    suspend fun addToLibrary(manga: Manga): AddStep<MangaAddDialog> = resolveAddFavorite(manga).toStep(manga)
 
     /**
      * The duplicate prompt every manga add path raises, or null when nothing similar is in the library.

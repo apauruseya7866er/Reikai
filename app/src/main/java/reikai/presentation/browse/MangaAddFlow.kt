@@ -37,13 +37,12 @@ class MangaAddFlow(
 
     override fun confirmRemove() = continueWith(raised as? MangaAddDialog.Remove) {
         adder.removeFromLibrary(it.manga)
-        null
+        AddStep.Done
     }
 
     override fun confirmCategories(categoryIds: List<Long>) =
         continueWith(raised as? MangaAddDialog.ChangeCategory) {
-            adder.confirmAddCategories(it.manga.id, categoryIds)
-            null
+            adder.confirmAddCategories(it.manga.id, categoryIds).step
         }
 
     override fun confirmAddDuplicate() = continueWith(raised as? MangaAddDialog.AddDuplicate) {
@@ -51,11 +50,11 @@ class MangaAddFlow(
     }
 
     override fun addToGroup(entryIds: List<Long>) = continueWith(raised as? MangaAddDialog.AddDuplicate) {
-        adder.addToExistingGroup(it.manga, entryIds).pickerFor(it.manga)
+        adder.addToExistingGroup(it.manga, entryIds).toStep(it.manga)
     }
 
     override fun startMigrate(duplicateId: Long) = continueWith(raised as? MangaAddDialog.AddDuplicate) {
-        MangaAddDialog.Migrate(currentId = duplicateId, targetId = it.manga.id)
+        AddStep.Ask(MangaAddDialog.Migrate(currentId = duplicateId, targetId = it.manga.id))
     }
 
     override fun duplicateScreen(entryId: Long) = MangaScreen(entryId)
@@ -68,9 +67,10 @@ class MangaAddFlow(
     }
 }
 
-/** The picker an add has to raise, or null when it finished (or failed, which wrote nothing). */
-internal fun AddFavoriteResult.pickerFor(manga: Manga): MangaAddDialog? =
+/** Where an add of [manga] leaves the flow: its picker when it has to ask. */
+internal fun AddFavoriteResult.toStep(manga: Manga): AddStep<MangaAddDialog> =
     when (this) {
-        AddFavoriteResult.Added, AddFavoriteResult.Failed -> null
-        is AddFavoriteResult.NeedsCategoryChoice -> MangaAddDialog.ChangeCategory(manga, initialSelection)
+        AddFavoriteResult.Added -> AddStep.Done
+        AddFavoriteResult.Failed -> AddStep.Failed
+        is AddFavoriteResult.NeedsCategoryChoice -> AddStep.Ask(MangaAddDialog.ChangeCategory(manga, initialSelection))
     }

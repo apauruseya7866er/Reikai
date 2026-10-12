@@ -176,6 +176,9 @@ class FakeNovelLibrary(
     /** The rows the duplicate lookup lists, while they are in the library. */
     val duplicateIds = mutableSetOf<Long>()
 
+    /** Rows whose favorite write the database refuses, answering false as a failed update does. */
+    val refusedFavoriteWrites = mutableSetOf<Long>()
+
     fun put(id: Long, path: String, favorite: Boolean, categories: List<Long> = emptyList()): Novel {
         val row = Novel.create().copy(
             id = id,
@@ -207,6 +210,7 @@ class FakeNovelLibrary(
         coEvery { update(any<NovelUpdate>()) } answers {
             val update = firstArg<NovelUpdate>()
             val row = rows[update.id] ?: return@answers false
+            if (update.isSet(NovelUpdate::favoriteAt) && update.id in refusedFavoriteWrites) return@answers false
             if (update.isSet(NovelUpdate::favoriteAt)) {
                 favoriteWrites += update.id
                 rows[update.id] = row.copy(favoriteAt = update.favoriteAt)

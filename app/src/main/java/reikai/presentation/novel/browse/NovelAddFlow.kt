@@ -4,10 +4,12 @@ import kotlinx.coroutines.CoroutineScope
 import reikai.domain.library.ContentType
 import reikai.domain.novel.model.NovelWithChapterCount
 import reikai.novel.host.NovelItem
+import reikai.presentation.browse.AddStep
 import reikai.presentation.browse.DuplicatePrompt
 import reikai.presentation.browse.EntryAddDialog
 import reikai.presentation.browse.EntryAddFlow
 import reikai.presentation.browse.components.toDuplicateCard
+import reikai.presentation.browse.step
 import reikai.presentation.browse.toAddDuplicate
 import reikai.presentation.novel.details.NovelScreen
 import tachiyomi.core.common.preference.CheckboxState
@@ -45,13 +47,12 @@ class NovelAddFlow(
 
     override fun confirmRemove() = continueWith(raised as? NovelBrowseDialog.RemoveNovel) {
         adder.confirmRemove(it.item, it.sourceId)
-        null
+        AddStep.Done
     }
 
     override fun confirmCategories(categoryIds: List<Long>) =
         continueWith(raised as? NovelBrowseDialog.ChangeCategory) {
-            adder.confirmCategories(it.item, it.sourceId, categoryIds)
-            null
+            adder.confirmCategories(it.item, it.sourceId, categoryIds).step
         }
 
     override fun confirmAddDuplicate() = continueWith(raised as? NovelBrowseDialog.AddDuplicate) {
@@ -59,14 +60,14 @@ class NovelAddFlow(
     }
 
     override fun addToGroup(entryIds: List<Long>) = continueWith(raised as? NovelBrowseDialog.AddDuplicate) {
-        adder.addToExistingGroup(it.item, it.sourceId, entryIds)
-        null
+        adder.addToExistingGroup(it.item, it.sourceId, entryIds).step
     }
 
     // A browsed novel has no row until it is stored, which is a source round trip.
     override fun startMigrate(duplicateId: Long) = continueWith(raised as? NovelBrowseDialog.AddDuplicate) {
         adder.materialize(it.item, it.sourceId)
-            ?.let { target -> NovelBrowseDialog.Migrate(currentId = duplicateId, targetId = target.id) }
+            ?.let { target -> AddStep.Ask(NovelBrowseDialog.Migrate(currentId = duplicateId, targetId = target.id)) }
+            ?: AddStep.Failed
     }
 
     // A novel is addressed by source and path, which only the raised dialog's duplicates still know.
