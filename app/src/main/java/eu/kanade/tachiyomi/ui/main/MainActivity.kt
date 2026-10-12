@@ -343,6 +343,16 @@ class MainActivity : BaseActivity() {
         }
     }
 
+    override fun reportFullyDrawn() {
+        try {
+            super.reportFullyDrawn()
+        } catch (e: SecurityException) {
+            // Some Samsung Android 9 to 11 builds deny the platform's fully drawn broadcast
+            // and the report only feeds startup metrics, so it shouldn't crash the app
+            logcat(LogPriority.WARN, e)
+        }
+    }
+
     // RK: persist cover-based theming colors
     override fun onPause() {
         super.onPause()

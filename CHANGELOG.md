@@ -713,6 +713,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Fixed
 
+- **The app no longer crashes on start on some Samsung devices running Android 9 to 11 (from Mihon).** Upstream: mihon abb126ad2.
 - **The app update check no longer offers an older release as an update or misses a newer one, and no longer fails on a build with a longer version number.**
 - **Moving between screens after Android restored the app in the background no longer risks a crash (from Komikku).**
 - **A failure in background work that outlives its screen, such as saving the download index or installing an extension, no longer crashes the app (from Mihon).** It is logged and reported instead. Upstream: mihon f9c5fa901.
