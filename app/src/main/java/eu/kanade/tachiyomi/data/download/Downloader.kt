@@ -394,14 +394,16 @@ class Downloader(
         val source = sourceManager.get(manga.source) as? HttpSource ?: return false
         val wasEmpty = queueState.value.isEmpty()
         val chaptersToQueue = withIOContext {
+            val downloadedChapterIds = provider.findDownloadedChapterIds(chapters, manga, source)
+            val queuedChapterIds = queueState.value.mapTo(HashSet()) { it.chapter.id }
             chapters
                 // Filter out those already downloaded.
-                .filter { provider.findChapterDir(it.name, it.scanlator, it.url, manga.title, source) == null }
+                .filter { it.id !in downloadedChapterIds }
                 .asSequence()
                 // Add chapters to queue from the start.
                 .sortedByDescending { it.sourceOrder }
                 // Filter out those already enqueued.
-                .filter { chapter -> queueState.value.none { it.chapter.id == chapter.id } }
+                .filter { it.id !in queuedChapterIds }
                 // Create a download for each one.
                 .map { Download(source, manga, it) }
                 .toList()
@@ -411,8 +413,9 @@ class Downloader(
         // A failed chapter asked for again goes back to waiting, as a novel's does. Upstream retries
         // failures only when the downloader starts, which a busy one never does, so that one is
         // restarted the way a queue edit restarts it.
+        val askedChapterIds = chapters.mapTo(HashSet()) { it.id }
         val retried = queueState.value.filter { download ->
-            download.status == Download.State.ERROR && chapters.any { it.id == download.chapter.id }
+            download.status == Download.State.ERROR && download.chapter.id in askedChapterIds
         }
         retried.forEach {
             it.status = Download.State.QUEUE
@@ -827,7 +830,8 @@ class Downloader(
     private fun addAllToQueue(downloads: List<Download>) {
         _queueState.update { queue ->
             // Callers filter off the queue's thread, so a chapter may have been queued in the meantime
-            val toAdd = downloads.filter { download -> queue.none { it.chapter.id == download.chapter.id } }
+            val queuedChapterIds = queue.mapTo(HashSet()) { it.chapter.id }
+            val toAdd = downloads.filter { it.chapter.id !in queuedChapterIds }
             toAdd.forEach { download ->
                 download.status = Download.State.QUEUE
             }

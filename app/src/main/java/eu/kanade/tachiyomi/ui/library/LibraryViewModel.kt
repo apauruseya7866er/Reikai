@@ -533,6 +533,8 @@ class LibraryViewModel(
                 it.mangaId in installed
             }
         } ?: DownloadTargets.OWN
+        // One snapshot, since searching the queue for each chapter of a long list adds up
+        val queued = downloadManager.getQueuedDownloadsByChapterId()
         DownloadCandidates.forGroup(
             chapters,
             action,
@@ -541,7 +543,7 @@ class LibraryViewModel(
             group?.pooledChapters ?: chapters,
             { it.id },
             isHidden = { it.hiddenKey(ownerOf(it)) in hidden },
-            isQueued = { downloadManager.getQueuedDownloadOrNull(it) != null },
+            isQueued = { it in queued },
         )
             .groupBy { it.mangaId }
             .forEach { (mangaId, owned) ->

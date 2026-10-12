@@ -31,7 +31,8 @@ class MangaChapterDownloadActions(
             ChapterDownloadAction.START ->
                 forEachOwner(chapters) { manga, owned -> downloadManager.downloadChapters(manga, owned) }
             ChapterDownloadAction.START_NOW -> chapters.singleOrNull()?.let { downloadManager.startDownloadNow(it.id) }
-            ChapterDownloadAction.CANCEL -> chapters.mapNotNull { downloadManager.getQueuedDownloadOrNull(it.id) }
+            ChapterDownloadAction.CANCEL -> downloadManager.getQueuedDownloadsByChapterId()
+                .let { queued -> chapters.mapNotNull { queued[it.id] } }
                 .takeIf { it.isNotEmpty() }
                 ?.let { downloadManager.cancelQueuedDownloads(it) }
             ChapterDownloadAction.DELETE -> delete(deleteTargets())
