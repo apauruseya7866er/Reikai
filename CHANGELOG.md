@@ -8,6 +8,8 @@ Reikai uses its own [Semantic Versioning](https://semver.org/) from the Mihon-ba
 
 ## [Unreleased]
 
+## [0.4.0]
+
 ### Highlights
 
 Manga and light novels now share much more of the app. A new All chip shows your whole library as a
