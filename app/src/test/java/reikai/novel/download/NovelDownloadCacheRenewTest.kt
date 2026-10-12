@@ -79,13 +79,13 @@ class NovelDownloadCacheRenewTest {
             provider = provider,
         )
         // The scanned chapter shows once the scan has swapped its result in; only then is the write judged.
-        awaitOnRealThreads { cache.isChapterDownloaded(novel, onDisk) }
+        awaitOnRealThreads { cache.isChapterDownloaded(novel, onDisk) } shouldBe true
 
         awaitOnRealThreads { cache.isChapterDownloaded(novel, written) } shouldBe true
     }
 
     private suspend fun awaitOnRealThreads(condition: () -> Boolean): Boolean = withContext(Dispatchers.Default) {
-        withTimeoutOrNull(2.seconds) {
+        withTimeoutOrNull(AWAIT_LIMIT) {
             while (!condition()) delay(10.milliseconds)
             true
         } ?: false
@@ -109,5 +109,9 @@ class NovelDownloadCacheRenewTest {
     private companion object {
         // How long the scan waits for the write to land before it swaps; the fixed cache makes it wait out.
         const val WRITE_WINDOW_MS = 1_000L
+
+        // A ceiling, not a wait: each check returns as soon as it holds. A busy CI runner can take seconds
+        // just to start the scan.
+        val AWAIT_LIMIT = 20.seconds
     }
 }
