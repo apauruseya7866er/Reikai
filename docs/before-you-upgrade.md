@@ -14,7 +14,18 @@ An update installs over the version you have, and your library and settings stay
 Make a backup before any update anyway: <nav to="data-and-storage">, then **Create backup**.
 [Backups](/docs/guides/backups) covers what a backup holds and how to restore one.
 
-The two cases below are the ones that need extra steps.
+The cases below are the ones that need extra steps or bring a change you should know about.
+
+## From Reikai 0.3.2
+
+Back up first. The upgrade itself needs no steps, but it changes some of your data:
+
+* A manga or novel you have twice from the same source becomes one, keeping the library copy with your read chapters, history, categories, tracking, custom cover and downloads.
+* Your novel library takes on the manga library's sort, filters and grouping, and existing categories carry over as Manga only or Novels only.
+* Novels open in the shared reader, and a chapter you have already read opens at its start unless **Resume reading position** is on in <nav to="novel-reader">.
+
+Novels an earlier build saved with another novel's title and cover, or wrongly as Completed, stay that way until you refresh them.
+**Repair novel details**, in <nav to="advanced">, finds the library novels showing another novel's title and cover and re-fetches them in one pass; refresh any it misses by hand.
 
 ## From Reikai 0.3.1 or older
 

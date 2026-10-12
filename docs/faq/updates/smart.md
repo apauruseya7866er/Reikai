@@ -23,5 +23,6 @@ After that many days, the app will allow that series to check for updates.
 ::: info Light novels get all four conditions
 A novel's next chapter is predicted from its own chapter history, the same way as for manga, and it
 has the hourglass on its details page too. For either kind, a series with no chapters yet does not
-count as not started, so it keeps being checked until it has some.
+count as not started, so it keeps being checked until it has some, and a series added to your
+library without ever being opened is always checked, whichever conditions are on.
 :::

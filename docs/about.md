@@ -32,8 +32,10 @@ but additions will still follow Mihon's design.
 
 ## How do I get updates? Is it on an app store?
 
-No app store. Reikai has a built-in updater, in <nav to="about"> under **Check for updates**. It checks
-GitHub Releases and, when there is a newer version, opens an update screen with its changelog.
+No app store. Reikai has a built-in updater. It checks GitHub Releases each time you open the app from
+cold and every 6 hours while it stays open, and you can check yourself in <nav to="about"> under
+**Check for updates**. When there is a newer version, it opens an update screen with its changelog,
+where you can also skip that version.
 Tap **Download** and the button shows the progress; when it finishes, tap **Install**.
 
 ## Where should I download Reikai from? Are "patched" builds safe?

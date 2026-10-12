@@ -18,7 +18,7 @@ Read [Before you upgrade](/docs/before-you-upgrade) first.
 1. Open the `.apk` file and follow the installer.
 
 Reikai is not on an app store.
-It checks for its own updates in <nav to="about"> under **Check for updates**.
+It checks for its own updates when you open it, and you can check yourself in <nav to="about"> under **Check for updates**.
 
 ## Add sources
 

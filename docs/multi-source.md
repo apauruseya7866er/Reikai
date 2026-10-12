@@ -28,9 +28,9 @@ Turn it off or back on with **Group series across sources**, in <nav to="library
 With it on, every group renders as one card.
 Turning it off expands each group back into its per-source entries and keeps the groups, so turning it on again collapses them exactly as they were.
 
-A merged card is filed under the categories of the source that leads it, and shows once in each of them.
-Changing a merged card's categories from the library changes them for every source in the group.
-Changing them from the details screen changes only the source the page was opened through.
+A merged card is filed under the categories its group shares, and shows once in each of them.
+Changing a merged series' categories, from the library or its details screen, changes them for every source in the group.
+A source that joins a group takes the group's categories.
 
 ### Joining a group as you add a series
 
@@ -153,8 +153,9 @@ It decides which source leads a merged chapter list when a group has no order of
 ## Removing a merged series
 
 The heart on the details screen removes what the page is showing.
+It always asks first.
 Under a source chip it removes that one source, and the rest of the group stays in your library.
-Under **All** it asks first, with an **All grouped sources (N)** checkbox: keep it ticked to remove every source, or untick it to remove only the source you opened the page from.
+Under **All** the question has an **All grouped sources (N)** checkbox: keep it ticked to remove every source, or untick it to remove only the source you opened the page from.
 If the sources that left have downloads, it then offers to delete them.
 
 In the library, select the entry and delete it.

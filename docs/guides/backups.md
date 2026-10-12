@@ -58,7 +58,7 @@ The sources behind each [merged series](/docs/multi-source) are saved as source-
 - **Extension stores** - Your extension repos, plus the list of installed [extension apps](/docs/faq/browse/extensions#extension-apps-and-plugins), manga and novel
 - **Source settings**
 - **Feed and saved searches** - The searches you saved on a source, and the Browse feed built on them
-- **Include sensitive settings** - Saved sign-ins: tracker logins, the FlareSolverr sign-in, and source and plugin site sign-ins. Not included by default, and can only be ticked while App settings or Source settings is ticked
+- **Include sensitive settings** - Saved sign-ins: tracker logins, the FlareSolverr sign-in, and source and plugin site sign-ins. A restore never applies the FlareSolverr settings. Not included by default, and can only be ticked while App settings or Source settings is ticked
 
 ### What is not included in a backup?
 - **Extension files**. Only the list of installed extension apps and the addresses of your plugins are saved
