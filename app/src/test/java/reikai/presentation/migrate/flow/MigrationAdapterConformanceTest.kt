@@ -154,7 +154,9 @@ class MigrationAdapterConformanceTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("probes")
     fun `an entry whose chapters carry no recognized number shows no latest chapter`(probe: Probe) = runTest {
-        probe.adapter(chapters = 2, unnumbered = true).loadEntries(listOf(ENTRY_ID)).single().latestChapter shouldBe null
+        val entry = probe.adapter(chapters = 2, unnumbered = true).loadEntries(listOf(ENTRY_ID)).single()
+
+        entry.latestChapter shouldBe null
     }
 
     companion object {
@@ -279,7 +281,10 @@ object MangaProbe : Probe {
             },
             getChapterSummaryByMangaId = mockk<GetChapterSummaryByMangaId> {
                 coEvery { await(any()) } answers {
-                    MigrationAdapterConformanceTest.storedSummary(if (synced) sourceChapters.size else chapters, unnumbered)
+                    MigrationAdapterConformanceTest.storedSummary(
+                        if (synced) sourceChapters.size else chapters,
+                        unnumbered,
+                    )
                 }
             },
             networkToLocalManga = mockk<NetworkToLocalManga> {
@@ -387,7 +392,10 @@ object NovelProbe : Probe {
                     }
                 }
                 coEvery { getChapterSummaryByNovelId(any()) } answers {
-                    MigrationAdapterConformanceTest.storedSummary(if (synced) sourceChapters.size else chapters, unnumbered)
+                    MigrationAdapterConformanceTest.storedSummary(
+                        if (synced) sourceChapters.size else chapters,
+                        unnumbered,
+                    )
                 }
             },
             // Real, not relaxed: a relaxed Preference cannot answer get() with a Boolean.
