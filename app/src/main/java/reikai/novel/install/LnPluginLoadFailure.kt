@@ -1,10 +1,12 @@
 package reikai.novel.install
 
+import dev.icerock.moko.resources.StringResource
 import kotlinx.serialization.SerializationException
 import reikai.domain.novel.LnInstalledPluginMetadata
 import reikai.domain.novel.LnSourceIdentity
 import reikai.util.firstCause
 import reikai.util.rootMessage
+import tachiyomi.i18n.MR
 
 /**
  * An installed plugin that did not load, so the Extensions list can show it under Not loaded rather
@@ -71,6 +73,14 @@ data class LnPluginLoadFailure(
             seen?.name ?: url.substringAfterLast('/').substringBeforeLast('.')
     }
 }
+
+/** Why the plugin did not load, in the words every screen showing a failed plugin uses. */
+val LnPluginLoadFailure.Reason.description: StringResource
+    get() = when (this) {
+        is LnPluginLoadFailure.Reason.Missing -> MR.strings.ln_plugin_script_missing_message
+        LnPluginLoadFailure.Reason.Malformed -> MR.strings.ext_malformed_message
+        is LnPluginLoadFailure.Reason.Failed -> MR.strings.ext_load_failed_message
+    }
 
 /** An installed plugin whose script is not stored and could not be fetched from its URL again. */
 class LnPluginScriptMissingException(url: String, cause: Throwable) :

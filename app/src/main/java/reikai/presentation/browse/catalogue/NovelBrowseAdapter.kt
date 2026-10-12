@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import reikai.domain.source.filter.NovelSavedSearchFilters
+import reikai.novel.install.description
 import reikai.novel.source.NovelListing
 import reikai.presentation.browse.EntryBulkFavoriteViewModel
 import reikai.presentation.browse.item
@@ -65,6 +66,9 @@ class NovelBrowseAdapter(
      */
     private val toolbarText = MutableStateFlow<ToolbarText>(ToolbarText.Untouched)
 
+    // Above [state], whose initial value reads it.
+    private val retry = SourceLoadRetry(model::retryLoad)
+
     override val state: StateFlow<EntryBrowseScreenState> =
         combine(model.state, bulk.state, toolbarText, ::toNeutral)
             // WhileSubscribed, not Eagerly: the adapter is rebuilt per composition entry while its
@@ -91,9 +95,7 @@ class NovelBrowseAdapter(
         bulkState: EntryBulkFavoriteViewModel.State<SelectedNovel>,
         toolbar: ToolbarText,
     ): EntryBrowseScreenState {
-        val source = state.source
-            ?: return state.missingSourceLabel?.let(EntryBrowseScreenState::SourceMissing)
-                ?: EntryBrowseScreenState.Loading
+        val source = state.source ?: return unavailable(state)
         val searching = state.query.isNotBlank()
         return EntryBrowseScreenState.Loaded(
             sourceName = source.name,
@@ -118,6 +120,12 @@ class NovelBrowseAdapter(
             capabilities = capabilities,
             dialog = EntryBrowseDialog.Filter.takeIf { state.filterSheetOpen },
         )
+    }
+
+    private fun unavailable(state: NovelBrowseState): EntryBrowseScreenState {
+        val label = state.missingSourceLabel ?: return EntryBrowseScreenState.Loading
+        val failure = state.loadFailure ?: return EntryBrowseScreenState.SourceMissing(label)
+        return EntryBrowseScreenState.SourceLoadFailed(label, failure.reason.description, failure.reason.message, retry)
     }
 
     override fun setListing(listing: EntryBrowseListing) {

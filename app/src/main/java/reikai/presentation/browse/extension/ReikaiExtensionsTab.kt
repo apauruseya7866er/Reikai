@@ -60,6 +60,7 @@ import reikai.domain.library.includes
 import reikai.domain.library.labelRes
 import reikai.novel.install.LnPluginLoadFailure
 import reikai.novel.install.canonicalizePluginUrl
+import reikai.novel.install.description
 import reikai.novel.registry.LnRegistryEntry
 import reikai.novel.source.NovelSource
 import reikai.presentation.browse.ReikaiBrowseViewModel
@@ -364,11 +365,7 @@ private fun ExtensionsList(
         val reason = failure.reason
         val dismiss = { failedPlugin = null }
         NotLoadedDialog(
-            description = when (reason) {
-                is LnPluginLoadFailure.Reason.Missing -> MR.strings.ln_plugin_script_missing_message
-                LnPluginLoadFailure.Reason.Malformed -> MR.strings.ext_malformed_message
-                is LnPluginLoadFailure.Reason.Failed -> MR.strings.ext_load_failed_message
-            },
+            description = reason.description,
             failureMessage = reason.message,
             stackTrace = (reason as? LnPluginLoadFailure.Reason.Failed)?.stackTrace,
             onClickUninstall = {

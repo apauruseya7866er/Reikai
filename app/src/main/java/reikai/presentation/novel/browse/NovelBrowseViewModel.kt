@@ -38,6 +38,7 @@ import reikai.domain.source.SourceKey
 import reikai.domain.source.filter.genreSearch
 import reikai.novel.host.NovelItem
 import reikai.novel.install.LnPluginInstaller
+import reikai.novel.install.LnPluginLoadFailure
 import reikai.novel.source.NovelFilterState
 import reikai.novel.source.NovelListing
 import reikai.novel.source.NovelListingPagingSource
@@ -145,7 +146,8 @@ class NovelBrowseViewModel(
         runCatchingCancellable { installer.ensureLoaded() }
         val source = manager.get(sourceId)
         if (source == null) {
-            state.update { it.copy(missingSourceLabel = manager.nameOf(sourceId)) }
+            val failure = installer.failures.value.values.firstOrNull { it.pluginId == sourceId }
+            state.update { it.copy(missingSourceLabel = manager.nameOf(sourceId), loadFailure = failure) }
             return
         }
         // Recorded here rather than at the Sources row, so every route into a catalogue marks it
@@ -164,6 +166,12 @@ class NovelBrowseViewModel(
                 listing = listing,
             )
         }
+    }
+
+    /** Load a plugin that threw while loading again, through the screen's loading state. */
+    fun retryLoad() {
+        state.update { it.copy(missingSourceLabel = null, loadFailure = null) }
+        viewModelScope.launchIO { loadSource() }
     }
 
     /** Switch the Popular / Latest listing, clearing any active search and filters, and page from the start. */
@@ -323,6 +331,8 @@ data class NovelBrowseState(
     val filtersApplied: Boolean = false,
     /** The source's last known name, set when no installed source has its id. */
     val missingSourceLabel: String? = null,
+    /** Why the plugin with this source's id did not load, when it is installed but failed. */
+    val loadFailure: LnPluginLoadFailure? = null,
     /** (source, url) pairs in the library, for in-library marking of results. */
     val favoritedKeys: FavoritedNovels = FavoritedNovels.None,
     val filterSheetOpen: Boolean = false,

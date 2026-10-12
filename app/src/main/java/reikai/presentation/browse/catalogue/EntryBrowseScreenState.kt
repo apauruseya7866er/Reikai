@@ -1,6 +1,7 @@
 package reikai.presentation.browse.catalogue
 
 import androidx.compose.runtime.Immutable
+import dev.icerock.moko.resources.StringResource
 import tachiyomi.domain.library.model.LibraryDisplayMode
 
 /**
@@ -13,6 +14,16 @@ sealed interface EntryBrowseScreenState {
     /** The source cannot be reached and nothing here will bring it back: an extension that is not
      *  installed. No retry is offered, because there is nothing to retry. */
     data class SourceMissing(val label: String) : EntryBrowseScreenState
+
+    /** The source is installed but threw while loading, which a retry can fix when the cause passed.
+     *  Only the novel adapter produces it: a plugin loads in the app, a manga extension as a package. */
+    data class SourceLoadFailed(
+        val label: String,
+        val description: StringResource,
+        /** The root cause in words, where the failure has one. */
+        val message: String?,
+        val retry: SourceLoadRetry,
+    ) : EntryBrowseScreenState
 
     @Immutable
     data class Loaded(
@@ -84,6 +95,9 @@ class MigrationPickCapability(
     val migrateForId: Long,
     val pick: (EntryBrowseRow, onPicked: () -> Unit) -> Unit,
 )
+
+/** Loading the source again. Held once by its adapter, as [MigrationPickCapability] is, for the same reason. */
+class SourceLoadRetry(val run: () -> Unit)
 
 /**
  * The dialogs only the catalogue raises. What a long press asks is the add flow's own

@@ -18,6 +18,9 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.FavoritedNovels
 import reikai.domain.source.ReikaiSourcePreferences
+import reikai.novel.install.LnPluginInstaller
+import reikai.novel.install.LnPluginLoadFailure
+import reikai.novel.source.NovelSource
 import reikai.novel.source.NovelSourceManager
 import reikai.presentation.browse.EntryBulkFavoriteViewModel
 import reikai.presentation.browse.catalogue.EntryBrowseScreenState
@@ -26,11 +29,22 @@ import reikai.presentation.migrate.flow.MigrationPickHandoff
 import reikai.presentation.recents.EmittingPreferenceStore
 import reikai.util.testAppScope
 import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.i18n.MR
 
-/** A novel catalogue whose source is gone says so the way a manga one does, by the source's name. */
+/**
+ * A novel catalogue whose source is gone says so the way a manga one does, by the source's name, and one
+ * whose plugin is installed but threw while loading says why and offers a retry.
+ */
 class NovelBrowseMissingSourceTest {
 
     private val dispatcher = StandardTestDispatcher()
+    private val store = EmittingPreferenceStore()
+    private val loadFailures = MutableStateFlow<Map<String, LnPluginLoadFailure>>(emptyMap())
+    private val installer = mockk<LnPluginInstaller>(relaxed = true) { every { failures } returns loadFailures }
+    private val manager = mockk<NovelSourceManager>(relaxed = true).also { manager ->
+        coEvery { manager.get(SOURCE_ID) } returns null
+        coEvery { manager.nameOf(SOURCE_ID) } returns "Gone plugin"
+    }
 
     @BeforeEach
     fun setUp() = Dispatchers.setMain(dispatcher)
@@ -40,16 +54,42 @@ class NovelBrowseMissingSourceTest {
 
     @Test
     fun `a source that is not installed shows as missing under its last known name`() = runTest {
-        val store = EmittingPreferenceStore()
-        val manager = mockk<NovelSourceManager>(relaxed = true)
-        coEvery { manager.get(SOURCE_ID) } returns null
-        coEvery { manager.nameOf(SOURCE_ID) } returns "Gone plugin"
+        adapter().settled() shouldBe EntryBrowseScreenState.SourceMissing("Gone plugin")
+    }
+
+    @Test
+    fun `an installed plugin that threw while loading shows why`() = runTest {
+        loadFailures.value = mapOf(FAILURE.url to FAILURE)
+
+        val state = adapter().settled() as EntryBrowseScreenState.SourceLoadFailed
+
+        Triple(state.label, state.description, state.message) shouldBe
+            Triple("Gone plugin", MR.strings.ext_load_failed_message, "ReferenceError: x")
+    }
+
+    @Test
+    fun `retrying a plugin that loads now opens its catalogue`() = runTest {
+        loadFailures.value = mapOf(FAILURE.url to FAILURE)
+        val adapter = adapter()
+        val failed = adapter.settled() as EntryBrowseScreenState.SourceLoadFailed
+        coEvery { manager.get(SOURCE_ID) } returns mockk<NovelSource>(relaxed = true)
+
+        failed.retry.run()
+
+        val next = adapter.state.first {
+            it != EntryBrowseScreenState.Loading && it !is EntryBrowseScreenState.SourceLoadFailed
+        }
+
+        next::class shouldBe EntryBrowseScreenState.Loaded::class
+    }
+
+    private fun adapter(): NovelBrowseAdapter {
         val model = NovelBrowseViewModel(
             appScope = testAppScope(),
             sourceId = SOURCE_ID,
             initialQuery = "",
             startLatest = false,
-            installer = mockk(relaxed = true),
+            installer = installer,
             manager = manager,
             novelRepository = mockk(relaxed = true) {
                 every { getFavoritedKeysAsFlow() } returns flowOf(FavoritedNovels.None)
@@ -64,13 +104,22 @@ class NovelBrowseMissingSourceTest {
         val bulk = mockk<NovelBulkFavoriteViewModel> {
             every { state } returns MutableStateFlow(EntryBulkFavoriteViewModel.State())
         }
-
-        val state = NovelBrowseAdapter(model, bulk, SOURCE_ID).state.first { it != EntryBrowseScreenState.Loading }
-
-        state shouldBe EntryBrowseScreenState.SourceMissing("Gone plugin")
+        return NovelBrowseAdapter(model, bulk, SOURCE_ID)
     }
+
+    private suspend fun NovelBrowseAdapter.settled() = state.first { it != EntryBrowseScreenState.Loading }
 
     private companion object {
         const val SOURCE_ID = "gone"
+        val FAILURE = LnPluginLoadFailure(
+            url = "https://example.org/gone.js",
+            pluginId = SOURCE_ID,
+            name = "Gone plugin",
+            iconUrl = null,
+            lang = null,
+            version = "1.0.0",
+            customCssUrl = null,
+            reason = LnPluginLoadFailure.Reason.Failed("ReferenceError: x", "trace"),
+        )
     }
 }

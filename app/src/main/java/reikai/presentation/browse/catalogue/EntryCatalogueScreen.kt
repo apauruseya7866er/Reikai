@@ -54,6 +54,7 @@ import mihon.app.di.appGraph
 import mihon.icons.materialsymbols.MaterialSymbols
 import mihon.icons.materialsymbols.rounded.Favorite
 import mihon.icons.materialsymbols.rounded.FilterList
+import mihon.icons.materialsymbols.rounded.Refresh
 import mihon.icons.materialsymbols.rounded.Verified
 import mihon.icons.materialsymbols.roundedfilled.Bookmark
 import mihon.presentation.core.util.collectAsLazyPagingItems
@@ -81,6 +82,7 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
+import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.source.local.LocalSource
 
@@ -580,7 +582,11 @@ class EntryCatalogueScreen(
             topBar = { scrollBehavior ->
                 AppBar(
                     // Named even when it cannot load, so the reader can tell which source this was.
-                    title = (state as? EntryBrowseScreenState.SourceMissing)?.label,
+                    title = when (state) {
+                        is EntryBrowseScreenState.SourceMissing -> state.label
+                        is EntryBrowseScreenState.SourceLoadFailed -> state.label
+                        else -> null
+                    },
                     navigateUp = navigateUp,
                     scrollBehavior = scrollBehavior,
                 )
@@ -590,6 +596,13 @@ class EntryCatalogueScreen(
                 is EntryBrowseScreenState.SourceMissing -> EmptyScreen(
                     message = stringResource(MR.strings.source_not_installed, state.label),
                     modifier = Modifier.padding(contentPadding),
+                )
+                is EntryBrowseScreenState.SourceLoadFailed -> EmptyScreen(
+                    message = listOfNotNull(stringResource(state.description), state.message).joinToString("\n\n"),
+                    modifier = Modifier.padding(contentPadding),
+                    actions = listOf(
+                        EmptyScreenAction(MR.strings.action_retry, MaterialSymbols.Rounded.Refresh, state.retry.run),
+                    ),
                 )
                 else -> Unit
             }
