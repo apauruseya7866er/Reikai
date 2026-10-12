@@ -174,6 +174,7 @@ Trust is Mihon's: a store's signing key covers its extensions, a keyless store's
 - **Global search is one screen with tabs, not two sharing an engine**, and a mixed batch prompts per type because novel categories are a different partition of the same table.
 - **`MangaDexFollowsScreen` keeps its own chrome.** What it does not share is a toolbar with no chips and no search; folding it in would add flags whose only job is to blank chrome.
 - **The NSFW-only list filter was dropped.** It has no both-types form, and the content-warning badge already marks adult sources.
+- **Extension update counts start at 0 on a cold start, for manga and novels, until a store answers**, as in Mihon. Saving them across restarts was declined: it would diverge from Mihon for manga too, and the badge comes back seconds after start. The decline holds while a store check runs at every cold start.
 - **The feed reuses the global-search fill kernel** rather than copying Komikku's fan-out, since two Reikai-owned copies get no engine-split exemption.
 - **The feed is opt-in, with no per-source feed.** A source opens on its catalogue as in Mihon, and its saved searches are chips there; the Sources row keeps its Latest button because nothing else reaches Latest in one tap.
 - **A saved query is not sanitized before a feed fetch**, since the catalogue does not sanitize a typed query; sanitize both or neither.

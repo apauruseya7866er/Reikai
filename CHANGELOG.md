@@ -256,7 +256,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **The full related-manga grid now follows Items per row while open, range-selects only the covers between the two you press when grouped, and counts only titles that reached your library.**
 - **Pressing back while selecting in the full related-manga grid now clears the selection instead of closing the grid.**
 - **Searching a genre from a novel's page now goes back to its source's catalogue to search that genre, as manga does.** Opened from anywhere else, it searches your library.
-- **Set as default in a novel's chapter settings now asks first and can apply the settings to your whole library, as manga's does.**
+- **Set as default in a novel's chapter settings now asks first, and leaves your other library novels' chapter settings as they were unless you apply it to the library, as manga's does.**
 - **A novel opened from a source, a search or the feed now shows its synopsis expanded on a phone, as manga does.**
 - **A novel showing chapter numbers instead of titles now labels them in your app language on its details page, like manga.**
 - **Deleting downloads, saving chapter settings or editing a manga or novel's info now finishes even if you leave the page right away (from Mihon).** Upstream: mihonapp/mihon#4068.
@@ -391,7 +391,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 - **A light-novel source that is no longer installed now shows by its name instead of its id, marked Not installed in your language.** That covers its catalogue, novel page, reader, merged source switcher, Migrate tab, migration list, download queue, update failures and restore warning and log (not for older backups).
 - **A novel's new-chapter notification no longer replaces or dismisses a manga's, a big novel library update keeps its summary and leaves no stray status-bar icon, and tapping the novel summary now opens Updates, as manga's does.**
 - **A novel filter that matches nothing no longer says your library is empty.**
-- **Hiding chapter titles on a novel no longer changes its chapter order, and sorting its chapters no longer changes how their titles show.** Each follows your global default until you change it on that novel.
+- **Hiding chapter titles on a novel no longer changes its chapter order, and sorting its chapters no longer changes how their titles show.** Each keeps the default it was added with until you change it on that novel.
 - **Novel chapter dates now hold: a refresh keeps a date the source stops giving, an undated new chapter gets one as on manga, and a date like 12/25/2024 that can only be month-first now reads correctly.** An ambiguous date like 03/04/2024 still reads day-first.
 - **A paged novel's page bar now names the same page as the page picker, and volumes list in the source's order.** Before, "Volume 10" sorted ahead of "Volume 2".
 - **A page of a paged novel no longer counts a chapter as missing when another page holds it, at the page's edges or inside it.** A chapter no page holds is still marked.

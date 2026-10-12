@@ -1211,16 +1211,10 @@ class NovelDetailsViewModel(
         viewModelScope.launch {
             // The settings outlive the screen, the snackbar doesn't
             appScope.launch {
-                novelPreferences.defaultChapterSortOrder().set(loaded.sorting)
-                novelPreferences.defaultChapterSortDescending().set(loaded.sortDescending)
-                novelPreferences.defaultChapterHideTitles().set(loaded.hideChapterTitles)
-                novelPreferences.defaultChapterFilterUnread().set(loaded.readFilter)
-                novelPreferences.defaultChapterFilterBookmarked().set(loaded.bookmarkedFilter)
-                novelPreferences.defaultChapterFilterDownloaded().set(loaded.downloadedFilter)
+                setNovelChapterFlags.awaitSetAsDefault(loaded.novel, applyToLibrary)
                 chapterSettings.change(loaded.novel.id, mergeGroup.relatedIds.asList()) {
                     setNovelChapterFlags.awaitClearLocalOverrides(loaded.novel)
                 }
-                if (applyToLibrary) setNovelChapterFlags.awaitClearLibraryLocalOverrides()
             }.join()
             snackbarHostState.showSnackbar(message = context.stringResource(MR.strings.chapter_settings_updated))
         }

@@ -29,6 +29,7 @@ import reikai.domain.novel.model.effectiveSortDescending
 import reikai.domain.novel.model.effectiveSorting
 import reikai.presentation.browse.MangaLibraryAdder
 import reikai.presentation.novel.browse.NovelLibraryAdder
+import reikai.presentation.recents.EmittingPreferenceStore
 import tachiyomi.core.common.preference.InMemoryPreferenceStore
 import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
 import tachiyomi.data.Database
@@ -165,6 +166,30 @@ class GroupChapterSettingsConformanceTest {
         side.groupOf(OWNER).first() shouldBe SIBLING
     }
 
+    // A library entry added under the default keeps it when another entry's settings become the default,
+    // until the change is applied to the library; a manga stores what it was added with.
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `setting another entry's sort as the default leaves a library entry's sort as it was`(type: ContentType) =
+        runTest {
+            val side = side(type).apply { addUnderTheDefault(OTHER) }
+
+            side.setAsDefault(SIBLING, applyToLibrary = false)
+
+            side.shownDescending(OTHER, listOf(OTHER)) shouldBe true
+        }
+
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `setting a sort as the default for the library moves every library entry to it`(type: ContentType) =
+        runTest {
+            val side = side(type).apply { addUnderTheDefault(OTHER) }
+
+            side.setAsDefault(SIBLING, applyToLibrary = true)
+
+            side.shownDescending(OTHER, listOf(OTHER)) shouldBe false
+        }
+
     /** [SIBLING] in the library and ungrouped, [OWNER] not yet added: the add-to-group prompt's usual pick. */
     private suspend fun Side.pickInLibraryWithNewcomerOut() {
         setInLibrary(SIBLING, true)
@@ -205,6 +230,12 @@ class GroupChapterSettingsConformanceTest {
         /** Adds [id] back merged into [pickedId]'s group, as the duplicate prompt's group add does. */
         suspend fun addBackIntoGroupOf(id: Long, pickedId: Long)
 
+        /** Stores [id] with no chapter setting of its own and adds it, so it takes the default. */
+        suspend fun addUnderTheDefault(id: Long)
+
+        /** Makes [openedId]'s shown settings the default, as the details Set as default does. */
+        suspend fun setAsDefault(openedId: Long, applyToLibrary: Boolean)
+
         suspend fun groupOf(id: Long) = mergeManager.computeRelatedIds(id).asList()
     }
 
@@ -226,7 +257,8 @@ class GroupChapterSettingsConformanceTest {
             chapterSettings = settings,
             groupCategories = MangaGroupCategories(mockk(relaxed = true), mockk(relaxed = true)),
         )
-        private val libraryPreferences = LibraryPreferences(InMemoryPreferenceStore())
+        private val libraryPreferences = LibraryPreferences(EmittingPreferenceStore())
+        private val setDefaultFlags = SetMangaDefaultChapterFlags(libraryPreferences, setFlags, GetFavorites(mangas))
         private val adder = MangaLibraryAdder(
             sourceManager = mockk(relaxed = true),
             libraryPreferences = libraryPreferences,
@@ -234,11 +266,7 @@ class GroupChapterSettingsConformanceTest {
             getDuplicateLibraryManga = mockk(relaxed = true),
             getManga = GetManga(mangas),
             setMangaCategories = mockk(relaxed = true),
-            setMangaDefaultChapterFlags = SetMangaDefaultChapterFlags(
-                libraryPreferences,
-                setFlags,
-                GetFavorites(mangas),
-            ),
+            setMangaDefaultChapterFlags = setDefaultFlags,
             updateManga = UpdateManga(mangas, fetchInterval = mockk(), sourceTracker = mockk(relaxed = true)),
             autoBindOnAdd = mockk(relaxed = true),
             mergeManager = mergeManager,
@@ -266,6 +294,17 @@ class GroupChapterSettingsConformanceTest {
             adder.addToExistingGroup(mangas.getMangaById(id), listOf(pickedId))
         }
 
+        override suspend fun addUnderTheDefault(id: Long) {
+            driver.seedManga(id, chapterId = id * 10)
+            addBack(id)
+        }
+
+        // The two writes MangaViewModel.setCurrentSettingsAsDefault makes.
+        override suspend fun setAsDefault(openedId: Long, applyToLibrary: Boolean) {
+            libraryPreferences.setChapterSettingsDefault(mangas.getMangaById(openedId))
+            if (applyToLibrary) setDefaultFlags.awaitAll()
+        }
+
         private suspend fun shown(openedId: Long, memberIds: List<Long>) =
             settings.shown(mangas.getMangaById(openedId), memberIds)
 
@@ -280,7 +319,7 @@ class GroupChapterSettingsConformanceTest {
 
     private inner class NovelSide : Side {
         private val novels = NovelRepositoryImpl(database)
-        private val preferences = NovelPreferences(InMemoryPreferenceStore())
+        private val preferences = NovelPreferences(EmittingPreferenceStore())
         private val setFlags = SetNovelChapterFlags(novels, preferences)
         override val settings = NovelChapterSettings(novels)
         override val mergeManager = ReikaiBindings.providesNovelMergeManager(
@@ -317,6 +356,15 @@ class GroupChapterSettingsConformanceTest {
             adder.addToExistingGroup(id, listOf(pickedId))
         }
 
+        override suspend fun addUnderTheDefault(id: Long) {
+            novels.insert(Novel.create().copy(source = "src$id", url = "/novel/$id", title = "Novel")) shouldBe id
+            addBack(id)
+        }
+
+        override suspend fun setAsDefault(openedId: Long, applyToLibrary: Boolean) {
+            setFlags.awaitSetAsDefault(novels.getById(openedId)!!, applyToLibrary)
+        }
+
         override suspend fun seed(id: Long, descending: Boolean) {
             val direction = if (descending) NovelChapterFlags.SORT_DESC else NovelChapterFlags.SORT_ASC
             val stored = novels.insert(
@@ -347,6 +395,7 @@ class GroupChapterSettingsConformanceTest {
     private companion object {
         const val OWNER = 1L
         const val SIBLING = 2L
+        const val OTHER = 3L
         val GROUP = listOf(OWNER, SIBLING)
     }
 }
