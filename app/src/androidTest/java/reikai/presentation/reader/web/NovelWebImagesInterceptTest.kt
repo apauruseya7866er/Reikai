@@ -54,7 +54,7 @@ class NovelWebImagesInterceptTest {
         scenario.onActivity { activity ->
             activity.webView.settings.javaScriptEnabled = true
             val images = NovelWebImages()
-            activity.webView.webViewClient = NovelChapterNavigationClient(activity, { BASE }, images, scope) { image ->
+            activity.webView.webViewClient = NovelChapterNavigationClient(activity, { BASE }, images, scope, {}) { image ->
                 fetched += image
                 if (!image.url.endsWith("ok.png")) throw HttpException(404)
                 SourceFetchResult(ImageSource(Buffer().write(png), FileSystem.SYSTEM), null, DataSource.DISK)

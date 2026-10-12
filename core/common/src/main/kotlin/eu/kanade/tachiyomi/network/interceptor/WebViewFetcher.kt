@@ -310,6 +310,8 @@ class WebViewFetcher(private val context: Context, private val verboseLogging: (
         val target = AtomicReference<String?>()
         val done = CountDownLatch(1)
         val view = AtomicReference<WebView?>()
+        // Main thread. Only destroy can be called on a WebView whose renderer is gone.
+        var rendererGone = false
         main.post {
             val webView = WebView(context).apply {
                 setDefaultSettings()
@@ -353,6 +355,7 @@ class WebViewFetcher(private val context: Context, private val verboseLogging: (
                         view: WebView?,
                         detail: RenderProcessGoneDetail?,
                     ): Boolean {
+                        rendererGone = true
                         done.countDown()
                         return true
                     }
@@ -366,7 +369,7 @@ class WebViewFetcher(private val context: Context, private val verboseLogging: (
         } finally {
             main.post {
                 view.get()?.run {
-                    stopLoading()
+                    if (!rendererGone) stopLoading()
                     destroy()
                 }
             }
@@ -383,6 +386,9 @@ class WebViewFetcher(private val context: Context, private val verboseLogging: (
         @Volatile var dead = false
         private var starts = 0
 
+        // Main thread. Only destroy can be called on a WebView whose renderer is gone.
+        private var rendererGone = false
+
         // Only the blank page may ever load: a navigation would put a site document, or anything a
         // service worker sends it to, behind the channel, so the page is dropped instead.
         val client = object : WebViewClient() {
@@ -393,6 +399,7 @@ class WebViewFetcher(private val context: Context, private val verboseLogging: (
             }
 
             override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                rendererGone = true
                 pages.remove(origin)?.destroy()
                 return true
             }
@@ -408,7 +415,7 @@ class WebViewFetcher(private val context: Context, private val verboseLogging: (
             readyLatch.countDown()
             inboxes.values.forEach { it.offer(PAGE_CLOSED) }
             main.removeCallbacksAndMessages(this)
-            webView.stopLoading()
+            if (!rendererGone) webView.stopLoading()
             webView.destroy()
         }
     }

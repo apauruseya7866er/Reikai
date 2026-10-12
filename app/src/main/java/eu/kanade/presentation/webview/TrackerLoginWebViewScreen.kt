@@ -1,5 +1,6 @@
 package eu.kanade.presentation.webview
 
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import mihon.icons.materialsymbols.rounded.Check
 import mihon.icons.materialsymbols.rounded.Close
 import mihon.icons.materialsymbols.rounded.Refresh
 import reikai.presentation.webview.WebViewLoadingBar
+import reikai.presentation.webview.closeOnRendererGone
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
@@ -86,6 +88,9 @@ fun TrackerLoginWebViewScreen(
                     super.onPageFinished(view, url)
                     onPageFinished(url ?: return)
                 }
+
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean =
+                    view.context.closeOnRendererGone(detail, onUp)
             }
         }
 

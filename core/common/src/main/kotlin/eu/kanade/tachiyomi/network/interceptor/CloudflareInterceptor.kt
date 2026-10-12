@@ -176,6 +176,7 @@ class CloudflareInterceptor(
         var challengeFound = false
         var cloudflareBypassed = false
         var isWebViewOutdated = false
+        var isRenderProcessGone = false
 
         val origRequestUrl = challengeUrl.toString() // RK: the page the challenge is on, after redirects
         val challengeHost = challengeUrl.host
@@ -325,9 +326,14 @@ class CloudflareInterceptor(
                     }
                 }
 
-                // RK: a dead renderer never finishes the page, so the request would sit out the
-                //     latch timeout, and returning false from here kills the app process.
-                override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                    // Not handling it kills the app, failing the bypass is enough
+                    logcat(LogPriority.ERROR) {
+                        "WebView renderer gone during Cloudflare bypass: crashed=${detail.didCrash()}, " +
+                            "priority=${detail.rendererPriorityAtExit()}, url=$origRequestUrl"
+                    }
+                    isRenderProcessGone = true
+                    solve.get()?.cancel() // RK: the solve's timers would press keys on a dead page
                     latch.countDown()
                     return true
                 }
@@ -371,7 +377,8 @@ class CloudflareInterceptor(
         } finally {
             val bypassed = cloudflareBypassed
             executor.execute {
-                if (!bypassed) {
+                // Only destroy can be called on a WebView whose renderer is gone
+                if (!bypassed && !isRenderProcessGone) {
                     isWebViewOutdated = webview?.isOutdated() == true
                 }
 
@@ -380,7 +387,7 @@ class CloudflareInterceptor(
                     //     destroyed WebView, since an undelayed destroy sorts ahead of a delayed key.
                     solve.get()?.cancel()
                     TurnstileSolver.detach(this)
-                    stopLoading()
+                    if (!isRenderProcessGone) stopLoading()
                     destroy()
                 }
             }

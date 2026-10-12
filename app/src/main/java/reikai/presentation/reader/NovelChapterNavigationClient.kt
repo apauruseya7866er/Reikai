@@ -2,6 +2,7 @@ package reikai.presentation.reader
 
 import android.content.Context
 import android.net.Uri
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -18,6 +19,7 @@ import logcat.LogPriority
 import reikai.data.coil.NovelImage
 import reikai.novel.content.NovelChapterAddress
 import reikai.presentation.reader.web.NovelWebImages
+import reikai.presentation.webview.closeOnRendererGone
 import tachiyomi.core.common.util.system.logcat
 import java.io.ByteArrayInputStream
 
@@ -38,8 +40,13 @@ class NovelChapterNavigationClient(
     /** A supervisor scope the reader cancels on close, which cancels a fetch still in flight rather than
      *  leaving a WebView thread waiting on it until the network times out. */
     private val scope: CoroutineScope,
+    /** Closes the reader once the renderer died; the WebView takes nothing but destroy() from here on. */
+    private val onRendererGone: () -> Unit,
     private val fetchImage: suspend (NovelImage) -> SourceFetchResult,
 ) : WebViewClient() {
+
+    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean =
+        context.closeOnRendererGone(detail, onRendererGone)
 
     /** Called on a WebView worker thread, which is why it may block. A failure is an error status, which
      *  the page draws as a failed picture with Retry. */
