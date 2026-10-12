@@ -35,6 +35,9 @@ class NovelDownloadCacheRenewTest {
 
     /** Writes a chapter the first time a scan lists the novel folder, and gives the write time to land. */
     private var duringScan: (() -> Unit)? = {
+        // The constructor starts the scan, so on a busy runner it can get here before [cache] is assigned.
+        val ready = System.currentTimeMillis() + WRITE_WINDOW_MS
+        while (!::cache.isInitialized && System.currentTimeMillis() < ready) Thread.sleep(1)
         cache.addChapter(novel, written)
         val until = System.currentTimeMillis() + WRITE_WINDOW_MS
         while (!cache.isChapterDownloaded(novel, written) && System.currentTimeMillis() < until) Thread.sleep(10)
