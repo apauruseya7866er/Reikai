@@ -1,0 +1,146 @@
+package reikai.novel.registry
+
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import logcat.LogPriority
+import reikai.domain.novel.NovelPreferences
+import reikai.novel.install.canonicalizePluginUrl
+import reikai.util.messageOrName
+import reikai.util.runCatchingCancellable
+import tachiyomi.core.common.util.system.logcat
+
+/** Downloads one LN plugin registry; throws when it cannot be read. */
+fun interface LnRegistryFetcher {
+    suspend fun fetchRepo(repoJsonUrl: String): List<LnRegistryEntry>
+}
+
+/** What fetching one added repo gave: its registry, or why it could not be read. */
+sealed interface LnRepoResult {
+    data class Reached(val entries: List<LnRegistryEntry>) : LnRepoResult
+
+    data class Unreachable(val message: String) : LnRepoResult
+}
+
+/**
+ * Fetches every repo in [repos] at once, each to its own outcome, so one down repo neither fails nor
+ * hides the rest. Keyed in [repos] order; a cancelled caller is cancelled, never reported as a failure.
+ */
+suspend fun LnRegistryFetcher.fetchEach(repos: Collection<String>): Map<String, LnRepoResult> = coroutineScope {
+    repos.map { repo ->
+        async {
+            val result = runCatchingCancellable { fetchRepo(repo) }.fold(
+                onSuccess = { LnRepoResult.Reached(it) },
+                onFailure = {
+                    logcat(LogPriority.WARN, it) { "LN repo fetch failed: $repo" }
+                    LnRepoResult.Unreachable(it.messageOrName)
+                },
+            )
+            repo to result
+        }
+    }.awaitAll().toMap()
+}
+
+/**
+ * The repo each listed plugin comes from, keyed by canonical script URL. A script two repos list
+ * belongs to the earlier one in [results], so every screen naming a plugin's repo names the same one.
+ */
+fun pluginRepos(results: Map<String, LnRepoResult>): Map<String, String> {
+    val repos = HashMap<String, String>()
+    results.forEach { (repoUrl, result) ->
+        (result as? LnRepoResult.Reached)?.entries.orEmpty().forEach {
+            repos.putIfAbsent(canonicalizePluginUrl(it.url), repoUrl)
+        }
+    }
+    return repos
+}
+
+/**
+ * The added LN plugin repos' registries, shared by every screen that lists them. A repo is fetched
+ * when first needed and when it is added, and again only on [refresh], so reopening a screen or
+ * installing a plugin downloads nothing. Each repo keeps its own outcome, so an unreachable repo is
+ * told apart from an empty one. The update check and the post-restore trust check fetch on their
+ * own, because both need the registry as it is now; the update check hands what it read to [accept].
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+@Inject
+@SingleIn(AppScope::class)
+class LnRepoRegistries(
+    private val fetcher: LnRegistryFetcher,
+    private val prefs: NovelPreferences,
+) {
+
+    private val mutex = Mutex()
+
+    /** Null until the first load; keyed in the order the added repos are stored. */
+    private val loaded = MutableStateFlow<Map<String, LnRepoResult>?>(null)
+
+    val isRefreshing: StateFlow<Boolean>
+        field = MutableStateFlow(false)
+
+    /** Every added repo's outcome, following the added repos. */
+    val results: Flow<Map<String, LnRepoResult>> = prefs.addedRepoUrls().changes()
+        .onEach { load(it, force = false) }
+        .flatMapLatest { loaded.filterNotNull() }
+
+    suspend fun refresh() = load(prefs.addedRepoUrls().get(), force = true)
+
+    /** Adds [repoUrl] only if it reads as a registry, keeping what it fetched so it is not downloaded twice. */
+    suspend fun add(repoUrl: String): Result<Unit> = mutex.withLock {
+        val entries = runCatchingCancellable { fetcher.fetchRepo(repoUrl) }
+            .getOrElse { return@withLock Result.failure(it) }
+        loaded.value = loaded.value.orEmpty() + (repoUrl to LnRepoResult.Reached(entries))
+        prefs.addedRepoUrls().set(prefs.addedRepoUrls().get() + repoUrl)
+        rememberIcons(entries)
+        Result.success(Unit)
+    }
+
+    /**
+     * Keeps what a fresher fetch of the added repos read, as Mihon's update check replaces the available
+     * extensions, so the screens and the Browse badge they recompute show the newest registries.
+     */
+    suspend fun accept(fetched: Map<String, LnRepoResult>) {
+        if (fetched.isEmpty()) return
+        mutex.withLock {
+            val kept = loaded.value.orEmpty()
+            fetched.values.forEach { if (it is LnRepoResult.Reached) rememberIcons(it.entries) }
+            loaded.value = prefs.addedRepoUrls().get()
+                .mapNotNull { repo -> (fetched[repo] ?: kept[repo])?.let { repo to it } }
+                .toMap()
+        }
+    }
+
+    fun remove(repoUrl: String) {
+        prefs.addedRepoUrls().set(prefs.addedRepoUrls().get() - repoUrl)
+    }
+
+    private suspend fun load(repos: Set<String>, force: Boolean) = mutex.withLock {
+        val kept = if (force) emptyMap() else loaded.value.orEmpty().filterKeys { it in repos }
+        val missing = repos.filterNot { it in kept }
+        isRefreshing.value = missing.isNotEmpty()
+        try {
+            val fetched = fetcher.fetchEach(missing)
+            fetched.values.forEach { if (it is LnRepoResult.Reached) rememberIcons(it.entries) }
+            loaded.value = repos.associateWith { kept[it] ?: fetched.getValue(it) }
+        } finally {
+            isRefreshing.value = false
+        }
+    }
+
+    // A novel app whose own icon shows nothing can take the icon a plugin lists for the same site.
+    private fun rememberIcons(entries: List<LnRegistryEntry>) {
+        prefs.addIconHints(emptyMap(), entries.mapNotNull { entry -> entry.iconUrl?.let { entry.site to it } })
+    }
+}

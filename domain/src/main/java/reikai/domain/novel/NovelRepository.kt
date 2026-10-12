@@ -1,0 +1,108 @@
+package reikai.domain.novel
+
+import kotlinx.coroutines.flow.Flow
+import reikai.domain.novel.model.LibraryNovel
+import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelUpdate
+import reikai.domain.novel.model.NovelUpdateWithRelations
+import reikai.domain.novel.model.NovelWithChapterCount
+import kotlin.time.Instant
+
+/**
+ * Parallel of [tachiyomi.domain.manga.repository.MangaRepository] holding novels in a separate
+ * table: CRUD, the library and recent-update reads, and the category junction write.
+ */
+interface NovelRepository {
+    suspend fun getAll(): List<Novel>
+    suspend fun getById(id: Long): Novel?
+    suspend fun getByUrlAndSource(url: String, source: String): Novel?
+    suspend fun getFavorites(): List<Novel>
+
+    /** Non-favorite novels with read progress (read chapters or a mid-chapter position), for the
+     *  read-entries backup option. Twin of
+     *  [tachiyomi.domain.manga.repository.MangaRepository.getReadMangaNotInLibrary], pinned by
+     *  NonLibraryEntryConformanceTest. */
+    suspend fun getReadNovelsNotInLibrary(): List<Novel>
+
+    /**
+     * Reactive (source id, non-favorite row count) pairs for the Clear database screen's novel
+     * section. Twin of `SourceRepository.getSourcesWithNonLibraryManga`, minus the source-manager
+     * mapping (novel source ids are Strings; callers resolve display data themselves), pinned by
+     * NonLibraryEntryConformanceTest.
+     */
+    fun getSourcesWithNonLibraryNovelAsFlow(): Flow<List<Pair<String, Long>>>
+
+    /** Reactive favorited novels of [source], read from the novels table alone. */
+    fun getFavoritesBySourceAsFlow(source: String): Flow<List<Novel>>
+
+    /** Reactive (source id, favorited novel count) pairs for the Browse Migrate list. */
+    fun getSourcesWithLibraryNovelAsFlow(): Flow<List<Pair<String, Long>>>
+
+    /**
+     * Delete non-favorite novels of [sources]; with [keepReadNovels] true, rows with progress (a
+     * read chapter or a mid-chapter position) survive. Chapters and other child rows go via FK
+     * cascade. Twin of `MangaRepository`'s clear-database delete, pinned by NonLibraryEntryConformanceTest.
+     */
+    suspend fun deleteNonLibraryNovels(sources: List<String>, keepReadNovels: Boolean)
+
+    /**
+     * Favorited novels whose title contains [title] (case-insensitive) or that are tracked to the same
+     * remote entry, excluding novel [id], each with its chapter count. Backs the browse "possible
+     * duplicates" dialog. Runs DB-side over the favorite partial index (mirrors the manga duplicate
+     * check, pinned by DuplicateTitleMatchConformanceTest and DuplicateTrackMatchConformanceTest).
+     */
+    suspend fun getDuplicateLibraryNovel(id: Long, title: String): List<NovelWithChapterCount>
+
+    /** Reactive library read: favorited novels with chapter/unread/download counts + categories. */
+    fun getLibraryNovelAsFlow(): Flow<List<LibraryNovel>>
+
+    /**
+     * Reactive recent-updates feed: chapters of favorited novels fetched after the novel was added, newest
+     * first, with the recents filters applied in SQL: twin of Mihon's `getRecentUpdatesWithFilters`, pinned by
+     * RecentsFilterQueriesTest. [after] is a lower bound on the fetch date and [limit] caps the row count,
+     * applied after the filters. Downloaded stays a Kotlin filter on both content types, since download state
+     * lives on disk.
+     */
+    fun getFilteredNovelUpdatesAsFlow(
+        after: Instant,
+        limit: Long,
+        unread: Boolean?,
+        started: Boolean?,
+        bookmarked: Boolean?,
+        includedCategories: List<Long>,
+        excludedCategories: List<Long>,
+    ): Flow<List<NovelUpdateWithRelations>>
+
+    /** The library by source and url, for the browse, search and feed lists; silent on a write outside it. */
+    fun getFavoritedKeysAsFlow(): Flow<FavoritedNovels>
+
+    /** The stored novel, emitted again only when its row changes, not on another novel's write. */
+    fun getByUrlAndSourceAsFlow(url: String, source: String): Flow<Novel?>
+
+    /** The new row's id, or null when the source already lists this novel or the write failed. */
+    suspend fun insert(novel: Novel): Long?
+
+    /**
+     * Get-or-insert by (url, source): return the stored row if one exists, else insert [novel] and
+     * return it. The single funnel that prevents duplicate library rows. A listing placeholder cover is
+     * never stored, and a real one repairs a stored row without one; twin of `NetworkToLocalManga`,
+     * pinned by ListedCoverConformanceTest. Callers must route through this with a fresh call rather
+     * than deciding insert-vs-update from a cached value.
+     */
+    suspend fun insertOrGet(novel: Novel): Novel?
+
+    /** Full-row update, for the writers that set columns back to null (restore and edit-info). */
+    suspend fun update(novel: Novel): Boolean
+
+    /** Surgical partial update: writes only the fields [update] sets, the novel twin of
+     *  `MangaRepository.update(MangaUpdate)`, pinned by FavoriteAtWriteConformanceTest. Use over
+     *  [update] for single-field edits. */
+    suspend fun update(update: NovelUpdate): Boolean
+
+    /** All of [updates] in ONE transaction (all or nothing), the novel twin of
+     *  `MangaRepository.updateAll`, pinned by BatchUpdateAtomicityConformanceTest. The migration
+     *  favorite swap depends on the atomicity: two separate updates could unfavorite the source
+     *  after favoriting the target failed. */
+    suspend fun updateAll(updates: List<NovelUpdate>): Boolean
+    suspend fun setCategories(novelId: Long, categoryIds: List<Long>)
+}

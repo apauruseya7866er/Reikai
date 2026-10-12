@@ -2,45 +2,43 @@ package reikai.presentation.reader
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.SkipNext
-import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SliderState
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalSlider
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.util.isTabletUi
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.SkipNext
+import mihon.icons.materialsymbols.rounded.SkipPrevious
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 
 /**
- * The reader's vertical progress rail, shared by the manga reader (page-index slider) and the novel
- * reader (scroll-percent slider): a previous-chapter skip button, a labelled vertical slider pill,
- * and a next-chapter skip button. The caller owns the [SliderState] and the [topLabel]/[bottomLabel]
- * so each content type provides its own value semantics; the translucent chrome scrim and button
- * colours are computed here so neither reader has to re-copy them (keeping the two in visual sync).
+ * The reader's vertical progress rail for both content types: a previous-chapter skip button, a
+ * labelled vertical slider pill, and a next-chapter skip button. The caller owns the [sliderState] and
+ * the [topLabel]/[bottomLabel], which carry each content type's unit. A null [sliderState] is a chapter
+ * with nowhere to scrub to, carried by the state rather than beside a flag a caller could set to
+ * disagree with it.
  */
 @Composable
 fun VerticalReaderRail(
-    sliderState: SliderState,
+    sliderState: SliderState?,
+    onSeek: (Float) -> Unit,
+    onSeekFinished: () -> Unit,
     topLabel: String,
     bottomLabel: String,
-    showSlider: Boolean,
     onPreviousChapter: () -> Unit,
     enabledPrevious: Boolean,
     onNextChapter: () -> Unit,
@@ -49,9 +47,7 @@ fun VerticalReaderRail(
     modifier: Modifier = Modifier,
 ) {
     val mainAxisPadding = if (isTabletUi()) 24.dp else 8.dp
-    val backgroundColor = MaterialTheme.colorScheme
-        .surfaceColorAtElevation(3.dp)
-        .copy(alpha = if (isSystemInDarkTheme()) 0.9f else 0.95f)
+    val backgroundColor = readerChromeColor()
     val buttonColor = IconButtonDefaults.filledIconButtonColors(
         containerColor = backgroundColor,
         disabledContainerColor = backgroundColor,
@@ -69,13 +65,13 @@ fun VerticalReaderRail(
             colors = buttonColor,
         ) {
             Icon(
-                imageVector = Icons.Outlined.SkipPrevious,
+                imageVector = MaterialSymbols.Rounded.SkipPrevious,
                 contentDescription = stringResource(MR.strings.action_previous_chapter),
                 modifier = Modifier.rotate(90f),
             )
         }
 
-        if (showSlider) {
+        if (sliderState != null) {
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -92,6 +88,8 @@ fun VerticalReaderRail(
                     modifier = Modifier
                         .weight(1f)
                         .padding(vertical = 8.dp),
+                    onValueChange = onSeek,
+                    onValueChangeFinished = onSeekFinished,
                     interactionSource = interactionSource,
                 )
 
@@ -107,7 +105,7 @@ fun VerticalReaderRail(
             colors = buttonColor,
         ) {
             Icon(
-                imageVector = Icons.Outlined.SkipNext,
+                imageVector = MaterialSymbols.Rounded.SkipNext,
                 contentDescription = stringResource(MR.strings.action_next_chapter),
                 modifier = Modifier.rotate(90f),
             )

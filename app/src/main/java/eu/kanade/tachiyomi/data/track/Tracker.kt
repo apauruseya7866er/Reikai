@@ -7,7 +7,10 @@ import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.model.TrackMangaMetadata
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import okhttp3.OkHttpClient
+import reikai.data.track.MetadataAccess
 import tachiyomi.domain.track.model.Track as DomainTrack
 
 interface Tracker {
@@ -51,11 +54,15 @@ interface Tracker {
 
     suspend fun search(query: String): List<TrackSearch>
 
-    // RK --> novel-aware search (Active #8). searchNovel defaults to the manga search so trackers
-    // outside the novel-capable set degrade gracefully; the seven novel-capable trackers override it.
-    // supportsNovels gates the novel tracking sheet: only trackers that declare it (the same seven)
-    // are offered, so a tracker that can only return manga hits can't be bound to a novel.
+    // RK --> per-type capability. Each gates the matching tracking sheet, so a service is offered
+    // only where its catalogue actually holds entries: one that lists no manga can't be bound to a
+    // manga, and one that lists no novels can't be bound to a novel. Binding across the two is worse
+    // than an empty search, because the wrong work's chapter count then drives progress sync.
+    // searchNovel defaults to the manga search so a tracker outside the novel-capable set degrades
+    // gracefully.
     val supportsNovels: Boolean
+
+    val supportsManga: Boolean
 
     suspend fun searchNovel(query: String): List<TrackSearch> = search(query)
     // RK <--
@@ -65,6 +72,8 @@ interface Tracker {
     // RK --> autofill entry metadata from a bound tracker (Fill from tracker). BaseTracker throws by
     // default; each supported service overrides it. Ported from Komikku, plus a genres field.
     suspend fun getMangaMetadata(track: DomainTrack): TrackMangaMetadata
+
+    val metadataAccess: MetadataAccess
     // RK <--
 
     suspend fun login(username: String, password: String)
@@ -72,9 +81,15 @@ interface Tracker {
     @CallSuper
     fun logout()
 
+    suspend fun refreshUser()
+
     val isLoggedIn: Boolean
 
     val isLoggedInFlow: Flow<Boolean>
+
+    val isRefreshingFlow: StateFlow<Boolean>
+
+    val refreshResultFlow: SharedFlow<RefreshResult>
 
     fun getUsername(): String
 

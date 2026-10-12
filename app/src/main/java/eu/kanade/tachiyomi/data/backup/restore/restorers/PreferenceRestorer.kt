@@ -2,8 +2,10 @@ package eu.kanade.tachiyomi.data.backup.restore.restorers
 
 import android.content.Context
 import android.util.Log
-import eu.kanade.tachiyomi.data.backup.create.BackupCreateJob
+import dev.zacsweers.metro.Inject
+import eu.kanade.tachiyomi.data.backup.create.BackupCreateWorker
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
+import eu.kanade.tachiyomi.data.backup.models.BackupNovelCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
@@ -12,42 +14,82 @@ import eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.LongPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
-import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
+import eu.kanade.tachiyomi.data.library.LibraryUpdateWorker
 import eu.kanade.tachiyomi.source.sourcePreferences
-import reikai.domain.library.ReikaiLibraryPreferences
-import reikai.domain.novel.NovelPreferences
+import exh.eh.EHentaiUpdateWorker
+import reikai.data.backup.AppPreferenceCarry
+import reikai.data.novel.update.NovelUpdateWorker
+import reikai.data.recommendation.taste.TrackerLibraryRefreshWorker
+import reikai.domain.category.CategoryContentType
+import reikai.domain.category.CategoryIdPreferences
+import reikai.domain.category.GetNovelCategories
+import reikai.domain.category.backupCategoryIdToName
+import reikai.domain.category.byNamePreferring
+import reikai.domain.category.translateCategoryId
+import reikai.novel.source.pluginStorageScope
 import tachiyomi.core.common.preference.AndroidPreferenceStore
 import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.preference.getLongArray
 import tachiyomi.core.common.preference.plusAssign
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.model.Category
-import tachiyomi.domain.download.service.DownloadPreferences
-import tachiyomi.domain.library.service.LibraryPreferences
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
+@Inject
 class PreferenceRestorer(
     private val context: Context,
-    private val getCategories: GetCategories = Injekt.get(),
-    private val preferenceStore: PreferenceStore = Injekt.get(),
+    private val getCategories: GetCategories,
+    private val preferenceStore: PreferenceStore,
+    // RK: the registry of category-id settings, which a restore translates by category name
+    private val categoryIdPreferences: CategoryIdPreferences,
+    // RK: the novel category-id settings translate here too, by the same rule as manga's.
+    private val getNovelCategories: GetNovelCategories,
+    // RK: Reikai's carries and skips for retired and untrusted app keys
+    private val appPreferenceCarry: AppPreferenceCarry,
 ) {
     suspend fun restoreApp(
         preferences: List<BackupPreference>,
         backupCategories: List<BackupCategory>?,
+        // RK: restored before the settings, like the manga categories
+        backupNovelCategories: List<BackupNovelCategory>? = null,
     ) {
-        restorePreferences(
-            preferences,
-            preferenceStore,
-            backupCategories,
-        )
+        // RK --> on the App path only, so a Source settings entry never reaches an app-wide setting
+        appPreferenceCarry.restore(preferences) { toWrite ->
+            restorePreferences(
+                toWrite,
+                preferenceStore,
+                backupCategories,
+                backupNovelCategories,
+            )
+        }
+        // RK <--
 
-        LibraryUpdateJob.setupTask(context)
-        BackupCreateJob.setupTask(context)
+        LibraryUpdateWorker.setupTask(context)
+        BackupCreateWorker.setupTask(context)
+        // RK --> Reikai's periodic jobs read their restored interval only when set up
+        NovelUpdateWorker.setupTask(context)
+        TrackerLibraryRefreshWorker.setupTask(context)
+        EHentaiUpdateWorker.setupTask(context)
+        // RK <--
     }
 
     suspend fun restoreSource(preferences: List<BackupSourcePreferences>) {
         preferences.forEach {
-            val sourcePrefs = AndroidPreferenceStore(context, sourcePreferences(it.sourceKey))
+            // RK --> a plugin's settings go back to the app store, and only the keys in its own scope,
+            // so a backup cannot reach any other app setting through Source settings.
+            if (pluginStorageScope(it.sourceKey) == it.sourceKey) {
+                restorePreferences(
+                    it.prefs.filter { pref ->
+                        pluginStorageScope(pref.key) == it.sourceKey
+                    },
+                    preferenceStore,
+                )
+                return@forEach
+            }
+            // The key names the file opened below, so only the source_<id> form preferenceKey() writes is
+            // let through: any other name, the app's own settings file included, would be written as is.
+            if (it.sourceKey.removePrefix("source_").toLongOrNull() == null) return@forEach
+            // RK <--
+            val sourcePrefs = AndroidPreferenceStore(sourcePreferences(it.sourceKey))
             restorePreferences(it.prefs, sourcePrefs)
         }
     }
@@ -56,35 +98,51 @@ class PreferenceRestorer(
         toRestore: List<BackupPreference>,
         preferenceStore: PreferenceStore,
         backupCategories: List<BackupCategory>? = null,
+        backupNovelCategories: List<BackupNovelCategory>? = null, // RK
     ) {
         val allCategories = if (backupCategories != null) getCategories.await() else emptyList()
-        val categoriesByName = allCategories.associateBy { it.name }
-        val backupCategoriesById = backupCategories?.associateBy { it.id.toString() }.orEmpty()
+        // RK -->
+        // Through the shared translation, which keeps the Default category and trusts no id a backup
+        // repeats (Yōkai writes none, so all of its categories decode as 0). Only keys the backup
+        // carries are translated, so a setting it left out keeps its live on-device value.
+        val manga = categoryIdTranslation(
+            backupCategories.orEmpty().map { it.id to it.name },
+            allCategories,
+            CategoryContentType.MANGA,
+        )
+        val novelCategories = if (backupNovelCategories != null) getNovelCategories.await() else emptyList()
+        val novel = categoryIdTranslation(
+            backupNovelCategories.orEmpty().map { it.id to it.name },
+            novelCategories,
+            CategoryContentType.NOVEL,
+        )
+        // A shared set holds ids of both types, which never collide since both lists come from one table.
+        // Per id rather than one merged name map, since a manga and a novel category may share a name.
+        val shared = CategoryIdTranslation { manga.translate(it) ?: novel.translate(it) }
+        val translations by lazy {
+            categoryIdPreferences.mangaSets.associate { it.key() to manga } +
+                categoryIdPreferences.mangaLists.associate { it.key() to manga } +
+                categoryIdPreferences.sharedSets.associate { it.key() to shared } +
+                categoryIdPreferences.novelSets.associate { it.key() to novel } +
+                mapOf(
+                    categoryIdPreferences.mangaDefault.key() to manga,
+                    categoryIdPreferences.novelDefault.key() to novel,
+                )
+        }
+        // RK <--
         val prefs = preferenceStore.getAll()
         toRestore.forEach { (key, value) ->
-            // RK: the merge prefs store entry IDs, which change on restore. MangaRestorer / NovelRestorer
-            // rebuild them from the backup's {url, source} refs, so skip the raw values here to avoid
-            // stale IDs (manga + novel).
-            if (key == ReikaiLibraryPreferences.MANGA_MANUAL_MERGES_KEY ||
-                key == ReikaiLibraryPreferences.MANGA_MANUAL_UNMERGES_KEY ||
-                key == ReikaiLibraryPreferences.NOVEL_MANUAL_MERGES_KEY ||
-                key == ReikaiLibraryPreferences.NOVEL_MANUAL_UNMERGES_KEY
-            ) {
-                return@forEach
-            }
-            // RK: a restored ln_installed_plugin_urls set can auto-load arbitrary plugin .js URLs that
-            // the QuickJS host evaluates. Flag it so LnPluginInstaller validates the restored URLs
-            // against the restored repos before loading any; the value itself is still restored below.
-            if (key == NovelPreferences.INSTALLED_PLUGIN_URLS_KEY) {
-                preferenceStore.getBoolean(NovelPreferences.PLUGINS_NEED_REVALIDATION_KEY).set(true)
-            }
             try {
                 when (value) {
                     is IntPreferenceValue -> {
                         if (prefs[key] is Int?) {
-                            val newValue = if (key == LibraryPreferences.DEFAULT_CATEGORY_PREF_KEY) {
-                                backupCategoriesById[value.value.toString()]
-                                    ?.let { categoriesByName[it.name]?.id?.toInt() }
+                            // RK: the default category of either content type; was a lookup by id, which a
+                            // Yōkai backup sent to its last category
+                            val translation = translations[key]
+                            val newValue = if (translation !=
+                                null
+                            ) {
+                                translation.defaultCategory(value.value)
                             } else {
                                 value.value
                             }
@@ -104,7 +162,9 @@ class PreferenceRestorer(
                     }
                     is StringPreferenceValue -> {
                         if (prefs[key] is String?) {
-                            preferenceStore.getString(key).set(value.value)
+                            // RK: a category-id list translates like the category sets below
+                            val restored = restoreCategoryList(key, value.value, preferenceStore, translations)
+                            if (!restored) preferenceStore.getString(key).set(value.value)
                         }
                     }
                     is BooleanPreferenceValue -> {
@@ -118,8 +178,7 @@ class PreferenceRestorer(
                                 key,
                                 value.value,
                                 preferenceStore,
-                                backupCategoriesById,
-                                categoriesByName,
+                                translations, // RK
                             )
                             if (!restored) preferenceStore.getStringSet(key).set(value.value)
                         }
@@ -131,25 +190,58 @@ class PreferenceRestorer(
         }
     }
 
+    // RK: the remapped key list comes from the shared CategoryIdPreferences registry, so it covers both
+    // content types' settings and the shared library and recents filters, not just Mihon's update/download
+    // prefs. Both category lists are restored before the settings (BackupRestorer).
     private fun restoreCategoriesPreference(
         key: String,
         value: Set<String>,
         preferenceStore: PreferenceStore,
-        backupCategoriesById: Map<String, BackupCategory>,
-        categoriesByName: Map<String, Category>,
+        // RK: per key, so each set translates against its own content type's categories
+        translations: Map<String, CategoryIdTranslation>,
     ): Boolean {
-        val categoryPreferences = LibraryPreferences.categoryPreferenceKeys + DownloadPreferences.categoryPreferenceKeys
-        if (key !in categoryPreferences) return false
+        val translation = translations[key] ?: return false
 
-        val ids = value.mapNotNull {
-            backupCategoriesById[it]?.name?.let { name ->
-                categoriesByName[name]?.id?.toString()
-            }
-        }
+        val ids = value.mapNotNullTo(mutableSetOf(), translation::translate) // RK
 
         if (ids.isNotEmpty()) {
             preferenceStore.getStringSet(key) += ids
         }
         return true
     }
+
+    // RK: Mihon's comma-joined category-id lists (getLongArray), merged into the live list like the sets
+    private fun restoreCategoryList(
+        key: String,
+        value: String,
+        preferenceStore: PreferenceStore,
+        translations: Map<String, CategoryIdTranslation>,
+    ): Boolean {
+        val translation = translations[key] ?: return false
+        val ids = value.split(",").mapNotNull { translation.translate(it)?.toLong() }
+        if (ids.isNotEmpty()) {
+            val preference = preferenceStore.getLongArray(key, emptyList())
+            preference.set((preference.get() + ids).distinct())
+        }
+        return true
+    }
+}
+
+// RK: a backup category id to its local id, for the category-id settings.
+private fun interface CategoryIdTranslation {
+    fun translate(id: String): String?
+
+    /** A negative default is a sentinel (prompt on favourite) rather than a category, so it is kept. */
+    fun defaultCategory(id: Int): Int? = if (id < 0) id else translate(id.toString())?.toInt()
+}
+
+// RK: one content type's translation, from the backup's categories to the ones restored here by name.
+private fun categoryIdTranslation(
+    backupIdsAndNames: List<Pair<Long, String>>,
+    localCategories: List<Category>,
+    contentType: Long,
+): CategoryIdTranslation {
+    val backupIdToName = backupCategoryIdToName(backupIdsAndNames)
+    val nameToNewId = localCategories.byNamePreferring(contentType).mapValues { it.value.id.toString() }
+    return CategoryIdTranslation { translateCategoryId(it, backupIdToName, nameToNewId) }
 }

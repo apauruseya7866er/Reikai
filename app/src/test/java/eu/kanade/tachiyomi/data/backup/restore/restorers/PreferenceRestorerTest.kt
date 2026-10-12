@@ -1,0 +1,389 @@
+package eu.kanade.tachiyomi.data.backup.restore.restorers
+
+import android.content.Context
+import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.domain.track.service.TrackPreferences
+import eu.kanade.tachiyomi.data.backup.create.BackupCreateWorker
+import eu.kanade.tachiyomi.data.backup.models.BackupPreference
+import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.PreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
+import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
+import eu.kanade.tachiyomi.data.library.LibraryUpdateWorker
+import eu.kanade.tachiyomi.network.NetworkPreferences
+import eu.kanade.tachiyomi.network.interceptor.FLARESOLVERR_URL_KEY
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderBottomButton
+import exh.eh.EHentaiUpdateWorker
+import io.kotest.matchers.shouldBe
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.unmockkObject
+import io.mockk.verify
+import kotlinx.coroutines.test.runTest
+import mihon.domain.extension.model.ContentWarning
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
+import reikai.data.backup.AppPreferenceCarry
+import reikai.data.novel.update.NovelUpdateWorker
+import reikai.data.recommendation.taste.TrackerLibraryRefreshWorker
+import reikai.domain.category.CategoryIdPreferences
+import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.domain.novel.DEAD_PLUGINS_NEED_REVALIDATION_KEY
+import reikai.domain.novel.DEAD_READER_AUTO_SCROLL_KEY
+import reikai.domain.novel.DEAD_READER_PADDING_KEY
+import reikai.domain.novel.DEAD_READER_TAP_TO_SCROLL_KEY
+import reikai.domain.novel.DEAD_READER_TTS_BUTTON_KEYS
+import reikai.domain.novel.DEAD_READER_TTS_ENABLED_KEY
+import reikai.domain.novel.NovelPreferences
+import reikai.domain.novel.NovelTapLayout
+import reikai.domain.source.ReikaiSourcePreferences
+import reikai.novel.content.NovelCodeSnippet
+import reikai.novel.content.NovelSnippets
+import reikai.presentation.recents.EmittingPreferenceStore
+import tachiyomi.domain.category.interactor.GetCategories
+
+/**
+ * What a restore does with a preference key the app has retired. The store answers null for a key it
+ * does not hold, which satisfies the restorer's type check, so a retired key is written back unless
+ * the restorer says otherwise: the six Yōkai-era keys it already skips, and the novel reader's page
+ * padding, whose value has somewhere to go. Also that a restore re-arms the periodic jobs.
+ */
+class PreferenceRestorerTest {
+
+    private val store = EmittingPreferenceStore()
+    private val novelPreferences = NovelPreferences(store)
+    private val sourcePreferences = SourcePreferences(store)
+    private val networkPreferences = NetworkPreferences(store, isDebugBuild = false)
+    private val context = mockk<Context>()
+
+    private val restorer = PreferenceRestorer(
+        context = context,
+        getCategories = mockk<GetCategories>(),
+        preferenceStore = store,
+        categoryIdPreferences = mockk<CategoryIdPreferences>(relaxed = true),
+        getNovelCategories = mockk(),
+        appPreferenceCarry = AppPreferenceCarry(
+            novelPreferences,
+            sourcePreferences,
+            networkPreferences,
+            TrackPreferences(store),
+            mockk<BasePreferences> { every { extensionInstaller.key() } returns INSTALLER_KEY },
+        ),
+    )
+
+    /** All five are WorkManager scheduling the restore does on its way out, which needs a real app. */
+    @BeforeEach
+    fun stubTheJobs() {
+        mockkObject(
+            LibraryUpdateWorker,
+            BackupCreateWorker,
+            NovelUpdateWorker,
+            TrackerLibraryRefreshWorker,
+            EHentaiUpdateWorker,
+        )
+        every { LibraryUpdateWorker.setupTask(any(), any()) } returns Unit
+        every { BackupCreateWorker.setupTask(any(), any()) } returns Unit
+        every { NovelUpdateWorker.setupTask(any(), any()) } returns Unit
+        every { TrackerLibraryRefreshWorker.setupTask(any(), any()) } returns Unit
+        every { EHentaiUpdateWorker.setupTask(any(), any()) } returns Unit
+    }
+
+    @AfterEach
+    fun releaseTheJobs() {
+        unmockkObject(
+            LibraryUpdateWorker,
+            BackupCreateWorker,
+            NovelUpdateWorker,
+            TrackerLibraryRefreshWorker,
+            EHentaiUpdateWorker,
+        )
+    }
+
+    /** A job reads its interval only when set up, so one left alone keeps running on the pre-restore one. */
+    @ParameterizedTest(name = "a restore re-arms {0} from the restored settings")
+    @MethodSource("rearmedJobs")
+    fun restoreRearmsThePeriodicJobs(name: String, check: (Context) -> Unit) = runTest {
+        restorer.restoreApp(emptyList(), backupCategories = null)
+
+        check(context)
+    }
+
+    private fun margins() = with(novelPreferences) {
+        listOf(readerMarginTop(), readerMarginBottom(), readerMarginLeft(), readerMarginRight()).map { it.get() }
+    }
+
+    private suspend fun restore(key: String, value: Int) =
+        restorer.restoreApp(listOf(BackupPreference(key, IntPreferenceValue(value))), backupCategories = null)
+
+    private suspend fun restoreString(key: String, value: String) =
+        restorer.restoreApp(listOf(BackupPreference(key, StringPreferenceValue(value))), backupCategories = null)
+
+    private fun savedSetup() = with(networkPreferences) {
+        enableFlareSolverr.set(true)
+        flareSolverrUrl.set("https://mine.example.com")
+        flareSolverrUsername.set("me")
+        flareSolverrPassword.set("pw")
+    }
+
+    private fun setup() = with(networkPreferences) {
+        listOf(enableFlareSolverr.get(), flareSolverrUrl.get(), flareSolverrUsername.get(), flareSolverrPassword.get())
+    }
+
+    /** A backup may be someone else's, and the solver it names would receive the sites' cookies. */
+    @Test
+    @DisplayName("a restore leaves the device's FlareSolverr setup as it was")
+    fun restoreLeavesTheFlareSolverrSetup() = runTest {
+        savedSetup()
+
+        restorer.restoreApp(
+            with(networkPreferences) {
+                listOf(
+                    BackupPreference(enableFlareSolverr.key(), BooleanPreferenceValue(false)),
+                    BackupPreference(FLARESOLVERR_URL_KEY, StringPreferenceValue("https://user:pw@elsewhere.example")),
+                    BackupPreference(flareSolverrUsername.key(), StringPreferenceValue("them")),
+                    BackupPreference(flareSolverrPassword.key(), StringPreferenceValue("theirs")),
+                )
+            },
+            backupCategories = null,
+        )
+
+        setup() shouldBe listOf(true, "https://mine.example.com", "me", "pw")
+    }
+
+    @Test
+    @DisplayName("a backup taken before the margins existed keeps its page padding")
+    fun retiredPaddingReachesTheMargins() = runTest {
+        restore(DEAD_READER_PADDING_KEY, 32)
+
+        margins() shouldBe listOf(50, 16, 32, 32)
+    }
+
+    /**
+     * The upgrade migrations have already run by the time a restore lands, so nothing would read these.
+     * This store tracks `isSet` by key alone, so one probe type serves every row.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("retiredKeys")
+    @DisplayName("a retired key is not written back into the store")
+    fun retiredKeyIsNotResurrected(key: String, value: PreferenceValue) = runTest {
+        restorer.restoreApp(listOf(BackupPreference(key, value)), backupCategories = null)
+
+        store.getString(key, "").isSet() shouldBe false
+    }
+
+    @Test
+    @DisplayName("a backup taken with novel auto-scroll on starts it when the reader opens")
+    fun retiredAutoScrollReachesStartOnOpen() = runTest {
+        restorer.restoreApp(
+            listOf(BackupPreference(DEAD_READER_AUTO_SCROLL_KEY, BooleanPreferenceValue(true))),
+            backupCategories = null,
+        )
+
+        novelPreferences.readerAutoScrollOnOpen().get() shouldBe true
+    }
+
+    @Test
+    @DisplayName("a backup taken with tap to scroll on keeps tapping the top and bottom of the page")
+    fun retiredTapToScrollReachesTheTapLayout() = runTest {
+        restorer.restoreApp(
+            listOf(BackupPreference(DEAD_READER_TAP_TO_SCROLL_KEY, BooleanPreferenceValue(true))),
+            backupCategories = null,
+        )
+
+        novelPreferences.readerTapLayout().get() shouldBe NovelTapLayout.THIRDS
+    }
+
+    /** Disabled is also the default, so only the stored value shows the off choice was carried. */
+    @Test
+    @DisplayName("a backup taken with tap to scroll off stores the disabled layout")
+    fun retiredTapToScrollOffIsStored() = runTest {
+        restorer.restoreApp(
+            listOf(BackupPreference(DEAD_READER_TAP_TO_SCROLL_KEY, BooleanPreferenceValue(false))),
+            backupCategories = null,
+        )
+
+        novelPreferences.readerTapLayout().let { it.get() to it.isSet() } shouldBe (NovelTapLayout.DISABLED to true)
+    }
+
+    @Test
+    @DisplayName("a backup taken with NSFW sources hidden allows only safe extensions")
+    fun retiredNsfwSwitchReachesTheContentWarnings() = runTest {
+        restorer.restoreApp(
+            listOf(BackupPreference(ReikaiSourcePreferences.DEAD_SHOW_NSFW_SOURCE_KEY, BooleanPreferenceValue(false))),
+            backupCategories = null,
+        )
+
+        sourcePreferences.enabledContentWarnings.get() shouldBe setOf(ContentWarning.SAFE)
+    }
+
+    @Test
+    @DisplayName("a backup taken with NSFW sources shown allows every extension again")
+    fun retiredNsfwSwitchOnRestoresEveryContentWarning() = runTest {
+        sourcePreferences.enabledContentWarnings.set(setOf(ContentWarning.SAFE))
+
+        restorer.restoreApp(
+            listOf(BackupPreference(ReikaiSourcePreferences.DEAD_SHOW_NSFW_SOURCE_KEY, BooleanPreferenceValue(true))),
+            backupCategories = null,
+        )
+
+        sourcePreferences.enabledContentWarnings.get() shouldBe
+            setOf(ContentWarning.SAFE, ContentWarning.MIXED, ContentWarning.NSFW)
+    }
+
+    /** A shared backup is someone else's code, so none of it runs until the user switches it on. */
+    @Test
+    @DisplayName("a restored javascript snippet comes back switched off")
+    fun restoredJavaScriptIsSwitchedOff() = runTest {
+        val snippet = NovelCodeSnippet(title = "x", code = "alert(1)", enabled = true, id = "a")
+        restorer.restoreApp(
+            listOf(
+                BackupPreference(
+                    NovelPreferences.JS_SNIPPETS_KEY,
+                    StringPreferenceValue(NovelSnippets.encode(listOf(snippet))),
+                ),
+            ),
+            backupCategories = null,
+        )
+
+        NovelSnippets.decode(novelPreferences.readerJsSnippets().get()) shouldBe listOf(snippet.copy(enabled = false))
+    }
+
+    /** It lets any computer with debugging rights inspect every WebView the app has, so it is the user's to turn on. */
+    @Test
+    @DisplayName("a restored webview developer tools switch stays off")
+    fun restoredDevToolsStayOff() = runTest {
+        restorer.restoreApp(
+            listOf(BackupPreference(NovelPreferences.WEBVIEW_DEV_TOOLS_KEY, BooleanPreferenceValue(true))),
+            backupCategories = null,
+        )
+
+        novelPreferences.readerWebViewDevTools().get() shouldBe false
+    }
+
+    /** The address decides where the tracker's sign-in token goes, and a shared backup is someone else's. */
+    @Test
+    @DisplayName("a restored novellist server address is not stored")
+    fun restoredNovelListAddressIsNotStored() = runTest {
+        val address = TrackPreferences(store).novelListApiUrl
+
+        restoreString(address.key(), "https://elsewhere.example/api")
+
+        address.isSet() shouldBe false
+    }
+
+    /** A backup may be someone else's, so it never decides how code reaches the app or whether it runs. */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("untrustedKeys")
+    @DisplayName("a restore never sets what lets a backup install or run code")
+    fun untrustedKeyIsNotStored(name: String, key: String, value: PreferenceValue) = runTest {
+        restorer.restoreApp(listOf(BackupPreference(key, value)), backupCategories = null)
+
+        store.getString(key, "").isSet() shouldBe false
+    }
+
+    /** The switch comes before the bar in the backup, so the bar restored after it must still gain the button. */
+    @Test
+    @DisplayName("a backup with read-aloud on and a customised bar keeps the read-aloud button")
+    fun retiredReadAloudSwitchReachesTheBar() = runTest {
+        val customised = setOf(ReaderBottomButton.ViewChapters.value)
+        restorer.restoreApp(
+            listOf(
+                BackupPreference(DEAD_READER_TTS_ENABLED_KEY, BooleanPreferenceValue(true)),
+                BackupPreference(novelPreferences.readerBottomButtons().key(), StringSetPreferenceValue(customised)),
+            ),
+            backupCategories = null,
+        )
+
+        novelPreferences.readerBottomButtons().get() shouldBe customised + ReaderBottomButton.ReadAloud.value
+    }
+
+    @Test
+    @DisplayName("a backup with read-aloud off keeps its customised bar as it was")
+    fun readAloudOffLeavesTheBar() = runTest {
+        val customised = setOf(ReaderBottomButton.ViewChapters.value)
+        restorer.restoreApp(
+            listOf(
+                BackupPreference(DEAD_READER_TTS_ENABLED_KEY, BooleanPreferenceValue(false)),
+                BackupPreference(novelPreferences.readerBottomButtons().key(), StringSetPreferenceValue(customised)),
+            ),
+            backupCategories = null,
+        )
+
+        novelPreferences.readerBottomButtons().get() shouldBe customised
+    }
+
+    @Test
+    @DisplayName("a live preference is still restored")
+    fun aLivePreferenceIsRestored() = runTest {
+        restore(novelPreferences.readerFontSize().key(), 22)
+
+        novelPreferences.readerFontSize().get() shouldBe 22
+    }
+
+    companion object {
+        // The stored key; the real preference cannot be built here, since it reads the device's installers.
+        private const val INSTALLER_KEY = "extension_installer"
+
+        @JvmStatic
+        fun rearmedJobs() = listOf(
+            Arguments.of("novel updates", { c: Context -> verify { NovelUpdateWorker.setupTask(c, null) } }),
+            Arguments.of(
+                "the tracker library refresh",
+                { c: Context -> verify { TrackerLibraryRefreshWorker.setupTask(c, null) } },
+            ),
+            Arguments.of(
+                "adult gallery updates",
+                { c: Context -> verify { EHentaiUpdateWorker.setupTask(c, null) } },
+            ),
+        )
+
+        @JvmStatic
+        fun retiredKeys() = listOf(
+            Arguments.of(DEAD_READER_PADDING_KEY, IntPreferenceValue(32)),
+            Arguments.of(DEAD_READER_TAP_TO_SCROLL_KEY, BooleanPreferenceValue(true)),
+            Arguments.of(DEAD_READER_AUTO_SCROLL_KEY, BooleanPreferenceValue(true)),
+            Arguments.of(ReikaiSourcePreferences.DEAD_SHOW_NSFW_SOURCE_KEY, BooleanPreferenceValue(false)),
+            Arguments.of(DEAD_READER_TTS_ENABLED_KEY, BooleanPreferenceValue(true)),
+            Arguments.of(ReikaiSourcePreferences.DEAD_DOWNLOAD_CONTENT_TYPE_KEY, StringPreferenceValue("NOVELS")),
+            Arguments.of(ReikaiLibraryPreferences.DEAD_LAST_USED_NOVEL_PAGE_KEY, IntPreferenceValue(3)),
+            Arguments.of(ReikaiLibraryPreferences.DEAD_LAST_USED_ALL_PAGE_KEY, IntPreferenceValue(3)),
+            Arguments.of(DEAD_PLUGINS_NEED_REVALIDATION_KEY, BooleanPreferenceValue(true)),
+        ) + DEAD_READER_TTS_BUTTON_KEYS.map { Arguments.of(it, IntPreferenceValue(120)) }
+
+        @JvmStatic
+        fun untrustedKeys(): List<Arguments> {
+            val store = EmittingPreferenceStore()
+            return listOf(
+                Arguments.of("the extension installer", INSTALLER_KEY, StringPreferenceValue("SHIZUKU")),
+                Arguments.of(
+                    "extension trust, an app-state key",
+                    SourcePreferences(store).trustedExtensions.key(),
+                    StringSetPreferenceValue(setOf("pkg:1:hash")),
+                ),
+                Arguments.of(
+                    "a chapter's own scripts",
+                    NovelPreferences(store).readerKeepEmbeddedJs().key(),
+                    BooleanPreferenceValue(true),
+                ),
+                Arguments.of(
+                    "the installed light-novel plugins",
+                    NovelPreferences(store).installedPluginUrls().key(),
+                    StringSetPreferenceValue(setOf("https://example.com/plugin.js")),
+                ),
+                Arguments.of(
+                    "the installed light-novel plugins' records",
+                    NovelPreferences(store).installedPluginMetadata().key(),
+                    StringPreferenceValue("""{"https://example.com/plugin.js":{"pluginId":"p"}}"""),
+                ),
+            )
+        }
+    }
+}

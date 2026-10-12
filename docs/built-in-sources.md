@@ -1,12 +1,12 @@
 ---
 title: Built-in sources
-titleTemplate: Browse - Frequently Asked Questions
+titleTemplate: Reference
 description: Which sources ship with Reikai, which are wrapped extensions, and which bugs belong here.
 ---
 
 # Built-in sources
 
-_Dev records: [exh-subsystem.md](dev/plans/exh-subsystem.md), [md-enhanced-source.md](dev/plans/md-enhanced-source.md). Doc map: [README.md](README.md)._
+_Dev records: [adult-sources.md](dev/subsystems/adult-sources.md). Doc map: [README.md](README.md)._
 
 Most sources in **Reikai** come from extensions you install yourself.
 A few come from Reikai, and those are the ones whose bugs belong in this repository.
@@ -15,6 +15,7 @@ A few come from Reikai, and those are the ones whose bugs belong in this reposit
 - **Enhanced** means you install a third-party extension and Reikai wraps it to add metadata, login or other features. How the wrapper behaves is Reikai's; the extension itself belongs to whoever publishes it.
 
 The adult switch treats the two differently. A built-in adult source only appears once [adult sources](adult-sources.md) are switched on, while an enhanced one is wrapped whenever its extension is installed, switch or no switch.
+**Enable delegated sources**, just below it in <nav to="browse">, is the switch for the enhanced ones: on by default, and turning it off leaves each of those extensions as it ships.
 
 ## Reporting a bug in one
 

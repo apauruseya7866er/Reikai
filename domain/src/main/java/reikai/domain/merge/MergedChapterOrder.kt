@@ -1,0 +1,214 @@
+package reikai.domain.merge
+
+import java.util.Collections
+import java.util.IdentityHashMap
+import kotlin.math.abs
+
+/**
+ * [merged] with each chapter's source order overwritten by its merged position, the only order
+ * comparable across sources: each source numbered its own list, and a sort on those interleaves them.
+ * The chapters are copies, so nothing persists.
+ */
+fun <T> stampedReadingOrder(merged: List<T>, restamp: (T, Long) -> T): List<T> =
+    merged.mapIndexed { position, chapter -> restamp(chapter, position.toLong()) }
+
+/**
+ * Places several sources' chapters into one reading order, Komikku's `dedupeByPriority` shape.
+ *
+ * Neither key a chapter carries is comparable across sources: its number is whatever that site
+ * counted, often a position, and its source order indexes its own list. So the order is built as the
+ * sources are stitched rather than by sorting the pooled result. Each source is walked in its own
+ * order: a chapter an earlier one already placed moves the cursor to it, a new one lands after it.
+ *
+ * @property isTitle whether an identity is a chapter's own title, which no run pairing may fold into a
+ *   different title. Only novels key on titles; manga keys numbers only and defers nothing.
+ * @property boundsBackwardMatch whether a title match behind the cursor that this source already
+ *   supplied is refused, as a source repeating a title cannot be a second copy of its own chapter. A
+ *   repeated number still collapses, as a manga scanlator variant does.
+ * @property boundsForwardMatch whether a title match ahead of the cursor is refused when this source
+ *   repeats that title further down its list, nearer to the match. Needs [startSource]'s chapters.
+ */
+class MergedChapterOrder<T>(
+    private val isTitle: (key: Any) -> Boolean = { false },
+    private val boundsBackwardMatch: Boolean = false,
+    private val boundsForwardMatch: Boolean = false,
+    private val keyOf: (T) -> Any?,
+) {
+
+    /** A chapter with the identity it was placed under. Held rather than recomputed: [keyOf]
+     *  normalizes a chapter title, and the search below would otherwise redo that for every placed
+     *  chapter on every lookup, which is quadratic in the group's size. */
+    private class Placed<T>(val key: Any?, val item: T)
+
+    private val order = mutableListOf<Placed<T>>()
+
+    /** Every identity [order] holds, so a chapter no earlier source had is answered without a scan. */
+    private val placedKeys = HashSet<Any>()
+
+    /** Where the last chapter this source contributed or matched sits. */
+    private var cursor = -1
+
+    /** How many chapters this source placed. Until it matches one an earlier source placed, they are
+     *  exactly the head of [order], since it started from the top. */
+    private var placedBySource = 0
+
+    private var anchored = false
+
+    /** The placed chapters this source placed or matched by identity. A run paired by count is left
+     *  out: it is a guess from position, which a real title match behind it must still be able to win. */
+    private val supplied = HashSet<Placed<T>>()
+
+    /** How far down this source's own list each of its titled chapters next repeats its title. */
+    private val nextNamesake = IdentityHashMap<T, Int>()
+
+    /** Chapters this source offered that match nothing yet, waiting on the next one that does. */
+    private val deferred = mutableListOf<T>()
+
+    /** Each source's own copy of a chapter another source already placed, paired with that chapter.
+     *  The merged list shows one of them; everything that has to count the group once needs the rest. */
+    private val copies = mutableListOf<Pair<T, T>>()
+
+    /** Call before walking each source, so it starts placing from the top again. */
+    fun startSource(chapters: List<T> = emptyList()) {
+        finishSource()
+        cursor = -1
+        placedBySource = 0
+        anchored = false
+        supplied.clear()
+        nextNamesake.clear()
+        if (boundsForwardMatch) {
+            val laterIndex = HashMap<Any, Int>()
+            for (index in chapters.indices.reversed()) {
+                val key = keyOf(chapters[index])?.takeIf(::titled) ?: continue
+                laterIndex[key]?.let { nextNamesake[chapters[index]] = it - index }
+                laterIndex[key] = index
+            }
+        }
+    }
+
+    /**
+     * Where an already-placed chapter shares [item]'s identity, or -1 when none does. One identity
+     * can sit in the order several times (a per-volume "Afterword" normalizes to one title), so the
+     * copy this source means is the first one past its cursor; only when none lies ahead, or
+     * [laterNamesakeTakes] it, is it the nearest one behind. Taking the first in the whole order
+     * filed a later volume's copy under the earliest and dragged the cursor back to it.
+     */
+    fun positionOf(item: T): Int {
+        val key = keyOf(item) ?: return -1
+        if (key !in placedKeys) return -1
+        val ahead = (cursor + 1 until order.size).firstOrNull { order[it].key == key }
+        if (ahead != null && !laterNamesakeTakes(item, ahead)) return ahead
+        val behind = (cursor downTo 0).firstOrNull { order[it].key == key } ?: return -1
+        return if (boundsBackwardMatch && titled(key) && order[behind] in supplied) -1 else behind
+    }
+
+    /**
+     * Whether this source's own next copy of [item]'s title, further down its list, is the one the
+     * chapter at [ahead] belongs to: the order holds that title only once past the cursor, and the
+     * later copy would land nearer to it than the cursor sits. A source repeating a title hundreds of
+     * chapters apart otherwise filed its early copy under the late chapter.
+     */
+    private fun laterNamesakeTakes(item: T, ahead: Int): Boolean {
+        val gap = nextNamesake[item] ?: return false
+        val key = order[ahead].key
+        return abs(cursor + gap - ahead) < ahead - cursor &&
+            (ahead + 1 until order.size).none { order[it].key == key }
+    }
+
+    /**
+     * [item] is this source's copy of the chapter already sitting at [index], which [positionOf]
+     * found, so the walk continues from there. That closes any run of deferred chapters since the
+     * last one: when this source offered exactly as many as the order already holds between the two,
+     * and no pair is two different titles, they are the same chapters seen twice, so they become
+     * copies too. Anything else means the runs do not correspond and every one is kept.
+     */
+    fun followTo(index: Int, item: T) {
+        // A match inside this source's own head run is a repeated identity of its own, no anchor.
+        if (index >= placedBySource) anchored = true
+        val between = index - cursor - 1
+        if (deferredRunMatches(between)) {
+            deferred.forEachIndexed { offset, held -> copies += held to order[cursor + 1 + offset].item }
+            deferred.clear()
+            cursor = index
+        } else {
+            // The run lands just past the cursor, so it shifts the match down only when the match
+            // lies past the cursor too; a match behind it stays where it was.
+            val shift = if (index > cursor) deferred.size else 0
+            placeDeferred()
+            cursor = index + shift
+        }
+        copies += item to order[cursor].item
+        supplied += order[cursor]
+    }
+
+    /** A chapter no identity places: none of its own, or one nothing placed yet shares. Where it
+     *  belongs is only knowable once the next matched one arrives, so the decision waits for [followTo]. */
+    fun defer(item: T) {
+        deferred.add(item)
+    }
+
+    fun place(item: T) {
+        cursor += 1
+        placedBySource += 1
+        val key = keyOf(item)
+        val placed = Placed(key, item)
+        order.add(cursor, placed)
+        supplied += placed
+        if (key != null) placedKeys.add(key)
+    }
+
+    /** The deferred run is the [between] chapters already placed past the cursor, seen again. */
+    private fun deferredRunMatches(between: Int): Boolean = deferred.size == between &&
+        deferred.indices.none { titled(keyOf(deferred[it])) && titled(order[cursor + 1 + it].key) }
+
+    private fun titled(key: Any?): Boolean = key != null && isTitle(key)
+
+    fun result(): Stitched<T> {
+        finishSource()
+        return Stitched(order.map { it.item }, copies)
+    }
+
+    /**
+     * A source that matched nothing an earlier one placed has no position against them, and starting
+     * from the top would bury the trunk's first chapter under its whole run, so the run moves to the
+     * end of the walk: after the trunk for novels, which walk oldest first, and at the older end for
+     * manga, whose sources mostly list newest first. The trunk's own run is the whole order, a no-op.
+     */
+    private fun finishSource() {
+        placeDeferred()
+        if (!anchored) Collections.rotate(order, -placedBySource)
+    }
+
+    /** A run with no closing chapter cannot be aligned against anything, so it is kept. */
+    private fun placeDeferred() {
+        deferred.forEach(::place)
+        deferred.clear()
+    }
+
+    /**
+     * The stitch's full answer. [merged] is the reading order, one chapter per row. [copies] pairs
+     * each other source's copy of one of those chapters with the chapter itself; a chapter the stitch
+     * dropped outright appears in neither, so a caller holding the input can tell the two apart.
+     */
+    class Stitched<T>(val merged: List<T>, val copies: List<Pair<T, T>>) {
+
+        /**
+         * Which merged chapter each input chapter belongs to, the shown chapter first and the other
+         * sources' copies after it in the order they were walked, which is trunk order. A chapter the
+         * stitch dropped is absent. One assembly for both content types, since only reading an id off
+         * a chapter is per type.
+         */
+        fun units(id: (T) -> Long): List<ChapterUnit> {
+            val positions = merged.withIndex().associate { (position, item) -> id(item) to position }
+            val shown = merged.mapIndexed { position, item -> ChapterUnit(id(item), position, 0) }
+            val copyOrders = HashMap<Int, Int>()
+            return shown + copies.mapNotNull { (copy, of) ->
+                positions[id(of)]?.let { unit ->
+                    val order = (copyOrders[unit] ?: 0) + 1
+                    copyOrders[unit] = order
+                    ChapterUnit(id(copy), unit, order)
+                }
+            }
+        }
+    }
+}

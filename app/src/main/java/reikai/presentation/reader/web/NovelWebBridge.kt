@@ -1,0 +1,83 @@
+package reikai.presentation.reader.web
+
+import android.webkit.JavascriptInterface
+
+/**
+ * What the WebView rendering mode's page can call, as named methods so a chapter id stays one rather
+ * than being re-parsed out of JSON. A chapter id crosses as text, since a JS number cannot hold every
+ * `Long`. Every method carries the document's token: the object is exposed to every frame, and a
+ * chapter's script, a frame it creates, or the page being replaced can call it without holding one.
+ */
+class NovelWebBridge(
+    /** Runs a report's [call] if [documentToken] names the document the host built last and it has
+     *  reported ready. Every method arrives on a WebView binder thread, so this is also where a call
+     *  reaches the main thread. */
+    private val fromDocument: (documentToken: String, call: () -> Unit) -> Unit,
+    /** The same for what the reader's own finger does, which needs the token only: a chapter script
+     *  holding up the parse holds up the ready report, and the menu has to open meanwhile. */
+    private val fromReader: (documentToken: String, call: () -> Unit) -> Unit,
+    private val onVisibleChapter: (chapterId: Long) -> Unit,
+    private val onProgress: (chapterId: Long, fraction: Double) -> Unit,
+    private val onProgressSettled: (chapterId: Long, fraction: Double) -> Unit,
+    private val onTopLine: (chapterId: Long, line: Int?) -> Unit,
+    private val onRetryBoundary: (forward: Boolean) -> Unit,
+    /** A tap on the page, as fractions of its width and height. */
+    private val onTap: (x: Float, y: Float) -> Unit,
+    private val onStepChapter: (forward: Boolean) -> Unit,
+    private val onChapterFits: (chapterId: Long, fits: Boolean) -> Unit,
+    private val onChapterEndSeen: (chapterId: Long) -> Unit,
+    /** The one call that is not gated: it is what tells the host which token is the page's. */
+    private val onReady: (documentToken: String) -> Unit,
+) {
+
+    @JavascriptInterface
+    fun onVisibleChapter(documentToken: String, chapterId: String) {
+        chapterId.toLongOrNull()?.let { fromDocument(documentToken) { onVisibleChapter(it) } }
+    }
+
+    @JavascriptInterface
+    fun onProgress(documentToken: String, chapterId: String, fraction: Double) {
+        chapterId.toLongOrNull()?.let { fromDocument(documentToken) { onProgress(it, fraction) } }
+    }
+
+    @JavascriptInterface
+    fun onProgressSettled(documentToken: String, chapterId: String, fraction: Double) {
+        chapterId.toLongOrNull()?.let { fromDocument(documentToken) { onProgressSettled(it, fraction) } }
+    }
+
+    /** [line] is -1 while no chapter text is at the top, since a JS null does not cross as an `Int`. */
+    @JavascriptInterface
+    fun onTopLine(documentToken: String, chapterId: String, line: Int) {
+        chapterId.toLongOrNull()?.let { fromDocument(documentToken) { onTopLine(it, line.takeIf { it >= 0 }) } }
+    }
+
+    @JavascriptInterface
+    fun onRetryBoundary(documentToken: String, forward: Boolean) =
+        fromReader(documentToken) { onRetryBoundary.invoke(forward) }
+
+    @JavascriptInterface
+    fun onTap(documentToken: String, x: Double, y: Double) =
+        fromReader(documentToken) { onTap.invoke(x.toFloat(), y.toFloat()) }
+
+    @JavascriptInterface
+    fun onStepChapter(documentToken: String, forward: Boolean) =
+        fromReader(documentToken) { onStepChapter.invoke(forward) }
+
+    @JavascriptInterface
+    fun onChapterFits(documentToken: String, chapterId: String, fits: Boolean) {
+        chapterId.toLongOrNull()?.let { fromDocument(documentToken) { onChapterFits(it, fits) } }
+    }
+
+    @JavascriptInterface
+    fun onChapterEndSeen(documentToken: String, chapterId: String) {
+        chapterId.toLongOrNull()?.let { fromDocument(documentToken) { onChapterEndSeen(it) } }
+    }
+
+    @JavascriptInterface
+    fun onReady(documentToken: String) = onReady.invoke(documentToken)
+
+    companion object {
+        /** The name the page reaches this by, matching `reader.js`. */
+        const val NAME = "ReikaiWeb"
+    }
+}

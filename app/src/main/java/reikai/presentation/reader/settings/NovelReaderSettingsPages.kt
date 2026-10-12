@@ -1,0 +1,749 @@
+package reikai.presentation.reader.settings
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilledIconToggleButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import dev.icerock.moko.resources.StringResource
+import reikai.domain.novel.NovelPreferences
+import reikai.domain.novel.NovelRenderingMode
+import reikai.domain.novel.NovelTapLayout
+import reikai.domain.novel.NovelTextAlign
+import reikai.domain.novel.tts.TtsColorPreset
+import reikai.domain.novel.tts.TtsHighlightColors
+import reikai.domain.novel.tts.TtsHighlightStyle
+import reikai.novel.font.NovelFont
+import reikai.presentation.components.ColorPickerDialog
+import reikai.presentation.components.StepperItem
+import reikai.presentation.components.toHexRgb
+import reikai.presentation.icons.FormatAlignCenter
+import reikai.presentation.icons.FormatAlignJustify
+import reikai.presentation.icons.FormatAlignLeft
+import reikai.presentation.icons.FormatAlignRight
+import reikai.presentation.icons.ReikaiIcons
+import reikai.presentation.reader.NovelTapZones
+import reikai.presentation.reader.NovelTextRanges
+import reikai.presentation.reader.ReaderFont
+import reikai.presentation.reader.ReaderRanges
+import reikai.presentation.reader.ReaderThemeSwatches
+import reikai.presentation.reader.TtsOptions
+import reikai.presentation.reader.builtInReaderFonts
+import reikai.presentation.reader.readerBackgroundColorInt
+import reikai.presentation.reader.readerFontLabel
+import reikai.presentation.reader.readerFontSummary
+import reikai.presentation.reader.readerTextColorInt
+import reikai.presentation.reader.readerThemeShown
+import reikai.presentation.reader.rememberTtsOptions
+import reikai.presentation.reader.tenthsLabel
+import reikai.util.scaled
+import tachiyomi.core.common.preference.Preference
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.CheckboxItem
+import tachiyomi.presentation.core.components.HeadingItem
+import tachiyomi.presentation.core.components.RadioItem
+import tachiyomi.presentation.core.components.SettingsChipRow
+import tachiyomi.presentation.core.components.SettingsItemsPaddings
+import tachiyomi.presentation.core.components.SliderItem
+import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState
+
+/*
+ * The novel half of the reader's settings sheet, in tsundoku's look: the rows a reader adjusts while
+ * looking at the page. Settings -> Novel reader writes the same values for every row except this novel's
+ * rotation, the text size and the page colours, which live here and on the reader's Theme and Text size
+ * bar buttons. Read aloud is a novel's tab alone.
+ */
+
+/** Words the split threshold steps by, across its 20 to 2000 range. */
+private const val AUTO_SPLIT_STEP = 10
+
+/**
+ * This novel's rotation, then how the text is drawn: the renderer, the font and its size, the paragraphs
+ * and the margins around them.
+ */
+@Composable
+internal fun ColumnScope.NovelReadingPage(pages: ReaderSettingsPages.Novel) {
+    val preferences = pages.preferences
+
+    HeadingItem(MR.strings.pref_category_for_this_series)
+    val orientation by pages.orientation.collectAsState(null)
+    EntryRotationRow(orientation) { pages.onChangeOrientation(it.flagValue) }
+
+    HeadingItem(MR.strings.pref_category_text)
+    val renderingModePref = preferences.readerRenderingMode()
+    val renderingMode by renderingModePref.collectAsState()
+    SettingsChipRow(MR.strings.pref_novel_rendering_mode) {
+        NovelRenderingMode.entries.forEach {
+            FilterChip(
+                selected = renderingMode == it,
+                onClick = { renderingModePref.set(it) },
+                label = { Text(stringResource(it.titleRes)) },
+            )
+        }
+    }
+    FontRow(preferences.readerFontFamily(), pages.installedFonts)
+    val fontSize by preferences.readerFontSize().collectAsState()
+    StepperItem(
+        label = stringResource(MR.strings.pref_reader_text_size),
+        value = fontSize,
+        onChange = pages.textSettings::setFontSize,
+        valueRange = NovelTextRanges.fontSize,
+        defaultValue = preferences.readerFontSize().defaultValue(),
+    )
+    TenthsStepper(
+        preferences.readerLineSpacing(),
+        MR.strings.pref_novel_line_spacing,
+        NovelTextRanges.lineHeightTenths,
+        "%.1fx",
+    )
+    val textAlign by preferences.readerTextAlign().collectAsState()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = SettingsItemsPaddings.Horizontal, vertical = SettingsItemsPaddings.Vertical / 4),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = stringResource(MR.strings.pref_novel_text_align),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            NovelTextAlign.entries.forEach { align ->
+                val icon = when (align) {
+                    NovelTextAlign.LEFT -> ReikaiIcons.FormatAlignLeft
+                    NovelTextAlign.CENTER -> ReikaiIcons.FormatAlignCenter
+                    NovelTextAlign.JUSTIFY -> ReikaiIcons.FormatAlignJustify
+                    NovelTextAlign.RIGHT -> ReikaiIcons.FormatAlignRight
+                }
+                FilledIconToggleButton(
+                    checked = textAlign == align,
+                    onCheckedChange = { preferences.readerTextAlign().set(align) },
+                ) {
+                    Icon(icon, contentDescription = stringResource(align.titleRes))
+                }
+            }
+        }
+    }
+
+    HeadingItem(MR.strings.pref_category_paragraphs)
+    TenthsStepper(
+        preferences.readerParagraphIndent(),
+        MR.strings.pref_paragraph_indent,
+        NovelTextRanges.paragraphIndentTenths,
+        "%.1fem",
+    )
+    TenthsStepper(
+        preferences.readerParagraphSpacing(),
+        MR.strings.pref_paragraph_spacing,
+        NovelTextRanges.paragraphSpacingTenths,
+        "%.1fem",
+    )
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_remove_extra_spacing),
+        pref = preferences.readerRemoveExtraSpacing(),
+    )
+    CheckboxItem(label = stringResource(MR.strings.pref_bionic_reading), pref = preferences.readerBionicReading())
+
+    HeadingItem(MR.strings.pref_category_margins)
+    MarginStepper(preferences.readerMarginTop(), MR.strings.pref_margin_top)
+    MarginStepper(preferences.readerMarginBottom(), MR.strings.pref_margin_bottom)
+    MarginStepper(preferences.readerMarginLeft(), MR.strings.pref_margin_left)
+    MarginStepper(preferences.readerMarginRight(), MR.strings.pref_margin_right)
+}
+
+/** The page's colours, what surrounds the text, and how a chapter's text is treated before it is shown. */
+@Composable
+internal fun ColumnScope.NovelAppearancePage(pages: ReaderSettingsPages.Novel) {
+    val preferences = pages.preferences
+    val followSystem by preferences.readerFollowSystemTheme().collectAsState()
+    val background by preferences.readerBackgroundColor().collectAsState()
+    val text by preferences.readerTextColor().collectAsState()
+    // What the page shows, which under Follow system is the preset it resolves to, not what is stored.
+    val shown = readerThemeShown(followSystem, isSystemInDarkTheme(), background, text)
+
+    HeadingItem(MR.strings.pref_category_theme)
+    // A radio, not a checkbox: following the system is left by picking a swatch, never by unticking it.
+    RadioItem(
+        label = stringResource(MR.strings.pref_novel_theme_follow_system),
+        selected = followSystem,
+        onClick = pages.textSettings::followSystemTheme,
+    )
+    ReaderThemeSwatches(
+        followSystem = followSystem,
+        background = background,
+        textColor = text,
+        onPreset = { pages.textSettings.setThemeColors(it.background, it.textColor) },
+        modifier = Modifier.padding(
+            horizontal = SettingsItemsPaddings.Horizontal,
+            vertical = SettingsItemsPaddings.Vertical,
+        ),
+    )
+    // Either colour picked by hand is the custom theme; the other keeps what the page shows now.
+    PageColorRow(MR.strings.pref_novel_background_color, readerBackgroundColorInt(shown.background)) {
+        pages.textSettings.setThemeColors(it, shown.textColor)
+    }
+    PageColorRow(MR.strings.pref_novel_text_color, readerTextColorInt(shown.textColor)) {
+        pages.textSettings.setThemeColors(shown.background, it)
+    }
+
+    HeadingItem(MR.strings.pref_category_page)
+    ReaderPageRows(
+        titleFormat = preferences.readerChapterTitleFormat(),
+        progressLabel = MR.strings.pref_show_reading_progress,
+        showProgress = preferences.readerShowProgressPercentage(),
+        fullscreen = preferences.readerFullscreen(),
+        drawUnderCutout = preferences.readerDrawUnderCutout(),
+        keepScreenOn = preferences.readerKeepScreenOn(),
+    )
+    val seamless by preferences.readerSeamlessChapters().collectAsState()
+    if (seamless) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_always_show_chapter_transition),
+            pref = preferences.readerAlwaysShowChapterTransition(),
+        )
+    }
+
+    NovelChapterTextRows(preferences)
+}
+
+/** The rows of Settings -> Novel reader -> Chapter text that change what the page shows, in its order. */
+@Composable
+private fun ColumnScope.NovelChapterTextRows(preferences: NovelPreferences) {
+    val renderingMode by preferences.readerRenderingMode().collectAsState()
+    val autoSplit by preferences.readerAutoSplitText().collectAsState()
+    val sourceCssPriority by preferences.readerSourceCssPriority().collectAsState()
+
+    HeadingItem(MR.strings.pref_category_chapter_text)
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_hide_chapter_title),
+        pref = preferences.readerHideChapterTitle(),
+    )
+    CheckboxItem(label = stringResource(MR.strings.pref_force_lowercase), pref = preferences.readerForceLowercase())
+    CheckboxItem(label = stringResource(MR.strings.pref_block_media), pref = preferences.readerBlockMedia())
+    CheckboxItem(label = stringResource(MR.strings.pref_auto_split_text), pref = preferences.readerAutoSplitText())
+    if (autoSplit) {
+        val wordsPref = preferences.readerAutoSplitWordCount()
+        val words by wordsPref.collectAsState()
+        StepperItem(
+            label = stringResource(MR.strings.pref_auto_split_word_count),
+            value = words,
+            onChange = wordsPref::set,
+            valueRange = NovelTextRanges.autoSplitWords,
+            step = AUTO_SPLIT_STEP,
+            defaultValue = wordsPref.defaultValue(),
+        )
+    }
+    if (!renderingMode.rendersMarkup) return
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_keep_embedded_css),
+        pref = preferences.readerKeepEmbeddedCss(),
+    )
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_source_css_priority),
+        pref = preferences.readerSourceCssPriority(),
+    )
+    // Under chapter styling that wins, the reader's own font overrides are not applied at all.
+    if (!sourceCssPriority) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_use_original_fonts),
+            pref = preferences.readerUseOriginalFonts(),
+        )
+    }
+}
+
+/** Seamless chapters, taps and swipes, and the volume keys; auto-scroll sits above, shared with manga. */
+@Composable
+internal fun ColumnScope.NovelControlsPage(preferences: NovelPreferences) {
+    HeadingItem(MR.strings.pref_category_scrolling)
+    val seamless by preferences.readerSeamlessChapters().collectAsState()
+    if (seamless) {
+        val autoLoadPref = preferences.readerAutoLoadNextAt()
+        val autoLoad by autoLoadPref.collectAsState()
+        SliderItem(
+            value = autoLoad,
+            valueRange = NovelTextRanges.autoLoadNextAtPercent,
+            label = stringResource(MR.strings.pref_novel_auto_load_next_at),
+            valueString = "$autoLoad%",
+            onChange = autoLoadPref::set,
+            pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        )
+    }
+
+    HeadingItem(MR.strings.pref_category_gestures)
+    NovelTapZonesRows(preferences)
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_swipe_between_chapters),
+        pref = preferences.readerSwipeGestures(),
+    )
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_novel_text_selectable),
+        pref = preferences.readerTextSelectable(),
+    )
+
+    HeadingItem(MR.strings.pref_reader_navigation)
+    val showNavigator by preferences.readerShowNavigator().collectAsState()
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_show_progress_navigator),
+        pref = preferences.readerShowNavigator(),
+    )
+    if (showNavigator) {
+        CheckboxItem(label = stringResource(MR.strings.pref_novel_use_rail), pref = preferences.readerUseRail())
+        val useRail by preferences.readerUseRail().collectAsState()
+        if (useRail) {
+            ReaderRailRows(onLeft = preferences.readerRailOnLeft(), height = preferences.readerRailHeight())
+        }
+    }
+    val volumeKeys by preferences.readerUseVolumeButtons().collectAsState()
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_read_with_volume_keys),
+        pref = preferences.readerUseVolumeButtons(),
+    )
+    if (volumeKeys) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_read_with_volume_keys_inverted),
+            pref = preferences.readerVolumeButtonsInverted(),
+        )
+        val percentPref = preferences.readerVolumeButtonsFraction().scaled(ReaderRanges.PERCENT)
+        val percent by percentPref.collectAsState()
+        SliderItem(
+            value = percent,
+            valueRange = ReaderRanges.volumeKeyScrollPercent,
+            label = stringResource(MR.strings.pref_volume_keys_scroll_amount),
+            valueString = "$percent%",
+            onChange = percentPref::set,
+            pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        )
+    }
+}
+
+/** The tap layout, its inversion where it has something to invert, and the bottom layout's zone height. */
+@Composable
+private fun ColumnScope.NovelTapZonesRows(preferences: NovelPreferences) {
+    val layoutPref = preferences.readerTapLayout()
+    val invertPref = preferences.readerTapInvert()
+    val layout by layoutPref.collectAsState()
+    val invert by invertPref.collectAsState()
+
+    SettingsChipRow(MR.strings.pref_viewer_nav) {
+        NovelTapLayout.entries.forEach {
+            FilterChip(
+                selected = layout == it,
+                onClick = { preferences.setReaderTapLayout(it) },
+                label = { Text(stringResource(it.titleRes)) },
+            )
+        }
+    }
+    if (layout.offersInvert) {
+        SettingsChipRow(MR.strings.pref_read_with_tapping_inverted) {
+            layout.invertModes.forEach {
+                FilterChip(
+                    selected = it == invert,
+                    onClick = { invertPref.set(it) },
+                    label = { Text(stringResource(it.titleRes)) },
+                )
+            }
+        }
+    }
+    if (layout == NovelTapLayout.BOTTOM) {
+        val heightPref = preferences.readerTapBottomZoneHeight()
+        val height by heightPref.collectAsState()
+        SliderItem(
+            value = height,
+            valueRange = NovelTapZones.BOTTOM_ZONE_PERCENT,
+            label = stringResource(MR.strings.pref_tap_bottom_zone_height),
+            valueString = "$height%",
+            onChange = heightPref::set,
+            pillColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+        )
+    }
+}
+
+/** One page colour with its swatch and hex, picked by hand; [color] is what the page draws, and [onPick]
+ *  gets six hex digits. */
+@Composable
+private fun PageColorRow(labelRes: StringResource, color: Int, onPick: (String) -> Unit) {
+    var picking by remember { mutableStateOf(false) }
+    val label = stringResource(labelRes)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { picking = true }
+            .padding(horizontal = SettingsItemsPaddings.Horizontal, vertical = SettingsItemsPaddings.Vertical),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(text = label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(text = color.toHexRgb(), style = MaterialTheme.typography.bodyMedium)
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(Color(color))
+                .border(1.dp, MaterialTheme.colorScheme.outline, CircleShape),
+        )
+    }
+    if (picking) {
+        ColorPickerDialog(
+            title = label,
+            initialColor = color,
+            onDismiss = { picking = false },
+            onConfirm = {
+                onPick(it.toHexRgb())
+                picking = false
+            },
+        )
+    }
+}
+
+/** A setting stored as a float and stepped in tenths, shown through [format]. */
+@Composable
+private fun TenthsStepper(pref: Preference<Float>, labelRes: StringResource, tenths: IntRange, format: String) {
+    val scaled = pref.scaled(ReaderRanges.TENTHS)
+    val value by scaled.collectAsState()
+    StepperItem(
+        label = stringResource(labelRes),
+        value = value,
+        onChange = scaled::set,
+        valueRange = tenths,
+        defaultValue = scaled.defaultValue(),
+        scale = ReaderRanges.TENTHS,
+        valueString = tenthsLabel(value, format),
+    )
+}
+
+@Composable
+private fun MarginStepper(pref: Preference<Int>, labelRes: StringResource) {
+    val value by pref.collectAsState()
+    StepperItem(
+        label = stringResource(labelRes),
+        value = value,
+        onChange = pref::set,
+        valueRange = NovelTextRanges.marginDp,
+        step = 2,
+        defaultValue = pref.defaultValue(),
+        valueString = "${value}dp",
+    )
+}
+
+/** A radio row laid out as [RadioItem] lays one out, with room for the line [readerFontSummary] gives. */
+@Composable
+private fun FontItem(label: String, summary: String?, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = SettingsItemsPaddings.Horizontal, vertical = SettingsItemsPaddings.Vertical),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Column {
+            Text(text = label, style = MaterialTheme.typography.bodyMedium)
+            if (summary != null) {
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+/** The font, named as the picker names it, and a list of every font to choose from. */
+@Composable
+private fun FontRow(pref: Preference<String>, installedFonts: suspend () -> List<NovelFont>) {
+    val family by pref.collectAsState()
+    var picking by remember { mutableStateOf(false) }
+    val defaultLabel = stringResource(MR.strings.pref_novel_font_default)
+
+    PickerRow(MR.strings.pref_novel_font, readerFontLabel(family, defaultLabel)) { picking = true }
+
+    if (picking) {
+        val installed by produceState(emptyList<ReaderFont>()) {
+            value = installedFonts().map { ReaderFont(it.fileName, it.displayName) }
+        }
+        ListPickerDialog(MR.strings.pref_novel_font, onDismiss = { picking = false }) {
+            (builtInReaderFonts + installed).forEach { font ->
+                val select = {
+                    pref.set(font.family)
+                    picking = false
+                }
+                FontItem(
+                    label = readerFontLabel(font.family, defaultLabel),
+                    summary = readerFontSummary(font.family)?.let { stringResource(it) },
+                    selected = font.family == family,
+                    onClick = select,
+                )
+            }
+        }
+    }
+}
+
+/** Read aloud's engine, voice and mark, as Settings -> Novel reader sets them. */
+@Composable
+internal fun ColumnScope.NovelReadAloudPage(preferences: NovelPreferences) {
+    val context = LocalContext.current
+    val engine by preferences.readerTtsEngine().collectAsState()
+    val options by rememberTtsOptions(context, engine)
+    HeadingItem(MR.strings.pref_tts_voice)
+    EngineRow(preferences, options)
+    VoiceLanguagesRow(preferences, options)
+    VoiceRow(preferences, options)
+    TenthsStepper(
+        preferences.readerTtsRate(),
+        MR.strings.pref_tts_rate,
+        tenths = NovelTextRanges.readAloudRateTenths,
+        format = "%.1fx",
+    )
+    TenthsStepper(
+        preferences.readerTtsPitch(),
+        MR.strings.pref_tts_pitch,
+        tenths = NovelTextRanges.readAloudPitchTenths,
+        format = "%.1f",
+    )
+
+    HeadingItem(MR.strings.pref_category_playback)
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_tts_auto_page_advance),
+        pref = preferences.readerTtsAutoPageAdvance(),
+    )
+
+    val keepInView by preferences.readerTtsKeepInView().collectAsState()
+    CheckboxItem(label = stringResource(MR.strings.pref_tts_keep_in_view), pref = preferences.readerTtsKeepInView())
+    if (keepInView) {
+        CheckboxItem(
+            label = stringResource(MR.strings.pref_tts_scroll_to_top),
+            pref = preferences.readerTtsScrollToTop(),
+        )
+    }
+
+    HeadingItem(MR.strings.pref_category_highlight)
+    val highlight by preferences.readerTtsHighlight().collectAsState()
+    CheckboxItem(label = stringResource(MR.strings.pref_tts_highlight), pref = preferences.readerTtsHighlight())
+    if (!highlight) return
+    CheckboxItem(
+        label = stringResource(MR.strings.pref_tts_highlight_sentence),
+        pref = preferences.readerTtsHighlightSentence(),
+    )
+    val stylePref = preferences.readerTtsHighlightStyle()
+    val style by stylePref.collectAsState()
+    SettingsChipRow(MR.strings.pref_tts_highlight_style) {
+        TtsHighlightStyle.entries.forEach {
+            FilterChip(
+                selected = style == it,
+                onClick = { stylePref.set(it) },
+                label = { Text(stringResource(it.titleRes)) },
+            )
+        }
+    }
+    TtsColorRow(
+        preferences.readerTtsHighlightColor(),
+        TtsHighlightColors.highlight,
+        MR.strings.pref_tts_highlight_color,
+    )
+    // Underline and outline leave the text's own colour alone.
+    if (style == TtsHighlightStyle.BACKGROUND) {
+        TtsColorRow(
+            preferences.readerTtsHighlightTextColor(),
+            TtsHighlightColors.text,
+            MR.strings.pref_tts_highlight_text_color,
+        )
+    }
+}
+
+/** The engine, only offered when more than one is installed. A new engine stops playback. */
+@Composable
+private fun EngineRow(preferences: NovelPreferences, options: TtsOptions) {
+    if (options.engines.size <= 1) return
+    val enginePref = preferences.readerTtsEngine()
+    val engine by enginePref.collectAsState()
+    var picking by remember { mutableStateOf(false) }
+    val defaultLabel = stringResource(MR.strings.label_default)
+    PickerRow(
+        labelRes = MR.strings.pref_tts_engine,
+        value = options.engineLabel(engine, defaultLabel),
+        onClick = { picking = true },
+    )
+    if (picking) {
+        ListPickerDialog(MR.strings.pref_tts_engine, onDismiss = { picking = false }) {
+            options.engineEntries(defaultLabel).forEach { (name, label) ->
+                RadioItem(label = label, selected = name == engine) {
+                    preferences.setReaderTtsEngine(name)
+                    picking = false
+                }
+            }
+        }
+    }
+}
+
+/** Narrows the voice list to some languages, only offered when the voices span more than one. */
+@Composable
+private fun VoiceLanguagesRow(preferences: NovelPreferences, options: TtsOptions) {
+    val languagesPref = preferences.readerTtsLanguages()
+    val selected by languagesPref.collectAsState()
+    val languages = remember(options) { options.languageNames() }
+    if (languages.size <= 1) return
+    var picking by remember { mutableStateOf(false) }
+    PickerRow(
+        labelRes = MR.strings.pref_tts_languages,
+        value = options.languagesLabel(selected).ifEmpty { stringResource(MR.strings.all) },
+        onClick = { picking = true },
+    )
+    if (picking) {
+        ListPickerDialog(MR.strings.pref_tts_languages, onDismiss = { picking = false }) {
+            languages.forEach { (code, name) ->
+                CheckboxItem(label = name, checked = code in selected) {
+                    languagesPref.set(if (code in selected) selected - code else selected + code)
+                }
+            }
+        }
+    }
+}
+
+/** The voice, named as the engine names it, and a list of the voices in the languages picked above. */
+@Composable
+private fun VoiceRow(preferences: NovelPreferences, options: TtsOptions) {
+    val voicePref = preferences.readerTtsVoice()
+    val voice by voicePref.collectAsState()
+    val languages by preferences.readerTtsLanguages().collectAsState()
+    var picking by remember { mutableStateOf(false) }
+    val defaultLabel = stringResource(MR.strings.label_default)
+    PickerRow(
+        labelRes = MR.strings.pref_tts_voice,
+        value = options.voiceLabel(voice, defaultLabel),
+        onClick = { picking = true },
+    )
+    if (picking) {
+        val shown = remember(options, languages, defaultLabel) { options.voiceEntries(languages, defaultLabel) }
+        ListPickerDialog(MR.strings.pref_tts_voice, onDismiss = { picking = false }) {
+            shown.forEach { (name, label) ->
+                RadioItem(label = label, selected = name == voice) {
+                    voicePref.set(name)
+                    picking = false
+                }
+            }
+        }
+    }
+}
+
+/** A setting's name and its current value, opening a picker on a tap. */
+@Composable
+private fun PickerRow(labelRes: StringResource, value: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = SettingsItemsPaddings.Horizontal, vertical = SettingsItemsPaddings.Vertical),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = stringResource(labelRes),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false).padding(start = 12.dp),
+        )
+    }
+}
+
+/** A scrolling list of choices under [titleRes], closed by its button or by picking one. */
+@Composable
+private fun ListPickerDialog(
+    titleRes: StringResource,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(titleRes)) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                content = content,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(MR.strings.action_close)) }
+        },
+    )
+}
+
+/** The named colours as chips, then Custom, which opens the picker and is selected for any other colour. */
+@Composable
+private fun ColumnScope.TtsColorRow(pref: Preference<Int>, presets: List<TtsColorPreset>, labelRes: StringResource) {
+    val color by pref.collectAsState()
+    var picking by remember { mutableStateOf(false) }
+    val label = stringResource(labelRes)
+    SettingsChipRow(labelRes) {
+        presets.forEach {
+            FilterChip(
+                selected = color == it.argb,
+                onClick = { pref.set(it.argb) },
+                label = { Text(stringResource(it.nameRes)) },
+            )
+        }
+        FilterChip(
+            selected = presets.none { it.argb == color },
+            onClick = { picking = true },
+            label = { Text(stringResource(MR.strings.color_custom)) },
+        )
+    }
+    if (picking) {
+        ColorPickerDialog(
+            title = label,
+            initialColor = color,
+            onDismiss = { picking = false },
+            onConfirm = {
+                pref.set(it)
+                picking = false
+            },
+        )
+    }
+}

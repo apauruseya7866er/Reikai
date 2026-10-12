@@ -1,0 +1,1239 @@
+package reikai.presentation.reader
+
+import android.content.Context
+import android.content.Intent
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
+import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderBottomButton
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeSameInstanceAs
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
+import reikai.data.novel.tts.SleepTimer
+import reikai.domain.entry.EntryCustomInfo
+import reikai.domain.entry.EntryId
+import reikai.domain.novel.model.CustomNovelInfo
+import reikai.domain.novel.tts.TtsPlayback
+import reikai.domain.reader.ChapterProgress
+import reikai.presentation.components.UndatedChapterDate
+import reikai.presentation.recents.EmittingPreferenceStore
+import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
+import tachiyomi.domain.manga.model.CustomMangaInfo
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+
+class ReaderEngineTest {
+
+    // Shared with runTest below, so a test can advance work the engine posted to the main thread.
+    private val scheduler = TestCoroutineScheduler()
+
+    // The engine shares the provider's flows in its own scope, which is the main one.
+    @BeforeEach
+    fun setUp() {
+        Dispatchers.setMain(UnconfinedTestDispatcher(scheduler))
+    }
+
+    @AfterEach
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
+    private fun engine(
+        provider: FakeReaderProvider = FakeReaderProvider(),
+        themeCoverBased: Boolean = true,
+        customInfo: Map<EntryId, EntryCustomInfo> = emptyMap(),
+    ) = ReaderEngine(
+        provider,
+        UiPreferences(
+            InMemoryPreferenceStore(
+                sequenceOf(InMemoryPreference("pref_theme_cover_based_key", themeCoverBased, true)),
+            ),
+        ),
+        mockk { every { subscribeAll() } returns flowOf(customInfo) },
+    )
+
+    /** Ids overlap across the two types, so the override is found by the entry's typed id. */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("editedEntries")
+    fun `the bar names the entry by its Edit info title`(entry: EntryId, custom: EntryCustomInfo) {
+        val provider = FakeReaderProvider()
+        provider.chrome.value = ReaderChromeState(entryTitle = "Source title", entry = entry)
+        val other = if (entry is EntryId.Manga) EntryId.Novel(entry.rawId) else EntryId.Manga(entry.rawId)
+
+        val engine = engine(provider, customInfo = mapOf(entry to custom, other to CustomMangaInfo(0L, title = "No")))
+
+        engine.chrome.value.entryTitle shouldBe "Mine"
+    }
+
+    @Test
+    fun `nothing is raised to begin with`() {
+        engine().dialog.value shouldBe null
+    }
+
+    @Test
+    fun `raising a dialog shows it`() {
+        val engine = engine()
+
+        engine.openDialog(ReaderDialog.Settings)
+
+        engine.dialog.value shouldBe ReaderDialog.Settings
+    }
+
+    /**
+     * The single slot is the mechanism: the host raises Loading while a chapter loads, and it has to
+     * take over from whatever the reader had open rather than stacking on top of it.
+     */
+    @Test
+    fun `raising a second dialog replaces the first rather than stacking`() {
+        val engine = engine()
+        engine.openDialog(ReaderDialog.ChapterList)
+
+        engine.openDialog(ReaderDialog.Loading)
+
+        engine.dialog.value shouldBe ReaderDialog.Loading
+    }
+
+    @Test
+    fun `dismissing clears the raised dialog`() {
+        val engine = engine()
+        engine.openDialog(ReaderDialog.ChapterList)
+
+        engine.dismissDialog()
+
+        engine.dialog.value shouldBe null
+    }
+
+    @Test
+    fun `dismissing with nothing raised stays empty`() {
+        val engine = engine()
+
+        engine.dismissDialog()
+
+        engine.dialog.value shouldBe null
+    }
+
+    /**
+     * The load surface is the engine's, not the host's. The host raised it from a collector rebuilt
+     * on every Activity recreation, and a failure stays Failed until the next load, so a rotation
+     * reopened a failure the reader had cancelled.
+     */
+    @Test
+    fun `a failed load raises the failure it reports`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+
+        provider.loadState.value =
+            ReaderLoadState.Failed("no connection", canKeepReading = true, chapterId = null, attempt = 1L)
+
+        engine.dialog.value shouldBe ReaderDialog.LoadFailed("no connection", canKeepReading = true)
+    }
+
+    @Test
+    fun `a failure offers the page of the chapter that failed`() {
+        val provider = FakeReaderProvider()
+        provider.chapterPages[7L] = "https://site.example/7"
+        val engine = engine(provider)
+
+        provider.loadState.value = ReaderLoadState.Failed("no connection", canKeepReading = true, chapterId = 7L)
+
+        (engine.dialog.value as ReaderDialog.LoadFailed).webUrl shouldBe "https://site.example/7"
+    }
+
+    @Test
+    fun `a load in flight raises the loading dialog`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+
+        provider.loadState.value = ReaderLoadState.Loading
+
+        engine.dialog.value shouldBe ReaderDialog.Loading
+    }
+
+    /**
+     * A setting changed in a sheet reloads the chapter in place, and read aloud steps chapters on its
+     * own, so a load can start under any sheet the reader opened. Replacing it would close it mid-use.
+     */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("sheets")
+    fun `a load under a sheet the reader opened leaves the sheet open`(sheet: ReaderDialog) {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        engine.openDialog(sheet)
+
+        provider.loadState.value = ReaderLoadState.Loading
+
+        engine.dialog.value shouldBe sheet
+    }
+
+    @Test
+    fun `a sheet open through a load stays open once the chapter arrives`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        val sleepTimer = ReaderDialog.SleepTimerSelect(FakeReadAloud())
+        engine.openDialog(sleepTimer)
+        provider.loadState.value = ReaderLoadState.Loading
+
+        provider.loadState.value = ReaderLoadState.Idle
+
+        engine.dialog.value shouldBe sleepTimer
+    }
+
+    /** Retrying from the failure starts a load, which shows its progress in the failure's place. */
+    @Test
+    fun `a load after a failure replaces it with the loading dialog`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        provider.loadState.value = ReaderLoadState.Failed("no connection", canKeepReading = true, chapterId = null)
+
+        provider.loadState.value = ReaderLoadState.Loading
+
+        engine.dialog.value shouldBe ReaderDialog.Loading
+    }
+
+    @Test
+    fun `the chapter arriving clears the loading dialog`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        provider.loadState.value = ReaderLoadState.Loading
+
+        provider.loadState.value = ReaderLoadState.Idle
+
+        engine.dialog.value shouldBe null
+    }
+
+    /** The load clears only what it raised, or a chapter arriving would close the reader's own sheet. */
+    @Test
+    fun `the chapter arriving leaves a dialog the reader opened alone`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        provider.loadState.value = ReaderLoadState.Loading
+        engine.openDialog(ReaderDialog.ChapterList)
+
+        provider.loadState.value = ReaderLoadState.Idle
+
+        engine.dialog.value shouldBe ReaderDialog.ChapterList
+    }
+
+    /**
+     * Page actions travel as the capability built for that page, so the engine hands back the same
+     * instance it was given. Reading the page back out of the slot is what this replaces.
+     */
+    @Test
+    fun `page actions keep the capability they were raised with`() {
+        val engine = engine()
+        val actions = RecordingPageActions()
+
+        engine.openDialog(ReaderDialog.PageActions(actions))
+
+        val raised = engine.dialog.value as ReaderDialog.PageActions
+        raised.actions shouldBeSameInstanceAs actions
+    }
+
+    @Test
+    fun `a page action reaches the capability it was raised with`() {
+        val engine = engine()
+        val actions = RecordingPageActions()
+        engine.openDialog(ReaderDialog.PageActions(actions))
+
+        (engine.dialog.value as ReaderDialog.PageActions).actions.share(copyToClipboard = true)
+
+        actions.shared shouldBe true
+    }
+
+    /**
+     * The chrome names the entry whichever content type is open, so the engine must pass the
+     * provider's answer through rather than hold one of its own that could go stale.
+     */
+    @Test
+    fun `the chrome comes from the provider`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+
+        provider.chrome.value = ReaderChromeState("Some Novel", "Chapter 2")
+
+        engine.chrome.value shouldBe ReaderChromeState("Some Novel", "Chapter 2")
+    }
+
+    /**
+     * The bar used to render manga's stored selection in every session, so a novel reader offered
+     * reading mode and crop borders. The engine asking the provider is what stops that.
+     */
+    @Test
+    fun `the bottom bar buttons come from the provider`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+
+        provider.bottomButtons.value = listOf(ReaderBottomButton.Theme, ReaderBottomButton.Autoscroll)
+
+        engine.bottomButtons.value shouldBe listOf(ReaderBottomButton.Theme, ReaderBottomButton.Autoscroll)
+    }
+
+    /**
+     * The bar's verbs used to act on the manga model whatever was open, so rotating in a novel
+     * session wrote a flag on a manga that was not there.
+     */
+    @Test
+    fun `rotating goes to the session rather than a model the host picked`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+
+        engine.setOrientation(ReaderOrientation.PORTRAIT.flagValue)
+
+        provider.orientation.value shouldBe ReaderOrientation.PORTRAIT.flagValue
+        engine.orientation.value shouldBe ReaderOrientation.PORTRAIT.flagValue
+    }
+
+    @Test
+    fun `keeping the screen on goes to the session too`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+
+        engine.setKeepScreenOn(true)
+
+        provider.keepScreenOn.value shouldBe true
+        engine.keepScreenOn.value shouldBe true
+    }
+
+    /**
+     * The scrub reaches the installed viewport carrying the session's own unit, so a percentage can
+     * never arrive somewhere that would read it as a page number.
+     */
+    @Test
+    fun `seeking moves the installed viewport`() {
+        val engine = engine()
+        val viewport = FakeViewport()
+        engine.installViewport(viewport)
+
+        engine.seek(ChapterProgress.Percent(4200L))
+
+        viewport.sought shouldBe ChapterProgress.Percent(4200L)
+    }
+
+    @Test
+    fun `scrolling to the top lands a novel at zero percent`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        val viewport = FakeViewport()
+        engine.installViewport(viewport)
+        provider.navigator.value = ReaderNavigatorState(progress = ChapterProgress.Percent(4200L))
+
+        engine.seekToStart()
+
+        viewport.sought shouldBe ChapterProgress.Percent(0L)
+    }
+
+    @Test
+    fun `scrolling to the top lands manga on its first page`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        val viewport = FakeViewport()
+        engine.installViewport(viewport)
+        provider.navigator.value = ReaderNavigatorState(progress = ChapterProgress.Pages(7, 20))
+
+        engine.seekToStart()
+
+        viewport.sought shouldBe ChapterProgress.Pages(0, 20)
+    }
+
+    @Test
+    fun `seeking with no viewport installed does nothing`() {
+        engine().seek(ChapterProgress.Percent(4200L))
+    }
+
+    /**
+     * The viewer is told after the step, not before: a viewer that keeps one long view of several
+     * chapters would otherwise be pointed at the chapter it is leaving.
+     */
+    @Test
+    fun `stepping a chapter tells the session first and then the viewport`() {
+        val calls = mutableListOf<String>()
+        val engine = engine(FakeReaderProvider(calls))
+        engine.installViewport(FakeViewport(calls))
+
+        engine.nextChapter()
+
+        calls shouldBe listOf("session", "viewport")
+    }
+
+    @Test
+    fun `a step that did not move leaves the viewport where it is`() {
+        val calls = mutableListOf<String>()
+        val engine = engine(FakeReaderProvider(calls).apply { moves = false })
+        engine.installViewport(FakeViewport(calls))
+
+        engine.nextChapter()
+
+        calls shouldBe listOf("session")
+    }
+
+    @Test
+    fun `stepping back goes back`() {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+
+        engine.previousChapter()
+
+        provider.stepped shouldBe -1
+    }
+
+    @Test
+    fun `no viewport is installed to begin with`() {
+        engine().viewport.value shouldBe null
+    }
+
+    @Test
+    fun `installing puts the viewport in the slot`() {
+        val engine = engine()
+        val viewport = FakeViewport()
+
+        engine.installViewport(viewport)
+
+        engine.viewport.value shouldBeSameInstanceAs viewport
+    }
+
+    /**
+     * Losing this step leaks the whole previous view tree, and nothing fails loudly when it happens,
+     * which is why the engine owns it rather than the call site.
+     */
+    @Test
+    fun `replacing destroys the outgoing viewport`() {
+        val engine = engine()
+        val first = FakeViewport()
+        engine.installViewport(first)
+
+        engine.installViewport(FakeViewport())
+
+        first.destroyed shouldBe true
+    }
+
+    @Test
+    fun `destroying clears the slot as well as the viewport`() {
+        val engine = engine()
+        val installed = FakeViewport()
+        engine.installViewport(installed)
+
+        engine.destroyViewport()
+
+        installed.destroyed shouldBe true
+        engine.viewport.value shouldBe null
+    }
+
+    /**
+     * A novel session marks the renderer it reads aloud, and speech outlives the Activity, so the
+     * session has to let go before the view tree does. The host no longer asks which type that is.
+     */
+    @Test
+    fun `destroying the viewport lets the session let go of it first`() {
+        val calls = mutableListOf<String>()
+        val engine = engine(FakeReaderProvider(calls))
+        engine.installViewport(FakeViewport(calls))
+
+        engine.destroyViewport()
+
+        calls shouldBe listOf("detach", "destroy")
+    }
+
+    @Test
+    fun `replacing the viewport lets the session let go of the outgoing one first`() {
+        val calls = mutableListOf<String>()
+        val engine = engine(FakeReaderProvider(calls))
+        engine.installViewport(FakeViewport(calls))
+
+        engine.installViewport(FakeViewport())
+
+        calls shouldBe listOf("detach", "destroy")
+    }
+
+    // Auto-scroll. These drive the main scheduler by hand instead of through runTest: a stepped loop
+    // never goes idle, so runTest's closing drain would spin on one a test left running.
+
+    private fun running(engine: ReaderEngine, auto: ViewportAutoScroll): ReaderEngine {
+        engine.installViewport(FakeViewport(autoScroll = auto))
+        engine.toggleAutoScroll()
+        return engine
+    }
+
+    /** Runs the main scheduler [by] forward, including whatever falls due at that instant. */
+    private fun advance(by: Duration = Duration.ZERO) {
+        scheduler.advanceTimeBy(by)
+        scheduler.runCurrent()
+    }
+
+    @Test
+    fun `turns one interval after its page is ready`() {
+        val stepped = FakeStepped()
+        running(engine(), stepped.shape)
+
+        advance(5.seconds)
+
+        stepped.advances shouldBe 1
+    }
+
+    @Test
+    fun `a loading page does not count down`() {
+        val stepped = FakeStepped(ready = false)
+        running(engine(), stepped.shape)
+
+        advance(10.seconds)
+
+        stepped.advances shouldBe 0
+    }
+
+    /** Three seconds loading, then ready: the full interval runs from there. */
+    @Test
+    fun `the countdown starts when the page is ready`() {
+        val stepped = FakeStepped(ready = false)
+        running(engine(), stepped.shape)
+        advance(3.seconds)
+        stepped.shownPage.value = ShownPage("p1", ready = true)
+
+        advance(5.seconds)
+
+        stepped.advances shouldBe 1
+    }
+
+    @Test
+    fun `a new page restarts the countdown`() {
+        val stepped = FakeStepped()
+        running(engine(), stepped.shape)
+        advance(3.seconds)
+        stepped.shownPage.value = ShownPage("p2", ready = true)
+
+        advance(3.seconds)
+
+        stepped.advances shouldBe 0
+    }
+
+    /** A pan step on navigate-to-pan, or a failed turn, shows no new page, and it must still turn. */
+    @Test
+    fun `with no new page it keeps turning`() {
+        val stepped = FakeStepped()
+        running(engine(), stepped.shape)
+
+        advance(10.seconds)
+
+        stepped.advances shouldBe 2
+    }
+
+    @Test
+    fun `closing the menu restarts from full`() {
+        val stepped = FakeStepped()
+        val engine = running(engine(), stepped.shape)
+        advance(3.seconds)
+        engine.setMenuVisible(true)
+        advance(1.seconds)
+        engine.setMenuVisible(false)
+
+        advance(4.seconds)
+
+        stepped.advances shouldBe 0
+    }
+
+    @Test
+    fun `a finger down pauses and release resumes`() {
+        val continuous = FakeContinuous()
+        val engine = running(engine(), continuous.shape)
+        engine.setTouching(true)
+        advance()
+        val during = continuous.runs.lastOrNull()
+
+        engine.setTouching(false)
+        advance()
+
+        "$during ${continuous.runs.lastOrNull()}" shouldBe "0.0 2.0"
+    }
+
+    @Test
+    fun `a finger down restarts the stepped countdown`() {
+        val stepped = FakeStepped()
+        val engine = running(engine(), stepped.shape)
+        advance(3.seconds)
+        engine.setTouching(true)
+        engine.setTouching(false)
+
+        advance(3.seconds)
+
+        stepped.advances shouldBe 0
+    }
+
+    @Test
+    fun `off screen pauses and coming back resumes`() {
+        val stepped = FakeStepped()
+        val engine = running(engine(), stepped.shape)
+        engine.setOnScreen(false)
+        advance(10.seconds)
+        val during = stepped.advances
+
+        engine.setOnScreen(true)
+        advance(5.seconds)
+
+        "$during ${stepped.advances}" shouldBe "0 1"
+    }
+
+    @Test
+    fun `the long-press page sheet pauses and dismissing it resumes`() {
+        val stepped = FakeStepped()
+        val engine = running(engine(), stepped.shape)
+        engine.openDialog(ReaderDialog.PageActions(NoPageActions))
+        advance(10.seconds)
+        val during = stepped.advances
+
+        engine.dismissDialog()
+        advance(5.seconds)
+
+        "$during ${stepped.advances}" shouldBe "0 1"
+    }
+
+    /** The menu hides under some of them, so the dialog itself has to hold the scroll. */
+    @Test
+    fun `a dialog over the page pauses a continuous scroll and dismissing it resumes`() {
+        val continuous = FakeContinuous()
+        val engine = running(engine(), continuous.shape)
+        engine.openDialog(ReaderDialog.ChapterList)
+        advance()
+        val during = continuous.runs.lastOrNull()
+
+        engine.dismissDialog()
+        advance()
+
+        "$during ${continuous.runs.lastOrNull()}" shouldBe "0.0 2.0"
+    }
+
+    private object NoPageActions : ReaderPageActions {
+        override fun save() = Unit
+
+        override fun share(copyToClipboard: Boolean) = Unit
+
+        override fun setAsCover() = Unit
+    }
+
+    @Test
+    fun `read-aloud pauses and resumes when it ends`() {
+        val provider = FakeReaderProvider()
+        val readAloud = FakeReadAloud()
+        provider.readAloudSlot = readAloud
+        val continuous = FakeContinuous()
+        running(engine(provider), continuous.shape)
+        readAloud.play()
+        advance()
+        val during = continuous.runs.lastOrNull()
+
+        readAloud.state.value = ReaderReadAloudState(playback = TtsPlayback.Stopped)
+        advance()
+
+        "$during ${continuous.runs.lastOrNull()}" shouldBe "0.0 2.0"
+    }
+
+    /** A scrub no longer stops the scroll; it only holds a continuous one for a moment. */
+    @Test
+    fun `seeking leaves it running`() {
+        val engine = running(engine(), FakeStepped().shape)
+
+        engine.seek(ChapterProgress.Percent(hundredths = 5000))
+
+        engine.autoScrollRunning.value shouldBe true
+    }
+
+    @Test
+    fun `seeking holds a continuous scroll then resumes`() {
+        val continuous = FakeContinuous()
+        val engine = running(engine(), continuous.shape)
+        engine.seek(ChapterProgress.Percent(hundredths = 5000))
+        advance()
+        val held = continuous.runs.lastOrNull()
+
+        advance(ReaderEngine.SEEK_HOLD)
+
+        "$held ${continuous.runs.lastOrNull()}" shouldBe "0.0 2.0"
+    }
+
+    /** A paged scroll moves on to the page the scrub picked, which restarts its countdown anyway. */
+    @Test
+    fun `seeking does not hold a stepped scroll`() {
+        val stepped = FakeStepped()
+        val engine = running(engine(), stepped.shape)
+        advance(3.seconds)
+        engine.seek(ChapterProgress.Percent(hundredths = 5000))
+
+        advance(2.seconds)
+
+        stepped.advances shouldBe 1
+    }
+
+    @Test
+    fun `the setting starts it`() {
+        val provider = FakeReaderProvider()
+        provider.autoScrollOnOpen.set(true)
+
+        engine(provider).autoScrollRunning.value shouldBe true
+    }
+
+    /** Start-on-open is a Settings choice; the bar and the sheet only say whether it runs now. */
+    @Test
+    fun `toggling never writes the setting`() {
+        val provider = FakeReaderProvider()
+
+        engine(provider).toggleAutoScroll()
+
+        provider.autoScrollOnOpen.get() shouldBe false
+    }
+
+    @Test
+    fun `replacing the viewport stops the outgoing drive`() {
+        val outgoing = FakeContinuous()
+        val engine = running(engine(), outgoing.shape)
+        advance()
+
+        engine.installViewport(FakeViewport())
+        advance()
+
+        outgoing.runs.lastOrNull() shouldBe 0f
+    }
+
+    /** The manga shape again: an image has no words to bold, so the button is absent, not lit. */
+    @Test
+    fun `a session without bionic reading reports it off`() {
+        val engine = engine()
+
+        engine.bionicReading shouldBe null
+        engine.bionicReadingEnabled.value shouldBe false
+    }
+
+    @Test
+    fun `bionic reading follows the session that offers it`() {
+        val provider = FakeReaderProvider()
+        val bionic = FakeBionicReading()
+        provider.bionicReadingSlot = bionic
+        val engine = engine(provider)
+
+        bionic.toggle()
+
+        engine.bionicReadingEnabled.value shouldBe true
+    }
+
+    /** The novel shape, and the half the absent case cannot catch: the bar's button needs the toggle. */
+    @Test
+    fun `a session that offers bionic reading gets the button`() {
+        val provider = FakeReaderProvider()
+        val bionic = FakeBionicReading()
+        provider.bionicReadingSlot = bionic
+
+        engine(provider).bionicReading shouldBe bionic
+    }
+
+    /** The manga shape: nothing to read, so auto-scroll never pauses for speech. */
+    @Test
+    fun `a session without read-aloud reports it stopped`() {
+        val engine = engine()
+
+        engine.readAloud shouldBe null
+        engine.readAloudState.value shouldBe ReaderReadAloudState()
+    }
+
+    /** Eager, because the auto-scroll pause reads it with nothing composed. */
+    @Test
+    fun `read-aloud state follows the session that offers it`() {
+        val provider = FakeReaderProvider()
+        val readAloud = FakeReadAloud()
+        provider.readAloudSlot = readAloud
+        val engine = engine(provider)
+
+        readAloud.play()
+
+        engine.readAloudState.value.playback shouldBe TtsPlayback.Playing
+    }
+
+    /**
+     * The provider only starts the load, so without this the sheet moved the model and the app bar to
+     * the picked chapter while the viewer kept rendering whatever page it was already on.
+     */
+    @Test
+    fun `picking a chapter lands the viewport on it once the session holds it`() = runTest(scheduler) {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        val viewport = FakeViewport()
+        engine.installViewport(viewport)
+
+        engine.chapterList.open(7L)
+        advanceUntilIdle()
+
+        viewport.chapterOpens shouldBe 1
+    }
+
+    /** A chapter that never becomes current must not move the reader onto whatever is showing instead. */
+    @Test
+    fun `a pick the session never lands on moves nothing`() = runTest(scheduler) {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        val viewport = FakeViewport()
+        engine.installViewport(viewport)
+
+        engine.chapterList.open(FakeChapterList.NEVER_LOADS)
+        advanceUntilIdle()
+
+        viewport.chapterOpens shouldBe 0
+    }
+
+    /** A pick that failed is over: reaching that chapter later by a step must not land it like a pick. */
+    @Test
+    fun `a pick whose load failed does not land the chapter when it is reached later`() = runTest(scheduler) {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        val viewport = FakeViewport()
+        engine.installViewport(viewport)
+        engine.chapterList.open(FakeChapterList.NEVER_LOADS)
+        provider.loadState.value = ReaderLoadState.Loading
+        advanceUntilIdle()
+        provider.loadState.value =
+            ReaderLoadState.Failed("no connection", canKeepReading = true, chapterId = null, attempt = 1L)
+        advanceUntilIdle()
+
+        provider.chapterList.currentChapterId.value = FakeChapterList.NEVER_LOADS
+        advanceUntilIdle()
+
+        viewport.chapterOpens shouldBe 0
+    }
+
+    @Test
+    fun `a failure left from an earlier load does not end a new pick`() = runTest(scheduler) {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        val viewport = FakeViewport()
+        engine.installViewport(viewport)
+        provider.loadState.value =
+            ReaderLoadState.Failed("no connection", canKeepReading = true, chapterId = null, attempt = 1L)
+        engine.chapterList.open(FakeChapterList.NEVER_LOADS)
+        advanceUntilIdle()
+
+        provider.chapterList.currentChapterId.value = FakeChapterList.NEVER_LOADS
+        advanceUntilIdle()
+
+        viewport.chapterOpens shouldBe 1
+    }
+
+    /** Retrying a pick is a pick again, so the chapter lands where it resumes when it finally loads. */
+    @Test
+    fun `retrying a failed pick opens it again and lands it`() = runTest(scheduler) {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        val viewport = FakeViewport()
+        engine.installViewport(viewport)
+        engine.chapterList.open(FakeChapterList.NEVER_LOADS)
+        provider.loadState.value = ReaderLoadState.Loading
+        advanceUntilIdle()
+        provider.loadState.value =
+            ReaderLoadState.Failed("no connection", canKeepReading = true, chapterId = null, attempt = 1L)
+        advanceUntilIdle()
+
+        provider.chapterList.loadsAgain = true
+        provider.loadState.value = ReaderLoadState.Idle
+        engine.retryLoad()
+        advanceUntilIdle()
+
+        "${provider.chapterList.opened} ${viewport.chapterOpens} ${provider.retried}" shouldBe "[99, 99] 1 0"
+    }
+
+    /** Retry answers the failure on screen, and a load since the pick is what that failure is about. */
+    @Test
+    fun `a load failing after a failed pick retries that load, not the pick`() = runTest(scheduler) {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        engine.chapterList.open(FakeChapterList.NEVER_LOADS)
+        provider.loadState.value = ReaderLoadState.Loading
+        advanceUntilIdle()
+        provider.loadState.value =
+            ReaderLoadState.Failed("no connection", canKeepReading = true, chapterId = null, attempt = 1L)
+        advanceUntilIdle()
+        provider.loadState.value = ReaderLoadState.Loading
+        advanceUntilIdle()
+        provider.loadState.value =
+            ReaderLoadState.Failed("no connection", canKeepReading = true, chapterId = null, attempt = 2L)
+        advanceUntilIdle()
+
+        engine.retryLoad()
+        advanceUntilIdle()
+
+        "${provider.chapterList.opened} ${provider.retried}" shouldBe "[99] 1"
+    }
+
+    /**
+     * The state is conflated, so the Loading between an earlier failure and the pick's own can go
+     * unseen. The pick has to end on its failure all the same, or its Retry is not a pick.
+     */
+    @Test
+    fun `a pick failing the way the failure before it did still ends`() = runTest(scheduler) {
+        val provider = FakeReaderProvider()
+        val engine = engine(provider)
+        provider.loadState.value =
+            ReaderLoadState.Failed("no connection", canKeepReading = true, chapterId = null, attempt = 1L)
+        engine.chapterList.open(FakeChapterList.NEVER_LOADS)
+        advanceUntilIdle()
+        provider.loadState.value =
+            ReaderLoadState.Failed("no connection", canKeepReading = true, chapterId = null, attempt = 2L)
+        advanceUntilIdle()
+
+        engine.retryLoad()
+        advanceUntilIdle()
+
+        "${provider.chapterList.opened} ${provider.retried}" shouldBe "[99, 99] 0"
+    }
+
+    /** Finding the colour decodes the cover, which is wasted where nothing is tinted from it. */
+    @Test
+    fun `with cover theming off the cover is never asked for its colour`() = runTest(scheduler) {
+        val provider = FakeReaderProvider()
+
+        engine(provider, themeCoverBased = false).coverSeed(mockk()).first()
+
+        provider.seedAsked shouldBe false
+    }
+
+    @Test
+    fun `with cover theming on the chrome tints from the cover`() = runTest(scheduler) {
+        val provider = FakeReaderProvider()
+
+        engine(provider, themeCoverBased = true).coverSeed(mockk()).first() shouldBe COVER_SEED
+    }
+
+    /** The sheet's other verbs are the provider's own, so wrapping open must not swallow them. */
+    @Test
+    fun `the sheet's remaining verbs still reach the provider`() {
+        val provider = FakeReaderProvider()
+
+        engine(provider).chapterList.setRead(7L, read = true)
+
+        provider.chapterList.readMarks shouldBe listOf(7L to true)
+    }
+
+    /** A session with no auto-scroll still scrubs, rather than the engine reaching through a null. */
+    @Test
+    fun `scrubbing a session without auto-scroll still moves the viewport`() {
+        val engine = engine()
+        val viewport = FakeViewport()
+        engine.installViewport(viewport)
+
+        engine.seek(ChapterProgress.Percent(hundredths = 5000))
+
+        viewport.sought shouldBe ChapterProgress.Percent(hundredths = 5000)
+    }
+
+    companion object {
+        @JvmStatic
+        fun editedEntries(): List<Arguments> = listOf(
+            Arguments.of(EntryId.Manga(1L), CustomMangaInfo(mangaId = 1L, title = "Mine")),
+            Arguments.of(EntryId.Novel(1L), CustomNovelInfo(novelId = 1L, title = "Mine")),
+        )
+
+        @JvmStatic
+        fun sheets(): List<ReaderDialog> = listOf(
+            ReaderDialog.Settings,
+            ReaderDialog.ChapterList,
+            ReaderDialog.SleepTimerSelect(FakeReadAloud()),
+            ReaderDialog.BottomButtons(ReaderBottomButton.Scope.Novel),
+        )
+    }
+}
+
+private class FakeReadAloud : ReaderReadAloud {
+    override val state = MutableStateFlow(ReaderReadAloudState())
+
+    override fun play() {
+        state.value = state.value.copy(playback = TtsPlayback.Playing)
+    }
+
+    override fun pause() = Unit
+
+    override fun stop() = Unit
+
+    override fun readFromHere() = Unit
+
+    override fun previousParagraph() = Unit
+
+    override fun nextParagraph() = Unit
+
+    override fun toggleControls() = Unit
+
+    override fun setSleepTimer(minutes: Int) = Unit
+
+    override fun setSleepTimerEndOfChapter() = Unit
+
+    override fun clearSleepTimer() = Unit
+
+    override fun minutesLeft(timer: SleepTimer.At) = 0
+}
+
+private class FakeBionicReading : ReaderBionicReading {
+    override val enabled = MutableStateFlow(false)
+
+    override fun toggle() {
+        enabled.value = !enabled.value
+    }
+}
+
+/** A paged viewport: a 5-second interval, one page on screen, counting its turns. */
+private class FakeStepped(ready: Boolean = true) {
+    val shownPage = MutableStateFlow(ShownPage("p1", ready))
+
+    var advances = 0
+        private set
+
+    val shape = ViewportAutoScroll.Stepped(EmittingPreferenceStore().getInt("interval", 5), shownPage) {
+        advances++
+    }
+}
+
+/** A continuous viewport at speed 2, recording every speed it was run at. */
+private class FakeContinuous {
+    val runs = mutableListOf<Float>()
+
+    val shape = ViewportAutoScroll.Continuous(EmittingPreferenceStore().getFloat("speed", 2f)) { runs += it }
+}
+
+/** The colour the fake's cover answers with, so a test can tell it from the off case's null. */
+private const val COVER_SEED = 0xFF123456.toInt()
+
+/**
+ * The engine only ever holds the provider for the host to build through, and no test here builds a
+ * viewport, so this never has to answer. Building is the half that needs a real Activity.
+ */
+private class FakeReaderProvider(
+    /** Shared with [FakeViewport] so the order the engine did the two in is readable, which counting
+     *  each side separately cannot show. */
+    private val calls: MutableList<String> = mutableListOf(),
+) : ReaderProvider {
+    override val chrome = MutableStateFlow(ReaderChromeState())
+
+    override val bottomButtons = MutableStateFlow(emptyList<ReaderBottomButton>())
+
+    override val displayFilters = MangaReaderProvider(
+        mockk(relaxed = true),
+        ReaderPreferences(InMemoryPreferenceStore()),
+        mockk(relaxed = true),
+        EnglishChapterTitleWords,
+    ).displayFilters
+
+    override val fullscreen = ReaderPreferences(InMemoryPreferenceStore()).fullscreen
+
+    override val drawUnderCutout = ReaderPreferences(InMemoryPreferenceStore()).drawUnderCutout
+
+    override fun onReaderMoved() = Unit
+
+    override fun flushPosition() = Unit
+
+    override fun detailsIntent(context: Context): Intent? = null
+
+    override suspend fun chapterWebViewIntent(context: Context, url: String, title: String?, chapterId: Long): Intent =
+        Intent()
+
+    val chapterPages = mutableMapOf<Long, String>()
+
+    override suspend fun chapterWebUrl(chapterId: Long): String? = chapterPages[chapterId]
+
+    override val orientation = MutableStateFlow(0)
+
+    override val resolvedOrientation = MutableStateFlow(0)
+
+    override val keepScreenOn = MutableStateFlow(false)
+
+    override val textSettings: ReaderTextSettings? = null
+
+    // One instance, since the in-memory store hands out a fresh unwritten one per read.
+    override val autoScrollOnOpen = InMemoryPreference("auto_scroll_on_open", null, false)
+
+    var bionicReadingSlot: ReaderBionicReading? = null
+
+    override val bionicReading: ReaderBionicReading? get() = bionicReadingSlot
+
+    var readAloudSlot: ReaderReadAloud? = null
+
+    override val readAloud: ReaderReadAloud? get() = readAloudSlot
+
+    var seedAsked = false
+        private set
+
+    override fun seedColor(context: Context): Flow<Int?> {
+        seedAsked = true
+        return flowOf(COVER_SEED)
+    }
+
+    override fun pageBackground(context: Context): Flow<Int> = flowOf(0)
+
+    override val bottomButtonScope = ReaderBottomButton.Scope.Manga
+
+    override val navigator = MutableStateFlow(ReaderNavigatorState())
+
+    override val showProgress = MutableStateFlow(false)
+
+    override val loadState = MutableStateFlow<ReaderLoadState>(ReaderLoadState.Idle)
+
+    override fun reloadChapter(fromSource: Boolean) = Unit
+
+    override fun retryLoad() {
+        retried++
+    }
+
+    override fun saveHistory() = Unit
+
+    override fun restartReadTimer() = Unit
+
+    override fun onActivityFinish() = Unit
+
+    var retried = 0
+        private set
+
+    override val bookmarked = MutableStateFlow(false)
+
+    override val webUrl = MutableStateFlow<String?>(null)
+
+    override fun toggleBookmark() {
+        bookmarked.value = !bookmarked.value
+    }
+
+    override fun setOrientation(flagValue: Int) {
+        orientation.value = flagValue
+    }
+
+    var stepped = 0
+        private set
+
+    /** Whether a step lands; false is a step with no neighbour or a load that failed. */
+    var moves = true
+
+    override suspend fun previousChapter(): Boolean {
+        stepped--
+        calls += "session"
+        return moves
+    }
+
+    override suspend fun nextChapter(): Boolean {
+        stepped++
+        calls += "session"
+        return moves
+    }
+
+    override fun setKeepScreenOn(enabled: Boolean) {
+        keepScreenOn.value = enabled
+    }
+
+    override val chapterList = FakeChapterList()
+
+    override fun createViewport(host: ReaderActivity): ReaderViewport =
+        error("a unit test never builds a viewport")
+
+    override fun attach(host: ReaderActivity) = error("a unit test never attaches a host")
+
+    override fun detach(viewport: ReaderViewport) {
+        calls += "detach"
+    }
+}
+
+/** Opening reports the chapter as current, the way a load that finished would. */
+private class FakeChapterList : ReaderChapterList {
+    override val rows = MutableStateFlow(emptyList<ReaderChapterRow>())
+
+    override val currentChapterId = MutableStateFlow(-1L)
+
+    override val undatedChapterDate = UndatedChapterDate.Blank
+
+    val readMarks = mutableListOf<Pair<Long, Boolean>>()
+
+    val opened = mutableListOf<Long>()
+
+    /** Set once a retry should succeed, standing in for a connection that came back. */
+    var loadsAgain = false
+
+    override fun open(chapterId: Long) {
+        opened += chapterId
+        if (chapterId != NEVER_LOADS || loadsAgain) currentChapterId.value = chapterId
+    }
+
+    override fun setRead(chapterId: Long, read: Boolean) {
+        readMarks += chapterId to read
+    }
+
+    override fun setBookmark(chapterId: Long, bookmarked: Boolean) = Unit
+
+    override fun download(chapterId: Long, action: ChapterDownloadAction) = Unit
+
+    companion object {
+        /** The id whose load never finishes, standing in for a chapter that failed to open. */
+        const val NEVER_LOADS = 99L
+    }
+}
+
+private class FakeViewport(
+    private val calls: MutableList<String> = mutableListOf(),
+    override val autoScroll: ViewportAutoScroll =
+        ViewportAutoScroll.Continuous(EmittingPreferenceStore().getFloat("speed", 0f)) {},
+) : ReaderViewport {
+    var sought: ChapterProgress? = null
+        private set
+
+    var destroyed = false
+        private set
+
+    override val view: View get() = error("no view in a unit test")
+
+    override val isRtl = false
+
+    override fun destroy() {
+        destroyed = true
+        calls += "destroy"
+    }
+
+    override fun handleKeyEvent(event: KeyEvent) = false
+
+    override fun handleGenericMotionEvent(event: MotionEvent) = false
+
+    override fun onChapterStepped() {
+        calls += "viewport"
+    }
+
+    var chapterOpens = 0
+        private set
+
+    override fun onChapterOpened() {
+        chapterOpens++
+    }
+
+    override fun seekTo(progress: ChapterProgress) {
+        sought = progress
+    }
+}
+
+private class RecordingPageActions : ReaderPageActions {
+    var shared = false
+        private set
+
+    override fun save() = Unit
+
+    override fun share(copyToClipboard: Boolean) {
+        shared = true
+    }
+
+    override fun setAsCover() = Unit
+}

@@ -1,14 +1,13 @@
 package reikai.domain.track
 
 import eu.kanade.tachiyomi.data.track.Tracker
-import io.kotest.matchers.shouldBe
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import eu.kanade.tachiyomi.data.database.models.Track as DbTrack
 
-/** MangaTrackWriter forwards each write straight to the tracker (BaseTracker persists to manga_sync). */
+/** MangaTrackWriter forwards each write straight to the tracker (BaseTracker persists to manga_track). */
 class MangaTrackWriterTest {
 
     private val track = mockk<DbTrack>()
@@ -48,10 +47,5 @@ class MangaTrackWriterTest {
     fun `setRemotePrivate forwards to the tracker`() = runTest {
         MangaTrackWriter.setRemotePrivate(tracker, track, true)
         coVerify { tracker.setRemotePrivate(track, true) }
-    }
-
-    @Test
-    fun `trackWriterFor picks the manga writer for manga`() {
-        trackWriterFor(isNovel = false) shouldBe MangaTrackWriter
     }
 }

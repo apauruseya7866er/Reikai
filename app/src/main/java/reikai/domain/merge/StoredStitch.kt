@@ -1,0 +1,263 @@
+package reikai.domain.merge
+
+/**
+ * Renders a merge group's stored stitch: one chapter per merged chapter, in the stitch's order, taking
+ * the highest-ranked copy that survived the caller's own filters. Every surface showing a grouped
+ * series goes through here, so none can reach a different answer than the library badge.
+ *
+ * [chapters] is what the caller can show, already filtered; a merged chapter whose every copy was
+ * filtered away drops out. An empty [stitch] means nothing to merge, so the list is its own.
+ */
+fun <T> renderStoredStitch(chapters: List<T>, stitch: List<ChapterUnit>, id: (T) -> Long): List<T> {
+    if (stitch.isEmpty()) return chapters
+    val available = chapters.associateBy(id)
+    return stitch.asSequence()
+        .filter { it.chapterId in available }
+        .bestCopyByUnit()
+        .toSortedMap()
+        .values
+        .mapNotNull(available::get)
+}
+
+/** Each merged chapter's highest-ranked copy among these, by unit: the one rule for which copy stands
+ *  for the others, whether the list renders it, the reader opens it, an update announces it or a
+ *  download fetches it in place of a copy whose source is gone. */
+private fun Sequence<ChapterUnit>.bestCopyByUnit(): Map<Int, Long> =
+    groupBy { it.unit }.mapValues { (_, copies) -> copies.minBy { it.copyOrder }.chapterId }
+
+/**
+ * [renderStoredStitch] as a reading order: a grouped list takes its merged positions as source order,
+ * so a "by source order" sort reads it top to bottom. An ungrouped list keeps its own.
+ */
+fun <T> renderMergedReadingOrder(
+    chapters: List<T>,
+    stitch: List<ChapterUnit>,
+    id: (T) -> Long,
+    restamp: (T, Long) -> T,
+): List<T> = if (stitch.isEmpty()) chapters else stampedReadingOrder(renderStoredStitch(chapters, stitch, id), restamp)
+
+/**
+ * Chapters of [shown] whose own row does not carry [flag] but whose copy on another source of the
+ * group does. A merged chapter appears once, so without this it reads as unflagged purely because the
+ * copy the stitch ranked first happens to be the one without it. [chapters] is every member's
+ * chapters, which is where the other copies live. Read, bookmark and downloaded all resolve here, so
+ * the three cannot drift into three rules.
+ */
+fun <T> flaggedOnAnotherSource(
+    chapters: List<T>,
+    shown: List<T>,
+    stitch: List<ChapterUnit>,
+    id: (T) -> Long,
+    flag: (T) -> Boolean,
+): Set<Long> {
+    if (stitch.isEmpty()) return emptySet()
+    val flaggedIds = chapters.asSequence().filter(flag).mapTo(HashSet(), id)
+    if (flaggedIds.isEmpty()) return emptySet()
+    val flaggedUnits = stitch.asSequence().filter { it.chapterId in flaggedIds }.mapTo(HashSet()) { it.unit }
+    if (flaggedUnits.isEmpty()) return emptySet()
+    val unitByChapterId = stitch.associate { it.chapterId to it.unit }
+    return shown.asSequence()
+        .filter { !flag(it) && unitByChapterId[id(it)] in flaggedUnits }
+        .mapTo(HashSet(), id)
+}
+
+/**
+ * Which of a merged chapter's copies a surface may act on. Group scope (the All list, the library,
+ * History) reaches every source's copy; source scope (a source chip, Updates) only the row's own, since
+ * a source-scoped reader never swaps to a sibling's copy. The one owner of that rule, so showing,
+ * opening and deleting a download cannot disagree about which copies count.
+ */
+enum class MergeScope {
+    Group,
+    Source,
+    ;
+
+    /** The stitch as this scope sees it: none of it in source scope, where each row stands alone. */
+    fun copiesIn(stitch: List<ChapterUnit>): List<ChapterUnit> = if (this == Group) stitch else emptyList()
+
+    /** [chapterIds] plus every copy of them this scope reaches: what a delete removes and a row probes. */
+    fun copiesOf(chapterIds: Set<Long>, stitch: List<ChapterUnit>): Set<Long> =
+        expandToUnits(chapterIds, copiesIn(stitch))
+
+    companion object {
+        fun of(sourceScoped: Boolean): MergeScope = if (sourceScoped) Source else Group
+    }
+}
+
+/**
+ * The copy of a merged chapter a reader opens: the one asked for when it is on disk, else the
+ * highest-ranked copy on disk that [scope] reaches, else the copy a download of it fetches ([fetched]),
+ * so a chapter shown from a source that is gone reads an installed source's copy. A row is downloaded
+ * ([isOnDisk]) exactly when the copy it opens is. [chapters] is every member's chapters the caller may
+ * show; a copy outside it is never picked. [fetched] defaults to each row's own, for a caller asking
+ * only about disk.
+ */
+class CopyToOpen<T>(
+    scope: MergeScope,
+    chapters: List<T>,
+    stitch: List<ChapterUnit>,
+    private val id: (T) -> Long,
+    private val onDisk: Set<Long>,
+    private val fetched: DownloadTargets = DownloadTargets.OWN,
+) {
+    private val byId = chapters.associateBy(id)
+    private val unitOf = scope.copiesIn(stitch).associate { it.chapterId to it.unit }
+    private val bestOnDisk = scope.copiesIn(stitch).asSequence()
+        .filter { it.chapterId in onDisk && it.chapterId in byId }
+        .bestCopyByUnit()
+
+    fun idOf(chapterId: Long): Long = if (chapterId in onDisk) {
+        chapterId
+    } else {
+        unitOf[chapterId]?.let(bestOnDisk::get)
+            ?: fetched.idOf(chapterId)?.takeIf { it in byId }
+            ?: chapterId
+    }
+
+    fun isOnDisk(chapterId: Long): Boolean = idOf(chapterId) in onDisk
+
+    /** [shown] with each row swapped for the copy it opens, put in the row's place by [keepPlace]. */
+    fun inPlaceOf(shown: List<T>, keepPlace: (copy: T, row: T) -> T): List<T> = shown.map { row ->
+        val copyId = idOf(id(row))
+        if (copyId == id(row)) row else keepPlace(byId.getValue(copyId), row)
+    }
+}
+
+/**
+ * The copy a download of each row fetches, as plain ids so a screen state can carry it: the row's own
+ * while its source is installed, else the highest-ranked copy of it on an installed source that the
+ * scope reaches, else none. The row shown stays the stitch's; [CopyToOpen] opens this copy when no copy
+ * is on disk.
+ */
+data class DownloadTargets(
+    private val moved: Map<Long, Long> = emptyMap(),
+    private val unavailable: Set<Long> = emptySet(),
+) {
+    /** The copy a download of [chapterId] fetches, or null when no installed source holds it. */
+    fun idOf(chapterId: Long): Long? = if (chapterId in unavailable) null else moved[chapterId] ?: chapterId
+
+    /** [chapterId]'s own queue entry, else that of the copy its download fetches: what its row shows
+     *  and a cancel reaches. */
+    fun <D : Any> queuedFor(chapterId: Long, queued: (Long) -> D?): D? =
+        queued(chapterId) ?: idOf(chapterId)?.let(queued)
+
+    /** [rows] as the copies a download fetches, once each; [load] returns the given ids' chapters. */
+    suspend fun <T> of(rows: List<T>, id: (T) -> Long, load: suspend (Set<Long>) -> List<T>): List<T> {
+        val missing = rows.mapNotNullTo(HashSet()) { idOf(id(it)) } - rows.mapTo(HashSet(), id)
+        return of(rows, if (missing.isEmpty()) rows else rows + load(missing), id)
+    }
+
+    /** [rows] as the copies a download fetches, once each, picked out of [copies]. */
+    fun <T> of(rows: List<T>, copies: List<T>, id: (T) -> Long): List<T> {
+        val byId = copies.associateBy(id)
+        return rows.mapNotNull { idOf(id(it)) }.distinct().mapNotNull(byId::get)
+    }
+
+    companion object {
+        /** Every row fetches its own copy: a view with nothing to move to. */
+        val OWN = DownloadTargets()
+
+        /** The targets of [shown]'s rows, from [pooled], every member's chapters, under [stitch]. */
+        fun <T> of(
+            scope: MergeScope,
+            pooled: List<T>,
+            shown: List<T>,
+            stitch: List<ChapterUnit>,
+            id: (T) -> Long,
+            isInstalled: (T) -> Boolean,
+        ): DownloadTargets {
+            val installed = pooled.asSequence().filter(isInstalled).mapTo(HashSet(), id)
+            val copies = scope.copiesIn(stitch)
+            val unitOf = copies.associate { it.chapterId to it.unit }
+            val bestInstalled = copies.asSequence().filter { it.chapterId in installed }.bestCopyByUnit()
+            val moved = HashMap<Long, Long>()
+            val unavailable = HashSet<Long>()
+            shown.asSequence().map(id).filterNot { it in installed }.forEach { rowId ->
+                val copy = unitOf[rowId]?.let(bestInstalled::get)
+                if (copy == null) unavailable += rowId else moved[rowId] = copy
+            }
+            return DownloadTargets(moved, unavailable)
+        }
+    }
+}
+
+/** Which merged chapter a copy belongs to, for a caller deduplicating a list of its own. */
+data class MergedChapterKey(val groupId: Long, val unit: Int)
+
+/**
+ * What an update run should count and announce, and what it needs to deduplicate anything else it
+ * gathered. [announced] is one chapter per merged chapter: an entry in no group keeps all of its own,
+ * and within a group a chapter is news only if the group did not already have that merged chapter,
+ * the stitch's first-ranked copy standing for the ones arriving together.
+ */
+class CollapsedArrivals(val announced: Set<Long>, val keyOf: Map<Long, MergedChapterKey>) {
+    /** [chapterId]'s merged chapter, or the id itself where the stitch places it alone. Deduplicating
+     *  a list on this keeps one copy per merged chapter without deciding which. */
+    fun dedupeKey(chapterId: Long): Any = keyOf[chapterId] ?: chapterId
+}
+
+/**
+ * The arrivals of an update run, collapsed per merge group. [stitches] must be current, so run the
+ * reconciliation first: a group with no stitch keeps every chapter, which is what "not stitched yet"
+ * has to mean rather than "nothing arrived". A chapter the stitch places nowhere is kept too: it is
+ * still a row the Updates feed lists, and dropping it would announce fewer chapters than that feed.
+ */
+fun <T> collapseNewChapters(
+    newByEntry: Map<Long, List<T>>,
+    groupOf: Map<Long, Long>,
+    stitches: Map<Long, List<ChapterUnit>>,
+    id: (T) -> Long,
+): CollapsedArrivals {
+    val announced = HashSet<Long>()
+    val keyOf = HashMap<Long, MergedChapterKey>()
+    val pooled = HashMap<Long, MutableList<T>>()
+    newByEntry.forEach { (entryId, chapters) ->
+        val groupId = groupOf[entryId]
+        if (groupId == null) {
+            chapters.mapTo(announced, id)
+        } else {
+            pooled.getOrPut(groupId) { mutableListOf() } += chapters
+        }
+    }
+    pooled.forEach { (groupId, chapters) ->
+        val stitch = stitches[groupId].orEmpty()
+        if (stitch.isEmpty()) {
+            chapters.mapTo(announced, id)
+            return@forEach
+        }
+        val arrived = chapters.mapTo(HashSet(), id)
+        stitch.forEach { if (it.chapterId in arrived) keyOf[it.chapterId] = MergedChapterKey(groupId, it.unit) }
+        val alreadyHad = stitch.asSequence().filter { it.chapterId !in arrived }.mapTo(HashSet()) { it.unit }
+        arrived.filterTo(announced) { it !in keyOf }
+        announced += stitch.asSequence()
+            .filter { it.chapterId in arrived && it.unit !in alreadyHad }
+            .bestCopyByUnit()
+            .values
+    }
+    return CollapsedArrivals(announced, keyOf)
+}
+
+/** [collapseNewChapters] reading the stitch of only the groups that gained chapters, so a library with
+ *  no merged entry among them reads none. [memberships] is entry id to group id. */
+suspend fun <T> collapseNewChapters(
+    newByEntry: Map<Long, List<T>>,
+    memberships: Map<Long, Long>,
+    stitchOf: suspend (groupId: Long) -> List<ChapterUnit>,
+    id: (T) -> Long,
+): CollapsedArrivals {
+    val groupOf = memberships.filterKeys { it in newByEntry }
+    val stitches = groupOf.values.distinct().associateWith { stitchOf(it) }
+    return collapseNewChapters(newByEntry, groupOf, stitches, id)
+}
+
+/**
+ * Every chapter that is the same merged chapter as one of [chapterIds], the given ones included. What
+ * an action taken on the merged list has to reach, so marking a chapter read marks the group's copies
+ * of it and not a chapter a few along that happens to share a number.
+ */
+fun expandToUnits(chapterIds: Set<Long>, stitch: List<ChapterUnit>): Set<Long> {
+    if (stitch.isEmpty()) return chapterIds
+    val units = stitch.asSequence().filter { it.chapterId in chapterIds }.mapTo(HashSet()) { it.unit }
+    if (units.isEmpty()) return chapterIds
+    return stitch.asSequence().filter { it.unit in units }.mapTo(HashSet(chapterIds)) { it.chapterId }
+}

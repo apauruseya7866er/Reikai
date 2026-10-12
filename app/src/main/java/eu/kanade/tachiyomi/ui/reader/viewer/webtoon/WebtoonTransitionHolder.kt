@@ -31,7 +31,7 @@ class WebtoonTransitionHolder(
     private val scope = MainScope()
     private var stateJob: Job? = null
 
-    private val transitionView = ReaderTransitionView(context, seedColor = viewer.seedColor) // RK: Y11
+    private val transitionView = ReaderTransitionView(context, seedColor = viewer.seedColor) // RK: cover-based theming
 
     /**
      * View container of the current status of the transition page. Child views will be added
@@ -135,7 +135,7 @@ class WebtoonTransitionHolder(
             setOnClickListener {
                 val toChapter = transition.to
                 if (toChapter != null) {
-                    viewer.activity.requestPreloadChapter(toChapter)
+                    viewer.activity.requestPreloadChapter(toChapter, userAsked = true) // RK
                 }
             }
         }

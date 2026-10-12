@@ -39,6 +39,12 @@ clean=$(fixture clean.md 'Nothing to see here.\n')
 echo "source-names"
 check "catches a content source"       1 bash "$lint" source-names "$(fixture names.md 'A line about nhentai.\n')" DOC
 check "passes clean prose"             0 bash "$lint" source-names "$clean" DOC
+check "passes a tracker named after a site" 0 bash "$lint" source-names "$(fixture tracker.md 'Track manga with the Comick tracker.
+')" DOC
+check "catches the site behind that tracker" 1 bash "$lint" source-names "$(fixture site.md 'Read it on Comick.
+')" DOC
+check "catches the site beside its tracker" 1 bash "$lint" source-names "$(fixture both.md 'The Comick tracker, or Comick itself.
+')" DOC
 
 echo "changelog-entries"
 check "catches a missing headline"     1 bash "$lint" changelog-entries "$(fixture bad.md '## [Unreleased]\n\n### Fixes\n\n- No bold headline here.\n')"
@@ -57,13 +63,93 @@ codename() { printf '%b' "$1" | bash "$lint" codenames --stdin; }
 check "catches a phase marker"         1 codename '+// Phase 3 of the port\n'
 check "catches a roadmap number"       1 codename '// see Roadmap 9\n'
 check "catches one in a .sqm comment"  1 codename '-- overlay (P6). detail\n'
-check "spares R8, the code shrinker"   0 codename '// R8 strips the signature\n'
+check "catches a stage marker"         1 codename ' * wired in the settings sheet (Stage 4).\n'
+check "spares a colon-led stage"       0 codename '// Stage 2: decode the page\n'
+check "catches a two-digit Y marker"   1 codename '// RK x (Y11)\n'
+check "catches a two-digit R marker"   1 codename '// see R12 here\n'
+check "catches an R-feature tag"       1 codename ' * Reikai (R-feature): a chapter row\n'
+check "catches a Y-feature tag"        1 codename '// RK: resume position (Y-feature)\n'
+check "spares R8, the code shrinker"  0 codename '// R8 strips the signature\n'
+check "spares Y2K"                     0 codename '// the Y2K icon set\n'
+check "spares M3, Material 3"          0 codename '// M3 surface colour\n'
 check "spares a colon-led step"        0 codename '// Step 1: read the file\n'
 check "passes an ordinary comment"     0 codename '// nothing to flag here\n'
+
+echo "twin-pins"
+twin() { printf '%b' "+++ b/app/src/main/java/reikai/X.kt\n@@ -1,0 +1,4 @@\n$1" | bash "$lint" twin-pins --stdin; }
+check "catches an unpinned twin marker"   1 twin '+// twin of MangaFoo.bar\n+fun bar() = 1\n'
+check "catches a mirrors marker"          1 twin '+    /** Mirrors the manga rule for novels. */\n'
+check "catches a marker split over lines" 1 twin '+// Mirrors the\n+// novel side.\n'
+check "catches as manga does"             1 twin '+val x = 1 // sorts as manga does\n'
+check "a pin past a code line is too far" 1 twin '+// twin of MangaFoo.bar\n+fun bar() = 1\n+// pinned by FooTest\n'
+check "passes a pinned twin"              0 twin '+// twin of MangaFoo.bar, pinned by FooConformanceTest\n'
+check "passes a pin on the next line"     0 twin '+ * Twin of MangaFoo.bar,\n+ * pinned by [resolveFoo].\n'
+check "passes a type-only twin"           0 twin '+// twin of MangaRow, type only\n'
+check "passes an explicit no pin"         0 twin '+// twin of MangaFoo, no pin: the engines differ in X\n'
+check "ignores a removed marker"          0 twin '-// twin of MangaFoo.bar\n+fun bar() = 1\n'
+check "ignores a context-line marker"     0 twin ' // twin of MangaFoo.bar\n+fun bar() = 1\n'
+check "passes an ordinary comment"        0 twin '+// the twin rows render side by side\n'
+check "tree mode reports without failing" 0 bash "$lint" twin-pins --tree
+# The hook feeds -U0, so a block whose pin sits on an unchanged line arrives without it; the staged
+# file supplies the rest of the block.
+staged="$work/staged" && mkdir -p "$staged/src" && git -C "$staged" init -q
+printf '// Twin of Foo.bar, kept in lockstep\n// pinned by FooConformanceTest.\nfun bar() = 1\n// Twin of Foo.baz, kept in lockstep\n// with the manga side.\n' > "$staged/src/X.kt"
+git -C "$staged" add src/X.kt
+lint_abs="$(cd "$(dirname "$lint")" && pwd)/lint-docs.sh"
+staged_twin() { (cd "$staged" && printf '%b' "+++ b/src/X.kt\n@@ $1 @@\n$2" | bash "$lint_abs" twin-pins --stdin); }
+check "passes a pin on an unchanged line" 0 staged_twin '-1 +1' '+// Twin of Foo.bar, kept in lockstep\n'
+check "still catches an unpinned block"   1 staged_twin '-4 +4' '+// Twin of Foo.baz, kept in lockstep\n'
 
 echo "manifest-rows"
 check "catches a resurrected file"     1 bash "$lint" manifest-rows "$(fixture man.md '| app/src/main/java/eu/kanade/tachiyomi/App.kt | mihon | nowhere/Absent.kt |\n')"
 check "catches a manifest with no rows" 1 bash "$lint" manifest-rows "$(fixture man2.md 'no rows at all\n')"
+
+echo "key-files"
+check "catches a missing Key files path" 1 bash "$lint" key-files "$(fixture kf1.md '## Key files\n\n- `app/src/main/java/reikai/NoSuchFile.kt`: gone.\n')"
+check "catches a dead Key files link"    1 bash "$lint" key-files "$(fixture kf2.md '## Key files\n\n- [NoSuchFile.kt](../nowhere/NoSuchFile.kt)\n')"
+check "passes live paths and names"      0 bash "$lint" key-files "$(fixture kf3.md '## Key files\n\n- `scripts/lint-docs.sh`, `LibraryViewModel.kt` (`applyGrouping`), `reikai/domain/entry/EntryId`.\n\n## Status\n\n- `app/src/main/java/reikai/NoSuchFile.kt` sits outside the section.\n')"
+check "skips a line recording a deletion" 0 bash "$lint" key-files "$(fixture kf4.md '## Key files\n\n- Deleted and manifested: `app/src/main/java/reikai/NoSuchFile.kt`.\n')"
+
+echo "kdoc-links"
+kdoc() { printf '%b' "+++ b/${2:-app/src/main/java/reikai/X.kt}\n@@ -1,0 +1,4 @@\n$1" | bash "$lint" kdoc-links --stdin; }
+check "catches a link to no symbol"       1 kdoc '+/** Hands off to [NoSuchSymbolAnywhereXyz]. */\n'
+check "catches a dotted link's last part" 1 kdoc '+// see [LibraryViewModel.noSuchMemberXyz]\n'
+check "passes a live symbol"              0 kdoc '+/** Resolved by [LibraryViewModel]. */\n'
+check "passes a qualified live member"    0 kdoc '+// see [reikai.presentation.library.GallerySearchIndex.matches]\n'
+check "passes a symbol the diff declares" 0 kdoc '+/** See [brandNewThingXyz]. */\n+fun brandNewThingXyz() = 1\n'
+check "passes a parameter name"           0 kdoc '+/** Scales [factorXyzParam]. */\n+fun scale(factorXyzParam: Int) = 1\n'
+check "skips a markdown link"             0 kdoc '+// [NoSuchLinkTextXyz](https://example.com)\n'
+check "skips the label of a label pair"   0 kdoc '+// the [NoSuchLabelXyz][LibraryViewModel]\n'
+check "catches a dead symbol after one"   1 kdoc '+// the [LibraryViewModel][NoSuchSymbolAnywhereXyz]\n'
+check "skips an index in quoted code"     0 kdoc '+// reads rows[noSuchIndexXyz]\n'
+check "ignores a code line"               0 kdoc '+val a = b[noSuchIndexXyz]\n'
+check "ignores a file outside the scope"  0 kdoc '+// [NoSuchSymbolAnywhereXyz]\n' 'presentation-core/src/main/java/X.kt'
+check "ignores a removed line"            0 kdoc '-// [NoSuchSymbolAnywhereXyz]\n'
+check "tree mode reports without failing" 0 bash "$lint" kdoc-links --tree
+
+echo "history-words"
+# A warning, so the assertion is on what it prints, not on its exit code.
+history() { printf '%b' "+++ b/$1\n@@ -1,0 +1,2 @@\n$2" | bash "$lint" history-words | grep -q '^history-words'; }
+check "warns on used to be"               0 history app/src/main/java/reikai/X.kt '+// this used to be a list\n'
+check "warns on an owner ruling"          0 history app/src/main/java/exh/X.kt '+ * per the owner ruling on sorting\n'
+check "warns on an RK line in Mihon code" 0 history app/src/main/java/eu/kanade/X.kt '+// RK: previously a flow (owner, today)\n'
+check "passes Mihon prose without RK"     1 history app/src/main/java/eu/kanade/X.kt '+// previously cached\n'
+check "passes a plain Reikai comment"     1 history app/src/main/java/reikai/X.kt '+// sorts by date\n'
+check "passes the words in code"          1 history app/src/main/java/reikai/X.kt '+val previously = 1\n'
+check "never fails the commit"            0 bash -c "printf '+++ b/app/src/main/java/reikai/X.kt\n@@ -1,0 +1,1 @@\n+// used to be\n' | bash '$lint' history-words"
+
+echo "subsystem-docs"
+check "catches a date"                    1 bash "$lint" subsystem-docs "$(fixture ss1.md 'Measured on 2026-10-09.\n')"
+check "catches a backticked commit SHA"   1 bash "$lint" subsystem-docs "$(fixture ss2.md 'Landed in `ab7ee00c4`.\n')"
+check "catches a plan step"               1 bash "$lint" subsystem-docs "$(fixture ss3.md 'Built in Step 3.\n')"
+check "catches an audit round"            1 bash "$lint" subsystem-docs "$(fixture ss4.md 'Found in round two.\n')"
+check "catches a phase"                   1 bash "$lint" subsystem-docs "$(fixture ss5.md 'Ported in phase 2.\n')"
+check "catches an owner attribution"      1 bash "$lint" subsystem-docs "$(fixture ss6.md 'Kept (owner, ruling 3).\n')"
+check "catches a Status heading"          1 bash "$lint" subsystem-docs "$(fixture ss7.md '# Reader\n\n## Status\n\nDone.\n')"
+printf 'line\n%.0s' $(seq 301) > "$work/ss8.md"
+check "catches a page past the cap"       1 bash "$lint" subsystem-docs "$work/ss8.md"
+check "passes a timeless page"            0 bash "$lint" subsystem-docs "$(fixture ss9.md '# Reader\n\nThe engine owns `ReaderViewModel` and pages through `abcdef`.\n')"
+check "tree mode passes absent or clean"  0 bash "$lint" subsystem-docs
 
 for f in "$work"/*.md; do rm -f "$f"; done
 rmdir "$work" 2> /dev/null || true

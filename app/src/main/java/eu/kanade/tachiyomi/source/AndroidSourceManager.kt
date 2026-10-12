@@ -1,6 +1,10 @@
 package eu.kanade.tachiyomi.source
 
 import android.content.Context
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesBinding
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -24,24 +28,19 @@ import exh.source.ExhPreferences
 import exh.source.NHENTAI_NET_SOURCE_ID
 import exh.source.PURURIN_SOURCE_ID
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import mihon.core.metro.AppCoroutineScope
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.repository.StubSourceRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.LocalSource
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import uy.kohesive.injekt.injectLazy
 import java.util.concurrent.ConcurrentHashMap
 
 // RK -->
@@ -49,26 +48,30 @@ import java.util.concurrent.ConcurrentHashMap
 // source map is (re)built. nHentai is delegated, so its id varies by extension version; the library
 // updater reads this to skip nHentai galleries the same way LIBRARY_UPDATE_EXCLUDED_SOURCES skips
 // the built-in E-Hentai / ExHentai / Pururin sources.
+// Volatile: written on the source-map rebuild's IO collector, read by the library-update worker on
+// its own thread, with no other happens-before between them.
+@Volatile
 internal var nHentaiDelegatedSourceIds: List<Long> = emptyList()
 // RK <--
 
+@Inject
+@SingleIn(AppScope::class)
+@ContributesBinding(AppScope::class)
 class AndroidSourceManager(
-    private val context: Context,
+    @AppCoroutineScope private val scope: CoroutineScope,
+    private val context: Context, // RK: the built-in adult sources need it
     private val extensionManager: ExtensionManager,
     private val sourceRepository: StubSourceRepository,
+    private val localSource: LocalSource,
+    private val downloadManager: Lazy<DownloadManager>,
+    // RK: gates the built-in E-Hentai / ExHentai sources.
+    private val exhPreferences: ExhPreferences,
 ) : SourceManager {
 
-    private val _isInitialized = MutableStateFlow(false)
-    override val isInitialized: StateFlow<Boolean> = _isInitialized.asStateFlow()
-
-    private val downloadManager: DownloadManager by injectLazy()
-
-    // RK: gates the built-in E-Hentai / ExHentai sources.
-    private val exhPreferences: ExhPreferences by injectLazy()
-
-    private val scope = CoroutineScope(Job() + Dispatchers.IO)
-
-    private val sourcesMapFlow = MutableStateFlow(ConcurrentHashMap<Long, Source>())
+    /**
+     * Null until the extensions have loaded, so that nothing observes the empty seed value.
+     */
+    private val sourcesMapFlow = MutableStateFlow<Map<Long, Source>?>(null)
 
     private val stubSourcesMap = ConcurrentHashMap<Long, StubSource>()
 
@@ -79,11 +82,13 @@ class AndroidSourceManager(
     //     currentDelegatedSources / handleSourceLibrary.
     private val currentDelegatedSources = ConcurrentHashMap<Long, DelegatedSource>()
 
-    override val sources: Flow<List<Source>> = sourcesMapFlow.map { it.values.toList() }
+    override val sources: Flow<List<Source>> = sourcesMapFlow
+        .filterNotNull()
+        .map { it.values.toList() }
 
     init {
         scope.launch {
-            extensionManager.installedExtensionsFlow
+            extensionManager.loadedExtensionsFlow
                 // RK: re-collect whenever the EXH gates flip so the built-in EH/ExH sources
                 //     appear or disappear without an app restart.
                 .combine(exhPreferences.enableExhentai().changes()) { extensions, enableExhentai ->
@@ -95,11 +100,7 @@ class AndroidSourceManager(
                 .collectLatest { (extensions, enableExhentai, isHentaiEnabled) ->
                     val mutableMap = ConcurrentHashMap<Long, Source>(
                         mapOf(
-                            LocalSource.ID to LocalSource(
-                                context,
-                                Injekt.get(),
-                                Injekt.get(),
-                            ),
+                            LocalSource.ID to localSource,
                         ),
                     ).apply {
                         // RK: register the built-in E-Hentai sources (one per language) when the
@@ -139,36 +140,43 @@ class AndroidSourceManager(
                         .filterValues { it.sourceName == "NHentai" }
                         .keys.sorted()
                     sourcesMapFlow.value = mutableMap
-                    _isInitialized.value = true
                 }
         }
 
         scope.launch {
             sourceRepository.subscribeAll()
                 .collectLatest { sources ->
-                    val mutableMap = stubSourcesMap.toMutableMap()
                     sources.forEach {
-                        mutableMap[it.id] = it
+                        stubSourcesMap[it.id] = it
                     }
                 }
         }
     }
 
-    override fun get(sourceKey: Long): Source? {
-        return sourcesMapFlow.value[sourceKey]
+    /**
+     * Awaits the extensions to have loaded before returning the sources.
+     */
+    private suspend fun sourcesMap(): Map<Long, Source> = sourcesMapFlow.filterNotNull().first()
+
+    override suspend fun get(sourceKey: Long): Source? {
+        return sourcesMap()[sourceKey]
     }
 
-    override fun getOrStub(sourceKey: Long): Source {
-        return sourcesMapFlow.value[sourceKey] ?: stubSourcesMap.getOrPut(sourceKey) {
-            runBlocking { createStubSource(sourceKey) }
+    override suspend fun getOrStub(sourceKey: Long): Source {
+        return sourcesMap()[sourceKey] ?: stubSourcesMap.getOrPut(sourceKey) {
+            createStubSource(sourceKey)
         }
     }
 
-    override fun getAll() = sourcesMapFlow.value.values.toList()
+    override suspend fun getAll(): List<Source> {
+        return sourcesMap().values.toList()
+    }
 
-    override fun getOnlineSources() = sourcesMapFlow.value.values.filterIsInstance<HttpSource>()
+    override suspend fun getOnlineSources(): List<HttpSource> {
+        return sourcesMap().values.filterIsInstance<HttpSource>()
+    }
 
-    override fun getStubSources(): List<StubSource> {
+    override suspend fun getStubSources(): List<StubSource> {
         val onlineSourceIds = getOnlineSources().map { it.id }
         return stubSourcesMap.values.filterNot { it.id in onlineSourceIds }
     }
@@ -179,7 +187,7 @@ class AndroidSourceManager(
             if (dbSource == source) return@launch
             sourceRepository.upsertStubSource(source.id, source.lang, source.name)
             if (dbSource != null) {
-                downloadManager.renameSource(dbSource, source)
+                downloadManager.value.renameSource(dbSource, source)
             }
         }
     }
@@ -280,6 +288,9 @@ class AndroidSourceManager(
                 factory = true,
             ),
         ).associateBy { it.originalSourceQualifiedClassName }
+
+        // The extensions the delegated-sources switch lists in its summary.
+        val DELEGATED_SOURCE_NAMES = DELEGATED_SOURCES.values.map { it.sourceName }
 
         private data class DelegatedSource(
             val sourceName: String,

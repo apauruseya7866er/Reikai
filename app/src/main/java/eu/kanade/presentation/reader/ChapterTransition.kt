@@ -10,10 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.CardColors
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -34,15 +30,25 @@ import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import eu.kanade.presentation.theme.TachiyomiPreviewTheme
-import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import eu.kanade.tachiyomi.ui.reader.viewer.calculateChapterGap
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Info
+import mihon.icons.materialsymbols.roundedfilled.CheckCircle
+import mihon.icons.materialsymbols.roundedfilled.Warning
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.chapter.service.calculateChapterGap
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.secondaryItemAlpha
+
+// RK --> the seam marker is named rather than typed, so the light-novel reader draws the same one
+/** What the marker names on either side of it, whichever kind of chapter it came from. */
+data class TransitionChapter(val name: String, val subtitle: String?)
+
+private fun Chapter.toTransitionChapter() = TransitionChapter(name = name, subtitle = scanlator)
+// RK <--
 
 @Composable
 fun ChapterTransition(
@@ -50,46 +56,52 @@ fun ChapterTransition(
     currChapterDownloaded: Boolean,
     goingToChapterDownloaded: Boolean,
 ) {
-    val currChapter = transition.from.chapter.toDomainChapter()
-    val goingToChapter = transition.to?.chapter?.toDomainChapter()
+    val currChapter = transition.from.chapter
+    val goingToChapter = transition.to?.chapter
 
     ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
         when (transition) {
             is ChapterTransition.Prev -> {
                 TransitionText(
                     topLabel = stringResource(MR.strings.transition_previous),
-                    topChapter = goingToChapter,
+                    // RK --> named sides, and the gap by the chapter list's rule (MissingChapters.calculateChapterGap)
+                    topChapter = goingToChapter?.toTransitionChapter(),
                     topChapterDownloaded = goingToChapterDownloaded,
                     bottomLabel = stringResource(MR.strings.transition_current),
-                    bottomChapter = currChapter,
+                    bottomChapter = currChapter.toTransitionChapter(),
                     bottomChapterDownloaded = currChapterDownloaded,
                     fallbackLabel = stringResource(MR.strings.transition_no_previous),
-                    chapterGap = calculateChapterGap(currChapter, goingToChapter),
+                    chapterGap = calculateChapterGap(transition.from, transition.to),
+                    // RK <--
                 )
             }
             is ChapterTransition.Next -> {
                 TransitionText(
                     topLabel = stringResource(MR.strings.transition_finished),
-                    topChapter = currChapter,
+                    // RK --> named sides, and the gap by the chapter list's rule (MissingChapters.calculateChapterGap)
+                    topChapter = currChapter.toTransitionChapter(),
                     topChapterDownloaded = currChapterDownloaded,
                     bottomLabel = stringResource(MR.strings.transition_next),
-                    bottomChapter = goingToChapter,
+                    bottomChapter = goingToChapter?.toTransitionChapter(),
                     bottomChapterDownloaded = goingToChapterDownloaded,
                     fallbackLabel = stringResource(MR.strings.transition_no_next),
-                    chapterGap = calculateChapterGap(goingToChapter, currChapter),
+                    chapterGap = calculateChapterGap(transition.to, transition.from),
+                    // RK <--
                 )
             }
         }
     }
 }
 
+// RK: public and neutral, called by both readers; nothing here was manga-specific but its two
+// chapter parameters, which the callers now map.
 @Composable
-private fun TransitionText(
+fun TransitionText(
     topLabel: String,
-    topChapter: Chapter?,
+    topChapter: TransitionChapter?,
     topChapterDownloaded: Boolean,
     bottomLabel: String,
-    bottomChapter: Chapter?,
+    bottomChapter: TransitionChapter?,
     bottomChapterDownloaded: Boolean,
     fallbackLabel: String,
     chapterGap: Int,
@@ -103,7 +115,7 @@ private fun TransitionText(
             ChapterText(
                 header = topLabel,
                 name = topChapter.name,
-                scanlator = topChapter.scanlator,
+                scanlator = topChapter.subtitle, // RK: TransitionChapter carries the scanlator as subtitle
                 downloaded = topChapterDownloaded,
             )
 
@@ -128,7 +140,7 @@ private fun TransitionText(
             ChapterText(
                 header = bottomLabel,
                 name = bottomChapter.name,
-                scanlator = bottomChapter.scanlator,
+                scanlator = bottomChapter.subtitle, // RK: TransitionChapter carries the scanlator as subtitle
                 downloaded = bottomChapterDownloaded,
             )
         } else {
@@ -156,7 +168,7 @@ private fun NoChapterNotification(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = Icons.Outlined.Info,
+                imageVector = MaterialSymbols.Rounded.Info,
                 tint = MaterialTheme.colorScheme.primary,
                 contentDescription = null,
             )
@@ -184,7 +196,7 @@ private fun ChapterGapWarning(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                imageVector = Icons.Outlined.Warning,
+                imageVector = MaterialSymbols.RoundedFilled.Warning,
                 tint = MaterialTheme.colorScheme.error,
                 contentDescription = null,
             )
@@ -243,7 +255,7 @@ private fun ChapterText(
                     ),
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.CheckCircle,
+                        imageVector = MaterialSymbols.RoundedFilled.CheckCircle,
                         contentDescription = stringResource(MR.strings.label_downloaded),
                     )
                 },

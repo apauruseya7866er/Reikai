@@ -1,10 +1,13 @@
 package reikai.domain.recommendation
 
+import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.serialization.json.Json
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import reikai.data.track.isMyAnimeListNovel
 import reikai.domain.recommendation.dto.JikanImages
 import reikai.domain.recommendation.dto.JikanMangaResponse
 import reikai.domain.recommendation.dto.JikanRecsResponse
@@ -13,18 +16,16 @@ import reikai.domain.recommendation.dto.JikanSearchResponse
 /**
  * MyAnimeList recommendations via the public Jikan API. MAL's own API has no recommendations
  * endpoint, so Jikan is the standard substitute. Public, no auth. Jikan reports no alternative
- * titles here, so these candidates dedup on primary title only (synonym parsing deferred, see
- * docs/dev/development.md).
+ * titles here, so these candidates dedup on primary title only.
  */
 class MyAnimeListRecommendations(
     private val client: OkHttpClient,
-    override val trackerId: Long,
-) : TrackerRecommendations() {
-
-    override val trackerName: String = "MyAnimeList"
+    tracker: Tracker,
+    override val json: Json,
+) : TrackerRecommendations(tracker) {
 
     override suspend fun getRecsById(remoteId: Long): List<RelatedMangaCandidate> {
-        val url = ENDPOINT.toHttpUrl().newBuilder()
+        val url = JIKAN_URL.toHttpUrl().newBuilder()
             .addPathSegment("manga")
             .addPathSegment(remoteId.toString())
             .addPathSegment("recommendations")
@@ -37,7 +38,7 @@ class MyAnimeListRecommendations(
     }
 
     override suspend fun getMediaContext(remoteId: Long): MediaContext {
-        val url = ENDPOINT.toHttpUrl().newBuilder()
+        val url = JIKAN_URL.toHttpUrl().newBuilder()
             .addPathSegment("manga")
             .addPathSegment(remoteId.toString())
             .build()
@@ -49,19 +50,20 @@ class MyAnimeListRecommendations(
     }
 
     override suspend fun getRecsBySearch(title: String): List<RelatedMangaCandidate> {
-        val url = ENDPOINT.toHttpUrl().newBuilder()
+        val url = JIKAN_URL.toHttpUrl().newBuilder()
             .addPathSegment("manga")
             .addQueryParameter("q", title)
             .build()
 
         val data = with(json) { client.newCall(GET(url)).awaitSuccess().parseAs<JikanSearchResponse>() }
-        val firstMalId = data.data.firstOrNull()?.malId ?: return emptyList()
+        val firstMalId = data.data.firstOrNull { !isMyAnimeListNovel(it.type) }?.malId ?: return emptyList()
         return getRecsById(firstMalId)
     }
 
     private fun JikanImages.pickImage(): String? = webp?.imageUrl ?: jpg?.imageUrl
 
     companion object {
-        private const val ENDPOINT = "https://api.jikan.moe/v4/"
+        /** Jikan, MyAnimeList's public mirror; the shared client rate-limits this host. */
+        const val JIKAN_URL = "https://api.jikan.moe/v4/"
     }
 }

@@ -12,7 +12,12 @@
 #   lint-docs.sh em-dash <file> <label>          no em dash
 #   lint-docs.sh issue-refs <file> <label> <hint>   no bare #N
 #   lint-docs.sh codenames                       plan/roadmap codenames, candidate lines on stdin
+#   lint-docs.sh twin-pins [--stdin|--tree]      a twin/mirrors comment names its pin
 #   lint-docs.sh manifest-rows <file>            every off-path row still describes reality
+#   lint-docs.sh key-files <file>...             every path a plan record's Key files names exists
+#   lint-docs.sh kdoc-links [--stdin|--tree]     a [Symbol] in a comment names live code
+#   lint-docs.sh history-words                   comments narrating history, diff on stdin (warns)
+#   lint-docs.sh subsystem-docs [<file>...]      docs/dev/subsystems/ pages carry no history
 #
 # Exits non-zero when a check fails. Under GitHub Actions the heading is emitted as ::error:: so it
 # lands as an annotation; locally it is printed plainly.
@@ -21,6 +26,9 @@ set -u
 # Content-source names (adult and mainstream) that must be genericized or use an approved shorthand
 # (EH / ExH / MD / CMK) in the public-facing docs. Trackers (MangaUpdates, Shikimori, AniList, ...)
 # are NOT sources and stay allowed. Extend this list as new sources get named in the repo.
+# A tracker that shares a site's name is written as "<Name> tracker", and that phrase is dropped
+# before matching, so the tracker can be named while the bare site name is still caught.
+ALLOWED_TRACKERS='comick tracker'
 DENY='e-hentai|ehentai|exhentai|nhentai|pururin|8muses|hentaifox|asmhentai|koharu|schalenetwork|mangadex|comick'
 
 # A bare '#N' auto-links to a Reikai issue. A '#' + digits not preceded by an alphanumeric; the
@@ -30,16 +38,49 @@ BARE_ISSUE_REF='(^|[^A-Za-z0-9])#[0-9]'
 # A comment line: //, a block-comment opener, a KDoc *-line, or a SQL -- line.
 COMMENT_LINE='(//|/\*|^\+?[[:space:]]*\*|^\+?[[:space:]]*--)'
 
-# Plan and roadmap codenames, which rot as the plan moves on. Caught: Phase N, the P<phase> / P5 S5
-# shorthand, Y<n> Yokai-era refs, R<n> roadmap refs, Active #N, and in-words "Roadmap N" /
-# "Roadmap:" (the bare document name ROADMAP.md stays allowed). Spared below the line: R8 (the code
-# shrinker, so R uses [0-79]) and M3 (Material 3, M is not matched).
-CODENAME='(Phase[[:space:]]*[0-9]|Active[[:space:]]*#[0-9]|\b[PY][0-9][a-z]?\b|\bR[0-79][a-z]?\b|\b[Ss]tep[[:space:]]*[0-9]|[Rr]oadmap[[:space:]]*(#?[0-9]|:))'
+# Plan and roadmap codenames, which rot as the plan moves on. Caught: Phase N, Stage N, the P<phase> /
+# P5 S5 shorthand, Y<n> Yokai-era refs and R<n> roadmap refs of any length (Y11, R12), the R-feature /
+# Y-feature tags, Active #N, and in-words "Roadmap N" / "Roadmap:" (the bare document name ROADMAP.md
+# stays allowed). Spared: R8 (the code shrinker, so a one-digit R skips 8), M3 (Material 3, M is not
+# matched) and Y2K (no word boundary follows its digit).
+CODENAME='(Phase[[:space:]]*[0-9]|\b[Ss]tage[[:space:]]*[0-9]|Active[[:space:]]*#[0-9]|\b[PY][0-9]+[a-z]?\b|\bR([0-79]|[0-9]{2,})[a-z]?\b|\b[RY]-feature\b|\b[Ss]tep[[:space:]]*[0-9]|[Rr]oadmap[[:space:]]*(#?[0-9]|:))'
 
-# A colon-led algorithm step ("Step 1:") is fine; a plan-style "Step 3" is not. The step match is
+# A colon-led algorithm step ("Step 1:", "Stage 1:") is fine; a plan-style "Step 3" is not. The step match is
 # case-insensitive because a lower-case "step 2" reached main once. Two Kotlin range shapes quoted
 # in comments are spared too: "2..20 step 6" and a fractional "step 0.5".
-CODENAME_SPARED='(\b[Ss]tep[[:space:]]*[0-9]:|[0-9]\.\.[0-9]+[[:space:]]+step[[:space:]]|[Ss]tep[[:space:]]*[0-9]+\.[0-9])'
+CODENAME_SPARED='(\b[Ss]t(ep|age)[[:space:]]*[0-9]:|[0-9]\.\.[0-9]+[[:space:]]+step[[:space:]]|[Ss]tep[[:space:]]*[0-9]+\.[0-9])'
+
+# Comment words that narrate history, which git already holds (a warning, not a block).
+HISTORY_WORDS="used to (be|sit|have|always)|previously|was found by|found by an audit|owner('s)? ruling|\\(owner"
+
+# What a docs/dev/subsystems/ page must not carry: it describes the subsystem as it is, so dates,
+# commit SHAs, plan steps, rounds, phases, rulings and a Status section belong in git history.
+SUBSYSTEM_HISTORY='\b20[0-9]{2}-[0-9]{2}-[0-9]{2}\b|`[0-9a-f]{7,40}`|\bstep[[:space:]]+[0-9]|\bround[[:space:]]+(one|two|[0-9])|\bphase[[:space:]]+[0-9]|\(owner,|^#+[[:space:]]+status\b'
+SUBSYSTEM_MAX_LINES=300
+
+# Shared awk prologue for the checks that read either a unified diff (git diff -U0, the hook's feed) or
+# whole files (tree=1). It sets `file`, `line` (without the diff's '+') and `where` (path:line) for each
+# added or scanned line, and calls the program's own boundary() wherever a run of lines is broken.
+DIFF_WALK='
+  tree && FNR == 1 { boundary() }
+  !tree && /^\+\+\+ / { boundary(); file = $0; sub(/^\+\+\+ (b\/)?/, "", file); next }
+  !tree && /^@@/ { boundary(); ln = $0; sub(/^@@ -[0-9,]+ \+/, "", ln); sub(/[ ,].*/, "", ln); ln += 0; next }
+  !tree && !/^\+/ { boundary(); next }
+  { if (tree) { line = $0; file = FILENAME; where = FILENAME ":" FNR } else { line = substr($0, 2); where = file ":" ln; ln++ } }'
+
+# The comment and the code part of one Kotlin line, by the same heuristic as COMMENT_LINE: a line
+# opening with //, /* or * is all comment, otherwise a // starts one.
+COMMENT_SPLIT='
+  function comment_of(l,  s) {
+    s = l; sub(/^[ \t]+/, "", s)
+    if (s ~ /^(\/\/|\/\*|\*)/) return s
+    return index(s, "//") > 0 ? substr(s, index(s, "//")) : ""
+  }
+  function code_of(l,  s) {
+    s = l; sub(/^[ \t]+/, "", s)
+    if (s ~ /^(\/\/|\/\*|\*)/) return ""
+    return index(s, "//") > 0 ? substr(s, 1, index(s, "//") - 1) : s
+  }'
 
 report() {
   if [ -n "${GITHUB_ACTIONS:-}" ]; then
@@ -57,7 +98,7 @@ shift
 case "$cmd" in
   source-names)
     file="${1:?file}"; label="${2:?label}"
-    if hits=$(grep -inE "$DENY" "$file"); then
+    if hits=$(sed -E "s/($ALLOWED_TRACKERS)//Ig" "$file" | grep -inE "$DENY"); then
       report "$label names a content source; genericize it or use an approved shorthand (EH / ExH / MD / CMK). See Public-facing naming." "$hits"
       exit 1
     fi
@@ -114,8 +155,66 @@ case "$cmd" in
       hits=$(grep -E "$COMMENT_LINE" | grep -E "$CODENAME" | grep -vE "$CODENAME_SPARED" || true)
     fi
     if [ -n "$hits" ]; then
-      report "a code comment carries a plan/roadmap codename marker (Phase N, P5 S5, Y3, R3, Active #N, Roadmap N, plan Step N); state the durable fact instead. See code-quality.md." "$hits"
+      report "a code comment carries a plan/roadmap codename marker (Phase N, Stage N, P5 S5, Y3, R12, R-feature, Active #N, Roadmap N, plan Step N); state the durable fact instead. See code-quality.md." "$hits"
       exit 1
+    fi
+    ;;
+
+  twin-pins)
+    # content-layer.md: a "twin of" / "mirrors" comment claims two halves must behave alike, so it names
+    # what pins them in one fixed spelling: "pinned by <kernel|capability|...Test>", "type only" for a
+    # data shape with no rule, or an explicit "no pin: <reason>". A comment block is a run of
+    # consecutive comment lines, so a pin on the line below the marker counts.
+    #
+    # --stdin reads a unified diff (git diff -U0) and checks the blocks its added lines form, which is
+    # the hook's feed and fails. A -U0 hunk carries no unchanged lines, so a block it flags is re-read
+    # whole from the staged file, where a pin on an untouched line still counts. --tree scans every
+    # tracked .kt/.kts and only reports, because the markers written before the spelling was fixed are
+    # paid off as their files are next touched. span=1 prints each block's file and line range too.
+    mode="${1:---stdin}"
+    twin_awk='
+      function flush() {
+        t = tolower(text)
+        if (n > 0 && t ~ /twin of|mirrors (the )?(manga|novel|mihon)|as manga does/ && t !~ /pinned by|type only|no pin:/)
+          print (span ? file "\t" start "\t" end "\t" : "") loc ": " first
+        n = 0; text = ""
+      }
+      function boundary() { flush() }
+      '"$DIFF_WALK"'
+      {
+        s = line; sub(/^[ \t]+/, "", s)
+        if (s ~ /^(\/\/|\/\*|\*)/) { sub(/^(\/+|\/\*+|\*+)[ \t]*/, "", s) }
+        else if (index(s, "//") > 0) { s = substr(s, index(s, "//") + 2) }
+        else { flush(); next }
+        sub(/\*\/[ \t]*$/, "", s)
+        end = tree ? FNR : ln - 1
+        if (n == 0) { loc = where; first = line; start = end }
+        n++; text = text " " s
+      }
+      END { flush() }'
+    if [ "$mode" = "--tree" ]; then
+      hits=$(git ls-files -z -- '*.kt' '*.kts' | xargs -0 awk -v tree=1 "$twin_awk" || true)
+      if [ -n "$hits" ]; then
+        echo "twin-pins: $(printf '%s\n' "$hits" | wc -l | tr -d ' ') twin/mirrors comment(s) name no pin (report only; pay each off when its file is next touched):"
+        printf '%s\n' "$hits"
+      fi
+    else
+      hits=""
+      while IFS=$'\t' read -r path from to hit; do
+        [ -n "$path" ] || continue
+        if blob=$(git show ":$path" 2> /dev/null); then
+          # Kept only when the same lines still form an unpinned block in the whole staged file.
+          printf '%s\n' "$blob" | awk -v tree=1 -v span=1 "$twin_awk" |
+            awk -F '\t' -v from="$from" -v to="$to" '$2 <= to && $3 >= from { found = 1 } END { exit !found }' ||
+            continue
+        fi
+        hits="$hits$hit"$'\n'
+      done <<< "$(awk -v tree=0 -v span=1 "$twin_awk")"
+      hits="${hits%$'\n'}"
+      if [ -n "$hits" ]; then
+        report "a twin/mirrors comment names no pin; write 'twin of X, pinned by Y' (a kernel, a capability or a ...Test), 'twin of X, type only', or 'no pin: <reason>'. See content-layer.md." "$hits"
+        exit 1
+      fi
     fi
     ;;
 
@@ -157,6 +256,194 @@ case "$cmd" in
         fail=1
       fi
     done <<< "$rows"
+    [ "$fail" -eq 0 ] || exit 1
+    ;;
+
+  key-files)
+    # A plan record's Key files list is what a reader opens first, so a path in it that no longer
+    # exists sends them nowhere while reading as current (roadmap-plans.md). Checked: each backticked
+    # path and each markdown link target in the "## Key files" section. A link resolves from the
+    # record's own directory. A backticked path passes when it exists from the repo root or a tracked
+    # path ends with it, so a bare file name or a path relative to a source root is enough, and an
+    # elided ".../x/y.kt" is matched on what follows the dots. A token that is no path and no file name
+    # (a symbol, a pref key, a branch) is not checked, and a line saying the file was deleted or
+    # manifested is history, so it is skipped.
+    tracked=$(mktemp); refs=$(mktemp)
+    git ls-files > "$tracked"
+    # is_tracked <path>: some tracked path is it, ends with /it, or sits under it as a directory.
+    is_tracked() {
+      awk -v p="$1" '
+        BEGIN { n = length(p) }
+        $0 == p || substr($0, length($0) - n) == "/" p || index($0, p "/") == 1 || index($0, "/" p "/") { f = 1; exit }
+        END { exit !f }' "$tracked"
+    }
+    fail=0
+    for file in "$@"; do
+      [ -f "$file" ] || continue
+      dir=$(dirname "$file")
+      # A line "In `../Other-repo`:" roots the bullets after it in that sibling repo, until "In this
+      # repo". There only each bullet's leading path is read, since the prose around it names selectors
+      # and versions in backticks too.
+      awk '/^## Key files/ { on = 1; next } /^## / { on = 0 } on' "$file" \
+        | grep -viE 'deleted|manifested|no longer exist' \
+        | { sibling=0; while IFS= read -r line; do
+            case "$line" in
+              'In `../'*) r=${line#In \`}; echo "ROOT ${r%%\`*}"; sibling=1; continue ;;
+              'In this repo'*) echo "ROOT ."; sibling=0; continue ;;
+            esac
+            if [ "$sibling" = 1 ]; then
+              printf '%s\n' "$line" | grep -oE '^- `[^`]+`' | cut -c3-
+            else
+              printf '%s\n' "$line" | grep -oE '`[^`]+`|\]\([^)]+\)'
+            fi
+          done; } > "$refs" || true
+      missing=""; root=.
+      while IFS= read -r ref; do
+        case "$ref" in 'ROOT '*) root=${ref#ROOT }; continue ;; esac
+        if [ "$root" != . ]; then
+          # A sibling repo is checked where it is cloned, and skipped where it is not (CI).
+          p=${ref:1:${#ref}-2}
+          [ -d "$root" ] && [ "${ref:0:1}" = '`' ] && [[ "$p" == */* || "$p" == *.* ]] \
+            && [[ "$p" != *' '* && "$p" != *...* ]] && [ ! -e "$root/$p" ] && missing="$missing  $root/$p"$'\n'
+          continue
+        fi
+        if [ "${ref:0:1}" = '`' ]; then
+          p=${ref:1:${#ref}-2}; kind=code
+        else
+          p=${ref:2:${#ref}-3}; p=${p%%#*}; kind=link
+        fi
+        case "$p" in ''|*' '*|*'*'*|*'<'*|*'{'*|*'#'*|http*|../refs/*|refs/*) continue ;; esac
+        if [ "$kind" = link ]; then
+          [ -e "$dir/$p" ] || missing="$missing  $p"$'\n'
+          continue
+        fi
+        case "$p" in
+          */*|*.kt|*.kts|*.sq|*.sqm|*.md|*.sh|*.ps1|*.yml|*.json|*.xml|*.proto|*.toml) ;;
+          *) continue ;;
+        esac
+        case "$p" in .*/*) ;; .*|*...) continue ;; esac
+        [ -e "$p" ] && continue
+        q=${p##*.../}; q=${q%/}
+        is_tracked "$q" && continue
+        # A class or member named by its package path (reikai/domain/entry/EntryId, X.member).
+        base=${q##*/}
+        case "$base" in
+          *.*) is_tracked "${q%.*}.kt" && continue ;;
+          *) is_tracked "$q.kt" && continue ;;
+        esac
+        # An elided directory (".../yokai-y2k/app", the checkout itself) cannot be judged by its tail.
+        case "$p" in .../*) [[ "${q##*/}" != *.* ]] && continue ;; esac
+        # A branch named as a port source (design/library-compose).
+        git show-ref -q "$p" 2>/dev/null && continue
+        missing="$missing  $p"$'\n'
+      done < "$refs"
+      if [ -n "$missing" ]; then
+        report "$file: a Key files path does not exist; point it at the live file or drop it." "${missing%$'\n'}"
+        fail=1
+      fi
+    done
+    rm -f "$tracked" "$refs"
+    [ "$fail" -eq 0 ] || exit 1
+    ;;
+
+  kdoc-links)
+    # A [Symbol] in a comment names code, and one whose symbol was renamed or deleted reads as current
+    # while pointing nowhere. A reference resolves when its last dotted segment appears in non-comment
+    # Kotlin anywhere in the tree (main and test, any module), which also covers a documented
+    # function's own parameter names, since a signature is code. In --stdin mode the added code lines
+    # count too, so a symbol the same diff declares resolves. Skipped: [text](url) links, the label of
+    # [label][Symbol] (the symbol is checked), and an index such as list[i], whose '[' follows a name.
+    # Scope: Kotlin under app/src, domain/src, data/src, core and source-api. --stdin reads a unified
+    # diff and fails; --tree reports only.
+    mode="${1:---stdin}"
+    ids=$(mktemp)
+    git ls-files -z -- '*.kt' '*.kts' | xargs -0 awk "$COMMENT_SPLIT"'
+      { c = code_of($0); while (match(c, /[A-Za-z_][A-Za-z0-9_]*/)) { seen[substr(c, RSTART, RLENGTH)] = 1; c = substr(c, RSTART + RLENGTH) } }
+      END { for (k in seen) print k }' | sort -u > "$ids"
+    kdoc_awk="$COMMENT_SPLIT"'
+      BEGIN { while ((getline t < ENVIRON["KDOC_IDS"]) > 0) ids[t] = 1 }
+      function boundary() {}
+      '"$DIFF_WALK"'
+      {
+        c = code_of(line)
+        while (match(c, /[A-Za-z_][A-Za-z0-9_]*/)) { ids[substr(c, RSTART, RLENGTH)] = 1; c = substr(c, RSTART + RLENGTH) }
+        if (file !~ /^(app\/src|domain\/src|data\/src|core|source-api)\/.*\.kt$/) next
+        t = comment_of(line)
+        while (match(t, /\[[A-Za-z_][A-Za-z0-9_.]*\]/)) {
+          pre = RSTART > 1 ? substr(t, RSTART - 1, 1) : ""
+          post = substr(t, RSTART + RLENGTH, 1)
+          name = substr(t, RSTART + 1, RLENGTH - 2)
+          t = substr(t, RSTART + RLENGTH)
+          if (pre ~ /[A-Za-z0-9_)>]/ || post == "(" || post == "[") continue
+          sub(/\.+$/, "", name); n = split(name, part, ".")
+          nr++; ref[nr] = part[n]; at[nr] = where; whole[nr] = name
+        }
+      }
+      END { for (i = 1; i <= nr; i++) if (!(ref[i] in ids)) print at[i] ": [" whole[i] "]" }'
+    if [ "$mode" = "--tree" ]; then
+      hits=$(git ls-files -z -- 'app/src/*.kt' 'domain/src/*.kt' 'data/src/*.kt' 'core/*.kt' 'source-api/*.kt' \
+        | KDOC_IDS="$ids" xargs -0 awk -v tree=1 "$kdoc_awk" || true)
+      rm -f "$ids"
+      if [ -n "$hits" ]; then
+        echo "kdoc-links: $(printf '%s\n' "$hits" | wc -l | tr -d ' ') comment reference(s) name no symbol in the code (report only):"
+        printf '%s\n' "$hits"
+      fi
+    else
+      hits=$(KDOC_IDS="$ids" awk -v tree=0 "$kdoc_awk")
+      rm -f "$ids"
+      if [ -n "$hits" ]; then
+        report "a comment's [Symbol] names nothing in the code; point it at the live symbol, or drop the brackets if it names no symbol." "$hits"
+        exit 1
+      fi
+    fi
+    ;;
+
+  history-words)
+    # A comment states the durable fact; how it came to be (what something used to do, who ruled, which
+    # audit found it) is history that git already holds. Read on the lines a
+    # unified diff adds: comments under reikai/ or exh/, and RK lines in Mihon's files. Warns, never
+    # blocks, since a word like "previously" is sometimes the plain fact.
+    hits=$(HIST="$HISTORY_WORDS" awk -v tree=0 "$COMMENT_SPLIT"'
+      function boundary() {}
+      '"$DIFF_WALK"'
+      {
+        c = comment_of(line)
+        if (c == "") next
+        if ((file ~ /(^|\/)(reikai|exh)\// || c ~ /\/\/[ \t]*RK([^A-Za-z0-9_]|$)/) && tolower(c) ~ ENVIRON["HIST"])
+          print where ": " line
+      }')
+    if [ -n "$hits" ]; then
+      echo "history-words (warning): a comment narrates history; state the fact as it stands and leave"
+      echo "how it got there to git. See code-quality.md \"Comments\"."
+      printf '%s\n' "$hits"
+    fi
+    ;;
+
+  subsystem-docs)
+    # A docs/dev/subsystems/ page describes a subsystem as it is now, so anything that dates it is
+    # rejected (SUBSYSTEM_HISTORY), and so is a page past SUBSYSTEM_MAX_LINES, which has stopped being
+    # an overview. With no arguments every file under the folder is checked; absent is not a violation.
+    files=("$@")
+    if [ "${#files[@]}" -eq 0 ]; then
+      if [ ! -d docs/dev/subsystems ]; then
+        echo "subsystem-docs: docs/dev/subsystems does not exist here, nothing to check."
+        exit 0
+      fi
+      mapfile -t files < <(find docs/dev/subsystems -type f)
+    fi
+    fail=0
+    for file in "${files[@]}"; do
+      [ -f "$file" ] || continue
+      if hits=$(grep -niE "$SUBSYSTEM_HISTORY" "$file"); then
+        report "$file carries history (a date, a commit SHA, a step, round or phase, an owner ruling, or a Status section); leave the history to git and describe what is." "$hits"
+        fail=1
+      fi
+      lines=$(awk 'END { print NR }' "$file")
+      if [ "$lines" -gt "$SUBSYSTEM_MAX_LINES" ]; then
+        report "$file runs to $lines lines, past the cap of $SUBSYSTEM_MAX_LINES; split it by component."
+        fail=1
+      fi
+    done
     [ "$fail" -eq 0 ] || exit 1
     ;;
 

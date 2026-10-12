@@ -26,14 +26,15 @@ data class HKRead(
 ) {
     // RK: contentType ("manga"/"novel") keeps a novel bind on the /novel content tree; defaults to
     // manga so the existing manga callers are unchanged.
-    fun toTrack(trackId: Long, contentType: String = "manga"): TrackSearch {
-        return TrackSearch.create(trackId).apply {
+    fun toTrack(trackerId: Long, contentType: String = "manga"): TrackSearch {
+        return TrackSearch.create(trackerId).apply {
             val mangaContent = this@HKRead.content
             if (mangaContent != null) {
                 title = mangaContent.titleUa ?: mangaContent.titleEn ?: mangaContent.titleOriginal
                 remote_id = stringToNumber(mangaContent.slug)
                 library_id = stringToNumber(mangaContent.slug)
                 total_chapters = mangaContent.chapters?.toLong() ?: 0
+                // RK: novel binds use the /novel tree
                 tracking_url = "${HikkaApi.BASE_URL}/$contentType/${mangaContent.slug}"
             }
 

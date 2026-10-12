@@ -7,14 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.RadioButtonUnchecked
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -25,7 +17,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.icerock.moko.resources.StringResource
-import tachiyomi.domain.library.model.LibrarySort
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.ArrowDownward
+import mihon.icons.materialsymbols.rounded.ArrowUpward
+import mihon.icons.materialsymbols.rounded.KeyboardArrowDown
+import mihon.icons.materialsymbols.rounded.KeyboardArrowRight
+import mihon.icons.materialsymbols.rounded.RadioButtonUnchecked
+import mihon.icons.materialsymbols.rounded.Refresh
+import mihon.icons.materialsymbols.roundedfilled.CheckCircle
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 
@@ -48,8 +47,8 @@ fun ReikaiLibraryCategoryHeader(
     onToggleSelectAll: () -> Unit = {},
     // Per-category affordances; null = hidden (e.g. dynamic groups, which have no real category).
     // The caller passes the EFFECTIVE sort (a category's override, or the global sort it follows): the
-    // label via [sortLabel] and the arrow via [sortAscending], both content-type-decoded upstream so the
-    // header never touches the raw flag bits (manga and novel encode different enums into them).
+    // label via [sortLabel] and the arrow via [sortAscending], decoded by the caller so the header never
+    // touches the raw flag bits.
     sortLabel: StringResource? = null,
     sortAscending: Boolean? = null,
     onClickSort: (() -> Unit)? = null,
@@ -66,13 +65,21 @@ fun ReikaiLibraryCategoryHeader(
         if (selectionMode) {
             IconButton(onClick = onToggleSelectAll) {
                 Icon(
-                    imageVector = if (allSelected) Icons.Filled.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                    imageVector = if (allSelected) {
+                        MaterialSymbols.RoundedFilled.CheckCircle
+                    } else {
+                        MaterialSymbols.Rounded.RadioButtonUnchecked
+                    },
                     contentDescription = stringResource(MR.strings.action_select_all),
                 )
             }
         } else {
             Icon(
-                imageVector = if (isCollapsed) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+                imageVector = if (isCollapsed) {
+                    MaterialSymbols.Rounded.KeyboardArrowRight
+                } else {
+                    MaterialSymbols.Rounded.KeyboardArrowDown
+                },
                 contentDescription = null,
                 modifier = Modifier.padding(vertical = 8.dp),
             )
@@ -98,7 +105,11 @@ fun ReikaiLibraryCategoryHeader(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Icon(
-                    imageVector = if (sortAscending) Icons.Filled.ArrowUpward else Icons.Filled.ArrowDownward,
+                    imageVector = if (sortAscending) {
+                        MaterialSymbols.Rounded.ArrowUpward
+                    } else {
+                        MaterialSymbols.Rounded.ArrowDownward
+                    },
                     contentDescription = stringResource(MR.strings.action_sort),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(16.dp),
@@ -108,25 +119,10 @@ fun ReikaiLibraryCategoryHeader(
         if (onClickRefresh != null) {
             IconButton(onClick = onClickRefresh) {
                 Icon(
-                    imageVector = Icons.Outlined.Refresh,
+                    imageVector = MaterialSymbols.Rounded.Refresh,
                     contentDescription = stringResource(MR.strings.action_update_category),
                 )
             }
         }
     }
-}
-
-/** The display label for a manga sort mode, reusing Mihon's Sort-tab strings. */
-internal fun sortLabelRes(type: LibrarySort.Type): StringResource = when (type) {
-    LibrarySort.Type.Alphabetical -> MR.strings.action_sort_alpha
-    LibrarySort.Type.TotalChapters -> MR.strings.action_sort_total
-    LibrarySort.Type.LastRead -> MR.strings.action_sort_last_read
-    LibrarySort.Type.LastUpdate -> MR.strings.action_sort_last_manga_update
-    LibrarySort.Type.UnreadCount -> MR.strings.action_sort_unread_count
-    LibrarySort.Type.LatestChapter -> MR.strings.action_sort_latest_chapter
-    LibrarySort.Type.ChapterFetchDate -> MR.strings.action_sort_chapter_fetch_date
-    LibrarySort.Type.DateAdded -> MR.strings.action_sort_date_added
-    LibrarySort.Type.TrackerMean -> MR.strings.action_sort_tracker_score
-    LibrarySort.Type.Downloaded -> MR.strings.action_sort_downloaded
-    LibrarySort.Type.Random -> MR.strings.action_sort_random
 }

@@ -1,10 +1,20 @@
 package reikai.presentation.browse
 
+import dev.zacsweers.metro.Inject
 import eu.kanade.domain.manga.interactor.UpdateManga
-import eu.kanade.domain.track.interactor.AddTracks
-import eu.kanade.tachiyomi.data.cache.CoverCache
-import eu.kanade.tachiyomi.util.removeCovers
 import kotlinx.coroutines.flow.firstOrNull
+import reikai.domain.category.groupCategoryIds
+import reikai.domain.category.resolveDefaultCategoryIds
+import reikai.domain.category.withoutSystemCategory
+import reikai.domain.db.Transactions
+import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.domain.manga.MangaChapterSettings
+import reikai.domain.manga.MangaGroupCategories
+import reikai.domain.manga.MangaMergeManager
+import reikai.domain.manga.RemoveMangaFromLibrary
+import reikai.domain.track.autobind.AutoBindOnAdd
+import reikai.presentation.browse.components.EntrySourceLabel
+import reikai.presentation.library.reikaiSortCategories
 import tachiyomi.core.common.preference.CheckboxState
 import tachiyomi.core.common.preference.mapAsCheckboxState
 import tachiyomi.domain.category.interactor.GetCategories
@@ -13,98 +23,223 @@ import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.chapter.interactor.SetMangaDefaultChapterFlags
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetDuplicateLibraryManga
+import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaWithChapterCount
-import tachiyomi.domain.manga.model.toMangaUpdate
+import tachiyomi.domain.source.model.StubSource
 import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import java.time.Instant
 
 /**
- * Shared long-press "add to library" orchestration for any manga browse surface (the per-source
- * Browse screen and cross-source global search). Extracted from `BrowseSourceScreenModel` so both
- * reuse one implementation. Returns plain results ([AddFavoriteResult]) rather than a screen's Dialog
- * type, so each caller maps to its own dialog. The source is resolved per-manga
- * ([SourceManager.getOrStub] on `manga.source`) so it works in global search, where results span
- * sources (Browse's single source equals each result's source, so behaviour there is unchanged).
+ * The manga add-to-library orchestration every surface shares: the long-press decision [MangaAddFlow]
+ * runs, and the add, group and picker writes details, recents and the bulk add call. The
+ * source is resolved per manga ([SourceManager.getOrStub] on `manga.source`), since a global search
+ * or a feed spans sources.
  */
+@Inject
 class MangaLibraryAdder(
-    private val sourceManager: SourceManager = Injekt.get(),
-    private val coverCache: CoverCache = Injekt.get(),
-    private val libraryPreferences: LibraryPreferences = Injekt.get(),
-    private val getCategories: GetCategories = Injekt.get(),
-    private val getDuplicateLibraryManga: GetDuplicateLibraryManga = Injekt.get(),
-    private val setMangaCategories: SetMangaCategories = Injekt.get(),
-    private val setMangaDefaultChapterFlags: SetMangaDefaultChapterFlags = Injekt.get(),
-    private val updateManga: UpdateManga = Injekt.get(),
-    private val addTracks: AddTracks = Injekt.get(),
+    private val sourceManager: SourceManager,
+    private val libraryPreferences: LibraryPreferences,
+    private val getCategories: GetCategories,
+    private val getDuplicateLibraryManga: GetDuplicateLibraryManga,
+    private val getManga: GetManga,
+    private val setMangaCategories: SetMangaCategories,
+    private val setMangaDefaultChapterFlags: SetMangaDefaultChapterFlags,
+    private val updateManga: UpdateManga,
+    private val autoBindOnAdd: AutoBindOnAdd,
+    // Add-time grouping (the suggestion gate + the merge into the duplicate's group).
+    private val mergeManager: MangaMergeManager,
+    private val transactions: Transactions,
+    private val reikaiLibraryPreferences: ReikaiLibraryPreferences,
+    private val removeMangaFromLibrary: RemoveMangaFromLibrary,
+    private val chapterSettings: MangaChapterSettings,
 ) {
 
+    private val groupCategories = MangaGroupCategories(getCategories, setMangaCategories)
+
     /**
-     * Toggle a manga's favorite state. On favorite: apply default chapter flags + bind enhanced
-     * trackers; on unfavorite: drop cached covers.
+     * Decide a long press: remove, confirm a possible duplicate, or add. Decided on the stored row, since
+     * the list that drew [manga] may predate an add or a removal made elsewhere. Twin of
+     * `NovelLibraryAdder.onLongClick`, pinned by `EntryAddFlowConformanceTest`.
      */
-    suspend fun changeFavorite(manga: Manga) {
-        var new = manga.copy(
-            favorite = !manga.favorite,
-            dateAdded = if (manga.favorite) 0 else Instant.now().toEpochMilli(),
-        )
-        if (!new.favorite) {
-            new = new.removeCovers(coverCache)
-        } else {
-            setMangaDefaultChapterFlags.await(manga)
-            addTracks.bindEnhancedTrackers(manga, sourceManager.getOrStub(manga.source))
+    suspend fun onLongClick(manga: Manga): AddStep<MangaAddDialog> {
+        val decision = decideAdd(inLibrary = isInLibrary(manga.id)) { findDuplicates(manga) }
+        return when (decision) {
+            AddDecision.Remove -> AddStep.Ask(MangaAddDialog.Remove(manga))
+            is AddDecision.ConfirmDuplicate -> AddStep.Ask(MangaAddDialog.AddDuplicate(manga, decision.duplicates))
+            AddDecision.Add -> addToLibrary(manga)
         }
-        updateManga.await(new.toMangaUpdate())
     }
 
-    suspend fun getDuplicates(manga: Manga): List<MangaWithChapterCount> =
-        getDuplicateLibraryManga.invoke(manga)
-
-    suspend fun moveToCategories(manga: Manga, categoryIds: List<Long>) {
-        setMangaCategories.await(manga.id, categoryIds.filter { it != 0L })
-    }
+    /** A browse add, answering the picker to raise when there is no usable default category. */
+    suspend fun addToLibrary(manga: Manga): AddStep<MangaAddDialog> = resolveAddFavorite(manga).toStep(manga)
 
     /**
-     * Add to library: with a default category set or no categories, move + favorite directly and
-     * return [AddFavoriteResult.Added]; otherwise return [AddFavoriteResult.NeedsCategoryChoice] so
-     * the caller can show its own category picker.
+     * The duplicate prompt every manga add path raises, or null when nothing similar is in the library.
+     * A stub source means the extension is not installed, which the duplicate card warns about. Twin of
+     * `NovelLibraryAdder.findDuplicates`, pinned by `AddDecisionConformanceTest`.
      */
-    suspend fun resolveAddFavorite(manga: Manga): AddFavoriteResult {
-        val categories = getUserCategories()
-        val defaultCategoryId = libraryPreferences.defaultCategory.get()
-        val defaultCategory = categories.find { it.id == defaultCategoryId.toLong() }
-
-        return when {
-            defaultCategory != null -> {
-                moveToCategories(manga, listOf(defaultCategory.id))
-                changeFavorite(manga)
-                AddFavoriteResult.Added
-            }
-            defaultCategoryId == 0 || categories.isEmpty() -> {
-                moveToCategories(manga, emptyList())
-                changeFavorite(manga)
-                AddFavoriteResult.Added
-            }
-            else -> {
-                val preselectedIds = getCategories.await(manga.id).map { it.id }
-                AddFavoriteResult.NeedsCategoryChoice(
-                    categories.mapAsCheckboxState { it.id in preselectedIds },
-                )
+    suspend fun findDuplicates(manga: Manga): DuplicatePrompt<MangaWithChapterCount, Long>? = duplicatePrompt(
+        duplicates = getDuplicateLibraryManga(manga),
+        entryId = { it.manga.id },
+        mergeManager = mergeManager,
+    ) { duplicates ->
+        duplicates.map { it.manga.source }.distinct().associateWith { id ->
+            when (val source = sourceManager.getOrStub(id)) {
+                is StubSource -> EntrySourceLabel.Missing(source.name)
+                else -> EntrySourceLabel.Installed(source.name)
             }
         }
     }
 
-    /** User categories, excluding the system default. */
-    private suspend fun getUserCategories(): List<Category> =
-        getCategories.subscribe().firstOrNull()?.filterNot { it.isSystemCategory }.orEmpty()
-}
+    /** Where an entry joining [selectedIds]'s group lands: their categories, never a prompt. Reads only. */
+    suspend fun groupCategoryIdsOf(selectedIds: List<Long>): List<Long> =
+        groupCategoryIds(selectedIds.flatMap { getCategories.await(it) })
 
-/** Outcome of [MangaLibraryAdder.resolveAddFavorite]: added outright, or awaiting a category choice. */
-sealed interface AddFavoriteResult {
-    data object Added : AddFavoriteResult
-    data class NeedsCategoryChoice(
-        val initialSelection: List<CheckboxState.State<Category>>,
-    ) : AddFavoriteResult
+    /**
+     * Add [manga] to the library in the group of the user's picked duplicates, through the shared
+     * sequence, filed in the group's categories, so it never asks. Only the picks: the duplicate list
+     * is fuzzy, and one member is enough since the merge absorbs that member's whole group.
+     */
+    suspend fun addToExistingGroup(manga: Manga, selectedIds: List<Long>): AddFavoriteResult = addEntryOrPrompt(
+        resolveCategories = { groupCategoryIdsOf(selectedIds) },
+        favorite = { joinGroupForAdd(manga, selectedIds) },
+        fileCategories = { _, categoryIds -> moveToCategories(manga, categoryIds) },
+        categoryPicker = { categoryPickerSelection(manga.id) },
+    )
+
+    // The defaults go first, so the setting the join hands the entry is the one it keeps.
+    private suspend fun joinGroupForAdd(manga: Manga, selectedIds: List<Long>): Long? {
+        setMangaDefaultChapterFlags.await(manga)
+        return joinGroup(manga, selectedIds)
+    }
+
+    /**
+     * Favorite [manga] and merge it into [selectedIds]'s group as ONE unit, answering its id, or null
+     * when the row is gone or the write failed. Atomic because membership is not favorite-filtered: a
+     * merged copy that never got favorited feeds the group while invisible in the library, with nothing
+     * able to unmerge it. The row is re-read rather than trusted from a snapshot, which would skip the
+     * write and still merge. Trackers bind once it is in. The picks go first, so an ungrouped pick stays
+     * the settings owner. Twin of `NovelLibraryAdder.joinGroup`, pinned by `AddToGroupConformanceTest`.
+     */
+    suspend fun joinGroup(manga: Manga, selectedIds: List<Long>): Long? {
+        val stored = getManga.await(manga.id) ?: return null
+        val favorited = chapterSettings.rejoin(manga.id, mergeManager) {
+            transactions.run {
+                val ok = stored.favorite || updateManga.awaitUpdateFavorite(manga.id, true)
+                if (ok) mergeManager.merge(selectedIds + manga.id)
+                ok
+            }
+        }
+        if (!favorited) return null
+        autoBindOnAdd.manga(manga, sourceManager.getOrStub(manga.source))
+        return manga.id
+    }
+
+    /** The long press's remove, through the removal every surface shares. */
+    suspend fun removeFromLibrary(manga: Manga) {
+        removeMangaFromLibrary.await(listOf(manga.id))
+    }
+
+    /** Files [manga] under [categoryIds], and the rest of its merge group with it. */
+    suspend fun moveToCategories(manga: Manga, categoryIds: List<Long>) = fileCategories(manga.id, categoryIds)
+
+    /** Files a just-added [mangaId]: a member back in its group takes the group's categories, else [categoryIds]. */
+    suspend fun fileAdded(mangaId: Long, categoryIds: List<Long>) =
+        fileCategories(mangaId, groupCategories.groupCategoriesFor(mangaId, mergeManager) ?: categoryIds)
+
+    private suspend fun fileCategories(mangaId: Long, categoryIds: List<Long>) {
+        groupCategories.set(mangaId, categoryIds.withoutSystemCategory(), mergeManager)
+    }
+
+    /**
+     * Add to library through the shared sequence ([addEntry]): decide, favorite, then file. With no
+     * usable default the caller shows its own picker, whose confirm owes both writes, so backing out of
+     * it adds nothing.
+     */
+    suspend fun resolveAddFavorite(manga: Manga): AddFavoriteResult = addEntryOrPrompt(
+        resolveCategories = { landingCategories(manga.id) },
+        favorite = { favoriteFromBrowse(manga.id) },
+        fileCategories = { _, categoryIds -> moveToCategories(manga, categoryIds) },
+        categoryPicker = { categoryPickerSelection(manga.id) },
+    )
+
+    /**
+     * The writes a picker's confirm owes for a stored row, in the shared order, so backing out of
+     * the picker adds nothing and the row is favorited only when the user confirms. Twin of
+     * `NovelLibraryAdder.confirmAddCategories`, pinned by `AddToGroupConformanceTest`'s confirm cases.
+     */
+    suspend fun confirmAddCategories(mangaId: Long, categoryIds: List<Long>): AddOutcome = finishAdd(
+        categoryIds = categoryIds,
+        favorite = { favoriteFromBrowse(mangaId) },
+        fileCategories = { id, ids -> fileCategories(id, ids) },
+    )
+
+    /**
+     * The favorite step of every add outside the details page: a newly added row takes the default
+     * chapter settings, which the details page stamped already when it opened.
+     */
+    suspend fun favoriteFromBrowse(mangaId: Long): Long? =
+        favoriteForAdd(mangaId) { setMangaDefaultChapterFlags.await(it) }
+
+    /**
+     * Add [mangaId] where there is no screen to ask on (a batch add, a shared link, a follows sync): the
+     * default category when one is set, uncategorized under "always ask". A row already in the library
+     * keeps its categories and date added.
+     */
+    suspend fun addWithoutAsking(mangaId: Long): Long? = favoriteForAdd(mangaId) { added ->
+        setMangaDefaultChapterFlags.await(added)
+        landingCategories(added.id)?.let { moveToCategories(added, it) }
+    }
+
+    /** Whether [mangaId] is in the library now, rather than when a list drew it. */
+    suspend fun isInLibrary(mangaId: Long): Boolean = getManga.await(mangaId)?.favorite == true
+
+    /**
+     * Favorite [mangaId] for an add, answering its id, or null when the row is gone or the write
+     * failed. The row is re-read rather than trusted from a snapshot, which can say favorited for an
+     * entry unfavorited since and would file categories against a row outside the library. An already
+     * favorited row is not re-written: that would reset dateAdded. [onAdded] runs only for a row this
+     * call added, before a row rejoining its group takes the group's chapter settings. Twin of
+     * `NovelLibraryAdder.favoriteForAdd`, pinned by `AddToGroupConformanceTest`.
+     */
+    suspend fun favoriteForAdd(mangaId: Long, onAdded: suspend (Manga) -> Unit = {}): Long? {
+        val stored = getManga.await(mangaId) ?: return null
+        if (stored.favorite) return mangaId
+        val added = chapterSettings.rejoin(mangaId, mergeManager) {
+            updateManga.awaitUpdateFavorite(mangaId, true).also { if (it) onAdded(stored) }
+        }
+        if (!added) return null
+        autoBindOnAdd.manga(stored, sourceManager.getOrStub(stored.source))
+        return mangaId
+    }
+
+    /**
+     * Where an add of [mangaId] lands, or null to ask: a member coming back to its group takes the
+     * group's categories, as it takes its chapter setting; anything else the default. Reads only.
+     */
+    suspend fun landingCategories(mangaId: Long): List<Long>? =
+        groupCategories.groupCategoriesFor(mangaId, mergeManager) ?: resolveDefaultCategories()
+
+    /**
+     * Where a new favorite should land, or null when the user has to be asked. Reads only, so a
+     * caller can favorite between this and [moveToCategories]. Twin of `NovelLibraryAdder.resolveDefaultCategories`;
+     * both call the `resolveDefaultCategoryIds` kernel, pinned by `AddDecisionConformanceTest`.
+     */
+    suspend fun resolveDefaultCategories(): List<Long>? =
+        resolveDefaultCategoryIds(getUserCategories(), libraryPreferences.defaultCategory.get())
+
+    /** The picker's initial state for [mangaId], its current categories checked. Reads only. */
+    suspend fun categoryPickerSelection(mangaId: Long): List<CheckboxState.State<Category>> {
+        val preselectedIds = getCategories.await(mangaId).map { it.id }
+        return getUserCategories().mapAsCheckboxState { it.id in preselectedIds }
+    }
+
+    /**
+     * User categories, excluding the system default, ordered by the category sort-order preference
+     * so every picker lists them the way the library and the details picker do, not in table order.
+     */
+    suspend fun getUserCategories(): List<Category> = reikaiSortCategories(
+        categories = getCategories.subscribe().firstOrNull()?.filterNot { it.isSystemCategory }.orEmpty(),
+        sortOrder = reikaiLibraryPreferences.categorySortOrder.get(),
+    )
 }

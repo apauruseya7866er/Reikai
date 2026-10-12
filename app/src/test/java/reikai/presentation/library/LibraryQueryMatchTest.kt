@@ -1,0 +1,263 @@
+package reikai.presentation.library
+
+import io.kotest.matchers.shouldBe
+import mihon.domain.library.model.search.QueryNode
+import org.junit.jupiter.api.Test
+import kotlin.time.Instant
+
+/**
+ * The shared query kernel, exercised over a plain row type rather than `LibraryItem`, since the kernel is
+ * pure over its accessors. Pins what is Reikai's rather than upstream's: the source key is matched as a
+ * String on both content types.
+ */
+class LibraryQueryMatchTest {
+
+    private data class Row(
+        val id: Long = 1L,
+        val title: String = "Lord of the Mysteries",
+        val author: String? = "Cuttlefish",
+        val genre: List<String>? = listOf("Fantasy"),
+        val sources: List<LibraryQuerySource> = listOf(source()),
+        val notes: String? = "",
+        val unread: Long = 3L,
+    )
+
+    /** Stands in for the id set each library resolves once per query from its own chapter table. */
+    private val chapterMatches = mapOf("clown" to setOf(1L), "seer" to setOf(2L))
+
+    private val fields = LibraryQueryFields<Row>(
+        id = { it.id },
+        title = { it.title },
+        author = { it.author },
+        artist = { null },
+        description = { null },
+        notes = { it.notes },
+        genre = { it.genre },
+        sources = { it.sources },
+        unreadCount = { it.unread },
+        readCount = { 0L },
+        totalChapters = { 10L },
+        dateAdded = { EPOCH },
+        fetchInterval = { 0 },
+        nextUpdate = { EPOCH },
+        matchesChapter = { row, term -> chapterMatches[term]?.contains(row.id) },
+        matchesTagTerm = { _, _ -> false },
+    )
+
+    /** A merged series led by the default source, with a local Japanese member. */
+    private val merged = Row(
+        sources = listOf(source(), source(key = "member", name = "member site", language = "ja", isLocal = true)),
+    )
+
+    private fun matches(query: String, row: Row = Row()) =
+        libraryQueryMatches(QueryNode.from(query), row, fields)
+
+    /** The same fields with an override on row 1, standing in for a renamed entry. */
+    private val overlaidFields = LibraryQueryFields<Row>(
+        id = fields.id,
+        title = { if (it.id == 1L) "Renamed Entry" else it.title },
+        author = { if (it.id == 1L) "New Author" else it.author },
+        artist = fields.artist,
+        description = fields.description,
+        notes = fields.notes,
+        genre = { if (it.id == 1L) listOf("Renamed Genre") else it.genre },
+        sources = fields.sources,
+        unreadCount = fields.unreadCount,
+        readCount = fields.readCount,
+        totalChapters = fields.totalChapters,
+        dateAdded = fields.dateAdded,
+        fetchInterval = fields.fetchInterval,
+        nextUpdate = fields.nextUpdate,
+        matchesChapter = fields.matchesChapter,
+        matchesTagTerm = fields.matchesTagTerm,
+    )
+
+    private fun matchesOverlaid(query: String) =
+        libraryQueryMatches(QueryNode.from(query), Row(), overlaidFields)
+
+    @Test
+    fun `a bare word sweeps the text fields`() {
+        matches("mysteries") shouldBe true
+    }
+
+    @Test
+    fun `an absent field follows the absent-then-negate convention`() {
+        // artist is null here, so `-artist:x` keeps the row, matching upstream's semantics.
+        matches("-artist:hoshino") shouldBe true
+    }
+
+    @Test
+    fun `a source's own query finds entries on that source, whatever its key holds`() {
+        matches(sourceKeyQuery("ireader:42"), Row(sources = listOf(source(key = "ireader:42")))) shouldBe true
+    }
+
+    @Test
+    fun `a source's own query leaves a source whose key only begins the same way`() {
+        matches(sourceKeyQuery("ireader:4"), Row(sources = listOf(source(key = "ireader:42")))) shouldBe false
+    }
+
+    @Test
+    fun `a merged series is found from a source other than its lead`() {
+        matches(sourceKeyQuery("member"), merged) shouldBe true
+    }
+
+    @Test
+    fun `excluding a merged series' member source excludes the series`() {
+        matches("-srcid:member", merged) shouldBe false
+    }
+
+    @Test
+    fun `a merged series matches a member's source name`() {
+        matches("source:\"member site\"", merged) shouldBe true
+    }
+
+    @Test
+    fun `a merged series matches a plain word naming a member's source`() {
+        matches("\"member site\"", merged) shouldBe true
+    }
+
+    @Test
+    fun `a merged series with a local member matches source local`() {
+        matches("source:local", merged) shouldBe true
+    }
+
+    @Test
+    fun `a merged series matches a member's language`() {
+        matches("lang:ja", merged) shouldBe true
+    }
+
+    @Test
+    fun `an absent language needs every source of a merged series to lack one`() {
+        matches("lang:\"\"", Row(sources = listOf(source(language = ""), source(key = "b")))) shouldBe false
+    }
+
+    @Test
+    fun `a merged series whose sources all lack a language matches an absent one`() {
+        matches("lang:\"\"", Row(sources = listOf(source(language = ""), source(key = "b", language = null)))) shouldBe
+            true
+    }
+
+    @Test
+    fun `an absent source name needs every source of a merged series to lack one`() {
+        matches("source:\"\"", Row(sources = listOf(source(name = ""), source(key = "b")))) shouldBe false
+    }
+
+    @Test
+    fun `srcid matches the source key exactly on either content type`() {
+        matches("srcid:novelarrow") shouldBe true
+        matches("srcid:novel") shouldBe false
+    }
+
+    @Test
+    fun `source matches the display name, not the key`() {
+        matches("source:arrow") shouldBe true
+    }
+
+    @Test
+    fun `id compares numerically`() {
+        matches("id=1") shouldBe true
+        matches("id=2") shouldBe false
+    }
+
+    @Test
+    fun `comparisons the row can answer work`() {
+        matches("unread>2") shouldBe true
+        matches("unread>5") shouldBe false
+    }
+
+    @Test
+    fun `an unknown field degrades to a plain text term`() {
+        // Upstream's parser behaviour, worth pinning because it is what a typo does.
+        matches("nonsense:mysteries") shouldBe false
+    }
+
+    @Test
+    fun `chapter matches through the resolved id set`() {
+        matches("chapter:clown") shouldBe true
+        matches("chapter:seer") shouldBe false
+        matches("chapter:clown", Row(id = 2L)) shouldBe false
+    }
+
+    @Test
+    fun `a term with no resolved lookup does not match`() {
+        matches("chapter:nothingresolvedthis") shouldBe false
+    }
+
+    @Test
+    fun `a bare word never sweeps chapter names`() {
+        // CHAPTER is fieldOnly, so a plain search must never pay a chapter lookup.
+        matches("clown") shouldBe false
+    }
+
+    @Test
+    fun `chapter terms are extracted from the parsed tree, quoting and negation included`() {
+        QueryNode.from("chapter:clown").chapterSearchTerms() shouldBe setOf("clown")
+        QueryNode.from("-chapter:\"the clown\"").chapterSearchTerms() shouldBe setOf("the clown")
+        QueryNode.from("chapter:a || (chapter:b fantasy)").chapterSearchTerms() shouldBe setOf("a", "b")
+        QueryNode.from("fantasy").chapterSearchTerms() shouldBe emptySet()
+    }
+
+    @Test
+    fun `a custom override is what search matches`() {
+        // The name on the card wins over the source's.
+        matchesOverlaid("renamed") shouldBe true
+        matchesOverlaid("title:renamed") shouldBe true
+        matchesOverlaid("author:\"new author\"") shouldBe true
+        matchesOverlaid("genre:renamed") shouldBe true
+    }
+
+    @Test
+    fun `a custom override replaces the source value rather than adding to it`() {
+        // Searching the source title of a renamed entry no longer finds it, which is the tradeoff.
+        matchesOverlaid("mysteries") shouldBe false
+        matchesOverlaid("author:cuttlefish") shouldBe false
+    }
+
+    @Test
+    fun `an unoverridden field still reads the source value`() {
+        matchesOverlaid("srcid:novelarrow") shouldBe true
+    }
+
+    @Test
+    fun `boolean operators and negation compose`() {
+        matches("fantasy || horror") shouldBe true
+        matches("fantasy -mysteries") shouldBe false
+        matches("\"lord of the\"") shouldBe true
+    }
+
+    @Test
+    fun `a negated applicable comparison inverts normally`() {
+        matches("-unread>5") shouldBe true
+        matches("-unread>2") shouldBe false
+    }
+
+    @Test
+    fun `a negated chapter term excludes through the id set`() {
+        matches("-chapter:clown") shouldBe false
+        matches("-chapter:clown", Row(id = 2L)) shouldBe true
+    }
+
+    @Test
+    fun `date comparisons parse and compare`() {
+        matches("added<2030-01-01") shouldBe true
+        matches("added>2030-01-01") shouldBe false
+    }
+
+    private companion object {
+        val EPOCH = Instant.fromEpochMilliseconds(0)
+
+        fun source(
+            key: String = "novelarrow",
+            name: String = "novel arrow",
+            language: String? = "en",
+            isLocal: Boolean = false,
+        ) = LibraryQuerySource(key, name, language, isLocal)
+    }
+
+    @Test
+    fun `an empty quoted field value matches an absent field`() {
+        // genre:"" is the reachable spelling for "no value" (a bare trailing colon lexes as text).
+        matches("artist:\"\"") shouldBe true
+        matches("genre:\"\"") shouldBe false
+    }
+}

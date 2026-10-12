@@ -1,0 +1,104 @@
+package reikai.presentation.settings
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
+import reikai.presentation.components.RevealableSecureTextField
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.stringResource
+
+/**
+ * Asks for the basic-auth credentials of a proxy in front of the bypass server.
+ *
+ * One dialog rather than two preference rows: a row renders its stored value as the subtitle, at up
+ * to ten lines, so the password would be printed on the screen. Shaped like the tracker sign-in
+ * dialog, which asks for the same pair.
+ */
+@Composable
+fun FlareSolverrLoginDialog(
+    currentUsername: String,
+    currentPassword: String,
+    /** The address is plain http off the user's network, where a login is refused. */
+    sentInTheClear: Boolean,
+    onConfirm: (username: String, password: String) -> Unit,
+    onDismissRequest: () -> Unit,
+) {
+    val username = rememberTextFieldState(currentUsername)
+    val password = rememberTextFieldState(currentPassword)
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        title = { Text(text = stringResource(MR.strings.login_title, "FlareSolverr")) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (sentInTheClear) {
+                    Text(
+                        text = stringResource(MR.strings.flaresolverr_login_not_private),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                OutlinedTextField(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentType = ContentType.Username },
+                    state = username,
+                    label = { Text(text = stringResource(MR.strings.username)) },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    lineLimits = TextFieldLineLimits.SingleLine,
+                )
+
+                RevealableSecureTextField(state = password, label = stringResource(MR.strings.password))
+            }
+        },
+        // One full-width row so Clear sits in the bottom-left corner and the actions stay at the
+        // right, instead of all three clustering at the end like the default dialog button layout.
+        confirmButton = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Empties the fields rather than saving: Save still commits, so a mistaken tap costs
+                // nothing and Cancel puts the stored pair back.
+                TextButton(
+                    enabled = username.text.isNotEmpty() || password.text.isNotEmpty(),
+                    onClick = {
+                        username.clearText()
+                        password.clearText()
+                    },
+                ) {
+                    Text(text = stringResource(MR.strings.action_clear))
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onDismissRequest) {
+                        Text(text = stringResource(MR.strings.action_cancel))
+                    }
+                    // Saving both empty is how a reader drops credentials they no longer need.
+                    TextButton(
+                        onClick = { onConfirm(username.text.toString().trim(), password.text.toString()) },
+                    ) {
+                        Text(text = stringResource(MR.strings.action_save))
+                    }
+                }
+            }
+        },
+    )
+}

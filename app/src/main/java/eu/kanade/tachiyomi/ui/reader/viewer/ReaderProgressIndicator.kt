@@ -16,11 +16,9 @@ import androidx.compose.ui.platform.AbstractComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.view.isVisible
 import com.google.android.material.progressindicator.CircularProgressIndicator
-import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.theme.TachiyomiTheme
+import mihon.app.di.appGraph
 import tachiyomi.presentation.core.components.CombinedCircularProgressIndicator
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 /**
  * A wrapper for [CircularProgressIndicator] that always rotates.
@@ -31,7 +29,7 @@ class ReaderProgressIndicator @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0,
-    // RK: cover-based theming color (Y11)
+    // RK: cover-based theming color
     @ColorInt private val seedColor: Int? = null,
 ) : AbstractComposeView(context, attrs, defStyleAttr) {
 
@@ -44,8 +42,8 @@ class ReaderProgressIndicator @JvmOverloads constructor(
 
     @Composable
     override fun Content() {
-        // RK: tint the spinner from the cover color when enabled (Y11)
-        val themeCoverBased = Injekt.get<UiPreferences>().themeCoverBased.get()
+        // RK: tint the spinner from the cover color when enabled
+        val themeCoverBased = context.appGraph.uiPreferences.themeCoverBased.get()
         TachiyomiTheme(seedColor = seedColor?.let { Color(it) }.takeIf { themeCoverBased }) {
             CombinedCircularProgressIndicator(progress = { progress })
         }

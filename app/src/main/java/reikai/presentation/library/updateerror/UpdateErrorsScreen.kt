@@ -1,5 +1,6 @@
 package reikai.presentation.library.updateerror
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,35 +11,42 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.SelectAll
-import androidx.compose.material.icons.outlined.SwapCalls
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import dev.zacsweers.metrox.viewmodel.assistedMetroViewModel
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.manga.components.MangaCover
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
-import mihon.feature.migration.config.MigrationConfigScreen
-import reikai.data.coil.NovelCover
+import kotlinx.coroutines.launch
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Delete
+import mihon.icons.materialsymbols.rounded.Refresh
+import mihon.icons.materialsymbols.rounded.SelectAll
+import mihon.icons.materialsymbols.rounded.SwapCalls
 import reikai.domain.library.ContentType
+import reikai.domain.novel.model.NovelCover
 import reikai.presentation.components.ContentTypeFilterChips
+import reikai.presentation.components.libraryRefreshMessage
+import reikai.presentation.components.rememberChipListState
+import reikai.presentation.migrate.flow.EntryMigrationSourcePickScreen
 import reikai.presentation.novel.details.NovelScreen
-import reikai.presentation.novel.migrate.NovelMigrationConfigScreen
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
@@ -57,8 +65,12 @@ class UpdateErrorsScreen(
     override fun Content() {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
-        val screenModel = rememberScreenModel { UpdateErrorsScreenModel(initialContentType) }
-        val state by screenModel.state.collectAsState()
+        val viewModel = assistedMetroViewModel<UpdateErrorsViewModel, UpdateErrorsViewModel.Factory> {
+            create(initialContentType = initialContentType)
+        }
+        val state by viewModel.state.collectAsState()
+        val scope = rememberCoroutineScope()
+        val snackbarHostState = remember { SnackbarHostState() }
 
         if (state is UpdateErrorsScreenState.Loading) {
             LoadingScreen()
@@ -66,40 +78,39 @@ class UpdateErrorsScreen(
         }
         val successState = state as UpdateErrorsScreenState.Success
 
+        // Back leaves selection mode before it leaves the screen, as Komikku's list and Mihon's lists do
+        BackHandler(enabled = successState.selection.size > 0, onBack = viewModel::clearSelection)
+
         Scaffold(
             topBar = { scrollBehavior ->
                 AppBar(
                     title = stringResource(MR.strings.label_update_errors),
                     navigateUp = navigator::pop,
-                    actionModeCounter = successState.selected.size,
-                    onCancelActionMode = screenModel::clearSelection,
+                    actionModeCounter = successState.selection.size,
+                    onCancelActionMode = viewModel::clearSelection,
                     actionModeActions = {
+                        val migration = EntryMigrationSourcePickScreen.forSelection(successState.selection.selection)
                         AppBarActions(
-                            listOf(
+                            listOfNotNull(
                                 AppBar.Action(
                                     title = stringResource(MR.strings.action_select_all),
-                                    icon = Icons.Outlined.SelectAll,
-                                    onClick = screenModel::selectAll,
+                                    icon = MaterialSymbols.Rounded.SelectAll,
+                                    onClick = viewModel::selectAll,
                                 ),
-                                AppBar.Action(
-                                    title = stringResource(MR.strings.action_migrate),
-                                    icon = Icons.Outlined.SwapCalls,
-                                    enabled = successState.selectionIsSingleVertical,
-                                    onClick = {
-                                        val mangaIds = screenModel.selectedMangaIds()
-                                        val novelIds = screenModel.selectedNovelIds()
-                                        if (mangaIds.isNotEmpty()) {
-                                            navigator.push(MigrationConfigScreen(mangaIds))
-                                        } else if (novelIds.isNotEmpty()) {
-                                            navigator.push(NovelMigrationConfigScreen(novelIds))
-                                        }
-                                        screenModel.clearSelection()
-                                    },
-                                ),
+                                migration?.let {
+                                    AppBar.Action(
+                                        title = stringResource(MR.strings.action_migrate),
+                                        icon = MaterialSymbols.Rounded.SwapCalls,
+                                        onClick = {
+                                            viewModel.clearSelection()
+                                            navigator.push(it)
+                                        },
+                                    )
+                                },
                                 AppBar.Action(
                                     title = stringResource(MR.strings.action_delete),
-                                    icon = Icons.Outlined.Delete,
-                                    onClick = screenModel::dismissSelected,
+                                    icon = MaterialSymbols.Rounded.Delete,
+                                    onClick = viewModel::dismissSelected,
                                 ),
                             ),
                         )
@@ -110,12 +121,22 @@ class UpdateErrorsScreen(
                                 listOf(
                                     AppBar.Action(
                                         title = stringResource(MR.strings.action_update_library),
-                                        icon = Icons.Outlined.Refresh,
-                                        onClick = { screenModel.retry(context) },
+                                        icon = MaterialSymbols.Rounded.Refresh,
+                                        onClick = {
+                                            scope.launch {
+                                                val started = viewModel.retry(context)
+                                                val message = libraryRefreshMessage(
+                                                    started,
+                                                    successState.contentType,
+                                                    category = false,
+                                                )
+                                                snackbarHostState.showSnackbar(context.stringResource(message))
+                                            }
+                                        },
                                     ),
                                     AppBar.OverflowAction(
                                         title = stringResource(MR.strings.action_clear_all),
-                                        onClick = screenModel::dismissAll,
+                                        onClick = viewModel::dismissAll,
                                     ),
                                 ),
                             )
@@ -124,11 +145,12 @@ class UpdateErrorsScreen(
                     scrollBehavior = scrollBehavior,
                 )
             },
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         ) { paddingValues ->
             Column(modifier = Modifier.padding(paddingValues)) {
                 ContentTypeFilterChips(
                     selected = successState.contentType,
-                    onSelect = screenModel::setContentType,
+                    onSelect = viewModel::setContentType,
                 )
 
                 if (successState.isEmpty) {
@@ -139,7 +161,10 @@ class UpdateErrorsScreen(
                     return@Column
                 }
 
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = rememberChipListState(successState.contentType),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
                     successState.groups.forEach { group ->
                         item(key = "header-${group.message}") {
                             Text(
@@ -154,14 +179,14 @@ class UpdateErrorsScreen(
                         }
                         items(
                             items = group.errors,
-                            key = { "error-${it.key}" },
+                            key = { "error-${it.entryId}" },
                         ) { entry ->
                             UpdateErrorRow(
                                 entry = entry,
-                                isSelected = entry.key in successState.selected,
+                                isSelected = entry.entryId in successState.selection,
                                 onClick = {
                                     if (successState.selectionMode) {
-                                        screenModel.toggleSelection(entry.key)
+                                        viewModel.toggleSelection(entry.entryId)
                                     } else {
                                         when (entry) {
                                             is UpdateErrorEntry.Manga ->
@@ -171,7 +196,7 @@ class UpdateErrorsScreen(
                                         }
                                     }
                                 },
-                                onLongClick = { screenModel.toggleSelection(entry.key) },
+                                onLongClick = { viewModel.rangeSelection(entry.entryId) },
                             )
                         }
                     }
@@ -198,7 +223,7 @@ private fun UpdateErrorRow(
         )
         is UpdateErrorEntry.Novel -> NovelCover(
             url = entry.error.thumbnailUrl,
-            site = null,
+            sourceId = entry.error.source,
             isNovelFavorite = true,
             lastModified = entry.error.coverLastModified,
             novelId = entry.error.novelId,

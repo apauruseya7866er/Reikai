@@ -1,26 +1,27 @@
 package reikai.domain.recommendation.taste
 
+import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.kitsu.Kitsu
 import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuLibraryEntry
+import eu.kanade.tachiyomi.data.track.kitsu.toKitsuStatus
 import reikai.domain.recommendation.ReikaiRecommendationPreferences
+import tachiyomi.core.common.preference.Preference
 
 /**
- * Pulls the user's full Kitsu manga library via the JSON:API `/library-entries` endpoint (categories
- * + mappings side-loaded, paged 500/entry) and normalizes each entry into a [TrackedEntry].
+ * Pulls the user's full Kitsu manga library through GraphQL (`currentProfile.library.all`, paged 500
+ * an entry) and normalizes each entry into a [TrackedEntry].
  *
- * Score: Kitsu's `ratingTwenty` (1..20 regardless of display preference), divided by 20; missing/0
- * becomes -1.0. Status: Kitsu uses `current` / `planned` rather than the other trackers' tokens.
- * Tags: the manga's `categories` titles. Cross-tracker [malId] / [anilistId] come from mappings.
+ * Score is Kitsu's native 1..20 rating regardless of display preference, so it divides by 20 and
+ * missing or 0 becomes -1.0. Statuses are Kitsu's own tokens, not the other trackers'.
  */
 class KitsuLibraryFetcher(
     private val kitsu: Kitsu,
-    private val preferences: ReikaiRecommendationPreferences,
+    preferences: ReikaiRecommendationPreferences,
 ) : TrackerLibraryFetcher {
 
-    override val trackerId: Long = kitsu.id
+    override val tracker: Tracker get() = kitsu
 
-    override fun isEnabled(): Boolean =
-        preferences.pullLibraryFromKitsu.get() && kitsu.isLoggedIn
+    override val pullPreference: Preference<Boolean> = preferences.pullLibraryFromKitsu
 
     override suspend fun fetchLibrary(): List<TrackedEntry> =
         kitsu.getUserLibrary().map { it.toTrackedEntry() }
@@ -30,18 +31,10 @@ class KitsuLibraryFetcher(
         remoteId = mangaId,
         title = title,
         score = normalizeTrackerScore(ratingTwenty, 20),
-        status = mapStatus(status),
-        tags = tags.map { it.toTagKey() }.filter { it.isNotEmpty() }.distinct(),
+        // Upper-cased because the JSON:API reported the status enum in lower case, GraphQL in upper.
+        status = kitsu.trackStatusOfRemote(status.uppercase()) { it.toKitsuStatus().rawValue },
+        tags = tags.toTagKeys(),
         malId = malId,
         anilistId = anilistId,
     )
-
-    private fun mapStatus(raw: String): TrackStatus = when (raw) {
-        "current" -> TrackStatus.READING
-        "completed" -> TrackStatus.COMPLETED
-        "on_hold" -> TrackStatus.ON_HOLD
-        "dropped" -> TrackStatus.DROPPED
-        "planned" -> TrackStatus.PLAN_TO_READ
-        else -> TrackStatus.UNKNOWN
-    }
 }

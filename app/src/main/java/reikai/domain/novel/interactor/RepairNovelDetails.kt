@@ -1,0 +1,89 @@
+package reikai.domain.novel.interactor
+
+import dev.zacsweers.metro.Inject
+import eu.kanade.tachiyomi.data.cache.CoverCache
+import logcat.LogPriority
+import reikai.data.novel.StoredDetails
+import reikai.data.novel.refreshNovelFromSource
+import reikai.domain.chapter.ChapterNumberOverrideRepository
+import reikai.domain.merge.ReconcileMergedChapters
+import reikai.domain.novel.NovelChapterRepository
+import reikai.domain.novel.NovelRepository
+import reikai.domain.novel.model.Novel
+import reikai.novel.download.NovelDownloadManager
+import reikai.novel.source.NovelSourceManager
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.library.service.LibraryPreferences
+
+/**
+ * Finds library novels showing another novel's details and re-fetches them from their own source.
+ * A plugin-host bug let a slow call's result land on the next novel in a bulk run, so that entry kept
+ * its own url and chapters but wore a same-source neighbour's title, cover, author and description.
+ * The host no longer does that, but rows written before the fix stay wrong until something refreshes
+ * them, and the only visible symptom is a cover the user happens to recognise.
+ */
+@Inject
+class RepairNovelDetails(
+    private val novelRepository: NovelRepository,
+    private val novelChapterRepository: NovelChapterRepository,
+    private val sourceManager: NovelSourceManager,
+    // A Provider, not the manager: constructing it restores the persisted queue and can start the
+    // download worker, and a repair run must not do that just by existing.
+    private val downloadManager: () -> NovelDownloadManager,
+    private val libraryPreferences: LibraryPreferences,
+    private val chapterNumberOverrides: ChapterNumberOverrideRepository,
+    private val coverCache: CoverCache,
+    private val reconcileMergedChapters: ReconcileMergedChapters,
+) {
+
+    data class Result(val suspects: Int, val repaired: Int)
+
+    suspend fun await(): Result {
+        // Detect over every row, repair only library ones. The donor can be a non-favorite shadow row
+        // left by opening a novel in Browse, and on a real corrupted device one victim was only
+        // visible because of such a row; scanning the library alone missed it entirely.
+        val suspects = findSuspects(novelRepository.getAll()).filter { it.favorite }
+        var repaired = 0
+        // The refresh syncs chapters, which leaves a grouped novel's stored stitch stale.
+        reconcileMergedChapters.afterPass {
+            suspects.forEach { novel ->
+                val source = sourceManager.get(novel.source) ?: return@forEach
+                runCatching {
+                    refreshNovelFromSource(
+                        novel,
+                        source,
+                        novelChapterRepository,
+                        novelRepository,
+                        libraryPreferences,
+                        chapterNumberOverrides,
+                        coverCache,
+                        novelDownloadManager = downloadManager(),
+                        // The parse tells the victim from its donor. A user's own edits live in
+                        // custom_novel_info and survive either way.
+                        details = StoredDetails.SUSPECT,
+                    )
+                }
+                    .onSuccess { repaired++ }
+                    .onFailure { logcat(LogPriority.WARN, it) { "Novel detail repair failed: id=${novel.id}" } }
+            }
+        }
+        return Result(suspects = suspects.size, repaired = repaired)
+    }
+
+    companion object {
+        /**
+         * Two novels on the SAME source sharing a title and author but sitting at different urls: one is wearing the
+         * other's details. Author is part of the key because title alone flags every same-titled work on a
+         * user-generated source, and it costs no sensitivity: the mix-up copies the whole metadata block, so a
+         * victim carries its donor's author too. Both members are returned rather than a guess at the victim: the
+         * refetch tells them apart, as only the victim's source names it by another title ([StoredDetails.SUSPECT]).
+         */
+        fun findSuspects(novels: List<Novel>): List<Novel> =
+            novels
+                .filter { it.title.isNotBlank() }
+                .groupBy { Triple(it.source, it.title.trim().lowercase(), it.author?.trim()?.lowercase()) }
+                .values
+                .filter { group -> group.distinctBy { it.url }.size > 1 }
+                .flatten()
+    }
+}

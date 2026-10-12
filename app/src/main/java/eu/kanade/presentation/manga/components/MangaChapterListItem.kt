@@ -7,16 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.sizeIn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Circle
-import androidx.compose.material.icons.outlined.BookmarkAdd
-import androidx.compose.material.icons.outlined.BookmarkRemove
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Done
-import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.FileDownloadOff
-import androidx.compose.material.icons.outlined.RemoveDone
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +28,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.data.download.model.Download
 import me.saket.swipe.SwipeableActionsBox
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.BookmarkAdd
+import mihon.icons.materialsymbols.rounded.BookmarkRemove
+import mihon.icons.materialsymbols.rounded.Check
+import mihon.icons.materialsymbols.rounded.Delete
+import mihon.icons.materialsymbols.rounded.Download
+import mihon.icons.materialsymbols.rounded.FileDownloadOff
+import mihon.icons.materialsymbols.rounded.RemoveDone
+import mihon.icons.materialsymbols.roundedfilled.Bookmark
+import mihon.icons.materialsymbols.roundedfilled.Circle
+import mihon.icons.materialsymbols.roundedfilled.Warning
+import reikai.presentation.components.subtitlePart
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
@@ -64,9 +66,8 @@ fun MangaChapterListItem(
     onDownloadClick: ((ChapterDownloadAction) -> Unit)?,
     onChapterSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit,
     modifier: Modifier = Modifier,
-    // RK: novels center single-line rows (no date/source subtitle) so the title and download icon
-    // line up; manga keeps the default top alignment (its rows usually carry a date subtitle).
-    verticalAlignment: Alignment.Vertical = Alignment.Top,
+    downloadIndicatorShown: Boolean = true, // RK
+    onNumberHintClick: (() -> Unit)? = null, // RK: draws the out-of-line number marker
 ) {
     val start = getSwipeAction(
         action = chapterSwipeStartAction,
@@ -100,7 +101,6 @@ fun MangaChapterListItem(
                     onLongClick = onLongClick,
                 )
                 .padding(start = 16.dp, top = 12.dp, end = 8.dp, bottom = 12.dp),
-            verticalAlignment = verticalAlignment, // RK
         ) {
             Column(
                 modifier = Modifier.weight(1f),
@@ -113,7 +113,7 @@ fun MangaChapterListItem(
                     var textHeight by remember { mutableIntStateOf(0) }
                     if (!read) {
                         Icon(
-                            imageVector = Icons.Filled.Circle,
+                            imageVector = MaterialSymbols.RoundedFilled.Circle,
                             contentDescription = stringResource(MR.strings.unread),
                             modifier = Modifier
                                 .height(8.dp)
@@ -123,13 +123,25 @@ fun MangaChapterListItem(
                     }
                     if (bookmark) {
                         Icon(
-                            imageVector = Icons.Filled.Bookmark,
+                            imageVector = MaterialSymbols.RoundedFilled.Bookmark,
                             contentDescription = stringResource(MR.strings.action_filter_bookmarked),
                             modifier = Modifier
                                 .sizeIn(maxHeight = with(LocalDensity.current) { textHeight.toDp() - 2.dp }),
                             tint = MaterialTheme.colorScheme.primary,
                         )
                     }
+                    // RK --> before the title, since a long title ellipsizes whatever follows it
+                    if (onNumberHintClick != null) {
+                        Icon(
+                            imageVector = MaterialSymbols.RoundedFilled.Warning,
+                            contentDescription = stringResource(MR.strings.chapter_number_hint),
+                            modifier = Modifier
+                                .sizeIn(maxHeight = with(LocalDensity.current) { textHeight.toDp() })
+                                .combinedClickable(onClick = onNumberHintClick, onLongClick = onNumberHintClick),
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    // RK <--
                     Text(
                         text = title,
                         style = MaterialTheme.typography.bodyMedium,
@@ -141,6 +153,14 @@ fun MangaChapterListItem(
                 }
 
                 Row {
+                    // RK --> The three checks below test for null, so a blank subtitle drew a
+                    //        separator with nothing after it. Normalised once here, through the
+                    //        same rule its callers compose with, rather than at each check: those
+                    //        lines stay identical to upstream's and the blank rule stays in one
+                    //        place. A caller that composes its own subtitle is safe here too.
+                    @Suppress("NAME_SHADOWING")
+                    val scanlator = subtitlePart(scanlator)
+                    // RK <--
                     val subtitleStyle = MaterialTheme.typography.bodySmall
                         .merge(
                             color = LocalContentColor.current
@@ -175,18 +195,24 @@ fun MangaChapterListItem(
                 }
             }
 
-            ChapterDownloadIndicator(
-                enabled = downloadIndicatorEnabled,
-                modifier = Modifier.padding(start = 4.dp),
-                downloadStateProvider = downloadStateProvider,
-                downloadProgressProvider = downloadProgressProvider,
-                onClick = { onDownloadClick?.invoke(it) },
-            )
+            // RK --> rowOffersDownload (EntryDetailsScreenState) hides it on an uninstalled source's row
+            if (downloadIndicatorShown) {
+                ChapterDownloadIndicator(
+                    enabled = downloadIndicatorEnabled,
+                    modifier = Modifier.padding(start = 4.dp),
+                    downloadStateProvider = downloadStateProvider,
+                    downloadProgressProvider = downloadProgressProvider,
+                    onClick = { onDownloadClick?.invoke(it) },
+                )
+            }
+            // RK <--
         }
     }
 }
 
-private fun getSwipeAction(
+// RK: internal, not private, so the recents feed's rows draw this same swipe. One definition keeps
+// the icons, the threshold and the undo semantics from drifting between a details row and a feed row.
+internal fun getSwipeAction(
     action: LibraryPreferences.ChapterSwipeAction,
     read: Boolean,
     bookmark: Boolean,
@@ -196,22 +222,22 @@ private fun getSwipeAction(
 ): me.saket.swipe.SwipeAction? {
     return when (action) {
         LibraryPreferences.ChapterSwipeAction.ToggleRead -> swipeAction(
-            icon = if (!read) Icons.Outlined.Done else Icons.Outlined.RemoveDone,
+            icon = if (!read) MaterialSymbols.Rounded.Check else MaterialSymbols.Rounded.RemoveDone,
             background = background,
             isUndo = read,
             onSwipe = onSwipe,
         )
         LibraryPreferences.ChapterSwipeAction.ToggleBookmark -> swipeAction(
-            icon = if (!bookmark) Icons.Outlined.BookmarkAdd else Icons.Outlined.BookmarkRemove,
+            icon = if (!bookmark) MaterialSymbols.Rounded.BookmarkAdd else MaterialSymbols.Rounded.BookmarkRemove,
             background = background,
             isUndo = bookmark,
             onSwipe = onSwipe,
         )
         LibraryPreferences.ChapterSwipeAction.Download -> swipeAction(
             icon = when (downloadState) {
-                Download.State.NOT_DOWNLOADED, Download.State.ERROR -> Icons.Outlined.Download
-                Download.State.QUEUE, Download.State.DOWNLOADING -> Icons.Outlined.FileDownloadOff
-                Download.State.DOWNLOADED -> Icons.Outlined.Delete
+                Download.State.NOT_DOWNLOADED, Download.State.ERROR -> MaterialSymbols.Rounded.Download
+                Download.State.QUEUE, Download.State.DOWNLOADING -> MaterialSymbols.Rounded.FileDownloadOff
+                Download.State.DOWNLOADED -> MaterialSymbols.Rounded.Delete
             },
             background = background,
             onSwipe = onSwipe,
@@ -241,4 +267,5 @@ private fun swipeAction(
     )
 }
 
-private val swipeActionThreshold = 56.dp
+// RK: internal alongside getSwipeAction above.
+internal val swipeActionThreshold = 56.dp

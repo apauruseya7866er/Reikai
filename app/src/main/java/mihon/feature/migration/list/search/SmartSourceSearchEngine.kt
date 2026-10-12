@@ -2,7 +2,10 @@ package mihon.feature.migration.list.search
 
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SManga
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import mihon.domain.manga.model.toDomainManga
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.manga.model.Manga
 
 class SmartSourceSearchEngine(extraSearchParams: String?) : BaseSmartSearchEngine<SManga>(extraSearchParams) {
@@ -21,7 +24,8 @@ class SmartSourceSearchEngine(extraSearchParams: String?) : BaseSmartSearchEngin
         }
     }
 
+    // Sources aren't main-safe: their default implementations block on the network
     private fun makeSearchAction(source: Source): SearchAction<SManga> = { query ->
-        source.getSearchManga(1, query, source.getFilterList()).mangas
+        withIOContext { source.getSearchManga(1, query, source.getFilterList()).mangas }
     }
 }

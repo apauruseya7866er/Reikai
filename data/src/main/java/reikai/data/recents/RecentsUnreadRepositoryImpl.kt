@@ -1,0 +1,35 @@
+package reikai.data.recents
+
+import app.cash.sqldelight.coroutines.asFlow
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesBinding
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import reikai.domain.recents.RecentsUnreadRepository
+import tachiyomi.data.Database
+import tachiyomi.data.subscribeToList
+
+@Inject
+@SingleIn(AppScope::class)
+@ContributesBinding(AppScope::class)
+class RecentsUnreadRepositoryImpl(
+    private val database: Database,
+) : RecentsUnreadRepository {
+
+    override fun subscribeMangaIdsWithUnread(mergingEnabled: Boolean): Flow<Set<Long>> =
+        database.recentsUnreadQueries.getMangaIdsWithUnread(mergingEnabled)
+            .subscribeToList()
+            .map { it.toSet() }
+
+    override fun subscribeNovelIdsWithUnread(mergingEnabled: Boolean): Flow<Set<Long>> =
+        database.recentsUnreadQueries.getNovelIdsWithUnread(mergingEnabled)
+            .subscribeToList()
+            .map { it.toSet() }
+
+    // asFlow hands over the query on each write without running it, and nothing here runs it either.
+    override fun mangaTargetWrites(): Flow<Unit> = database.recentsUnreadQueries.mangaTargetWrites().asFlow().map { }
+
+    override fun novelTargetWrites(): Flow<Unit> = database.recentsUnreadQueries.novelTargetWrites().asFlow().map { }
+}

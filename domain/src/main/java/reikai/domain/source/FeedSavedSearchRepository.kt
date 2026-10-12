@@ -1,0 +1,45 @@
+package reikai.domain.source
+
+import kotlinx.coroutines.flow.Flow
+import reikai.domain.source.model.FeedSavedSearch
+
+/**
+ * How many rows the Browse feed may hold. Komikku's number, kept so a feed stays a glance. Here rather
+ * than on the screen because a restore has to respect it too, and a backup is untrusted input.
+ */
+const val MAX_FEED_ROWS = 20
+
+/** Whether the Browse feed holds every row it may, so neither an add nor a restore puts in one more. */
+suspend fun FeedSavedSearchRepository.isGlobalFeedFull(): Boolean = countGlobal() >= MAX_FEED_ROWS
+
+/**
+ * Storage for feed rows, of both content types. Rows carry a `global` flag, but only the Browse feed
+ * is read today, so everything below reads that scope. Unreadable source keys are skipped for the
+ * reason [SavedSearchRepository] gives.
+ */
+interface FeedSavedSearchRepository {
+
+    /** The Browse feed's rows, in feed order. */
+    fun subscribeGlobal(): Flow<List<FeedSavedSearch>>
+
+    /** Every row of both scopes, for backup. */
+    suspend fun getAll(): List<FeedSavedSearch>
+
+    /** Row counts, which is what the cap on how many rows a feed may hold is checked against. */
+    suspend fun countGlobal(): Long
+
+    /**
+     * Inserts and returns the new row id. [savedSearchId] null means the row shows the source's own
+     * listing rather than a saved search.
+     */
+    suspend fun insert(sourceKey: SourceKey, savedSearchId: Long?, global: Boolean): Long
+
+    /**
+     * Renumbers [orderedIds] to their position in the list, in one transaction. A row outside the list
+     * keeps the number it had: it belongs to the other scope and is never read beside these, so a
+     * position in this list would not mean anything for it.
+     */
+    suspend fun updateOrders(orderedIds: List<Long>)
+
+    suspend fun delete(id: Long)
+}

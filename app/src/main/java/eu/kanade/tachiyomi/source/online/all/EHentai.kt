@@ -14,6 +14,7 @@ import eu.kanade.tachiyomi.network.newCachelessCallWithProgress
 import eu.kanade.tachiyomi.source.PagePreviewInfo
 import eu.kanade.tachiyomi.source.PagePreviewPage
 import eu.kanade.tachiyomi.source.PagePreviewSource
+import eu.kanade.tachiyomi.source.SourceTracker
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.MangasPage
@@ -44,6 +45,8 @@ import exh.metadata.metadata.RaisedSearchMetadata.Companion.TAG_TYPE_VIRTUAL
 import exh.metadata.metadata.RaisedSearchMetadata.Companion.toGenreString
 import exh.metadata.metadata.base.RaisedTag
 import exh.source.ExhPreferences
+import exh.ui.login.EhLoginActivity
+import exh.util.SourceTagsUtil
 import exh.util.UriFilter
 import exh.util.UriGroup
 import exh.util.dropBlank
@@ -52,7 +55,6 @@ import exh.util.nullIfBlank
 import exh.util.trimAll
 import exh.util.trimOrNull
 import exh.util.urlImportFetchSearchMangaSuspend
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -80,6 +82,7 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.TextNode
+import reikai.util.runCatchingCancellable
 import uy.kohesive.injekt.injectLazy
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -104,7 +107,8 @@ class EHentai(
     MetadataSource<EHentaiSearchMetadata, Document>,
     UrlImportableSource,
     NamespaceSource,
-    PagePreviewSource {
+    PagePreviewSource,
+    SourceTracker {
     override val metaClass = EHentaiSearchMetadata::class
 
     private val domain: String
@@ -610,6 +614,23 @@ class EHentai(
         retryFavoritesRequest { client.newCall(POST(url, headers, body)).awaitSuccess().close() }
     }
 
+    // Every add path reaches the account backup through the source-tracker hook. A removal stays with
+    // the details page, whose confirm lets the user keep the gallery on the account.
+    override val supportsChapterTracking = false
+
+    override val supportsFavoritesTracking: Boolean
+        get() = exhPreferences.isFavoritesBackupOn()
+
+    override suspend fun onFavorited(manga: SManga, categories: List<String>) = backUpFavorite(manga.url)
+
+    suspend fun backUpFavorite(url: String) {
+        addFavorite(
+            EHentaiSearchMetadata.galleryId(url),
+            EHentaiSearchMetadata.galleryToken(url),
+            exhPreferences.exhFavoritesBackupSlot().get(),
+        )
+    }
+
     suspend fun removeFavorites(gids: List<String>) {
         if (gids.isEmpty()) return
         val body = FormBody.Builder()
@@ -626,15 +647,12 @@ class EHentai(
     private suspend fun retryFavoritesRequest(block: suspend () -> Unit) {
         var lastError: Throwable? = null
         repeat(FAVORITES_RETRY_ATTEMPTS) { attempt ->
-            try {
-                block()
-                return
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                lastError = e
-                if (attempt < FAVORITES_RETRY_ATTEMPTS - 1) delay(FAVORITES_RETRY_DELAY_MS)
-            }
+            runCatchingCancellable { block() }
+                .onSuccess { return }
+                .onFailure {
+                    lastError = it
+                    if (attempt < FAVORITES_RETRY_ATTEMPTS - 1) delay(FAVORITES_RETRY_DELAY_MS)
+                }
         }
         throw lastError ?: IllegalStateException("E-Hentai favorites request failed")
     }
@@ -680,6 +698,8 @@ class EHentai(
     }
 
     override fun newMetaInstance() = EHentaiSearchMetadata()
+
+    override fun tagSearchQuery(namespace: String, tag: String) = SourceTagsUtil.wrapTag(namespace, tag)
 
     override suspend fun parseIntoMetadata(metadata: EHentaiSearchMetadata, input: Document) {
         with(metadata) {
@@ -821,9 +841,9 @@ class EHentai(
     private fun rawCookies(sp: Int): Map<String, String> {
         val cookies: MutableMap<String, String> = mutableMapOf()
         if (exhPreferences.enableExhentai().get()) {
-            cookies[MEMBER_ID_COOKIE] = exhPreferences.memberIdVal().get()
-            cookies[PASS_HASH_COOKIE] = exhPreferences.passHashVal().get()
-            cookies[IGNEOUS_COOKIE] = exhPreferences.igneousVal().get()
+            cookies[EhLoginActivity.MEMBER_ID_COOKIE] = exhPreferences.memberIdVal().get()
+            cookies[EhLoginActivity.PASS_HASH_COOKIE] = exhPreferences.passHashVal().get()
+            cookies[EhLoginActivity.IGNEOUS_COOKIE] = exhPreferences.igneousVal().get()
             cookies["sp"] = sp.toString()
 
             val sessionKey = exhPreferences.exhSettingsKey().get()
@@ -1337,12 +1357,6 @@ class EHentai(
 
         // Gallery is considered "aged" (and skipped by auto-update) once older than this.
         private val GALLERY_AGE_TIME = 365.days.inWholeMilliseconds
-
-        // E-Hentai login cookie names. Inlined here for Phase 2b (anonymous browse leaves them
-        // unused); the WebView login that writes them lands in Phase 2c.
-        private const val MEMBER_ID_COOKIE = "ipb_member_id"
-        private const val PASS_HASH_COOKIE = "ipb_pass_hash"
-        private const val IGNEOUS_COOKIE = "igneous"
 
         private val FAVORITES_BORDER_HEX_COLORS = listOf(
             "000",

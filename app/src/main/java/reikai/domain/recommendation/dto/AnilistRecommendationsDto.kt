@@ -8,7 +8,6 @@ data class ALRecsResponse(
     val data: ALRecsData,
 )
 
-/** Response for a single tracked media: its genres + its recommendations, in one query. */
 @Serializable
 data class ALMediaContextResponse(
     val data: ALMediaContextData,
@@ -39,6 +38,7 @@ data class ALRecsPage(
 
 @Serializable
 data class ALRecsMedia(
+    val format: String? = null,
     val title: ALRecsTitle? = null,
     val synonyms: List<String> = emptyList(),
     val recommendations: ALRecsEdges? = null,

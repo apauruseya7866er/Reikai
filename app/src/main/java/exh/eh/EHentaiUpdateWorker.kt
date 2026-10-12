@@ -14,23 +14,31 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkerParameters
-import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
-import eu.kanade.domain.manga.interactor.UpdateManga
-import eu.kanade.domain.manga.model.copyFrom
-import eu.kanade.domain.manga.model.toSManga
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.library.LibraryUpdateNotifier
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.source.online.all.EHentai
 import eu.kanade.tachiyomi.util.storage.getUriCompat
-import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import eu.kanade.tachiyomi.util.system.isConnectedToWifi
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
 import eu.kanade.tachiyomi.util.system.workManager
+import exh.debug.DebugToggles
 import exh.metadata.metadata.EHentaiSearchMetadata
 import exh.source.ExhPreferences
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
+import mihon.app.di.AppGraph
+import mihon.app.di.appGraph
+import mihon.core.metro.metroGraph
+import mihon.core.migration.Migrator
+import mihon.domain.source.interactor.UpdateMangaFromRemote
+import reikai.data.library.addNewUpdates
+import reikai.data.updateerror.UpdateErrorEntry
+import reikai.data.updateerror.UpdateErrorLog
+import reikai.data.updateerror.UpdateErrorSection
+import reikai.data.updateerror.updateFailureMessage
+import reikai.domain.merge.ReconcileMergedChapters
 import tachiyomi.core.common.preference.getAndSet
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
@@ -43,32 +51,48 @@ import tachiyomi.domain.manga.interactor.GetExhFavoriteMangaWithMetadata
 import tachiyomi.domain.manga.interactor.GetFlatMetadataById
 import tachiyomi.domain.manga.interactor.InsertFlatMetadata
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.manga.model.toMangaUpdate
 import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import uy.kohesive.injekt.injectLazy
-import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.days
 
 class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
-    private val exhPreferences: ExhPreferences by injectLazy()
-    private val libraryPreferences: LibraryPreferences by injectLazy()
-    private val sourceManager: SourceManager by injectLazy()
-    private val updateHelper: EHentaiUpdateHelper by injectLazy()
-    private val updateManga: UpdateManga by injectLazy()
-    private val syncChaptersWithSource: SyncChaptersWithSource by injectLazy()
-    private val getChaptersByMangaId: GetChaptersByMangaId by injectLazy()
-    private val getFlatMetadataById: GetFlatMetadataById by injectLazy()
-    private val insertFlatMetadata: InsertFlatMetadata by injectLazy()
-    private val getExhFavoriteMangaWithMetadata: GetExhFavoriteMangaWithMetadata by injectLazy()
 
-    private val updateNotifier by lazy { EHentaiUpdateNotifier(context) }
-    private val libraryUpdateNotifier by lazy { LibraryUpdateNotifier(context) }
+    private val graph: AppGraph = context.metroGraph()
+
+    init {
+        graph.inject(this)
+    }
+
+    @Inject private lateinit var exhPreferences: ExhPreferences
+
+    @Inject private lateinit var libraryPreferences: LibraryPreferences
+
+    @Inject private lateinit var sourceManager: SourceManager
+
+    @Inject private lateinit var updateHelper: EHentaiUpdateHelper
+
+    @Inject private lateinit var updateMangaFromRemote: UpdateMangaFromRemote
+
+    @Inject private lateinit var getChaptersByMangaId: GetChaptersByMangaId
+
+    @Inject private lateinit var getFlatMetadataById: GetFlatMetadataById
+
+    @Inject private lateinit var insertFlatMetadata: InsertFlatMetadata
+
+    @Inject private lateinit var getExhFavoriteMangaWithMetadata: GetExhFavoriteMangaWithMetadata
+
+    @Inject private lateinit var updateNotifier: EHentaiUpdateNotifier
+
+    @Inject private lateinit var libraryUpdateNotifier: LibraryUpdateNotifier
+
+    @Inject private lateinit var reconcileMergedChapters: ReconcileMergedChapters
+
+    private val updateErrorLog = UpdateErrorLog(context)
 
     override suspend fun doWork(): Result {
+        // A WorkManager start has no MainActivity to wait for the migrations first
+        Migrator.await()
         return try {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P &&
                 requiresWifiConnection(exhPreferences) &&
@@ -103,7 +127,6 @@ class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerPara
 
     private suspend fun startUpdating() {
         val startTime = System.currentTimeMillis()
-        val curTime = startTime
 
         val metadataManga = getExhFavoriteMangaWithMetadata.await()
 
@@ -111,8 +134,7 @@ class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerPara
             val meta = getFlatMetadataById.await(manga.id) ?: return@mapNotNull null
             val raisedMeta = meta.raise<EHentaiSearchMetadata>()
 
-            // Don't update aged (dead) galleries, nor galleries checked too recently.
-            if (raisedMeta.aged || curTime - raisedMeta.lastUpdateCheck < MIN_BACKGROUND_UPDATE_FREQ) {
+            if (isSkipped(raisedMeta, startTime, DebugToggles.RESTRICT_EXH_GALLERY_UPDATE_CHECK_FREQUENCY.enabled)) {
                 return@mapNotNull null
             }
 
@@ -124,59 +146,67 @@ class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerPara
         var failuresThisIteration = 0
         var updatedThisIteration = 0
         val updatedManga = mutableListOf<Pair<Manga, Array<Chapter>>>()
-        val failedUpdates = mutableListOf<Pair<Manga, String?>>()
+        val failedUpdates = mutableListOf<UpdateErrorEntry>()
         val modifiedThisIteration = mutableSetOf<Long>()
 
         try {
-            for ((index, entry) in mangaMetaToUpdateThisIter.withIndex()) {
-                val manga = entry.manga
-                if (failuresThisIteration > MAX_UPDATE_FAILURES) {
-                    logcat(LogPriority.WARN) { "Too many update failures, aborting EHentai update job" }
-                    break
-                }
-
-                if (manga.id in modifiedThisIteration) {
-                    // We already processed this manga this iteration!
-                    updatedThisIteration++
-                    continue
-                }
-
-                val (new, chapters) = try {
-                    updateNotifier.showProgressNotification(
-                        manga,
-                        updatedThisIteration + failuresThisIteration,
-                        mangaMetaToUpdateThisIter.size,
-                    )
-                    updateEntryAndGetChapters(manga)
-                } catch (e: GalleryNotUpdatedException) {
-                    if (e.network) {
-                        failuresThisIteration++
-                        failedUpdates += manga to (e.cause?.message ?: e.message)
-                        logcat(LogPriority.ERROR, e) { "Network error while updating EHentai gallery ${manga.id}" }
+            // A gallery grouped with other sources has a stored stitch, which new or moved chapters
+            // leave stale until something rebuilds it, even when a later gallery fails the pass.
+            reconcileMergedChapters.afterPass {
+                for ((index, entry) in mangaMetaToUpdateThisIter.withIndex()) {
+                    val manga = entry.manga
+                    if (failuresThisIteration > MAX_UPDATE_FAILURES) {
+                        logcat(LogPriority.WARN) { "Too many update failures, aborting EHentai update job" }
+                        break
                     }
-                    continue
+
+                    if (manga.id in modifiedThisIteration) {
+                        // We already processed this manga this iteration!
+                        updatedThisIteration++
+                        continue
+                    }
+
+                    val (new, chapters) = try {
+                        updateNotifier.showProgressNotification(
+                            manga,
+                            updatedThisIteration + failuresThisIteration,
+                            mangaMetaToUpdateThisIter.size,
+                        )
+                        updateEntryAndGetChapters(manga)
+                    } catch (e: GalleryNotUpdatedException) {
+                        if (e.network) {
+                            failuresThisIteration++
+                            failedUpdates += UpdateErrorEntry(
+                                title = manga.title,
+                                sourceName = sourceManager.getOrStub(manga.source).toString(),
+                                message = with(context) { (e.cause ?: e).updateFailureMessage() },
+                            )
+                            logcat(LogPriority.ERROR, e) { "Network error while updating EHentai gallery ${manga.id}" }
+                        }
+                        continue
+                    }
+
+                    if (chapters.isEmpty()) {
+                        logcat(LogPriority.ERROR) { "No chapters found for EHentai gallery ${manga.id}" }
+                        continue
+                    }
+
+                    // Find accepted root and discard others.
+                    val (acceptedRoot, discardedRoots, exhNew) =
+                        updateHelper.findAcceptedRootAndDiscardOthers(manga.source, chapters) ?: continue
+
+                    if (new.isNotEmpty() && manga.id == acceptedRoot.manga.id) {
+                        libraryPreferences.addNewUpdates(new.size)
+                        updatedManga += acceptedRoot.manga to new.toTypedArray()
+                    } else if (exhNew.isNotEmpty() && updatedManga.none { it.first.id == acceptedRoot.manga.id }) {
+                        libraryPreferences.addNewUpdates(exhNew.size)
+                        updatedManga += acceptedRoot.manga to exhNew.toTypedArray()
+                    }
+
+                    modifiedThisIteration += acceptedRoot.manga.id
+                    modifiedThisIteration += discardedRoots.map { it.manga.id }
+                    updatedThisIteration++
                 }
-
-                if (chapters.isEmpty()) {
-                    logcat(LogPriority.ERROR) { "No chapters found for EHentai gallery ${manga.id}" }
-                    continue
-                }
-
-                // Find accepted root and discard others.
-                val (acceptedRoot, discardedRoots, exhNew) =
-                    updateHelper.findAcceptedRootAndDiscardOthers(manga.source, chapters)
-
-                if (new.isNotEmpty() && manga.id == acceptedRoot.manga.id) {
-                    libraryPreferences.newUpdatesCount.getAndSet { it + new.size }
-                    updatedManga += acceptedRoot.manga to new.toTypedArray()
-                } else if (exhNew.isNotEmpty() && updatedManga.none { it.first.id == acceptedRoot.manga.id }) {
-                    libraryPreferences.newUpdatesCount.getAndSet { it + exhNew.size }
-                    updatedManga += acceptedRoot.manga to exhNew.toTypedArray()
-                }
-
-                modifiedThisIteration += acceptedRoot.manga.id
-                modifiedThisIteration += discardedRoots.map { it.manga.id }
-                updatedThisIteration++
             }
         } finally {
             exhPreferences.exhAutoUpdateStats().set(
@@ -193,32 +223,12 @@ class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerPara
             if (updatedManga.isNotEmpty()) {
                 libraryUpdateNotifier.showUpdateNotifications(updatedManga)
             }
+            // Rewritten on every run, so a gallery that has since updated leaves the shared dump.
+            val errorFile = updateErrorLog.write(UpdateErrorSection.GALLERIES, failedUpdates)
             if (failedUpdates.isNotEmpty()) {
-                val errorFile = writeErrorFile(failedUpdates)
                 updateNotifier.showUpdateErrorNotification(failedUpdates.size, errorFile.getUriCompat(context))
             }
         }
-    }
-
-    /**
-     * Dumps the galleries that failed to update into a cache file, one line per gallery grouped by
-     * error, so the error notification can open a readable log (mirrors LibraryUpdateJob's format).
-     */
-    private fun writeErrorFile(errors: List<Pair<Manga, String?>>): File {
-        try {
-            if (errors.isNotEmpty()) {
-                val file = context.createFileInCacheDir("reikai_ehentai_update_errors.txt")
-                file.bufferedWriter().use { out ->
-                    errors.groupBy({ it.second }, { it.first }).forEach { (error, mangas) ->
-                        out.write("! $error\n")
-                        mangas.forEach { out.write("  - ${it.title}\n") }
-                        out.write("\n")
-                    }
-                }
-                return file
-            }
-        } catch (_: Exception) {}
-        return File("")
     }
 
     private suspend fun updateEntryAndGetChapters(manga: Manga): Pair<List<Chapter>, List<Chapter>> {
@@ -229,12 +239,13 @@ class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerPara
             )
 
         try {
-            // Komikku splits getMangaDetails + getChapterList; Reikai's source-api combines them.
-            val update = source.getMangaUpdate(manga.toSManga(), emptyList(), fetchDetails = true, fetchChapters = true)
-            updateManga.awaitAll(listOf(manga.copyFrom(update.manga).toMangaUpdate()))
-
-            val new = syncChaptersWithSource.await(update.chapters, manga, source)
-            return new to getChaptersByMangaId.await(manga.id)
+            val result = updateMangaFromRemote(
+                source = source,
+                manga = manga,
+                fetchDetails = true,
+                fetchChapters = true,
+            ).getOrThrow()
+            return result.newChapters to getChaptersByMangaId.await(manga.id)
         } catch (t: Throwable) {
             if (t is EHentai.GalleryNotFoundException) {
                 val meta = getFlatMetadataById.await(manga.id)?.raise<EHentaiSearchMetadata>()
@@ -262,6 +273,10 @@ class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerPara
 
         private const val TAG = "EHBackgroundUpdater"
 
+        /** A dead gallery is never checked, and one checked within a day waits unless the debug menu lifts that. */
+        internal fun isSkipped(meta: EHentaiSearchMetadata, now: Long, restrictFrequency: Boolean): Boolean =
+            meta.aged || (restrictFrequency && now - meta.lastUpdateCheck < MIN_BACKGROUND_UPDATE_FREQ)
+
         fun launchBackgroundTest(context: Context) {
             context.workManager.enqueue(
                 OneTimeWorkRequestBuilder<EHentaiUpdateWorker>()
@@ -271,11 +286,11 @@ class EHentaiUpdateWorker(private val context: Context, workerParams: WorkerPara
             )
         }
 
-        fun setupTask(context: Context, prefInterval: Int? = null, prefRestrictions: Set<String>? = null) {
-            val exhPreferences = Injekt.get<ExhPreferences>()
+        fun setupTask(context: Context, prefInterval: Int? = null) {
+            val exhPreferences = context.appGraph.exhPreferences
             val interval = prefInterval ?: exhPreferences.exhAutoUpdateFrequency().get()
             if (interval > 0) {
-                val restrictions = prefRestrictions ?: exhPreferences.exhAutoUpdateRequirements().get()
+                val restrictions = exhPreferences.exhAutoUpdateRequirements().get()
                 val networkType = if (DEVICE_NETWORK_NOT_METERED in restrictions) {
                     NetworkType.UNMETERED
                 } else {

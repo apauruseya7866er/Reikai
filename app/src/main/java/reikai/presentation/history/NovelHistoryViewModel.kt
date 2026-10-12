@@ -1,0 +1,127 @@
+package reikai.presentation.history
+
+import androidx.compose.runtime.Immutable
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Assisted
+import dev.zacsweers.metro.AssistedFactory
+import dev.zacsweers.metro.AssistedInject
+import dev.zacsweers.metro.ContributesIntoMap
+import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactory
+import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactoryKey
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.plus
+import logcat.LogPriority
+import reikai.domain.category.RecentsSurface
+import reikai.domain.category.recentsCategoryFilterFlow
+import reikai.domain.entry.overlayCustomInfo
+import reikai.domain.entry.withCustomInfo
+import reikai.domain.novel.interactor.GetCustomNovelInfo
+import reikai.domain.novel.interactor.GetNovelHistory
+import reikai.domain.novel.interactor.RemoveNovelHistory
+import reikai.domain.novel.model.NovelHistoryWithRelations
+import reikai.domain.source.ReikaiSourcePreferences
+import tachiyomi.core.common.util.lang.SubscriberGate
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * Novel side of the consolidated History tab (the novel twin of
+ * [eu.kanade.tachiyomi.ui.history.HistoryViewModel], pinned by RecentsFeedSurfaceTest). Mihon's manga
+ * model drives manga rows; this drives novel rows, both rendered by the shared recents screen. The
+ * feed is one row per novel, its most-recently-read chapter; the recents engine searches, interleaves
+ * and dates it, so what leaves here is the raw list and nothing else.
+ */
+@AssistedInject
+class NovelHistoryViewModel(
+    // Whose category selection this feed reads: the tab building it, History or the combined one.
+    @Assisted private val surface: RecentsSurface,
+    private val getNovelHistory: GetNovelHistory,
+    // Per-entry custom title/cover overrides, overlaid on the displayed rows (display-only).
+    private val getCustomNovelInfo: GetCustomNovelInfo,
+    private val removeNovelHistory: RemoveNovelHistory,
+    private val sourcePreferences: ReikaiSourcePreferences,
+) : ViewModel() {
+
+    private val subscriberGate = SubscriberGate()
+
+    /** Assisted, so a bare metroViewModel() cannot build this; the surface is the tab's. */
+    @AssistedFactory
+    @ManualViewModelAssistedFactoryKey
+    @ContributesIntoMap(AppScope::class)
+    interface Factory : ManualViewModelAssistedFactory {
+        fun create(surface: RecentsSurface): NovelHistoryViewModel
+    }
+
+    private val _events: Channel<Event> = Channel(Channel.UNLIMITED)
+    val events: Flow<Event> = _events.receiveAsFlow()
+
+    // The category filter is a query parameter, so the subscription re-runs on it. Search is not one:
+    // the engine matches the rows it has already been handed, so this feed asks for all of them.
+    private val history: StateFlow<List<NovelHistoryWithRelations>?> =
+        sourcePreferences.recentsCategoryFilterFlow(surface)
+            .distinctUntilChanged()
+            .flatMapLatest { categories ->
+                // Overlay the display-only custom title/cover onto each row, keyed by the real novel id.
+                combine(
+                    getNovelHistory.subscribe("", categories.include, categories.exclude),
+                    getCustomNovelInfo.subscribeAll(),
+                ) { history, customInfo ->
+                    history.overlayCustomInfo(
+                        customInfo.associateBy { it.novelId },
+                        NovelHistoryWithRelations::novelId,
+                        NovelHistoryWithRelations::withCustomInfo,
+                    )
+                }
+                    .distinctUntilChanged()
+                    .emptyOnFailure { error ->
+                        logcat(LogPriority.ERROR, error)
+                        _events.send(Event.InternalError)
+                    }
+                    .flowOn(Dispatchers.Default)
+            }
+            // Null is this feed's "not loaded yet", read by the shared screen and by the recents read
+            // lane. Its manga twin seeds the same way and for the same reason.
+            .stateIn(viewModelScope + subscriberGate, SharingStarted.Eagerly, null)
+
+    val state: StateFlow<State> = history
+        .map { State(list = it) }
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
+
+    /** The latest novel read, which the seam resumes from. Unfiltered, unlike the feed above. */
+    suspend fun getLast(): NovelHistoryWithRelations? = getNovelHistory.getLast()
+
+    fun removeFromHistory(history: NovelHistoryWithRelations) {
+        viewModelScope.launchIO { removeNovelHistory.await(history) }
+    }
+
+    fun removeAllFromHistory(novelId: Long) {
+        viewModelScope.launchIO { removeNovelHistory.await(novelId) }
+    }
+
+    /** Suspends and answers, so the shell announces the wipe. */
+    suspend fun removeAllHistory(): Boolean = withIOContext { removeNovelHistory.awaitAll() }
+
+    @Immutable
+    data class State(
+        val list: List<NovelHistoryWithRelations>? = null,
+    )
+
+    sealed interface Event {
+        data object InternalError : Event
+    }
+}

@@ -1,18 +1,17 @@
 package eu.kanade.presentation.category
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.FlipToFront
-import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -21,11 +20,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import eu.kanade.presentation.category.components.CategoryFloatingActionButton
 import eu.kanade.presentation.category.components.CategoryListItem
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.tachiyomi.ui.category.CategoryScreenState
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Delete
+import mihon.icons.materialsymbols.rounded.FlipToBack
+import mihon.icons.materialsymbols.rounded.SelectAll
+import reikai.domain.library.CategorySortOrder
+import reikai.domain.library.ContentType
+import reikai.presentation.components.ContentTypeFilterChips
+import reikai.presentation.components.rememberChipListState
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import tachiyomi.domain.category.model.Category
@@ -48,19 +56,25 @@ fun CategoryScreen(
     onChangeOrder: (Category, Int) -> Unit,
     navigateUp: () -> Unit,
     // RK --> multi-select: the action-mode toolbar + the undo snackbar live here
+    onSelectContentType: (ContentType) -> Unit,
     snackbarHostState: SnackbarHostState,
     onToggleSelection: (Category) -> Unit,
+    onToggleRangeSelection: (Category) -> Unit,
     onSelectAll: () -> Unit,
     onInvertSelection: () -> Unit,
     onClearSelection: () -> Unit,
     onDeleteSelected: () -> Unit,
     // RK <--
-    // RK: optional content-type chip (Manga/Novels) rendered above the list; null = manga path unchanged
-    header: (@Composable () -> Unit)? = null,
 ) {
-    val lazyListState = rememberLazyListState()
-    // RK: in selection mode the drag handle is hidden (selection-tap shouldn't fight a drag-grab)
-    val reorderable = state.categorySortOrder == 0 && !state.selectionMode
+    val lazyListState = rememberChipListState(state.contentType) // RK: starts at the top on a chip change
+    // RK: in selection mode the drag handle is hidden (selection-tap shouldn't fight a drag-grab), and
+    // so is it under a content-type chip: a drop index comes from the list on screen while the reorder
+    // renumbers the whole table, so dragging inside a narrowed list would land the row elsewhere.
+    val reorderable = state.categorySortOrder == CategorySortOrder.MANUAL &&
+        !state.selectionMode &&
+        state.contentType == ContentType.ALL
+    // RK: back leaves selection mode before it leaves the screen, as Mihon's selection lists do
+    BackHandler(enabled = state.selectionMode, onBack = onClearSelection)
     Scaffold(
         topBar = { scrollBehavior ->
             AppBar(
@@ -74,17 +88,17 @@ fun CategoryScreen(
                         listOf(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select_all),
-                                icon = Icons.Outlined.SelectAll,
+                                icon = MaterialSymbols.Rounded.SelectAll,
                                 onClick = onSelectAll,
                             ),
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select_inverse),
-                                icon = Icons.Outlined.FlipToFront,
+                                icon = MaterialSymbols.Rounded.FlipToBack,
                                 onClick = onInvertSelection,
                             ),
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_delete),
-                                icon = Icons.Outlined.Delete,
+                                icon = MaterialSymbols.Rounded.Delete,
                                 onClick = onDeleteSelected,
                             ),
                         ),
@@ -103,61 +117,52 @@ fun CategoryScreen(
                     lazyListState = lazyListState,
                     onCreate = onClickCreate,
                 )
-            }
+            } // RK
         },
     ) { paddingValues ->
-        // RK --> with the chip header, consume the top inset into a Column so the chip sits below the
-        // toolbar and the list gets only the bottom inset (the manga path keeps the original layout).
-        if (header != null) {
-            Column(modifier = Modifier.padding(top = paddingValues.calculateTopPadding())) {
-                header()
-                val innerPadding = PaddingValues(bottom = paddingValues.calculateBottomPadding())
+        // RK --> the chip stays above the list, including when its filter empties it, so the user can
+        // always switch back. Body padding drops the top, which the chip row now occupies.
+        val layoutDirection = LocalLayoutDirection.current
+        Column(modifier = Modifier.padding(top = paddingValues.calculateTopPadding())) {
+            ContentTypeFilterChips(selected = state.contentType, onSelect = onSelectContentType)
+            val bodyPadding = PaddingValues(
+                start = paddingValues.calculateStartPadding(layoutDirection),
+                end = paddingValues.calculateEndPadding(layoutDirection),
+                bottom = paddingValues.calculateBottomPadding(),
+            )
+            Box(modifier = Modifier.weight(1f)) {
                 if (state.isEmpty) {
                     EmptyScreen(
-                        stringRes = MR.strings.information_empty_category,
-                        modifier = Modifier.padding(innerPadding),
+                        stringRes = if (state.contentType == ContentType.ALL) {
+                            MR.strings.information_empty_category
+                        } else {
+                            MR.strings.information_empty_category_filtered
+                        },
+                        modifier = Modifier.padding(bodyPadding),
                     )
                 } else {
                     CategoryContent(
                         categories = state.categories,
                         lazyListState = lazyListState,
-                        paddingValues = innerPadding,
+                        paddingValues = bodyPadding,
                         onClickRename = onClickRename,
                         onClickDelete = onClickDelete,
                         onClickToggleHidden = onClickToggleHidden,
                         onChangeOrder = onChangeOrder,
+                        // RK: drag only in Manual mode, outside selection, and only under the All chip
                         reorderable = reorderable,
+                        // RK: the move menu renumbers the whole list to an end, which is also an end of any
+                        // narrowed list, so only the manual order and selection gate it, never the chip.
+                        movable = state.categorySortOrder == CategorySortOrder.MANUAL && !state.selectionMode,
                         selection = state.selection,
                         selectionMode = state.selectionMode,
                         onToggleSelection = onToggleSelection,
+                        onToggleRangeSelection = onToggleRangeSelection,
                     )
                 }
             }
-            return@Scaffold
         }
         // RK <--
-        if (state.isEmpty) {
-            EmptyScreen(
-                stringRes = MR.strings.information_empty_category,
-                modifier = Modifier.padding(paddingValues),
-            )
-            return@Scaffold
-        }
-
-        CategoryContent(
-            categories = state.categories,
-            lazyListState = lazyListState,
-            paddingValues = paddingValues,
-            onClickRename = onClickRename,
-            onClickDelete = onClickDelete,
-            onClickToggleHidden = onClickToggleHidden,
-            onChangeOrder = onChangeOrder,
-            // RK: drag-reorder only in Manual (off) mode and outside selection; sorted/selecting = no drag
-            reorderable = reorderable,
-            selection = state.selection,
-            selectionMode = state.selectionMode,
-            onToggleSelection = onToggleSelection,
-        )
     }
 }
 
@@ -168,14 +173,17 @@ private fun CategoryContent(
     paddingValues: PaddingValues,
     onClickRename: (Category) -> Unit,
     onClickDelete: (Category) -> Unit,
-    onClickToggleHidden: (Category) -> Unit,
+    onClickToggleHidden: (Category) -> Unit, // RK: hidden-flag toggle
     onChangeOrder: (Category, Int) -> Unit,
     // RK: false hides the drag handle so the (sorted) list can't be manually reordered
     reorderable: Boolean = true,
+    // RK: false hides the move-to-top / move-to-bottom menu
+    movable: Boolean = true,
     // RK --> multi-select
     selection: Set<Long> = emptySet(),
     selectionMode: Boolean = false,
     onToggleSelection: (Category) -> Unit = {},
+    onToggleRangeSelection: (Category) -> Unit = {},
     // RK <--
 ) {
     val categoriesState = remember { categories.toMutableStateList() }
@@ -214,13 +222,17 @@ private fun CategoryContent(
                     onClick = {
                         if (selectionMode) onToggleSelection(category) else onClickRename(category)
                     },
-                    onLongClick = { onToggleSelection(category) },
+                    onLongClick = { onToggleRangeSelection(category) },
                     // RK <--
                     onRename = { onClickRename(category) },
                     onDelete = { onClickDelete(category) },
                     onToggleHidden = { onClickToggleHidden(category) },
                     // RK: hide the drag handle (and thus disable drag) when auto-sorted or selecting
                     showDragHandle = reorderable,
+                    // RK: an index past the end is clamped to the last place by the reorder
+                    showMoveActions = movable,
+                    onMoveToTop = { onChangeOrder(category, 0) },
+                    onMoveToBottom = { onChangeOrder(category, Int.MAX_VALUE) },
                 )
             }
         }

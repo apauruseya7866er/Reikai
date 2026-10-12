@@ -47,6 +47,11 @@
         <item quantity="other">Next %d unread chapters</item>
     </plurals>
 
+    <plurals name="pref_novel_source_delay_count">
+        <item quantity="one">%d source has its own delay</item>
+        <item quantity="other">%d sources have their own delay</item>
+    </plurals>
+
     <plurals name="restore_completed_message">
         <item quantity="one">Done in %1$s with %2$s error</item>
         <item quantity="other">Done in %1$s with %2$s errors</item>
@@ -112,6 +117,11 @@
         <item quantity="one">Extension update available</item>
         <item quantity="other">%d extension updates available</item>
     </plurals>
+    <!-- RK: the light-novel plugin update notice -->
+    <plurals name="ln_plugin_updates_available">
+        <item quantity="one">Light novel plugin update available</item>
+        <item quantity="other">%d light novel plugin updates available</item>
+    </plurals>
 
     <plurals name="num_repos">
         <item quantity="one">%d store</item>
@@ -131,15 +141,26 @@
         <item quantity="one">An entry was skipped</item>
         <item quantity="other">%1$d entries were skipped</item>
     </plurals>
+    <plurals name="migrationFlow.migratedCount">
+        <item quantity="one">%1$d entry migrated</item>
+        <item quantity="other">%1$d entries migrated</item>
+    </plurals>
 
     <plurals name="notification_update_error">
         <item quantity="one">%1$d update failed</item>
         <item quantity="other">%1$d updates failed</item>
     </plurals>
-    <!-- RK: opt-in on the library Remove dialog to remove every source in a merged group -->
+    <!-- RK: badge on a collapsed group card in the add-time duplicate dialog -->
+    <plurals name="num_grouped_sources">
+        <item quantity="one">%1$d source</item>
+        <item quantity="other">%1$d sources</item>
+    </plurals>
+    <!-- RK: opt-in on the library Remove dialog to remove every source in a merged group. The count
+         is the sources behind the merged rows, so it is never one; the singular is here for locales
+         whose plural rules need it. -->
     <plurals name="action_remove_grouped_sources">
-        <item quantity="one">All %1$d grouped source</item>
-        <item quantity="other">All %1$d grouped sources</item>
+        <item quantity="one">All grouped sources (%1$d)</item>
+        <item quantity="other">All grouped sources (%1$d)</item>
     </plurals>
     <!-- RK: relative-time strings for the E-Hentai updater statistics (Batch D, ported from Komikku) -->
     <plurals name="humanize_year">
@@ -169,5 +190,60 @@
     <plurals name="humanize_second">
         <item quantity="one">%1$d second ago</item>
         <item quantity="other">%1$d seconds ago</item>
+    </plurals>
+    <plurals name="bulk_selected_manga">
+        <item quantity="one">%1$d Manga</item>
+        <item quantity="other">%1$d Manga</item>
+    </plurals>
+    <plurals name="bulk_selected_novels">
+        <item quantity="one">%1$d Novel</item>
+        <item quantity="other">%1$d Novels</item>
+    </plurals>
+    <!-- RK: novel read-aloud sleep timer -->
+    <plurals name="tts_sleep_timer_minutes">
+        <item quantity="one">%1$d minute</item>
+        <item quantity="other">%1$d minutes</item>
+    </plurals>
+    <plurals name="tts_sleep_timer_minutes_left">
+        <item quantity="one">%1$d minute left</item>
+        <item quantity="other">%1$d minutes left</item>
+    </plurals>
+    <!-- RK: the Repos screen's cards and its Settings row -->
+    <plurals name="repo_extensions">
+        <item quantity="one">%d extension</item>
+        <item quantity="other">%d extensions</item>
+    </plurals>
+    <plurals name="repo_plugins">
+        <item quantity="one">%d plugin</item>
+        <item quantity="other">%d plugins</item>
+    </plurals>
+    <plurals name="novel_page_chapters_found">
+        <item quantity="one">%d chapter found on this page</item>
+        <item quantity="other">%d chapters found on this page</item>
+    </plurals>
+
+    <plurals name="repo_count">
+        <item quantity="one">%d repo</item>
+        <item quantity="other">%d repos</item>
+    </plurals>
+
+    <!-- RK: the related-manga grid when your filters hide every suggestion -->
+    <plurals name="recs_all_hidden">
+        <item quantity="one">Your filters hide the one suggestion</item>
+        <item quantity="other">Your filters hide all %d suggestions</item>
+    </plurals>
+
+    <!-- RK: search across a novel's downloaded chapters (from Tsundoku) -->
+    <plurals name="novel_text_search_matches">
+        <item quantity="one">%d match</item>
+        <item quantity="other">%d matches</item>
+    </plurals>
+    <plurals name="novel_text_search_matched_chapters">
+        <item quantity="one">in %d chapter</item>
+        <item quantity="other">in %d chapters</item>
+    </plurals>
+    <plurals name="novel_text_search_failed_chapters">
+        <item quantity="one">%d chapter could not be read</item>
+        <item quantity="other">%d chapters could not be read</item>
     </plurals>
 </resources>

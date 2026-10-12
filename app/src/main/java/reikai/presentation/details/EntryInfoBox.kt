@@ -11,17 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Brush
-import androidx.compose.material.icons.filled.PersonOutline
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.outlined.AttachMoney
-import androidx.compose.material.icons.outlined.Block
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Done
-import androidx.compose.material.icons.outlined.DoneAll
-import androidx.compose.material.icons.outlined.Pause
-import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
@@ -30,6 +20,10 @@ import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -46,12 +40,21 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.presentation.manga.components.DotSeparatorText
 import eu.kanade.presentation.manga.components.MangaCover
-import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.system.copyToClipboard
-import reikai.data.coil.NovelCover
+import exh.debug.LocalCoverImagesHidden
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Person
+import mihon.icons.materialsymbols.roundedfilled.Brush
+import reikai.data.coil.withCoverFallbacks
 import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelCover
+import reikai.domain.novel.model.asNovelCover
+import reikai.presentation.browse.components.MissingSourceIcon
+import reikai.presentation.components.entryStatusIcon
+import reikai.presentation.components.entryStatusRes
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
@@ -61,8 +64,8 @@ import tachiyomi.presentation.core.util.secondaryItemAlpha
 
 /**
  * Content-agnostic header data for the shared [EntryInfoBox]. [coverModel] is a coil model (a `Manga`
- * or a [NovelCover]), so each content type feeds its own object. [artist] is null and [isStubSource]
- * false for content types that lack them (novels).
+ * or a [NovelCover]), so each content type feeds its own object. [coverFallbacks] are the other members'
+ * models on a merged series' All view, empty otherwise; [cover] is what the header draws.
  */
 data class EntryHeaderUi(
     val coverModel: Any,
@@ -71,43 +74,55 @@ data class EntryHeaderUi(
     val artist: String?,
     val status: Long,
     val sourceName: String,
-    val isStubSource: Boolean,
-)
+    /** The viewed member's source; the download gate reads it too (EntryDetailsScreenState.Loaded). */
+    val sourceState: EntrySourceState,
+    /** The library query for the viewed source's entries; null where [sourceName] labels a merged group. */
+    val sourceQuery: String?,
+    val coverFallbacks: List<Any> = emptyList(),
+) {
+    val cover: Any = withCoverFallbacks(coverModel, coverFallbacks)
+}
 
-fun Manga.toEntryHeader(sourceName: String, isStubSource: Boolean) = EntryHeaderUi(
+fun Manga.toEntryHeader(
+    sourceName: String,
+    sourceState: EntrySourceState,
+    sourceQuery: String?,
+    coverFallbacks: List<Manga>,
+) = EntryHeaderUi(
     coverModel = this,
     title = title,
     author = author,
     artist = artist,
     status = status,
     sourceName = sourceName,
-    isStubSource = isStubSource,
+    sourceState = sourceState,
+    sourceQuery = sourceQuery,
+    coverFallbacks = coverFallbacks,
 )
 
-fun Novel.toEntryHeader(sourceName: String, sourceSite: String?) = EntryHeaderUi(
-    coverModel = NovelCover(
-        url = thumbnailUrl,
-        site = sourceSite,
-        isNovelFavorite = favorite,
-        lastModified = coverLastModified,
-        novelId = id,
-    ),
+fun Novel.toEntryHeader(
+    sourceName: String,
+    sourceState: EntrySourceState,
+    sourceQuery: String?,
+    coverFallbacks: List<Novel>,
+) = EntryHeaderUi(
+    coverModel = asNovelCover(),
     title = title,
     author = author,
-    // novels have no separate artist field
-    artist = null,
+    artist = artist,
     status = status,
     sourceName = sourceName,
-    // stub sources are a manga-extension concept; novels never have one
-    isStubSource = false,
+    sourceState = sourceState,
+    sourceQuery = sourceQuery,
+    coverFallbacks = coverFallbacks.map { it.asNovelCover() },
 )
 
 /**
  * Shared details header (blurred cover backdrop + cover + title / author / artist / status / source)
  * for manga and novels. Replaces MangaInfoBox + NovelInfoBox. Status codes match between the two
  * (see NovelStatusCode), so the status icon + label render from one switch. Tapping the title / author
- * / artist searches ([doSearch] global), tapping the source searches it (local for manga); long-press
- * copies any of them.
+ * / artist runs [onGlobalSearch] and tapping the source browses it; long-press offers library search,
+ * global search and copy (Browse, library search and copy on the source).
  */
 @Composable
 fun EntryInfoBox(
@@ -115,7 +130,9 @@ fun EntryInfoBox(
     appBarPadding: Dp,
     header: EntryHeaderUi,
     onCoverClick: () -> Unit,
-    doSearch: (query: String, global: Boolean) -> Unit,
+    onGlobalSearch: (query: String) -> Unit,
+    librarySearch: (query: String) -> Unit,
+    onBrowseSource: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
@@ -123,22 +140,25 @@ fun EntryInfoBox(
             Color.Transparent,
             MaterialTheme.colorScheme.background,
         )
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(header.coverModel)
-                .crossfade(true)
-                .build(),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .matchParentSize()
-                .drawWithContent {
-                    drawContent()
-                    drawRect(brush = Brush.verticalGradient(colors = backdropGradientColors))
-                }
-                .blur(4.dp)
-                .alpha(0.2f),
-        )
+        // The backdrop is the cover image too, so hiding covers from the debug menu drops it.
+        if (!LocalCoverImagesHidden.current) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(header.cover)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .matchParentSize()
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(brush = Brush.verticalGradient(colors = backdropGradientColors))
+                    }
+                    .blur(4.dp)
+                    .alpha(0.2f),
+            )
+        }
 
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
             if (!isTabletUi) {
@@ -146,14 +166,18 @@ fun EntryInfoBox(
                     appBarPadding = appBarPadding,
                     header = header,
                     onCoverClick = onCoverClick,
-                    doSearch = doSearch,
+                    onGlobalSearch = onGlobalSearch,
+                    librarySearch = librarySearch,
+                    onBrowseSource = onBrowseSource,
                 )
             } else {
                 EntryTitlesLarge(
                     appBarPadding = appBarPadding,
                     header = header,
                     onCoverClick = onCoverClick,
-                    doSearch = doSearch,
+                    onGlobalSearch = onGlobalSearch,
+                    librarySearch = librarySearch,
+                    onBrowseSource = onBrowseSource,
                 )
             }
         }
@@ -165,7 +189,9 @@ private fun EntryTitlesLarge(
     appBarPadding: Dp,
     header: EntryHeaderUi,
     onCoverClick: () -> Unit,
-    doSearch: (query: String, global: Boolean) -> Unit,
+    onGlobalSearch: (query: String) -> Unit,
+    librarySearch: (query: String) -> Unit,
+    onBrowseSource: (() -> Unit)?,
 ) {
     Column(
         modifier = Modifier
@@ -175,12 +201,18 @@ private fun EntryTitlesLarge(
     ) {
         MangaCover.Book(
             modifier = Modifier.fillMaxWidth(0.65f),
-            data = header.coverModel,
+            data = header.cover,
             contentDescription = stringResource(MR.strings.manga_cover),
             onClick = onCoverClick,
         )
         Spacer(modifier = Modifier.height(16.dp))
-        EntryContentInfo(header = header, doSearch = doSearch, textAlign = TextAlign.Center)
+        EntryContentInfo(
+            header = header,
+            onGlobalSearch = onGlobalSearch,
+            librarySearch = librarySearch,
+            onBrowseSource = onBrowseSource,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -189,7 +221,9 @@ private fun EntryTitlesSmall(
     appBarPadding: Dp,
     header: EntryHeaderUi,
     onCoverClick: () -> Unit,
-    doSearch: (query: String, global: Boolean) -> Unit,
+    onGlobalSearch: (query: String) -> Unit,
+    librarySearch: (query: String) -> Unit,
+    onBrowseSource: (() -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -202,12 +236,17 @@ private fun EntryTitlesSmall(
             modifier = Modifier
                 .sizeIn(maxWidth = 100.dp)
                 .align(Alignment.Top),
-            data = header.coverModel,
+            data = header.cover,
             contentDescription = stringResource(MR.strings.manga_cover),
             onClick = onCoverClick,
         )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            EntryContentInfo(header = header, doSearch = doSearch)
+            EntryContentInfo(
+                header = header,
+                onGlobalSearch = onGlobalSearch,
+                librarySearch = librarySearch,
+                onBrowseSource = onBrowseSource,
+            )
         }
     }
 }
@@ -215,7 +254,9 @@ private fun EntryTitlesSmall(
 @Composable
 private fun ColumnScope.EntryContentInfo(
     header: EntryHeaderUi,
-    doSearch: (query: String, global: Boolean) -> Unit,
+    onGlobalSearch: (query: String) -> Unit,
+    librarySearch: (query: String) -> Unit,
+    onBrowseSource: (() -> Unit)?,
     textAlign: TextAlign? = LocalTextStyle.current.textAlign,
 ) {
     val context = LocalContext.current
@@ -223,12 +264,73 @@ private fun ColumnScope.EntryContentInfo(
     val author = header.author
     val artist = header.artist
 
+    // One menu for all four rows, as the tag chips do it: it anchors to this column rather
+    // than to the row under the finger, which is the cost of not building four of them.
+    // Deliberately remember, not rememberSaveable: an open menu should not survive a rotation
+    // and reopen against a stale anchor.
+    var showMenu by remember { mutableStateOf(false) }
+    var menuTarget by remember { mutableStateOf("") }
+    var menuIsSource by remember { mutableStateOf(false) }
+
+    DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+        // The source row searches the library by the source's key rather than its name, which two
+        // sources can share, and offers no search where the name labels a merged group.
+        if (menuIsSource) {
+            if (onBrowseSource != null) {
+                DropdownMenuItem(
+                    text = { Text(text = stringResource(MR.strings.browse)) },
+                    onClick = {
+                        onBrowseSource()
+                        showMenu = false
+                    },
+                )
+            }
+            header.sourceQuery?.let { query ->
+                DropdownMenuItem(
+                    text = { Text(text = stringResource(MR.strings.action_library_search)) },
+                    onClick = {
+                        librarySearch(query)
+                        showMenu = false
+                    },
+                )
+            }
+        } else {
+            DropdownMenuItem(
+                text = { Text(text = stringResource(MR.strings.action_library_search)) },
+                onClick = {
+                    librarySearch(menuTarget)
+                    showMenu = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(text = stringResource(MR.strings.action_global_search)) },
+                onClick = {
+                    onGlobalSearch(menuTarget)
+                    showMenu = false
+                },
+            )
+        }
+        DropdownMenuItem(
+            text = { Text(text = stringResource(MR.strings.action_copy_to_clipboard)) },
+            onClick = {
+                context.copyToClipboard(menuTarget, menuTarget)
+                showMenu = false
+            },
+        )
+    }
+
     Text(
         text = title.ifBlank { stringResource(MR.strings.unknown_title) },
         style = MaterialTheme.typography.titleLarge,
         modifier = Modifier.clickableNoIndication(
-            onLongClick = { if (title.isNotBlank()) context.copyToClipboard(title, title) },
-            onClick = { if (title.isNotBlank()) doSearch(title, true) },
+            onLongClick = {
+                if (title.isNotBlank()) {
+                    menuTarget = title
+                    menuIsSource = false
+                    showMenu = true
+                }
+            },
+            onClick = { if (title.isNotBlank()) onGlobalSearch(title) },
         ),
         textAlign = textAlign,
     )
@@ -240,13 +342,19 @@ private fun ColumnScope.EntryContentInfo(
         horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(imageVector = Icons.Filled.PersonOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+        Icon(imageVector = MaterialSymbols.Rounded.Person, contentDescription = null, modifier = Modifier.size(16.dp))
         Text(
             text = author?.takeIf { it.isNotBlank() } ?: stringResource(MR.strings.unknown_author),
             style = MaterialTheme.typography.titleSmall,
             modifier = Modifier.clickableNoIndication(
-                onLongClick = { if (!author.isNullOrBlank()) context.copyToClipboard(author, author) },
-                onClick = { if (!author.isNullOrBlank()) doSearch(author, true) },
+                onLongClick = {
+                    if (!author.isNullOrBlank()) {
+                        menuTarget = author
+                        menuIsSource = false
+                        showMenu = true
+                    }
+                },
+                onClick = { if (!author.isNullOrBlank()) onGlobalSearch(author) },
             ),
             textAlign = textAlign,
         )
@@ -258,13 +366,21 @@ private fun ColumnScope.EntryContentInfo(
             horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(imageVector = Icons.Filled.Brush, contentDescription = null, modifier = Modifier.size(16.dp))
+            Icon(
+                imageVector = MaterialSymbols.RoundedFilled.Brush,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+            )
             Text(
                 text = artist,
                 style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.clickableNoIndication(
-                    onLongClick = { context.copyToClipboard(artist, artist) },
-                    onClick = { doSearch(artist, true) },
+                    onLongClick = {
+                        menuTarget = artist
+                        menuIsSource = false
+                        showMenu = true
+                    },
+                    onClick = { onGlobalSearch(artist) },
                 ),
                 textAlign = textAlign,
             )
@@ -278,15 +394,7 @@ private fun ColumnScope.EntryContentInfo(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            imageVector = when (header.status) {
-                SManga.ONGOING.toLong() -> Icons.Outlined.Schedule
-                SManga.COMPLETED.toLong() -> Icons.Outlined.DoneAll
-                SManga.LICENSED.toLong() -> Icons.Outlined.AttachMoney
-                SManga.PUBLISHING_FINISHED.toLong() -> Icons.Outlined.Done
-                SManga.CANCELLED.toLong() -> Icons.Outlined.Close
-                SManga.ON_HIATUS.toLong() -> Icons.Outlined.Pause
-                else -> Icons.Outlined.Block
-            },
+            imageVector = entryStatusIcon(header.status),
             contentDescription = null,
             modifier = Modifier
                 .padding(end = 4.dp)
@@ -294,34 +402,27 @@ private fun ColumnScope.EntryContentInfo(
         )
         ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
             Text(
-                text = when (header.status) {
-                    SManga.ONGOING.toLong() -> stringResource(MR.strings.ongoing)
-                    SManga.COMPLETED.toLong() -> stringResource(MR.strings.completed)
-                    SManga.LICENSED.toLong() -> stringResource(MR.strings.licensed)
-                    SManga.PUBLISHING_FINISHED.toLong() -> stringResource(MR.strings.publishing_finished)
-                    SManga.CANCELLED.toLong() -> stringResource(MR.strings.cancelled)
-                    SManga.ON_HIATUS.toLong() -> stringResource(MR.strings.on_hiatus)
-                    else -> stringResource(MR.strings.unknown)
-                },
+                text = stringResource(entryStatusRes(header.status)),
                 overflow = TextOverflow.Ellipsis,
                 maxLines = 1,
             )
             DotSeparatorText()
-            if (header.isStubSource) {
-                Icon(
-                    imageVector = Icons.Filled.Warning,
-                    contentDescription = null,
-                    modifier = Modifier
+            if (header.sourceState == EntrySourceState.Missing) {
+                MissingSourceIcon(
+                    Modifier
                         .padding(end = 4.dp)
                         .size(16.dp),
-                    tint = MaterialTheme.colorScheme.error,
                 )
             }
             Text(
                 text = header.sourceName,
                 modifier = Modifier.clickableNoIndication(
-                    onLongClick = { context.copyToClipboard(header.sourceName, header.sourceName) },
-                    onClick = { doSearch(header.sourceName, false) },
+                    onLongClick = {
+                        menuTarget = header.sourceName
+                        menuIsSource = true
+                        showMenu = true
+                    },
+                    onClick = { onBrowseSource?.invoke() },
                 ),
                 overflow = TextOverflow.Ellipsis,
                 maxLines = 1,

@@ -1,0 +1,200 @@
+package reikai.novel.source
+
+import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.extension.model.Extension
+import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeSameInstanceAs
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
+import reikai.domain.novel.LnSourceIdentity
+import reikai.domain.novel.NovelPreferences
+import reikai.novel.install.LnPluginInstaller
+import reikai.novel.source.ireader.IReaderSourceHolder
+import reikai.util.testAppScope
+import tachiyomi.core.common.preference.Preference
+import tachiyomi.domain.source.model.SourceNotInstalledException
+import ireader.core.source.CatalogSource as IReaderCatalogSource
+
+/** The registry follows the installed novel extension apps as the manga registry follows its extensions. */
+class NovelSourceManagerTest {
+
+    private val loaded = MutableStateFlow<List<Extension.Loaded>>(emptyList())
+    private val seen = mockk<Preference<Map<String, LnSourceIdentity>>>(relaxed = true) {
+        every { get() } returns emptyMap()
+    }
+    private val manager = NovelSourceManager(
+        scope = testAppScope(),
+        installer = { mockk<LnPluginInstaller>(relaxed = true) },
+        extensionManager = mockk<ExtensionManager> { every { loadedNovelExtensionsFlow } returns loaded },
+        prefs = mockk<NovelPreferences> { every { seenNovelSources() } returns seen },
+    )
+
+    // Fails any call that would load the plugins.
+    private val withoutPlugins = NovelSourceManager(
+        scope = testAppScope(),
+        installer = { error("loaded the plugins") },
+        extensionManager = mockk<ExtensionManager> { every { loadedNovelExtensionsFlow } returns flowOf(emptyList()) },
+        prefs = mockk<NovelPreferences> { every { seenNovelSources() } returns seen },
+    )
+
+    @Test
+    fun `an installed app's catalogue is registered`() = runTest {
+        loaded.value = listOf(novelApp(novelCatalogue(7L)))
+
+        manager.sources.first { it.isNotEmpty() }.map { it.id } shouldBe listOf("tachiyomi:7")
+    }
+
+    @Test
+    fun `an uninstalled app's catalogue leaves the registry`() = runTest {
+        loaded.value = listOf(novelApp(novelCatalogue(7L)))
+        manager.sources.first { it.isNotEmpty() }
+
+        loaded.value = emptyList()
+
+        manager.sources.first { it.isEmpty() } shouldBe emptyList()
+    }
+
+    @Test
+    fun `a plugin stays registered while the apps change`() = runTest {
+        val plugin = mockk<NovelSource> { every { id } returns "plugin" }
+        manager.register(plugin)
+
+        loaded.value = listOf(novelApp(novelCatalogue(7L)))
+
+        manager.sources.first { it.size == 2 }.map { it.id }.toSet() shouldBe setOf("plugin", "tachiyomi:7")
+    }
+
+    @Test
+    fun `an app's catalogue is remembered, so its novels keep a name once it is removed`() = runTest {
+        loaded.value = listOf(novelApp(novelCatalogue(7L)))
+
+        val written = slot<Map<String, LnSourceIdentity>>()
+        verify(timeout = 5_000) { seen.set(capture(written)) }
+        written.captured["tachiyomi:7"]?.name shouldBe "App 7"
+    }
+
+    @Test
+    fun `an IReader app's catalogue is registered under its own id beside a tachiyomi one's`() = runTest {
+        loaded.value = listOf(novelApp(novelCatalogue(7L)), iReaderApp(7L))
+
+        manager.sources.first { it.size == 2 }.map { it.id }.toSet() shouldBe setOf("tachiyomi:7", "ireader:7")
+    }
+
+    @Test
+    fun `an IReader catalogue that did not change keeps its adapter when another app arrives`() = runTest {
+        val iReader = iReaderApp(7L)
+        loaded.value = listOf(iReader)
+        val before = manager.sources.first { it.isNotEmpty() }.single()
+
+        loaded.value = listOf(iReader, novelApp(novelCatalogue(8L)))
+
+        manager.sources.first { it.size == 2 }.first { it.id == "ireader:7" } shouldBeSameInstanceAs before
+    }
+
+    /** Manga's stub source throws this same exception from every call; this pins the novel half to it. */
+    @Test
+    fun `a novel source that is not installed resolves to SourceNotInstalledException`() = runTest {
+        shouldThrow<SourceNotInstalledException> { manager.getOrThrow("gone") }
+    }
+
+    @Test
+    fun `an installed source is named by itself`() = runTest {
+        loaded.value = listOf(novelApp(novelCatalogue(7L)))
+        manager.sources.first { it.isNotEmpty() }
+
+        manager.nameOf("tachiyomi:7") shouldBe "App 7"
+    }
+
+    /** The seen record is a JSON preference decoded on every read, and the library names every row's source. */
+    @Test
+    fun `naming an installed source leaves the seen record unread`() = runTest {
+        manager.register(
+            mockk<NovelSource> {
+                every { id } returns "plugin"
+                every { name } returns "Plugin"
+                every { iconUrl } returns null
+                every { lang } returns "en"
+            },
+        )
+
+        manager.nameOf("plugin")
+
+        verify(exactly = 0) { seen.get() }
+    }
+
+    @Test
+    fun `a source no longer installed is named as it was last seen`() = runTest {
+        every { seen.get() } returns mapOf("gone" to LnSourceIdentity(name = "Old Name"))
+
+        manager.nameOf("gone") shouldBe "Old Name"
+    }
+
+    /** A backup, a library search and an error row want only the name, which every plugin load records. */
+    @Test
+    fun `naming a source never loads the plugins`() = runTest {
+        every { seen.get() } returns mapOf("plugin" to LnSourceIdentity(name = "Plugin"))
+
+        withoutPlugins.nameOf("plugin") shouldBe "Plugin"
+    }
+
+    @Test
+    fun `a source's language never loads the plugins`() = runTest {
+        every { seen.get() } returns mapOf("plugin" to LnSourceIdentity(name = "Plugin", lang = "ja"))
+
+        withoutPlugins.langOf("plugin") shouldBe "ja"
+    }
+
+    @Test
+    fun `a source never seen is named by its id`() = runTest {
+        manager.nameOf("gone") shouldBe "gone"
+    }
+
+    /** The library's language badge, `language:` search and language groups read this, as a manga stub keeps its language. */
+    @Test
+    fun `a source no longer installed keeps the language it was last seen with`() = runTest {
+        every { seen.get() } returns mapOf("gone" to LnSourceIdentity(name = "Old Name", lang = "ja"))
+
+        manager.langOf("gone") shouldBe "ja"
+    }
+
+    /** Records written before plugins reported a code hold the registry's endonym. */
+    @Test
+    fun `a language remembered by its registry name reads as its code`() = runTest {
+        every { seen.get() } returns mapOf("gone" to LnSourceIdentity(name = "Old Name", lang = "English"))
+
+        manager.langOf("gone") shouldBe "en"
+    }
+
+    @Test
+    fun `an installed source's own language wins over its seen record`() = runTest {
+        every { seen.get() } returns mapOf("tachiyomi:7" to LnSourceIdentity(name = "App 7", lang = "ja"))
+        loaded.value = listOf(novelApp(novelCatalogue(7L)))
+        manager.sources.first { it.isNotEmpty() }
+
+        manager.langOf("tachiyomi:7") shouldBe "en"
+    }
+
+    private fun iReaderApp(sourceId: Long) = novelApp().copy(
+        pkgName = "ireader.app.en",
+        kind = Extension.Kind.IREADER,
+        sources = listOf(
+            IReaderSourceHolder(
+                mockk<IReaderCatalogSource> {
+                    every { id } returns sourceId
+                    every { name } returns "IReader $sourceId"
+                    every { lang } returns "en"
+                    every { getFilters() } returns emptyList()
+                    every { getListings() } returns emptyList()
+                },
+            ),
+        ),
+    )
+}

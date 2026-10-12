@@ -1,14 +1,18 @@
 package reikai.domain.recommendation
 
+import eu.kanade.tachiyomi.data.track.Tracker
+import eu.kanade.tachiyomi.data.track.anilist.AnilistApi
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
+import eu.kanade.tachiyomi.network.jsonMime
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
+import reikai.data.track.isAnilistNovel
 import reikai.domain.recommendation.dto.ALMediaContextResponse
 import reikai.domain.recommendation.dto.ALRecsEdge
 import reikai.domain.recommendation.dto.ALRecsMedia
@@ -23,10 +27,9 @@ import reikai.domain.recommendation.dto.ALRecsTitle
  */
 class AnilistRecommendations(
     private val client: OkHttpClient,
-    override val trackerId: Long,
-) : TrackerRecommendations() {
-
-    override val trackerName: String = "AniList"
+    tracker: Tracker,
+    override val json: Json,
+) : TrackerRecommendations(tracker) {
 
     override suspend fun getRecsById(remoteId: Long): List<RelatedMangaCandidate> {
         val payload = buildJsonObject {
@@ -41,9 +44,9 @@ class AnilistRecommendations(
             put("query", QUERY_BY_SEARCH)
             put("variables", buildJsonObject { put("search", title) })
         }
-        // The search variant returns multiple medias whose own titles loosely match; keep only the
-        // ones that actually contain the query in some title variant before pulling their recs.
-        return execute(payload) { media -> media.matchesQuery(title) }
+        // The search variant returns multiple medias whose own titles loosely match, light novels among
+        // them; keep only the manga that contain the query in some title variant before pulling recs.
+        return execute(payload) { media -> !isAnilistNovel(media.format) && media.matchesQuery(title) }
     }
 
     override suspend fun getMediaContext(remoteId: Long): MediaContext {
@@ -51,7 +54,7 @@ class AnilistRecommendations(
             put("query", QUERY_MEDIA_CONTEXT)
             put("variables", buildJsonObject { put("id", remoteId) })
         }
-        val body = payload.toString().toRequestBody(JSON_MEDIA_TYPE)
+        val body = payload.toString().toRequestBody(jsonMime)
         val media = with(json) {
             client.newCall(POST(ENDPOINT, body = body)).awaitSuccess().parseAs<ALMediaContextResponse>()
         }.data.media ?: return MediaContext(emptyList(), emptyList())
@@ -66,7 +69,7 @@ class AnilistRecommendations(
         payload: JsonObject,
         filter: (ALRecsMedia) -> Boolean = { true },
     ): List<RelatedMangaCandidate> {
-        val body = payload.toString().toRequestBody(JSON_MEDIA_TYPE)
+        val body = payload.toString().toRequestBody(jsonMime)
         val data = with(json) {
             client.newCall(POST(ENDPOINT, body = body)).awaitSuccess().parseAs<ALRecsResponse>()
         }
@@ -123,8 +126,7 @@ class AnilistRecommendations(
             .filter { it.isNotBlank() }
 
     companion object {
-        private const val ENDPOINT = "https://graphql.anilist.co/"
-        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private const val ENDPOINT = AnilistApi.API_URL
 
         private val QUERY_BY_ID = """
             query Recommendations(${'$'}id: Int!) {
@@ -175,6 +177,7 @@ class AnilistRecommendations(
             query Recommendations(${'$'}search: String!) {
               Page {
                 media(search: ${'$'}search, type: MANGA) {
+                  format
                   title { romaji english native }
                   synonyms
                   recommendations {

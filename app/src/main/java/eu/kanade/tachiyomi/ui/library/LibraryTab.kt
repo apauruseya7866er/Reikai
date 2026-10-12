@@ -2,23 +2,18 @@ package eu.kanade.tachiyomi.ui.library
 
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.graphics.res.animatedVectorResource
 import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
 import androidx.compose.animation.graphics.vector.AnimatedImageVector
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -26,39 +21,38 @@ import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.fastAll
-import cafe.adriel.voyager.core.model.rememberScreenModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
+import dev.zacsweers.metrox.viewmodel.assistedMetroViewModel
+import dev.zacsweers.metrox.viewmodel.metroViewModel
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
 import eu.kanade.presentation.library.DeleteLibraryMangaDialog
-import eu.kanade.presentation.library.LibrarySettingsDialog
 import eu.kanade.presentation.library.components.LibraryContent
 import eu.kanade.presentation.library.components.LibraryToolbar
+import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.LibraryBottomActionMenu
 import eu.kanade.presentation.more.onboarding.GETTING_STARTED_URL
 import eu.kanade.presentation.util.Tab
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
-import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
 import eu.kanade.tachiyomi.ui.main.MainActivity
@@ -68,40 +62,46 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
-import reikai.data.novel.update.NovelUpdateJob
+import mihon.app.di.appGraph
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.automirroredrounded.Help
+import mihon.icons.materialsymbols.rounded.TravelExplore
+import reikai.data.track.TrackerRefreshWorker
+import reikai.domain.entry.EntryId
 import reikai.domain.library.ContentType
+import reikai.domain.library.singleContentType
 import reikai.domain.library.sortForCategory
-import reikai.domain.novel.model.NovelCategory
-import reikai.domain.novel.model.NovelLibrarySort
+import reikai.presentation.browse.globalsearch.EntryGlobalSearchScreen
 import reikai.presentation.components.ContentTypeFilterChips
-import reikai.presentation.library.ReikaiCategoryHopper
-import reikai.presentation.library.ReikaiCategoryPickerSheet
+import reikai.presentation.components.libraryRefreshMessage
+import reikai.presentation.library.LibraryBucket
+import reikai.presentation.library.LibraryDialog
+import reikai.presentation.library.LibraryEngine
+import reikai.presentation.library.LibraryScreenState
+import reikai.presentation.library.LibrarySettingsSheet
+import reikai.presentation.library.LibrarySettingsTab
 import reikai.presentation.library.ReikaiLibraryContent
-import reikai.presentation.library.novels.NovelLibraryScreenModel
-import reikai.presentation.library.novels.NovelLibrarySettingsDialog
-import reikai.presentation.library.novels.novelSortLabelRes
+import reikai.presentation.library.ReikaiLibraryHopperOverlay
+import reikai.presentation.library.libraryToolbarTitle
+import reikai.presentation.library.novels.NovelLibraryViewModel
 import reikai.presentation.library.reikaiCategoryHeaderIndices
 import reikai.presentation.library.reikaiIsCollapsed
-import reikai.presentation.library.reikaiSortCategories
 import reikai.presentation.library.sortLabelRes
 import reikai.presentation.library.updateerror.UpdateErrorsScreen
-import reikai.presentation.manga.MangaMigrationSourcePickScreen
+import reikai.presentation.library.visualLabel
+import reikai.presentation.migrate.flow.EntryMigrationSourcePickScreen
 import reikai.presentation.novel.details.NovelScreen
-import reikai.presentation.novel.migrate.NovelMigrationSourcePickScreen
-import reikai.presentation.novel.reader.NovelReaderScreen
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.model.LibraryManga
-import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
 import tachiyomi.presentation.core.screens.LoadingScreen
-import tachiyomi.source.local.isLocal
 
 data object LibraryTab : Tab {
 
@@ -109,7 +109,7 @@ data object LibraryTab : Tab {
         @Composable
         get() {
             val isSelected = LocalTabNavigator.current.current.key == key
-            val image = AnimatedImageVector.animatedVectorResource(R.drawable.anim_library_enter)
+            val image = AnimatedImageVector.animatedVectorResource(R.drawable.animated_library)
             return TabOptions(
                 index = 0u,
                 title = stringResource(MR.strings.label_library),
@@ -128,31 +128,94 @@ data object LibraryTab : Tab {
         val scope = rememberCoroutineScope()
         val haptic = LocalHapticFeedback.current
 
-        val screenModel = rememberScreenModel { LibraryScreenModel() }
-        val settingsScreenModel = rememberScreenModel { LibrarySettingsScreenModel() }
-        val state by screenModel.state.collectAsState()
+        val viewModel = metroViewModel<LibraryViewModel>()
+        val settingsViewModel = metroViewModel<LibrarySettingsViewModel>()
+        val state by viewModel.state.collectAsStateWithLifecycle()
 
-        // RK --> novels in the library behind the Manga/Novels chip (P5 S6). The "active" locals fall
-        // through to the manga `state` when the chip is on Manga, so the manga path is unchanged; on
-        // Novels they read the novel screen model, feeding the same views a disguised item list.
-        val novelModel = rememberScreenModel { NovelLibraryScreenModel() }
-        val novelState by novelModel.state.collectAsState()
-        val libraryContentType by novelModel.contentType.collectAsState()
-        val isNovels = libraryContentType == ContentType.NOVELS
-        val activeCategories = if (isNovels) novelState.displayedCategories else state.displayedCategories
-        val activeSelection = if (isNovels) novelState.selection else state.selection
-        val activeSearchQuery = if (isNovels) novelState.searchQuery else state.searchQuery
-        val activeIsLibraryEmpty = if (isNovels) novelState.isLibraryEmpty else state.isLibraryEmpty
-        val activeIsLoading = if (isNovels) novelState.isLoading else state.isLoading
-        val activeCollapsedCategories =
-            if (isNovels) novelState.collapsedCategories else state.reikai.collapsedCategories
-        val activeGetItems: (Category) -> List<LibraryItem> =
-            if (isNovels) novelState::getItemsForCategory else state::getItemsForCategory
-        val activeGetItemCount: (Category) -> Int? =
-            if (isNovels) novelState::getItemCountForCategory else state::getItemCountForCategory
-        val onSearch: (String?) -> Unit = if (isNovels) novelModel::search else screenModel::search
-        val activeSelectionMode = if (isNovels) novelState.selectionMode else state.selectionMode
-        val activeHasActiveFilters = if (isNovels) novelState.hasActiveFilters else state.hasActiveFilters
+        // RK --> novels in the library behind the Manga/Novels chip. Both models stay live; a per-type
+        // adapter maps each onto the neutral LibraryScreenState / LibraryBehavior, so the tab reads one
+        // `libState` and dispatches one `behavior` instead of branching manga-vs-novel per field. The chip
+        // picks the active adapter; only navigation stays branched below, because it needs the navigator
+        // and the per-type screen types. The `active*` locals are kept as thin aliases over
+        // `libState` so every downstream view reads them unchanged.
+        val novelModel = metroViewModel<NovelLibraryViewModel>()
+        val novelState by novelModel.state.collectAsStateWithLifecycle()
+        // The engine owns which provider drives the view and every dialog, so the content type is decided
+        // in one place rather than at each call site. It is shaped to merge both providers for an All view
+        // later, and is a ViewModel for its scope: building the change-categories dialog reads categories.
+        // It also constructs the adapters, so exactly one pair exists for as long as the engine does. They
+        // must not be `remember`ed separately: the engine outlives the composition, so a tab switch would
+        // hand the tab a second pair while the engine kept dispatching through the first. All three models
+        // share this tab host's ViewModelStore, so the pair the factory captures is cleared alongside them.
+        val graph = remember { context.appGraph }
+        val engine = assistedMetroViewModel<LibraryEngine, LibraryEngine.Factory> {
+            create(
+                providers = listOf(
+                    graph.mangaLibraryAdapterFactory.create(viewModel),
+                    graph.novelLibraryAdapterFactory.create(novelModel),
+                ),
+            )
+        }
+        val libraryContentType by engine.contentType.collectAsState()
+        val refreshing by engine.refreshing.collectAsStateWithLifecycle()
+        val libraryDialog by engine.dialog.collectAsState()
+        // RK: the library-wide display config, read from the engine rather than off the manga model, so
+        // the tab does not reach into one content type for a setting that belongs to neither.
+        val display by engine.display.collectAsState()
+        // RK: collect BOTH adapters' state and pick synchronously, so flipping the chip switches
+        // instantly. Collecting a single `behavior.state` over the switched adapter re-subscribes on the
+        // flow change, holding the old value for a frame, which stutters the manga<->novel transition.
+        // Both are collected for as long as this tab is on screen, so the inactive side stays current
+        // for an instant swap; the lifecycle read is what lets the models stop once it is not.
+        val mangaLibState by engine.behaviorFor(ContentType.MANGA).state.collectAsStateWithLifecycle()
+        val novelLibState by engine.behaviorFor(ContentType.NOVELS).state.collectAsStateWithLifecycle()
+        val libState = LibraryScreenState.forChip(libraryContentType, mangaLibState, novelLibState)
+        // RK: the list (the sections, their rows and their counts) renders off the engine's assembly,
+        // the only place that can bucket both content types into one list. The assembly lags a chip
+        // flip and a cold start by one emission, so it renders only when its chip matches, and until
+        // then the tab reads as loading rather than as a search that found nothing.
+        val assembled = engine.assembled.collectAsStateWithLifecycle().value
+            ?.takeIf { it.chip == libraryContentType }
+        val activeBuckets = assembled?.buckets.orEmpty()
+        // RK: the selection is the engine's, not a provider's: it can span both content types.
+        val activeSelection by engine.selection.collectAsState()
+        val activeSearchQuery = libState.searchQuery
+        val activeIsLibraryEmpty = libState.isLibraryEmpty
+        val activeIsLoading = libState.isLoading || assembled == null
+        val activeGetItems: (LibraryBucket) -> List<LibraryItem> =
+            assembled?.let { it::itemsFor } ?: { emptyList() }
+        val activeGetItemCount: (LibraryBucket) -> Int? =
+            assembled?.let { it::countFor } ?: { null }
+        val onSearch: (String?) -> Unit = { engine.search(libraryContentType, it) }
+        val activeSelectionMode = activeSelection.isNotEmpty()
+        val activeHasActiveFilters = libState.hasActiveFilters
+        // RK: the toolbar's whole-library count, over the assembled list rather than the manga model's
+        // favorites (which under All counted only one of the two content types). Distinct because an
+        // entry in several categories sits in several buckets. Remembered: it walks the whole library,
+        // and only the tabbed view with counts on ever shows it.
+        val showWholeLibraryCount =
+            display.showItemCounts && (display.showCategoryTabs || display.reikai.showAllCategories)
+        val wholeLibraryCount = remember(activeBuckets, activeGetItems, showWholeLibraryCount) {
+            if (!showWholeLibraryCount) {
+                0
+            } else {
+                activeBuckets.flatMap(activeGetItems).distinctBy(LibraryItem::entryId).size
+            }
+        }
+        // The rows of one section in display order, which is what the engine's range-select and
+        // select-all need. Resolved here rather than in the engine so the engine never looks rows up
+        // itself and stays free of per-type knowledge.
+        val entriesOf: (LibraryBucket?) -> List<EntryId> = { bucket ->
+            bucket?.let { activeGetItems(it).map(LibraryItem::entryId) }.orEmpty()
+        }
+        // Shared by the no-results action and both library views.
+        val onGlobalSearch = {
+            navigator.push(EntryGlobalSearchScreen(activeSearchQuery ?: "", scopedContentType = libraryContentType))
+        }
+        val onRangeSelect: (LibraryBucket, LibraryItem) -> Unit = { bucket, item ->
+            engine.toggleRangeSelection(bucket.key, item.entryId, entriesOf(bucket))
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
         // RK <--
 
         val snackbarHostState = remember { SnackbarHostState() }
@@ -164,40 +227,76 @@ data object LibraryTab : Tab {
         // RK: one scroll state per content type, so toggling the Manga/Novels chip preserves each
         // view's own position instead of both sharing a single offset (upstream is manga-only). The
         // active pair falls through to the current type, like the other `active*` locals above.
-        val mangaSingleListGridState = rememberLazyGridState()
-        val novelSingleListGridState = rememberLazyGridState()
-        val singleListGridState = if (isNovels) novelSingleListGridState else mangaSingleListGridState
-        val mangaPagerState = rememberPagerState(initialPage = state.coercedActiveCategoryIndex) {
-            state.displayedCategories.size
+        val singleListGridStates = ContentType.entries.associateWith { key(it) { rememberLazyGridState() } }
+        val singleListGridState = singleListGridStates.getValue(libraryContentType)
+        // RK: one pager per chip, each sized from a snapshot taken only while its own chip is up. Pointing
+        // all three at activeBuckets.size would make an inactive chip's pager lose its position, since
+        // Compose clamps a pager's currentPage whenever its pageCount shrinks. Each pager seeds its own
+        // chip's persisted page (the pager clamps the value if the list is shorter).
+        val pageCounts = remember { ContentType.entries.associateWith { mutableIntStateOf(0) } }
+        pageCounts.getValue(libraryContentType).intValue = activeBuckets.size
+        val pagerStates = ContentType.entries.associateWith { type ->
+            key(type) {
+                val initialPage = remember { engine.initialPageFor(type) }
+                rememberPagerState(initialPage = initialPage) { pageCounts.getValue(type).intValue }
+            }
         }
-        val novelPagerState = rememberPagerState(initialPage = novelState.coercedActiveCategoryIndex) {
-            novelState.displayedCategories.size
-        }
-        val pagerState = if (isNovels) novelPagerState else mangaPagerState
-        var pickerOpen by remember { mutableStateOf(false) }
+        val pagerState = pagerStates.getValue(libraryContentType)
         var hopperTarget by remember { mutableStateOf<Int?>(null) }
-        var hopperDragAccum by remember { mutableFloatStateOf(0f) }
-        fun reikaiHeaderIndices(): List<Int> = reikaiCategoryHeaderIndices(
-            categories = activeCategories,
-            hasSearchItem = !activeSearchQuery.isNullOrEmpty(),
-            isCollapsed = {
-                reikaiIsCollapsed(
-                    it,
-                    activeCollapsedCategories,
-                    if (isNovels) activeCollapsedCategories else state.reikai.collapsedDynamicCategories,
+        val showAllCategories = display.reikai.showAllCategories
+        val hasSearchItem = !activeSearchQuery.isNullOrEmpty()
+        val collapsedCategories = display.reikai.collapsedCategories
+        val collapsedDynamicCategories = display.reikai.collapsedDynamicCategories
+        // Built once per assembly and collapse state, not per scrolled row; the pager never reads it, so
+        // it does not pay every bucket's overlay pass there.
+        val headerIndices = remember(
+            showAllCategories,
+            assembled,
+            hasSearchItem,
+            collapsedCategories,
+            collapsedDynamicCategories,
+        ) {
+            if (!showAllCategories) {
+                emptyList()
+            } else {
+                reikaiCategoryHeaderIndices(
+                    buckets = activeBuckets,
+                    hasSearchItem = hasSearchItem,
+                    isCollapsed = { reikaiIsCollapsed(it, collapsedCategories, collapsedDynamicCategories) },
+                    itemCount = { activeGetItems(it).size },
                 )
-            },
-            itemCount = { activeGetItems(it).size },
-        )
-        fun currentCategoryIndex(): Int = if (state.reikai.showAllCategories) {
-            reikaiHeaderIndices().indexOfLast { it <= singleListGridState.firstVisibleItemIndex }.coerceAtLeast(0)
-        } else {
-            pagerState.currentPage
+            }
         }
+        // Derived, so the title and the hopper recompose when the section on screen changes rather than
+        // on every scrolled row.
+        val currentCategoryIndexState = remember(showAllCategories, headerIndices, singleListGridState, pagerState) {
+            derivedStateOf {
+                if (showAllCategories) {
+                    headerIndices.indexOfLast { it <= singleListGridState.firstVisibleItemIndex }.coerceAtLeast(0)
+                } else {
+                    pagerState.currentPage
+                }
+            }
+        }
+        fun currentCategoryIndex(): Int = currentCategoryIndexState.value
+        // RK: the section Select all / Invert act on. Keyed to the section actually on screen, which in
+        // the single-list view means the one scrolled to: there is no pager there, so the stored page
+        // index never moves off the first category no matter how far down the list you are.
+        val activeCategoryEntries: () -> List<EntryId> = {
+            entriesOf(activeBuckets.getOrNull(currentCategoryIndex()))
+        }
+        // The section the toolbar and hopper actions act on: the one actually on screen. In the
+        // single-list view the stored page index never moves, so anything reading it there acted on
+        // the first category while the title named the scrolled-to one.
+        val currentBucket: () -> LibraryBucket? = { activeBuckets.getOrNull(currentCategoryIndex()) }
+        // For actions that need a REAL category: a dynamic group has none, so these fall back to null
+        // (the global scope). The section headers disable such affordances outright; the toolbar and
+        // hopper have no off state.
+        val currentRealCategory: () -> Category? = { currentBucket()?.realCategory }
         LaunchedEffect(hopperTarget) {
             val target = hopperTarget ?: return@LaunchedEffect
-            if (state.reikai.showAllCategories) {
-                reikaiHeaderIndices().getOrNull(target)?.let { itemIndex ->
+            if (showAllCategories) {
+                headerIndices.getOrNull(target)?.let { itemIndex ->
                     // Jump instantly to the target category, the way Yōkai's hopper does. Categories
                     // here can hold hundreds of items, so a smooth scroll across them has to compose
                     // everything in between and stutters; an instant jump stays snappy under rapid
@@ -213,30 +312,48 @@ data object LibraryTab : Tab {
         }
         // RK <--
 
-        // RK: route refresh to the right vertical's job. The novel job (KEEP-deduped) has no
-        // already-running signal, so the Novels chip always reports "updating".
-        val onClickRefresh: (Category?) -> Boolean = { category ->
-            val started = if (isNovels) {
-                NovelUpdateJob.startNow(context, category)
-                true
-            } else {
-                LibraryUpdateJob.startNow(context, category)
-            }
+        // RK --> the engine starts the update behind the chip, and the message is the one Recents and
+        //        Update errors show
+        val onClickRefresh: suspend (Category?) -> Boolean = { category ->
+            val started = engine.refresh(libraryContentType, category)
             scope.launch {
-                val msgRes = when {
-                    !started -> MR.strings.update_already_running
-                    category != null -> MR.strings.updating_category
-                    else -> MR.strings.updating_library
-                }
+                val msgRes = libraryRefreshMessage(started, libraryContentType, category = category != null)
                 snackbarHostState.showSnackbar(context.stringResource(msgRes))
             }
             started
         }
+        // RK <--
+
+        // RK: open an entry on its own details screen, routed by the ROW's content type rather than the
+        // active chip. Navigation stays per-type (each type has its own screen), but the decision no
+        // longer depends on ambient UI state, so a mixed list routes every row correctly.
+        val openEntry: (EntryId) -> Unit = { entryId ->
+            when (entryId) {
+                is EntryId.Novel -> novelState.routeFor(entryId.rawId)?.let {
+                    navigator.push(NovelScreen(it.source, it.url))
+                }
+                is EntryId.Manga -> navigator.push(MangaScreen(entryId.rawId))
+            }
+        }
+
+        // RK: open a random entry, from the section on screen or from the whole library. The entry comes
+        // back neutral and opens through the same routing every other row uses, so the two callers can't
+        // drift into opening different content types.
+        val onOpenRandom: (String?) -> Unit = { bucketKey ->
+            val entry = engine.randomEntry(libraryContentType, bucketKey)
+            if (entry == null) {
+                scope.launch {
+                    snackbarHostState.showSnackbar(context.stringResource(MR.strings.information_no_entries_found))
+                }
+            } else {
+                openEntry(entry)
+            }
+        }
 
         // RK: shared manga continue-reading handler, used by both the pager and the single-list view.
         val onMangaContinueReading: (LibraryManga) -> Unit = { item ->
-            scope.launchIO {
-                val chapter = screenModel.getNextUnreadChapter(item.manga)
+            scope.launch {
+                val chapter = viewModel.getNextUnreadChapter(item.manga)
                 if (chapter != null) {
                     context.startActivity(ReaderActivity.newIntent(context, chapter.mangaId, chapter.id))
                 } else {
@@ -244,51 +361,63 @@ data object LibraryTab : Tab {
                 }
             }
         }
-        // RK: novel continue-reading (both views). The disguised item carries a negative id, so the
-        // real novel id is -manga.id. For a merged novel the resume spans the whole group (the unified
-        // reading order): open the unread chapter from its OWN source + hand the reader the merged list.
+        // RK: novel continue-reading (both views). Resume opens the next unread chapter from its own
+        // source in group scope, so the reader's prev/next spans the whole merge group (the reader
+        // resolves it itself).
         val onNovelContinueReading: (LibraryManga) -> Unit = { item ->
             scope.launchIO {
-                val resume = novelModel.getResume(-item.manga.id)
+                val resume = novelModel.getResume(item.manga.id)
                 if (resume != null) {
                     withUIContext {
-                        navigator.push(
-                            NovelReaderScreen(
-                                resume.chapter.novelId,
-                                resume.chapter.id,
-                                resume.chapterIds.toLongArray(),
-                            ),
-                        )
+                        context.startActivity(ReaderActivity.newNovelIntent(context, resume.novelId, resume.id))
                     }
                 } else {
                     snackbarHostState.showSnackbar(context.stringResource(MR.strings.no_next_chapter))
                 }
             }
         }
+        // RK: the resume handler is per-type navigation, dispatched on the ROW's own content type rather
+        // than the active chip, so a mixed list resumes each row in its own reader. The gate is neutral.
+        val onContinueReading: ((LibraryItem) -> Unit)? = { item: LibraryItem ->
+            when (item.entryId) {
+                is EntryId.Novel -> onNovelContinueReading(item.libraryManga)
+                is EntryId.Manga -> onMangaContinueReading(item.libraryManga)
+            }
+        }.takeIf { libState.showContinueButton }
 
         Scaffold(
             topBar = { scrollBehavior ->
-                val title = state.getToolbarTitle(
-                    defaultTitle = stringResource(MR.strings.label_library),
-                    defaultCategoryTitle = stringResource(MR.strings.label_default),
-                    // RK: single-list tracks the visible category on scroll, so the title follows it
-                    page = if (state.reikai.showAllCategories) {
-                        currentCategoryIndex()
-                    } else {
-                        state.coercedActiveCategoryIndex
-                    },
-                )
+                // RK: built here over the assembled list, so it names every chip's categories and counts
+                // rows of both content types.
+                val defaultTitle = stringResource(MR.strings.label_library)
+                // The paged view without tabs names the section on screen; single-list reads "Library".
+                val title = currentBucket().let { bucket ->
+                    libraryToolbarTitle(
+                        defaultTitle = defaultTitle,
+                        sectionLabel = bucket?.visualLabel,
+                        showCategoryInTitle = display.reikai.showCategoryInTitle,
+                        showCategoryTabs = display.showCategoryTabs,
+                        showAllCategories = showAllCategories,
+                        showItemCounts = display.showItemCounts,
+                        sectionCount = { bucket?.let(activeGetItemCount) ?: 0 },
+                        wholeCount = { wholeLibraryCount },
+                    )
+                }
                 // RK: stack the content-type chip under the toolbar so the Scaffold sizes
                 // contentPadding to include it and both library views render below it untouched.
                 // RK: match the toolbar's container color so the chip strip reads as part of it.
                 // Rest = surfaceColorAtElevation(0/3dp) (3dp in selection, mirroring AppBar's
                 // isActionMode); on scroll the toolbar tints to its scrolledContainerColor
                 // (M3 default surfaceContainer), only when it actually collapses (no category tabs).
+                // Derived as M3's TopAppBar reads it, so scrolling recomposes the bar only on the flip.
+                val toolbarOverlapped by remember(scrollBehavior) {
+                    derivedStateOf { scrollBehavior.state.overlappedFraction > 0.01f }
+                }
                 val chipBackground by animateColorAsState(
-                    targetValue = if (!state.showCategoryTabs && scrollBehavior.state.overlappedFraction > 0.01f) {
+                    targetValue = if (!display.showCategoryTabs && toolbarOverlapped) {
                         MaterialTheme.colorScheme.surfaceContainer
                     } else {
-                        MaterialTheme.colorScheme.surfaceColorAtElevation(if (state.selectionMode) 3.dp else 0.dp)
+                        MaterialTheme.colorScheme.surfaceColorAtElevation(if (activeSelectionMode) 3.dp else 0.dp)
                     },
                     label = "libraryChipBackground",
                 )
@@ -298,47 +427,47 @@ data object LibraryTab : Tab {
                         hasActiveFilters = activeHasActiveFilters,
                         selectedCount = activeSelection.size,
                         title = title,
-                        onClickUnselectAll = if (isNovels) novelModel::clearSelection else screenModel::clearSelection,
-                        onClickSelectAll = if (isNovels) novelModel::selectAll else screenModel::selectAll,
-                        onClickInvertSelection = if (isNovels) {
-                            novelModel::invertSelection
-                        } else {
-                            screenModel::invertSelection
-                        },
+                        onClickUnselectAll = engine::clearSelection,
+                        onClickSelectAll = { engine.selectAll(activeCategoryEntries()) },
+                        onClickInvertSelection = { engine.invertSelection(activeCategoryEntries()) },
                         onClickFilter = {
-                            // RK: the toolbar sort is GLOBAL (Model A); scope the sheet to the global sort,
-                            // not a stale active category. Per-category overrides are set from each
-                            // category header's sort in the single-list view.
-                            if (isNovels) {
-                                novelModel.openSettingsDialog(NovelCategory.UNCATEGORIZED_ID, 0)
-                            } else {
-                                screenModel.showSettingsDialog()
-                            }
+                            // RK: the toolbar sort is GLOBAL (Model A); a null category scopes the sheet to
+                            // the global sort, not a stale active category. Per-category overrides are set
+                            // from each category header's sort in the single-list view.
+                            engine.openSettingsDialog(libraryContentType, categoryId = null, LibrarySettingsTab.FILTER)
                         },
-                        onClickRefresh = { onClickRefresh(state.activeCategory) },
-                        onClickGlobalUpdate = { onClickRefresh(null) },
-                        onClickOpenRandomManga = {
+                        onClickRefresh = { scope.launch { onClickRefresh(currentRealCategory()) } },
+                        onClickGlobalUpdate = { scope.launch { onClickRefresh(null) } },
+                        // RK: follows the content-type chip.
+                        onClickOpenRandomManga = { onOpenRandom(currentBucket()?.key) },
+                        // RK: library-wide tracker refresh, both content types at once, so it does not
+                        // follow the chip. A snackbar reports the two states the user can act on.
+                        onClickRefreshTrackers = {
                             scope.launch {
-                                val randomItem = screenModel.getRandomLibraryItemForCurrentCategory()
-                                if (randomItem != null) {
-                                    navigator.push(MangaScreen(randomItem.libraryManga.manga.id))
-                                } else {
-                                    snackbarHostState.showSnackbar(
-                                        context.stringResource(MR.strings.information_no_entries_found),
-                                    )
-                                }
+                                val started = TrackerRefreshWorker.startNow(context)
+                                snackbarHostState.showSnackbar(
+                                    context.stringResource(
+                                        if (started) {
+                                            MR.strings.tracker_refresh_progress
+                                        } else {
+                                            MR.strings.tracker_refresh_already_running
+                                        },
+                                    ),
+                                )
                             }
                         },
-                        // RK: opt-in Update errors screen (hidden unless the matching Advanced toggle is on);
+                        // RK: the Update errors screen, hidden unless the matching Library update toggle is on;
                         //     opens on the chip for the content type currently shown.
                         onClickUpdateErrors = run {
-                            val enabled =
-                                if (isNovels) state.reikai.trackNovelUpdateErrors else state.reikai.trackUpdateErrors
+                            val reikai = display.reikai
+                            val enabled = when (libraryContentType) {
+                                ContentType.MANGA -> reikai.trackUpdateErrors
+                                ContentType.NOVELS -> reikai.trackNovelUpdateErrors
+                                ContentType.ALL -> reikai.trackUpdateErrors || reikai.trackNovelUpdateErrors
+                            }
                             if (enabled) {
-                                {
-                                    val initial = if (isNovels) ContentType.NOVELS else ContentType.MANGA
-                                    navigator.push(UpdateErrorsScreen(initial))
-                                }
+                                // The errors screen already handles ALL with its own chip strip.
+                                { navigator.push(UpdateErrorsScreen(libraryContentType)) }
                             } else {
                                 null
                             }
@@ -346,65 +475,63 @@ data object LibraryTab : Tab {
                         searchQuery = activeSearchQuery,
                         onSearchQueryChange = onSearch,
                         // For scroll overlay when no tab
-                        scrollBehavior = scrollBehavior.takeIf { !state.showCategoryTabs },
+                        scrollBehavior = scrollBehavior.takeIf { !display.showCategoryTabs },
                     )
+                    // RK: all three chips since the All view landed; the component's default order is
+                    // All, Manga, Novels (ContentType.entries).
                     ContentTypeFilterChips(
                         selected = libraryContentType,
-                        onSelect = novelModel::setContentType,
-                        types = listOf(ContentType.MANGA, ContentType.NOVELS),
+                        onSelect = engine::setContentType,
                         modifier = Modifier.background(chipBackground),
                     )
                 }
             },
             bottomBar = {
-                // RK: novels get their own action bar (download menu, mark read/unread, change
-                // category, delete, merge, and batch migrate).
-                if (isNovels) {
-                    LibraryBottomActionMenu(
-                        visible = novelState.selectionMode,
-                        onChangeCategoryClicked = novelModel::openChangeCategoryDialog,
-                        onMarkAsReadClicked = { novelModel.markReadSelection(true) },
-                        onMarkAsUnreadClicked = { novelModel.markReadSelection(false) },
-                        onDownloadClicked = novelModel::performDownloadAction,
-                        onDeleteClicked = novelModel::openDeleteDialog,
-                        onMigrateClicked = {
-                            val ids = novelState.selectedNovelIds
-                            novelModel.clearSelection()
-                            navigator.push(NovelMigrationSourcePickScreen(ids))
+                // RK: one action bar for both content types (download menu, mark read/unread, change
+                // category, delete, merge, unmerge). Only the batch-migrate nav stays per-type: it pushes a
+                // per-type source-pick screen over each type's own id space.
+                LibraryBottomActionMenu(
+                    visible = activeSelectionMode,
+                    onChangeCategoryClicked = { engine.openChangeCategoryDialog(libraryContentType) },
+                    onMarkAsReadClicked = { engine.markReadSelection(libraryContentType, true) },
+                    onMarkAsUnreadClicked = { engine.markReadSelection(libraryContentType, false) },
+                    // RK: manga hides Download when every selected entry is local; novels never do.
+                    onDownloadClicked = { action: DownloadAction ->
+                        engine.performDownloadAction(libraryContentType, action)
+                    }
+                        .takeIf { engine.canDownloadSelection(libraryContentType) },
+                    onDeleteClicked = { engine.openDeleteDialog(libraryContentType) },
+                    // RK: routed by what the selection holds; a mixed selection hides the action.
+                    onMigrateClicked = EntryMigrationSourcePickScreen.forSelection(activeSelection)?.let { screen ->
+                        {
+                            engine.clearSelection()
+                            navigator.push(screen)
+                        }
+                    },
+                    // RK: manual merge of the selected entries (needs at least two OF ONE TYPE: a merge
+                    // group is per content type, and a mixed gesture would silently create two groups)
+                    // + unmerge (only when the selection includes a merged one). Both follow the
+                    // grouping switch: with it off the manager refuses the merge and the collapse never
+                    // marks a row, so Unmerge could not offer a way back out of what Merge wrote.
+                    onMergeClicked = { engine.mergeSelection(libraryContentType) }
+                        .takeIf {
+                            display.reikai.seriesMergingEnabled &&
+                                activeSelection.size >= 2 &&
+                                singleContentType(activeSelection.map { it.contentType }) != null
                         },
-                        // RK: manual merge of the selected novels (needs at least two) + unmerge (P5 S8)
-                        onMergeClicked = novelModel::mergeSelection.takeIf { novelState.selection.size >= 2 },
-                        onUnmergeClicked = novelModel::unmergeSelection.takeIf { novelState.selectionContainsMerged },
-                    )
-                } else {
-                    LibraryBottomActionMenu(
-                        visible = state.selectionMode,
-                        onChangeCategoryClicked = screenModel::openChangeCategoryDialog,
-                        onMarkAsReadClicked = { screenModel.markReadSelection(true) },
-                        onMarkAsUnreadClicked = { screenModel.markReadSelection(false) },
-                        onDownloadClicked = screenModel::performDownloadAction
-                            .takeIf { state.selectedManga.fastAll { !it.isLocal() } },
-                        onDeleteClicked = screenModel::openDeleteMangaDialog,
-                        onMigrateClicked = {
-                            val selection = state.selection
-                            screenModel.clearSelection()
-                            // RK: source picker first (merged-manga member choice).
-                            navigator.push(MangaMigrationSourcePickScreen(selection.toList()))
-                        },
-                        // RK: manual merge of the selected manga (needs at least two)
-                        onMergeClicked = screenModel::mergeSelection.takeIf { state.selection.size >= 2 },
-                        // RK: unmerge selected manga (only when the selection includes a merged one)
-                        onUnmergeClicked = screenModel::unmergeSelection.takeIf { state.selectionContainsMerged },
-                    )
-                }
+                    onUnmergeClicked = { engine.unmergeSelection(libraryContentType) }
+                        .takeIf { engine.selectionContainsMerged(libraryContentType) },
+                )
             },
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         ) { contentPadding ->
             when {
-                activeIsLoading -> {
+                activeIsLoading -> { // RK: also loading until the engine has assembled the list
                     LoadingScreen(Modifier.padding(contentPadding))
                 }
-                activeSearchQuery.isNullOrEmpty() && !isNovels && !state.hasActiveFilters && activeIsLibraryEmpty -> {
+                // RK --> "empty" is counted after filters run, so the filter guard is what stops a filter
+                // that matches nothing from reading as an empty library. Both content types need it.
+                activeSearchQuery.isNullOrEmpty() && !activeHasActiveFilters && activeIsLibraryEmpty -> {
                     val handler = LocalUriHandler.current
                     EmptyScreen(
                         stringRes = MR.strings.information_empty_library,
@@ -412,293 +539,162 @@ data object LibraryTab : Tab {
                         actions = listOf(
                             EmptyScreenAction(
                                 stringRes = MR.strings.getting_started_guide,
-                                icon = Icons.AutoMirrored.Outlined.HelpOutline,
+                                icon = MaterialSymbols.AutoMirroredRounded.Help,
                                 onClick = { handler.openUri(GETTING_STARTED_URL) },
                             ),
                         ),
                     )
                 }
-                isNovels && activeSearchQuery.isNullOrEmpty() && activeIsLibraryEmpty -> {
+                // RK: a search or filter that matches nothing empties every category, and the
+                // assembly always hides empty categories, so the pager would render zero pages: no
+                // message, and no way to search globally exactly when the local search failed.
+                // (Loading and the truly-empty library are handled above, so reaching here means an
+                // active search or filter, or hiding every category, emptied the list.)
+                activeBuckets.isEmpty() -> {
                     EmptyScreen(
-                        stringRes = MR.strings.information_empty_library,
+                        stringRes = MR.strings.no_results_found,
                         modifier = Modifier.padding(contentPadding),
+                        actions = activeSearchQuery?.takeIf { it.isNotEmpty() }?.let {
+                            listOf(
+                                EmptyScreenAction(
+                                    stringRes = MR.strings.action_global_search,
+                                    icon = MaterialSymbols.Rounded.TravelExplore,
+                                    onClick = onGlobalSearch,
+                                ),
+                            )
+                        },
                     )
                 }
+                // RK <--
                 else -> {
                     // RK --> both library views (pager + single-list) with hopper + picker overlaid
                     Box(modifier = Modifier.fillMaxSize()) {
-                        if (state.reikai.showAllCategories) {
+                        if (display.reikai.showAllCategories) {
                             val isLandscape =
                                 LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
-                            val columns by screenModel.getColumnsForOrientation(isLandscape)
-                            val displayMode by screenModel.getDisplayMode()
-                            // RK: the global sort each non-overridden category follows (re-read per render;
-                            // a global-sort change re-sorts the library, which recomposes this).
-                            val mangaGlobalSort = settingsScreenModel.libraryPreferences.sortingMode.get()
-                            val novelDefaultSort = NovelLibrarySort.fromFlag(
-                                settingsScreenModel.reikaiLibraryPreferences.novelLibraryDefaultSort.get(),
-                            )
-                            ReikaiLibraryContent(
-                                categories = activeCategories,
-                                getItemsForCategory = activeGetItems,
-                                collapsedCategories = activeCollapsedCategories,
-                                collapsedDynamicCategories = if (isNovels) {
-                                    activeCollapsedCategories
-                                } else {
-                                    state.reikai.collapsedDynamicCategories
-                                },
-                                showItemCounts = state.showMangaCount,
-                                displayMode = displayMode,
-                                columns = columns,
-                                selection = activeSelection,
-                                searchQuery = activeSearchQuery,
-                                gridState = singleListGridState,
-                                contentPadding = contentPadding,
-                                onClickManga = { category, manga ->
-                                    if (isNovels) {
-                                        if (novelState.selectionMode) {
-                                            novelModel.toggleSelection(category.id, manga.id)
+                            // Remembered like upstream's pager: each call builds a preference state
+                            // whose collector lives in the engine scope, so an un-remembered call
+                            // leaked one per recomposition.
+                            val columns by remember(isLandscape) { engine.columnsForOrientation(isLandscape) }
+                            val displayMode by remember { engine.displayMode() }
+                            // RK: the global sort each non-overridden category follows, one library-wide
+                            // value since the sort preferences unified, so no chip involved.
+                            val globalSort by engine.globalSort.collectAsState()
+                            // RK: one composition per chip, as each chip already has its own scroll state. A
+                            // section keeps its key across a flip ("Default" is in every chip), and a lazy item
+                            // reused under that key drew the previous chip's count for a frame or two.
+                            key(libraryContentType) {
+                                ReikaiLibraryContent(
+                                    buckets = activeBuckets,
+                                    getItemsForCategory = activeGetItems,
+                                    collapsedCategories = display.reikai.collapsedCategories,
+                                    collapsedDynamicCategories = display.reikai.collapsedDynamicCategories,
+                                    getItemCount = activeGetItemCount,
+                                    displayMode = displayMode,
+                                    columns = columns,
+                                    selection = activeSelection,
+                                    searchQuery = activeSearchQuery,
+                                    gridState = singleListGridState,
+                                    contentPadding = contentPadding,
+                                    onClickManga = { bucket, item ->
+                                        if (activeSelectionMode) {
+                                            engine.toggleSelection(bucket.key, item.entryId)
                                         } else {
-                                            novelState.routeFor(manga.id)?.let {
-                                                navigator.push(NovelScreen(it.source, it.url))
-                                            }
+                                            // RK: navigation is per-type, routed by the ROW's own content
+                                            // type rather than the active chip, so a mixed list opens each
+                                            // row on its own screen.
+                                            openEntry(item.entryId)
                                         }
-                                    } else if (state.selectionMode) {
-                                        screenModel.toggleSelection(category, manga)
-                                    } else {
-                                        navigator.push(MangaScreen(manga.id))
-                                    }
-                                },
-                                onLongClickManga = { category, manga ->
+                                    },
                                     // RK: range-select (incl. the in-between) like the tabbed view,
                                     // instead of toggling only the long-pressed manga.
-                                    if (isNovels) {
-                                        novelModel.toggleRangeSelection(category.id, manga.id)
-                                    } else {
-                                        screenModel.toggleRangeSelection(category, manga)
-                                    }
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                },
-                                onToggleDefaultCollapse = if (isNovels) {
-                                    novelModel::toggleCategoryCollapse
-                                } else {
-                                    screenModel::toggleDefaultCategoryCollapse
-                                },
-                                onToggleDynamicCollapse = if (isNovels) {
-                                    novelModel::toggleCategoryCollapse
-                                } else {
-                                    screenModel::toggleDynamicCategoryCollapse
-                                },
-                                onGlobalSearchClicked = {
-                                    navigator.push(GlobalSearchScreen(activeSearchQuery ?: ""))
-                                },
-                                // RK: pull-to-refresh on the single-list updates the whole library (= overflow Update library).
-                                onRefresh = { onClickRefresh(null) },
-                                // RK 4.6: per-category header sort (Sort tab scoped to it), refresh, select-all
-                                onClickCategorySort = { category ->
-                                    if (isNovels) {
-                                        novelModel.openSettingsDialog(category.id, 1)
-                                    } else {
-                                        screenModel.showSettingsDialog(initialTab = 1, categoryId = category.id)
-                                    }
-                                },
-                                onRefreshCategory = { category -> onClickRefresh(category) },
-                                onSelectAllInCategory = { category ->
-                                    if (isNovels) {
-                                        novelModel.selectAllInCategory(category.id)
-                                    } else {
-                                        screenModel.selectAllInCategory(category)
-                                    }
-                                },
-                                // RK: the header shows each category's EFFECTIVE sort (its own override, or
-                                // the global sort it follows), decoded per content type so the label + arrow
-                                // match the actual ordering.
-                                sortLabelFor = if (isNovels) {
-                                    { category ->
-                                        novelSortLabelRes(
-                                            NovelLibrarySort.forCategory(category.flags, novelDefaultSort).type,
+                                    onLongClickManga = onRangeSelect,
+                                    onToggleDefaultCollapse = engine::toggleDefaultCategoryCollapse,
+                                    onToggleDynamicCollapse = engine::toggleDynamicCategoryCollapse,
+                                    onGlobalSearchClicked = onGlobalSearch,
+                                    // RK: pull-to-refresh on the single-list updates the whole library (= overflow Update library).
+                                    onRefresh = { onClickRefresh(null) },
+                                    refreshing = refreshing,
+                                    // RK: per-category header sort (Sort tab scoped to it), refresh, select-all
+                                    onClickCategorySort = { category ->
+                                        engine.openSettingsDialog(
+                                            libraryContentType,
+                                            category.id,
+                                            LibrarySettingsTab.SORT,
                                         )
-                                    }
-                                } else {
-                                    { category -> sortLabelRes(sortForCategory(category.flags, mangaGlobalSort).type) }
-                                },
-                                sortAscendingFor = if (isNovels) {
-                                    { category ->
-                                        NovelLibrarySort.forCategory(category.flags, novelDefaultSort).isAscending
-                                    }
-                                } else {
-                                    { category -> sortForCategory(category.flags, mangaGlobalSort).isAscending }
-                                },
-                                onClickContinueReading = if (isNovels) {
-                                    onNovelContinueReading.takeIf { novelState.showContinueButton }
-                                } else {
-                                    onMangaContinueReading.takeIf { state.showMangaContinueButton }
-                                },
-                            )
-                        } else {
-                            LibraryContent(
-                                categories = activeCategories,
-                                searchQuery = activeSearchQuery,
-                                selection = activeSelection,
-                                contentPadding = contentPadding,
-                                pagerState = pagerState,
-                                hasActiveFilters = activeHasActiveFilters,
-                                showPageTabs = state.showCategoryTabs || !activeSearchQuery.isNullOrEmpty(),
-                                onChangeCurrentPage = if (isNovels) {
-                                    novelModel::updateActiveCategoryIndex
-                                } else {
-                                    screenModel::updateActiveCategoryIndex
-                                },
-                                onClickManga = {
-                                    if (isNovels) {
-                                        novelState.routeFor(it)?.let { r ->
-                                            navigator.push(NovelScreen(r.source, r.url))
-                                        }
-                                    } else {
-                                        navigator.push(MangaScreen(it))
-                                    }
-                                },
-                                onContinueReadingClicked = if (isNovels) {
-                                    onNovelContinueReading.takeIf { novelState.showContinueButton }
-                                } else {
-                                    onMangaContinueReading.takeIf { state.showMangaContinueButton }
-                                },
-                                onToggleSelection = { category, manga ->
-                                    if (isNovels) {
-                                        novelModel.toggleSelection(category.id, manga.id)
-                                    } else {
-                                        screenModel.toggleSelection(category, manga)
-                                    }
-                                },
-                                onToggleRangeSelection = { category, manga ->
-                                    if (isNovels) {
-                                        novelModel.toggleRangeSelection(category.id, manga.id)
-                                    } else {
-                                        screenModel.toggleRangeSelection(category, manga)
-                                    }
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                },
-                                onRefresh = { onClickRefresh(state.activeCategory) },
-                                onGlobalSearchClicked = {
-                                    navigator.push(GlobalSearchScreen(activeSearchQuery ?: ""))
-                                },
-                                getItemCountForCategory = activeGetItemCount,
-                                getDisplayMode = { screenModel.getDisplayMode() },
-                                getColumnsForOrientation = { screenModel.getColumnsForOrientation(it) },
-                                getItemsForCategory = activeGetItems,
-                            )
-                        }
-
-                        if (!state.reikai.hideHopper && activeCategories.isNotEmpty()) {
-                            val hopperAlignment = when (state.reikai.hopperGravity) {
-                                0 -> Alignment.BottomStart
-                                2 -> Alignment.BottomEnd
-                                else -> Alignment.BottomCenter
+                                    },
+                                    onRefreshCategory = { category -> scope.launch { onClickRefresh(category) } },
+                                    onSelectAllInCategory = { bucket -> engine.selectAllInCategory(entriesOf(bucket)) },
+                                    // RK: the header shows each category's EFFECTIVE sort, its own override or
+                                    // the global sort it follows, decoded the same way on both content types.
+                                    sortLabelFor = { category ->
+                                        sortLabelRes(sortForCategory(category, globalSort).type)
+                                    },
+                                    sortAscendingFor = { category ->
+                                        sortForCategory(category, globalSort).isAscending
+                                    },
+                                    onClickContinueReading = onContinueReading,
+                                )
                             }
-                            // Autohide: fade the hopper out while the single-list is scrolling,
-                            // bring it back when it settles. No effect in the pager (its grid state
-                            // isn't this one), where the hopper stays put.
-                            val hopperVisible = !state.reikai.autohideHopper ||
-                                !singleListGridState.isScrollInProgress
-                            AnimatedVisibility(
-                                visible = hopperVisible,
-                                enter = fadeIn(),
-                                exit = fadeOut(),
-                                modifier = Modifier
-                                    .align(hopperAlignment)
-                                    .padding(horizontal = 12.dp)
-                                    .padding(bottom = contentPadding.calculateBottomPadding() + 12.dp),
-                            ) {
-                                ReikaiCategoryHopper(
-                                    modifier = Modifier
-                                        // Drag the hopper left/right to move it between start / center / end.
-                                        .pointerInput(state.reikai.hopperGravity) {
-                                            val gravity = state.reikai.hopperGravity
-                                            detectHorizontalDragGestures(
-                                                onDragStart = { hopperDragAccum = 0f },
-                                                onDragEnd = {
-                                                    val next = when {
-                                                        hopperDragAccum > 48f -> (gravity + 1).coerceAtMost(2)
-                                                        hopperDragAccum < -48f -> (gravity - 1).coerceAtLeast(0)
-                                                        else -> gravity
-                                                    }
-                                                    if (next != gravity) screenModel.setHopperGravity(next)
-                                                },
-                                            ) { change, dragAmount ->
-                                                change.consume()
-                                                hopperDragAccum += dragAmount
-                                            }
-                                        },
-                                    onUpClick = {
-                                        val last = activeCategories.lastIndex.coerceAtLeast(0)
-                                        hopperTarget = ((hopperTarget ?: currentCategoryIndex()) - 1).coerceIn(0, last)
+                        } else {
+                            // RK: one composition per chip, as for the single list above
+                            key(libraryContentType) {
+                                LibraryContent(
+                                    buckets = activeBuckets,
+                                    searchQuery = activeSearchQuery,
+                                    selection = activeSelection,
+                                    contentPadding = contentPadding,
+                                    pagerState = pagerState,
+                                    hasActiveFilters = activeHasActiveFilters,
+                                    showPageTabs = display.showCategoryTabs || !activeSearchQuery.isNullOrEmpty(),
+                                    onChangeCurrentPage = { engine.updateActiveCategoryIndex(libraryContentType, it) },
+                                    onClickManga = openEntry,
+                                    onContinueReadingClicked = onContinueReading,
+                                    onToggleSelection = { bucket, item ->
+                                        engine.toggleSelection(bucket.key, item.entryId)
                                     },
-                                    onCenterClick = { pickerOpen = true },
-                                    // RK: every hopper long-press action is content-aware (novel vs manga).
-                                    onCenterLongClick = {
-                                        when (state.reikai.hopperLongPressAction) {
-                                            0 -> if (isNovels) novelModel.search("") else screenModel.search("")
-                                            1 -> if (isNovels) {
-                                                novelModel.toggleAllCategoriesCollapsed(novelState.displayedCategories)
-                                            } else {
-                                                screenModel.toggleAllCategoriesCollapsed(state.displayedCategories)
-                                            }
-                                            2 -> if (isNovels) {
-                                                novelModel.openSettingsDialog(
-                                                    novelState.activeCategory?.id ?: NovelCategory.UNCATEGORIZED_ID,
-                                                    2,
-                                                )
-                                            } else {
-                                                screenModel.showSettingsDialog(initialTab = 2)
-                                            }
-                                            3 -> if (isNovels) {
-                                                novelModel.openSettingsDialog(
-                                                    novelState.activeCategory?.id ?: NovelCategory.UNCATEGORIZED_ID,
-                                                    3,
-                                                )
-                                            } else {
-                                                screenModel.showSettingsDialog(initialTab = 3)
-                                            }
-                                            4 -> scope.launch {
-                                                if (isNovels) {
-                                                    novelState.randomRouteInCategory(novelState.activeCategory?.id)
-                                                        ?.let { navigator.push(NovelScreen(it.source, it.url)) }
-                                                } else {
-                                                    screenModel.getRandomLibraryItemForCurrentCategory()
-                                                        ?.let { navigator.push(MangaScreen(it.libraryManga.manga.id)) }
-                                                }
-                                            }
-                                            5 -> scope.launch {
-                                                if (isNovels) {
-                                                    novelState.randomRoute()
-                                                        ?.let { navigator.push(NovelScreen(it.source, it.url)) }
-                                                } else {
-                                                    screenModel.getRandomLibraryItem()
-                                                        ?.let { navigator.push(MangaScreen(it.libraryManga.manga.id)) }
-                                                }
-                                            }
-                                        }
-                                    },
-                                    onDownClick = {
-                                        val last = activeCategories.lastIndex.coerceAtLeast(0)
-                                        hopperTarget = ((hopperTarget ?: currentCategoryIndex()) + 1).coerceIn(0, last)
-                                    },
+                                    onToggleRangeSelection = onRangeSelect,
+                                    onRefresh = { onClickRefresh(currentRealCategory()) },
+                                    refreshing = refreshing,
+                                    onGlobalSearchClicked = onGlobalSearch,
+                                    getItemCountForCategory = activeGetItemCount,
+                                    getDisplayMode = { engine.displayMode() },
+                                    getColumnsForOrientation = { engine.columnsForOrientation(it) },
+                                    getItemsForCategory = activeGetItems,
                                 )
                             }
                         }
-                    }
 
-                    if (pickerOpen) {
-                        ReikaiCategoryPickerSheet(
-                            categories = activeCategories,
+                        ReikaiLibraryHopperOverlay(
+                            settings = display.reikai,
+                            buckets = activeBuckets,
                             getItemCount = activeGetItemCount,
-                            showItemCounts = state.showMangaCount,
-                            activeCategoryId = activeCategories.getOrNull(currentCategoryIndex())?.id,
-                            onSelect = { category ->
-                                hopperTarget = activeCategories.indexOf(category)
-                                pickerOpen = false
+                            isListScrolling = { singleListGridState.isScrollInProgress },
+                            bottomPadding = contentPadding.calculateBottomPadding(),
+                            currentIndex = ::currentCategoryIndex,
+                            onJumpBy = { step ->
+                                val last = activeBuckets.lastIndex.coerceAtLeast(0)
+                                hopperTarget = ((hopperTarget ?: currentCategoryIndex()) + step).coerceIn(0, last)
                             },
-                            onDismiss = { pickerOpen = false },
+                            onJumpTo = { hopperTarget = it },
+                            onGravityChange = viewModel::setHopperGravity,
+                            // Every long-press action follows the content-type chip, which the seam decides.
+                            onSearch = { onSearch("") },
+                            onToggleAllCollapsed = { engine.toggleAllCategoriesCollapsed(activeBuckets) },
+                            // Scoped to the category the hopper sits on, like a header's sort. The sheet's
+                            // tabs swipe, so Sort is reachable from here: on a dynamic group the scope must
+                            // be null (global), or a sort set there writes the global preference while
+                            // presenting itself as a per-category override.
+                            onOpenSettings = { tab ->
+                                engine.openSettingsDialog(
+                                    libraryContentType,
+                                    currentRealCategory()?.id,
+                                    initialTab = tab,
+                                )
+                            },
+                            onOpenRandom = { inCurrentCategory ->
+                                onOpenRandom(if (inCurrentCategory) currentBucket()?.key else null)
+                            },
                         )
                     }
                     // RK <--
@@ -706,92 +702,48 @@ data object LibraryTab : Tab {
             }
         }
 
-        val onDismissRequest = screenModel::closeDialog
-        when (val dialog = state.dialog) {
-            is LibraryScreenModel.Dialog.SettingsSheet -> run {
-                LibrarySettingsDialog(
-                    onDismissRequest = onDismissRequest,
-                    screenModel = settingsScreenModel,
-                    // RK: a single-list header scopes the sheet to its category (Sort tab). Resolve the
-                    // live category by id so the Sort tab reflects the current sort after it changes. A
-                    // toolbar open (null id) leaves it null = the GLOBAL sort scope (Model A), not a stale
-                    // active category.
-                    category = dialog.categoryId?.let { id -> state.libraryData.categories.find { it.id == id } },
-                    // RK --> full category list for the include/exclude filter (sorted per R3) + route to category manager
-                    categories = reikaiSortCategories(state.libraryData.categories, state.reikai.categorySortOrder),
-                    onManageCategories = {
-                        onDismissRequest()
-                        navigator.push(CategoryScreen())
-                    },
-                    initialTab = dialog.initialTab,
-                    // RK <--
-                )
-            }
-            is LibraryScreenModel.Dialog.ChangeCategory -> {
+        // RK --> one dialog stream for both content types, built and owned by the engine. The dialogs
+        // themselves dismiss before they confirm, so each confirm acts on the entries its own dialog was
+        // built from, never on the live selection.
+        val onDismissRequest = engine::dismissDialog
+        when (val dialog = libraryDialog) {
+            // One sheet for both content types: the dialog's content type picks whose settings it
+            // describes, and the sheet itself is the same code either way. A null category id is the
+            // global sort scope, not a stale active category.
+            is LibraryDialog.Settings -> LibrarySettingsSheet(
+                settings = engine.settingsFor(dialog.contentType),
+                settingsViewModel = settingsViewModel,
+                categoryId = dialog.categoryId,
+                initialTab = dialog.initialTab,
+                onManageCategories = {
+                    onDismissRequest()
+                    navigator.push(CategoryScreen())
+                },
+                onDismissRequest = onDismissRequest,
+            )
+            is LibraryDialog.ChangeCategory -> {
                 ChangeCategoryDialog(
                     initialSelection = dialog.initialSelection,
                     onDismissRequest = onDismissRequest,
                     onEditCategories = {
-                        screenModel.clearSelection()
+                        engine.clearSelection()
                         navigator.push(CategoryScreen())
                     },
                     onConfirm = { include, exclude ->
-                        screenModel.clearSelection()
-                        screenModel.setMangaCategories(dialog.manga, include, exclude)
+                        engine.setCategories(dialog.entries, include, exclude)
+                        engine.clearSelection()
                     },
                 )
             }
-            is LibraryScreenModel.Dialog.DeleteManga -> {
+            is LibraryDialog.Delete -> {
                 DeleteLibraryMangaDialog(
-                    containsLocalManga = dialog.manga.any(Manga::isLocal),
+                    containsLocalManga = dialog.containsLocal,
                     // RK: offer removing every grouped source when a merged cover is selected
                     groupedSourceCount = dialog.groupedSourceCount,
                     onDismissRequest = onDismissRequest,
-                    onConfirm = { deleteManga, deleteChapter, removeGrouped ->
-                        screenModel.removeMangas(dialog.manga, deleteManga, deleteChapter, removeGrouped)
-                        screenModel.clearSelection()
-                    },
-                )
-            }
-            null -> {}
-        }
-
-        // RK --> novel library dialogs (change-category / delete / settings)
-        when (val novelDialog = novelModel.dialog.collectAsState().value) {
-            is NovelLibraryScreenModel.Dialog.ChangeCategory -> {
-                ChangeCategoryDialog(
-                    initialSelection = novelDialog.preselected,
-                    onDismissRequest = novelModel::dismissDialog,
-                    onEditCategories = {
-                        novelModel.dismissDialog()
-                        navigator.push(CategoryScreen(novels = true))
-                    },
-                    onConfirm = { include, exclude ->
-                        novelModel.setNovelCategories(novelDialog.novelIds, include, exclude)
-                    },
-                )
-            }
-            is NovelLibraryScreenModel.Dialog.Delete -> {
-                DeleteLibraryMangaDialog(
-                    containsLocalManga = false,
-                    // RK: offer removing every grouped source when a merged novel cover is selected
-                    groupedSourceCount = novelDialog.groupedSourceCount,
-                    onDismissRequest = novelModel::dismissDialog,
-                    onConfirm = { deleteFromLibrary, deleteDownloads, removeGrouped ->
-                        novelModel.removeNovels(novelDialog.novelIds, deleteFromLibrary, deleteDownloads, removeGrouped)
-                    },
-                )
-            }
-            is NovelLibraryScreenModel.Dialog.Settings -> {
-                NovelLibrarySettingsDialog(
-                    onDismissRequest = novelModel::dismissDialog,
-                    screenModel = novelModel,
-                    settingsScreenModel = settingsScreenModel,
-                    categoryId = novelDialog.categoryId,
-                    initialTab = novelDialog.initialTab,
-                    onManageCategories = {
-                        novelModel.dismissDialog()
-                        navigator.push(CategoryScreen(novels = true))
+                    onConfirm = { deleteEntry, deleteDownloads, removeGrouped ->
+                        engine.deleteEntries(dialog.entries, deleteEntry, deleteDownloads, removeGrouped)
+                        engine.clearSelection()
                     },
                 )
             }
@@ -801,12 +753,14 @@ data object LibraryTab : Tab {
 
         BackHandler(enabled = activeSelectionMode || activeSearchQuery != null) {
             when {
-                activeSelectionMode -> if (isNovels) novelModel.clearSelection() else screenModel.clearSelection()
+                activeSelectionMode -> engine.clearSelection()
                 activeSearchQuery != null -> onSearch(null)
             }
         }
 
-        LaunchedEffect(activeSelectionMode, state.dialog) {
+        // RK: keyed on the engine's dialog, so a novel dialog re-asserts the bottom nav the same way a
+        // manga one always has.
+        LaunchedEffect(activeSelectionMode, libraryDialog) {
             HomeScreen.showBottomNav(!activeSelectionMode)
         }
 
@@ -815,16 +769,34 @@ data object LibraryTab : Tab {
                 (context as? MainActivity)?.ready = true
             }
         }
+        // Lets startup be measured up to the library, not just its loading screen
+        ReportDrawnWhen { !activeIsLoading } // RK: whichever content type the chip shows
 
         LaunchedEffect(Unit) {
-            launch { queryEvent.receiveAsFlow().collect(screenModel::search) }
-            launch { requestSettingsSheetEvent.receiveAsFlow().collectLatest { screenModel.showSettingsDialog() } }
+            // RK: through the seam, so a search sent from another screen lands on the library of its type.
+            // The settings collector reads the chip from its flow rather than the captured composition
+            // value, because this effect keys on Unit and would otherwise hold the chip's first value.
+            launch {
+                queryEvent.receiveAsFlow().collect { (query, requested) ->
+                    // RK: a requested type is applied first and then used directly. Reading the flow
+                    //     back would still hold the old chip: the preference write is immediate but
+                    //     its change event is not.
+                    engine.setContentType(requested)
+                    engine.search(requested, query)
+                }
+            }
+            launch {
+                requestSettingsSheetEvent.receiveAsFlow()
+                    .collectLatest { engine.openSettingsDialog(engine.contentType.value) }
+            }
         }
     }
 
     // For invoking search from other screen
-    private val queryEvent = Channel<String>()
-    suspend fun search(query: String) = queryEvent.send(query)
+    // RK: carries the content type, so the search lands on the series' own chip.
+    private val queryEvent = Channel<Pair<String, ContentType>>()
+    suspend fun search(query: String, contentType: ContentType) =
+        queryEvent.send(query to contentType)
 
     // For opening settings sheet in LibraryController
     private val requestSettingsSheetEvent = Channel<Unit>()

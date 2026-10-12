@@ -1,0 +1,115 @@
+package reikai.domain.category
+
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.domain.novel.NovelPreferences
+import reikai.domain.source.ReikaiSourcePreferences
+import tachiyomi.core.common.preference.Preference
+import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.upcoming.service.UpcomingPreferences
+
+/**
+ * The one list of every preference that stores a category id, split by content type. A category delete
+ * and a backup restore read every list here, so a new category-id preference is declared once and both
+ * pick it up for the right content type. The one-time cleanup migration scrubs the defaults and sets only,
+ * since the Upcoming lists arrived after it shipped.
+ *
+ * Excluded on purpose: manga's `lastUsedCategory` is a library tab index (app-state), not a category id.
+ */
+@Inject
+@SingleIn(AppScope::class)
+class CategoryIdPreferences(
+    libraryPreferences: LibraryPreferences,
+    downloadPreferences: DownloadPreferences,
+    novelPreferences: NovelPreferences,
+    reikaiLibraryPreferences: ReikaiLibraryPreferences,
+    reikaiSourcePreferences: ReikaiSourcePreferences,
+    upcomingPreferences: UpcomingPreferences,
+) {
+
+    /** Manga default-category preference: a single id, or -1 for "prompt on favorite". */
+    val mangaDefault: Preference<Int> = libraryPreferences.defaultCategory
+
+    /** Every manga preference holding a set of category ids. */
+    val mangaSets: List<Preference<Set<String>>> = listOf(
+        libraryPreferences.updateCategories,
+        libraryPreferences.updateCategoriesExclude,
+        downloadPreferences.removeExcludeCategories,
+        downloadPreferences.downloadNewChapterCategories,
+        downloadPreferences.downloadNewChapterCategoriesExclude,
+    )
+
+    /** Every manga preference holding a list of category ids (Mihon's `getLongArray`). */
+    val mangaLists: List<Preference<List<Long>>> = listOf(
+        upcomingPreferences.filterIncludedCategories,
+        upcomingPreferences.filterExcludedCategories,
+    )
+
+    /**
+     * Sets that may hold ids of EITHER content type: the include/exclude library filter, the collapsed
+     * library categories, and one pair per rendered recents surface (see `RecentsSurface`). Scrubbed
+     * against the union of valid ids, and a delete of any content type scrubs them. On restore each id
+     * translates as a manga category first, then as a novel one.
+     */
+    val sharedSets: List<Preference<Set<String>>> = listOf(
+        reikaiLibraryPreferences.filterCategoriesInclude,
+        reikaiLibraryPreferences.filterCategoriesExclude,
+        reikaiSourcePreferences.updatesFilterCategoriesInclude,
+        reikaiSourcePreferences.updatesFilterCategoriesExclude,
+        reikaiSourcePreferences.historyFilterCategoriesInclude,
+        reikaiSourcePreferences.historyFilterCategoriesExclude,
+        reikaiSourcePreferences.recentsFilterCategoriesInclude,
+        reikaiSourcePreferences.recentsFilterCategoriesExclude,
+        reikaiLibraryPreferences.collapsedCategories,
+    )
+
+    /** Novel default-category preference: a single id, or -1 for "prompt on favorite". */
+    val novelDefault: Preference<Int> = novelPreferences.defaultNovelCategory()
+
+    /** Every novel preference holding a set of category ids. */
+    val novelSets: List<Preference<Set<String>>> = listOf(
+        novelPreferences.removeExcludeCategories(),
+        novelPreferences.downloadNewChapterCategories(),
+        novelPreferences.downloadNewChapterCategoriesExclude(),
+        novelPreferences.novelUpdateCategories(),
+        novelPreferences.novelUpdateCategoriesExclude(),
+    )
+}
+
+/**
+ * Orphaned Yōkai-era key (the last-viewed novel category tab index). Its accessor was removed with the
+ * novel-stack retirement, so nothing reads it, but a value can still linger in the prefs XML or ride in on
+ * an old backup. Cleaned up by the content-type cleanup migration and skipped on restore so it stays gone.
+ */
+const val DEAD_LAST_USED_NOVEL_CATEGORY_KEY = "last_used_novel_category"
+
+/**
+ * Translate a backup category id to the freshly restored local id, matched by category name. A restore
+ * mints new rowids, so a stored id only survives if some restored category still carries the same name;
+ * anything unmatched is null. PreferenceRestorer runs it on both content types' keys as it writes them,
+ * so a key the backup left out is never translated and keeps its live value. 0 is the Default category
+ * in Mihon, Yōkai and Reikai alike and is never in a backup's category list, so it stays 0.
+ */
+fun translateCategoryId(
+    id: String,
+    backupIdToName: Map<String, String>,
+    nameToNewId: Map<String, String>,
+): String? = if (id == Category.UNCATEGORIZED_ID.toString()) {
+    id
+} else {
+    backupIdToName[id]?.let(nameToNewId::get)
+}
+
+/**
+ * A backup's category id to name, for [translateCategoryId]. Empty when two categories share an id:
+ * Yōkai writes no category id, so each of its categories decodes as 0 and no id names one category.
+ */
+fun backupCategoryIdToName(idsAndNames: List<Pair<Long, String>>): Map<String, String> =
+    idsAndNames
+        .takeIf { list -> list.distinctBy { it.first }.size == list.size }
+        ?.associate { (id, name) -> id.toString() to name }
+        .orEmpty()

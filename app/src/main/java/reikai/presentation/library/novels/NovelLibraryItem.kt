@@ -1,31 +1,30 @@
 package reikai.presentation.library.novels
 
 import eu.kanade.tachiyomi.ui.library.LibraryItem
+import reikai.domain.entry.EntryId
 import reikai.domain.novel.model.LibraryNovel
+import reikai.presentation.library.LibraryBadgePrefs
+import reikai.presentation.library.SourceBadge
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.Manga
 
 /**
- * Disguises a [LibraryNovel] as the library's manga-shaped [LibraryItem] so the existing library
- * views, grids, hopper, badges, and selection render novels with no changes (P5 S6). The synthetic
- * [Manga] carries a **negative id** (`-novel.id`): manga ids are positive, so novel and manga
- * selection never collide and tap routing is a one-line `if (id < 0)`. `source` is left at the
- * factory default since novels use a String source id (the language badge is fed [sourceLanguage]
- * resolved by the screen model instead).
+ * Shapes a [LibraryNovel] into the library's manga-shaped [LibraryItem] so the existing library
+ * views, grids, hopper, badges, and selection render novels with no changes. The synthetic [Manga]
+ * carries the novel's own real id; identity across content types comes from [EntryId], never from
+ * the raw id, since a manga and a novel may share one. `source` is left at the factory default
+ * since novels use a String source id (the language badge is fed [sourceLanguage] resolved by the
+ * screen model instead).
  */
 fun LibraryNovel.toLibraryItem(
-    downloadBadge: Boolean,
-    unreadBadge: Boolean,
-    languageBadge: Boolean,
+    badgePrefs: LibraryBadgePrefs,
     sourceLanguage: String,
-    sourceBadge: Boolean,
-    sourceSite: String?,
-    sourceIconUrl: String?,
+    sourceIcon: SourceBadge,
+    sourceName: String,
 ): LibraryItem {
     val n = novel
     val synthetic = Manga.create().copy(
-        id = -n.id,
-        favorite = true,
+        id = n.id,
         url = n.url,
         title = n.title,
         artist = n.artist,
@@ -34,12 +33,17 @@ fun LibraryNovel.toLibraryItem(
         genre = n.genre,
         status = n.status,
         thumbnailUrl = n.thumbnailUrl,
-        dateAdded = n.dateAdded,
+        favoriteAt = n.favoriteAt ?: Manga.UNKNOWN_FAVORITE_AT,
         lastUpdate = n.lastUpdate,
         coverLastModified = n.coverLastModified,
         initialized = n.initialized,
         chapterFlags = n.chapterFlags,
         updateStrategy = n.updateStrategy,
+        // Carried so the shared query kernel and filter answer `notes:`, `nextupdate:`, `fetchinterval:`
+        // and the custom-interval filter on a novel exactly as on a manga.
+        notes = n.notes,
+        nextUpdate = n.nextUpdate,
+        fetchInterval = n.fetchInterval,
     )
     val libraryManga = LibraryManga(
         manga = synthetic,
@@ -53,18 +57,24 @@ fun LibraryNovel.toLibraryItem(
     )
     return LibraryItem(
         libraryManga = libraryManga,
+        // The neutral identity every shared decision site keys on; the manga-shaped row above is a
+        // rendering convenience, not an identity.
+        entryId = EntryId.Novel(n.id),
         downloadCount = downloadCount.toInt(),
         unreadCount = unreadCount,
         isLocal = false,
-        badges = LibraryItem.Badges(
-            downloadCount = if (downloadBadge) downloadCount.toInt() else 0,
-            unreadCount = if (unreadBadge) unreadCount else 0,
+        // The shared query kernel reads these off the row, so they are populated here rather than
+        // resolved again at filter time. Lowercased to match how the manga side supplies its own.
+        sourceName = sourceName.lowercase(),
+        sourceLanguage = sourceLanguage,
+        badges = badgePrefs.badges(
+            downloadCount = downloadCount.toInt(),
+            unreadCount = unreadCount,
             isLocal = false,
-            sourceLanguage = if (languageBadge) sourceLanguage else "",
-            // The cover Referer is always carried (it isn't a visible badge); the source icon honors
-            // the source-badge display toggle, mirroring how the manga side gates `source`.
-            coverSite = sourceSite,
-            sourceIconUrl = if (sourceBadge) sourceIconUrl else null,
+            sourceLanguage = sourceLanguage,
+            sourceBadge = sourceIcon,
+            // Always carried: the cover is fetched with it, and it is not a visible badge.
+            coverSourceId = n.source,
         ),
     )
 }

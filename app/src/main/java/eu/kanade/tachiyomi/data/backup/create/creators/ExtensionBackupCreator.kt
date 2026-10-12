@@ -1,27 +1,41 @@
-// RK: installed-extensions backup (Roadmap 9 follow-on). Net-new Reikai file: snapshots the installed
-// manga extensions so a restore can reinstall them. Reads the ExtensionManager's live installed list.
+// Installed-extensions backup. Net-new Reikai file: snapshots the installed manga and novel
+// extension apps so the restore screen can list the ones to install. Reads the ExtensionManager's live
+// installed lists.
 package eu.kanade.tachiyomi.data.backup.create.creators
 
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.backup.models.BackupExtension
 import eu.kanade.tachiyomi.extension.ExtensionManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
+import mihon.domain.extension.model.ContentWarning
 
+@Inject
 class ExtensionBackupCreator(
-    private val extensionManager: ExtensionManager = Injekt.get(),
+    private val extensionManager: ExtensionManager,
 ) {
 
-    operator fun invoke(): List<BackupExtension> {
-        return extensionManager.installedExtensionsFlow.value.map { extension ->
+    // Bounded, because the installed list stays silent until the extension scan finishes and an
+    // unbounded wait would hang the backup if that scan failed. An expired wait backs up no
+    // extensions, which is what reading it early used to do anyway.
+    suspend operator fun invoke(): List<BackupExtension> {
+        // Novel extension apps too, which the manager keeps apart from the manga ones
+        val installed = withTimeoutOrNull(INSTALLED_WAIT_MS) {
+            extensionManager.loadedExtensionsFlow.first() + extensionManager.loadedNovelExtensionsFlow.first()
+        }.orEmpty()
+        return installed.map { extension ->
             BackupExtension(
                 pkgName = extension.pkgName,
                 name = extension.name,
                 versionCode = extension.versionCode,
                 lang = extension.lang,
-                isNsfw = extension.isNsfw,
+                // Kept as the boolean it always was, so older builds still read a new backup.
+                isNsfw = extension.contentWarning != ContentWarning.SAFE,
                 sources = extension.sources.map { it.id },
                 repoUrl = extension.store?.indexUrl.orEmpty(),
             )
         }
     }
 }
+
+private const val INSTALLED_WAIT_MS = 20_000L

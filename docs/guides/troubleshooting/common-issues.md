@@ -1,6 +1,6 @@
 ---
 title: Common issues
-titleTemplate: Troubleshooting - Guides
+titleTemplate: Troubleshooting
 description: Facing issues with a source or the app? Here's how to tackle common challenges.
 ---
 
@@ -20,7 +20,7 @@ Sources being slow could stem from site slowness, your internet, or source-impos
 * Use sources with smaller images.
 
 ### App not installed
-Refer to "[Unable to install the app or extensions](/docs/guides/troubleshooting/#app-or-extension-installation-issues)" section.
+Refer to the "[App or extension installation issues](/docs/guides/troubleshooting/#app-or-extension-installation-issues)" section.
 
 ## Storage access issues
 
@@ -48,12 +48,10 @@ See the [Scoped Storage](/docs/faq/storage#scoped-storage) portion of the FAQ to
 
 ## Advanced errors
 
-### `Java.lang Exception: Failed to bypass Cloudflare`
+### `Failed to bypass Cloudflare`
 This error indicates the selected source is protected by **Cloudflare**.
 
-Consult the [Cloudflare guide](/docs/guides/troubleshooting/#cloudflare) for solutions.
-
-If it keeps happening on a source you want to keep, the protection is beyond what the in-app WebView can clear, and the answer is a [Cloudflare bypass proxy](/docs/flaresolverr) running on your own machine.
+Follow the steps in the [Cloudflare section](/docs/guides/troubleshooting/#cloudflare) of the troubleshooting guide.
 
 ### `Unable to resolve host` / `Connection failed` / `Failed to connect to` / `timeout` / `connection reset`
 These errors indicate personal connection issues. Possible causes include:
@@ -66,7 +64,7 @@ These errors indicate personal connection issues. Possible causes include:
 Try these solutions:
 
 * Switch between networks (WiFi, mobile data) and try connecting with a VPN.
-* Enable **DNS over HTTPS** under <nav to="advanced">.
+* Enable **DNS over HTTPS (DoH)** under <nav to="advanced">.
   * If this is already enabled, change to a different option, or disable the setting for now.
   * Remember to restart the application after changing this setting.
 * Check the router's protection settings if possible, otherwise, reboot your router.

@@ -1,12 +1,11 @@
 package exh.util
 
-import android.graphics.Color
-import androidx.annotation.ColorInt
 import androidx.core.graphics.toColorInt
+import dev.icerock.moko.resources.StringResource
+import exh.metadata.metadata.EHentaiSearchMetadata
 import exh.metadata.metadata.base.RaisedTag
-import exh.source.NHENTAI_NET_SOURCE_ID
-import exh.source.PURURIN_SOURCE_ID
-import exh.source.eHentaiSourceIds
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.icons.FlagEmoji.Companion.getEmojiLangFlag
 import java.util.Locale
 
 object SourceTagsUtil {
@@ -28,6 +27,27 @@ object SourceTagsUtil {
         constructor(color: String) : this(color.toColorInt())
     }
 
+    /** A gallery genre's badge colour and label, or null for a genre the site does not list. */
+    fun ehGenre(genre: String?): Pair<GenreColor, StringResource>? = when (genre) {
+        "doujinshi" -> GenreColor.DOUJINSHI_COLOR to MR.strings.doujinshi
+        "manga" -> GenreColor.MANGA_COLOR to MR.strings.content_type_manga
+        "artistcg" -> GenreColor.ARTIST_CG_COLOR to MR.strings.artist_cg
+        "gamecg" -> GenreColor.GAME_CG_COLOR to MR.strings.game_cg
+        "western" -> GenreColor.WESTERN_COLOR to MR.strings.western
+        "non-h" -> GenreColor.NON_H_COLOR to MR.strings.non_h
+        "imageset" -> GenreColor.IMAGE_SET_COLOR to MR.strings.image_set
+        "cosplay" -> GenreColor.COSPLAY_COLOR to MR.strings.cosplay
+        "asianporn" -> GenreColor.ASIAN_PORN_COLOR to MR.strings.asian_porn
+        "misc" -> GenreColor.MISC_COLOR to MR.strings.misc
+        else -> null
+    }
+
+    /** The flag of a gallery's first language tag this app knows a locale for. */
+    fun ehLanguageFlag(metadata: EHentaiSearchMetadata): String? = metadata.tags
+        .filter { it.namespace == EHentaiSearchMetadata.EH_LANGUAGE_NAMESPACE }
+        .firstNotNullOfOrNull { getLocaleSourceUtil(it.name) }
+        ?.let { getEmojiLangFlag(it.toLanguageTag()) }
+
     fun getLocaleSourceUtil(language: String?) = when (language) {
         "english", "eng" -> Locale.forLanguageTag("en")
         "japanese" -> Locale.forLanguageTag("ja")
@@ -47,39 +67,15 @@ object SourceTagsUtil {
         else -> null
     }
 
-    /** Build a source-specific browse-search query for a namespaced tag, so tapping a details tag
-     *  chip filters that source. Only the metadata sources Reikai ships are handled: E-Hentai/ExHentai
-     *  (namespace:"tag"$), the built-in nhentai.net, and Pururin (bare tag name); other metadata
-     *  sources fall through to the E-Hentai grammar. MangaDex wrapping is intentionally omitted
-     *  (source not built in; see ROADMAP "MangaDex as an adult metadata source"). */
-    fun getWrappedTag(
-        sourceId: Long?,
-        namespace: String? = null,
-        tag: String? = null,
-        fullTag: String? = null,
-    ): String? {
-        val parsed = when {
-            fullTag != null -> parseTag(fullTag)
-            namespace != null && tag != null -> RaisedTag(namespace, tag, TAG_TYPE_DEFAULT)
-            else -> null
-        }
-        val parsedNamespace = parsed?.namespace ?: return null
-        val name = parsed.name.substringBefore('|').trim()
-        return when {
-            sourceId == NHENTAI_NET_SOURCE_ID -> wrapTagNHentai(parsedNamespace, name)
-            sourceId == PURURIN_SOURCE_ID -> name
-            sourceId in eHentaiSourceIds -> wrapTag(parsedNamespace, name)
-            else -> wrapTag(parsedNamespace, name)
-        }
-    }
-
-    private fun wrapTag(namespace: String, tag: String) = if (tag.contains(spaceRegex)) {
+    /** The E-Hentai tag grammar, which Lanraragi also accepts: namespace:tag$, quoted when it has a space. */
+    fun wrapTag(namespace: String, tag: String) = if (tag.contains(spaceRegex)) {
         "$namespace:\"$tag$\""
     } else {
         "$namespace:$tag$"
     }
 
-    private fun wrapTagNHentai(namespace: String, tag: String) = if (tag.contains(spaceRegex)) {
+    /** The nhentai tag grammar: a bare quoted name for the plain tag namespace. */
+    fun wrapTagNHentai(namespace: String, tag: String) = if (tag.contains(spaceRegex)) {
         if (namespace == "tag") """"$tag"""" else """$namespace:"$tag""""
     } else {
         "$namespace:$tag"
@@ -91,13 +87,6 @@ object SourceTagsUtil {
         tag.substringAfter(':', missingDelimiterValue = tag).trim(),
         if (tag.startsWith("-")) TAG_TYPE_EXCLUDE else TAG_TYPE_DEFAULT,
     )
-
-    /** Contrast-appropriate text color for a genre badge painted with [GenreColor]. */
-    @ColorInt
-    fun genreTextColor(genre: GenreColor): Int = when (genre) {
-        GenreColor.IMAGE_SET_COLOR, GenreColor.COSPLAY_COLOR -> Color.WHITE
-        else -> Color.BLACK
-    }
 
     private const val TAG_TYPE_DEFAULT = 1
     private const val TAG_TYPE_EXCLUDE = 69

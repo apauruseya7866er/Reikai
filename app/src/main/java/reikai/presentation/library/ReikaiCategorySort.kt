@@ -1,23 +1,32 @@
 package reikai.presentation.library
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import reikai.domain.library.CategorySortOrder
+import reikai.domain.library.ReikaiLibraryPreferences
 import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.category.repository.CategoryRepository
 
 /**
- * Orders a category list by the Reikai category-sort-order pref (R3), so every surface that lists
- * categories (library sections, jump-to-category, the filter include/exclude picker, the category
- * manager) shows them in the same order.
- *
- * 0 = manual (leave as-is, i.e. the caller's `Category.order`); 1 = A->Z; 2 = Z->A. The system
- * (uncategorized) category is always pinned to the top. Sorts by display name so it works for both
- * real DB categories and synthetic dynamic-grouping categories.
+ * Orders a category list by the Reikai category-sort-order pref, so every surface that lists
+ * categories shows them in the same order. Manual follows each `Category.order`, whatever order the
+ * list arrived in; A to Z and Z to A pin the system category to the top. Every caller passes real DB
+ * categories; dynamic grouping orders its own buckets inside [LibraryDynamicGrouping].
  */
-fun reikaiSortCategories(categories: List<Category>, sortOrder: Int): List<Category> {
-    if (sortOrder == 0 || categories.isEmpty()) return categories
-    val (system, rest) = categories.partition { it.isSystemCategory }
-    val orderedRest = when (sortOrder) {
-        1 -> rest.sortedBy { ReikaiDynamicCategory.displayName(it).lowercase() }
-        2 -> rest.sortedByDescending { ReikaiDynamicCategory.displayName(it).lowercase() }
-        else -> rest
+fun reikaiSortCategories(categories: List<Category>, sortOrder: CategorySortOrder): List<Category> {
+    val manual = categories.sortedBy { it.order }
+    val (system, rest) = manual.partition { it.isSystemCategory }
+    return when (sortOrder) {
+        CategorySortOrder.MANUAL -> manual
+        CategorySortOrder.A_TO_Z -> system + rest.sortedBy { it.name.lowercase() }
+        CategorySortOrder.Z_TO_A -> system + rest.sortedByDescending { it.name.lowercase() }
     }
-    return system + orderedRest
 }
+
+/** [reikaiSortCategories] applied to every emission, re-sorting whenever the sort-order pref changes. */
+fun Flow<List<Category>>.sortedByCategoryPref(prefs: ReikaiLibraryPreferences): Flow<List<Category>> =
+    combine(this, prefs.categorySortOrder.changes(), ::reikaiSortCategories)
+
+/** Every category of both libraries, live and in the category sort order, for a list spanning the two. */
+fun CategoryRepository.subscribeAllInCategoryOrder(prefs: ReikaiLibraryPreferences): Flow<List<Category>> =
+    getUnfilteredAsFlow().sortedByCategoryPref(prefs)

@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.backup.create.creators
 
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
 import eu.kanade.tachiyomi.data.backup.models.BooleanPreferenceValue
@@ -8,28 +9,38 @@ import eu.kanade.tachiyomi.data.backup.models.IntPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.LongPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
+import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.source.ConfigurableSource
+import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.preferenceKey
 import eu.kanade.tachiyomi.source.sourcePreferences
+import kotlinx.coroutines.flow.first
+import reikai.novel.source.isSensitivePluginKey
+import reikai.novel.source.pluginStorageScope
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
+@Inject
 class PreferenceBackupCreator(
-    private val sourceManager: SourceManager = Injekt.get(),
-    private val preferenceStore: PreferenceStore = Injekt.get(),
+    private val sourceManager: SourceManager,
+    private val preferenceStore: PreferenceStore,
+    // RK -->
+    private val extensionManager: ExtensionManager,
+    // RK <--
 ) {
 
     fun createApp(includePrivatePreferences: Boolean): List<BackupPreference> {
-        return preferenceStore.getAll().toBackupPreferences()
+        return preferenceStore.getAll()
+            .filterKeys { pluginStorageScope(it) == null } // RK: they ride Source settings, below
+            .toBackupPreferences()
             .withPrivatePreferences(includePrivatePreferences)
     }
 
-    fun createSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> {
-        return sourceManager.getAll()
-            .filterIsInstance<ConfigurableSource>()
+    suspend fun createSource(includePrivatePreferences: Boolean): List<BackupSourcePreferences> {
+        // RK: a novel app's settings too, which the manga source manager never holds
+        return configurableSources(sourceManager.getAll(), extensionManager.loadedNovelExtensionsFlow.first())
             .map {
                 BackupSourcePreferences(
                     it.preferenceKey(),
@@ -37,8 +48,26 @@ class PreferenceBackupCreator(
                         .withPrivatePreferences(includePrivatePreferences),
                 )
             }
+            // RK: plugins and IReader extensions keep theirs in the app store, one entry per plugin
+            .plus(pluginStorageSettings(includePrivatePreferences))
             .filter { it.prefs.isNotEmpty() }
     }
+
+    // RK -->
+    private fun pluginStorageSettings(includePrivatePreferences: Boolean): List<BackupSourcePreferences> =
+        preferenceStore.getAll().entries
+            // A plugin's captured site sign-in is private the way a tracker token is, though its key has
+            // no private prefix: the plugin's JS reads it back by this exact key.
+            .filter { includePrivatePreferences || !isSensitivePluginKey(it.key) }
+            .groupBy({ pluginStorageScope(it.key) }, { it.key to it.value })
+            .mapNotNull { (scope, entries) ->
+                scope ?: return@mapNotNull null
+                BackupSourcePreferences(
+                    scope,
+                    entries.toMap().toBackupPreferences().withPrivatePreferences(includePrivatePreferences),
+                )
+            }
+    // RK <--
 
     @Suppress("UNCHECKED_CAST")
     private fun Map<String, *>.toBackupPreferences(): List<BackupPreference> {
@@ -66,3 +95,18 @@ class PreferenceBackupCreator(
             this.filter { !Preference.isPrivate(it.key) }
         }
 }
+
+// RK -->
+
+/**
+ * Every source whose settings a backup carries: the manga sources and the novel apps' catalogues. A
+ * manga and a novel source with the same number share one settings file, which is written once.
+ */
+internal fun configurableSources(
+    mangaSources: List<Source>,
+    novelApps: List<Extension.Loaded>,
+): List<ConfigurableSource> =
+    (mangaSources + novelApps.flatMap { it.sources })
+        .filterIsInstance<ConfigurableSource>()
+        .distinctBy { it.preferenceKey() }
+// RK <--

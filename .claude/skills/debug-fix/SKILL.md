@@ -6,8 +6,7 @@ disable-model-invocation: true
 allowed-tools:
   - Bash(git *)
   - Bash(gh *)
-  - Bash(npm run test *)
-  - Bash(npm run build)
+  - Bash(JAVA_HOME=* ./gradlew *)
   - Read
   - Glob
   - Grep
@@ -39,9 +38,9 @@ If unclear, ask clarifying questions before proceeding.
 
 In `--fast` mode only:
 
-- Detect the production branch: `git symbolic-ref refs/remotes/origin/HEAD` or `git remote show origin`.
+- The production branch is `main`.
 - Stash uncommitted work if needed.
-- Create and switch to `hotfix/<short-description>` branched from production.
+- Create and switch to `hotfix/<short-description>` branched from `main`. The branch name stays generic about content sources (`hotfix/paging-crash`, never a source name).
 - **ASK** the user to confirm the branch name first.
 
 In default mode, skip this. Branch creation happens in Step 7.
@@ -77,6 +76,7 @@ Don't skip ahead to guessing:
 - Don't patch symptoms. Trace back to where bad data originates and fix it there.
 - Don't refactor surrounding code while fixing.
 - Don't add defensive checks that mask the problem.
+- Run the reuse search before writing a helper (the DRY rule in code-quality.md): grep all modules by name stem, receiver and return type, and the rule it encodes. Note what you reused, or `none (searched: <terms>)`, for the `Reuse:` footer.
 
 In `--fast` mode specifically:
 - If the fix needs more than ~50 lines changed, warn the user. This may not actually be a hotfix.
@@ -84,10 +84,12 @@ In `--fast` mode specifically:
 
 ## Step 6: Verify
 
+**Both modes**: grep for sibling sites of the same defect (the other content type, the other mode or viewer, the same call pattern elsewhere) and list each as fixed or left, with the reason. "The reported case passes" is not "the bug is fixed".
+
 **Default**:
 - Write a test that reproduces the bug and now passes.
-- Run related tests for regressions.
-- Run lint and typecheck.
+- Run related tests for regressions (`:domain:test --tests "<FQCN>"`).
+- Run `:app:compileDebugKotlin`; `spotlessApply` if formatting drifted.
 - Temporarily revert your fix and confirm the new test fails (proves the test catches the bug).
 
 **--fast**:
@@ -98,19 +100,21 @@ In `--fast` mode specifically:
 
 ## Step 7: Wrap up or ship
 
+**Both modes**: the commit body ends with two footers. `Reuse:` names the symbol reused (`file:line`) or `none (searched: <terms>)`, and is required when the diff adds a non-private top-level declaration under `reikai/` or `exh/`. `Siblings:` lists the sweep from Step 6 (`none found (searched: <terms>)` when there were none).
+
 **Default**:
 - Create a branch if not already on one.
 - Stage only the fix and test files.
-- Commit: `fix: <what was wrong and why> (#number)`.
+- Commit: `fix(scope): <what was wrong>` per the workflow.md standard (the `commit-msg` hook enforces it). Reference an issue as `unseensnick/Reikai#N`, never a bare `#N`.
 
 **--fast**:
 - Stage only the fix files (never secrets, locks, or build output).
-- Draft commit: `hotfix: <short description>`. **Do NOT include `Co-Authored-By` lines.** **ASK** the user to confirm.
+- Draft commit: `fix(scope): <short description>` (`hotfix` is not a conventional type; the `commit-msg` hook rejects it). **Do NOT include `Co-Authored-By` lines.** **ASK** the user to confirm.
 - Push: `git push -u origin hotfix/<description>`.
 - Create a PR targeting production:
   - Title: `[HOTFIX] <description>`.
   - Body: `## Summary` with what broke, what caused it, what this fixes. **No `## Test plan` section. No `🤖 Generated with [Claude Code]` footer or other AI-attribution handle.**
-  - Run `gh pr create --repo unseensnick/Reikai --base main --label hotfix …` — the repo is standalone and `gh`'s default is set to `unseensnick/Reikai`, so these flags are optional now but kept for explicitness. Fall back to no label on failure.
+  - Run `gh pr create --repo unseensnick/Reikai --base main --label hotfix …`. The repo is standalone and `gh`'s default is set to `unseensnick/Reikai`, so these flags are optional now but kept for explicitness. Fall back to no label on failure.
 - Show the PR URL.
 
 ## Rules

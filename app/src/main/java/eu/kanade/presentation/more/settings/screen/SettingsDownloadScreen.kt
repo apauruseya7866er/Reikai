@@ -4,27 +4,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.util.fastMap
+import androidx.compose.ui.platform.LocalContext
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.presentation.category.visualName
 import eu.kanade.presentation.more.settings.Preference
-import eu.kanade.presentation.more.settings.widget.TriStateListDialog
+import eu.kanade.presentation.more.settings.screen.novel.NovelSourceDelaysScreen
+import eu.kanade.presentation.more.settings.screen.novel.downloadDelayLabel
+import mihon.app.di.appGraph
 import reikai.domain.novel.NovelPreferences
-import reikai.domain.novel.interactor.GetNovelCategories
-import reikai.domain.novel.model.toCategory
-import tachiyomi.domain.category.interactor.GetCategories
+import reikai.novel.download.NovelDownloadPacing
+import reikai.presentation.library.sortedByCategoryPref
+import reikai.presentation.settings.categoryFilterPreference
 import tachiyomi.domain.category.model.Category
-import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import tachiyomi.core.common.preference.Preference as PreferenceData
 
 object SettingsDownloadScreen : SearchableSettings {
@@ -35,17 +33,21 @@ object SettingsDownloadScreen : SearchableSettings {
 
     @Composable
     override fun getPreferences(): List<Preference> {
-        val getCategories = remember { Injekt.get<GetCategories>() }
-        val allCategories by getCategories.subscribe().collectAsState(initial = emptyList())
-
-        val downloadPreferences = remember { Injekt.get<DownloadPreferences>() }
-        val parallelSourceLimit by downloadPreferences.parallelSourceLimit.collectAsState()
-        val parallelPageLimit by downloadPreferences.parallelPageLimit.collectAsState()
-        // RK: light-novel download options (P5 S5)
-        val novelPreferences = remember { Injekt.get<NovelPreferences>() }
-        val getNovelCategories = remember { Injekt.get<GetNovelCategories>() }
-        val novelCategories by getNovelCategories.subscribe()
+        val context = LocalContext.current
+        val getCategories = remember { context.appGraph.getCategories }
+        // RK --> in the category sort order, as every other category picker lists them
+        val reikaiLibraryPreferences = remember { context.appGraph.reikaiLibraryPreferences }
+        val allCategories by remember { getCategories.subscribe().sortedByCategoryPref(reikaiLibraryPreferences) }
             .collectAsState(initial = emptyList())
+        // RK <--
+
+        val downloadPreferences = remember { context.appGraph.downloadPreferences }
+        // RK: light-novel download options
+        val novelPreferences = remember { context.appGraph.novelPreferences }
+        val getNovelCategories = remember { context.appGraph.getNovelCategories }
+        val novelCategories by remember {
+            getNovelCategories.subscribe().sortedByCategoryPref(reikaiLibraryPreferences) // RK
+        }.collectAsState(initial = emptyList())
         return listOf(
             Preference.PreferenceItem.SwitchPreference(
                 preference = downloadPreferences.downloadOnlyOverWifi,
@@ -61,17 +63,15 @@ object SettingsDownloadScreen : SearchableSettings {
                 subtitle = stringResource(MR.strings.split_tall_images_summary),
             ),
             Preference.PreferenceItem.SliderPreference(
-                value = parallelSourceLimit,
+                preference = downloadPreferences.parallelSourceLimit,
                 valueRange = 1..10,
                 title = stringResource(MR.strings.pref_download_concurrent_sources),
-                onValueChanged = { downloadPreferences.parallelSourceLimit.set(it) },
             ),
             Preference.PreferenceItem.SliderPreference(
-                value = parallelPageLimit,
+                preference = downloadPreferences.parallelPageLimit,
                 valueRange = 1..15,
                 title = stringResource(MR.strings.pref_download_concurrent_pages),
                 subtitle = stringResource(MR.strings.pref_download_concurrent_pages_summary),
-                onValueChanged = { downloadPreferences.parallelPageLimit.set(it) },
             ),
             // RK --> duplicated manga/novel download options, split into content-type sub-groups so each
             // row reads clean and the two never drift (the manga/novel builders are parameter-identical).
@@ -89,7 +89,7 @@ object SettingsDownloadScreen : SearchableSettings {
                 removeAfterReadSlots = novelPreferences.removeAfterReadSlots(),
                 removeBookmarkedChapters = novelPreferences.removeBookmarkedChapters(),
                 excludeCategories = novelPreferences.removeExcludeCategories(),
-                categories = novelCategories.map { it.toCategory() },
+                categories = novelCategories,
             ),
             autoDownloadGroup(
                 contentType = MR.strings.content_type_manga,
@@ -99,7 +99,9 @@ object SettingsDownloadScreen : SearchableSettings {
                 excludedCategories = downloadPreferences.downloadNewChapterCategoriesExclude,
                 categories = allCategories,
                 autoDownloadWhileReading = downloadPreferences.autoDownloadWhileReading,
-                showDownloadAheadInfo = false,
+                // Only manga's reader needs the current and next chapter on disk before it downloads
+                // ahead (ReaderViewModel.downloadNextChapters); the novel reader has no such gate.
+                showDownloadAheadInfo = true,
             ),
             autoDownloadGroup(
                 contentType = MR.strings.content_type_novels,
@@ -107,14 +109,16 @@ object SettingsDownloadScreen : SearchableSettings {
                 downloadNewUnreadOnly = novelPreferences.downloadNewUnreadChaptersOnly(),
                 includedCategories = novelPreferences.downloadNewChapterCategories(),
                 excludedCategories = novelPreferences.downloadNewChapterCategoriesExclude(),
-                categories = novelCategories.map { it.toCategory() },
+                categories = novelCategories,
                 autoDownloadWhileReading = novelPreferences.autoDownloadWhileReading(),
-                showDownloadAheadInfo = true,
+                showDownloadAheadInfo = false,
             ),
+            novelPacingGroup(novelPreferences),
             // RK <--
         )
     }
 
+    // RK --> the group builders take their preferences as parameters, so manga and novels share them
     // One builder, called once per content type, so the manga and novel delete-chapters groups can't drift.
     @Composable
     private fun deleteChaptersGroup(
@@ -171,6 +175,33 @@ object SettingsDownloadScreen : SearchableSettings {
         )
     }
 
+    // RK: novels only, since manga extensions rate-limit their own clients and LN plugins cannot.
+    @Composable
+    private fun novelPacingGroup(novelPreferences: NovelPreferences): Preference.PreferenceGroup {
+        val navigator = LocalNavigator.currentOrThrow
+        val perSource by novelPreferences.downloadSourceDelays().collectAsState()
+        val setCount = NovelDownloadPacing.parse(perSource).size
+        return Preference.PreferenceGroup(
+            title = contentTypedCategory(MR.strings.pref_category_download_pacing, MR.strings.content_type_novels),
+            preferenceItems = listOf(
+                Preference.PreferenceItem.ListPreference(
+                    preference = novelPreferences.downloadChapterDelayMs(),
+                    entries = NovelDownloadPacing.DELAY_OPTIONS_MS.associateWith { downloadDelayLabel(it) },
+                    title = stringResource(MR.strings.pref_novel_chapter_delay),
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_novel_source_delay),
+                    subtitle = if (setCount == 0) {
+                        stringResource(MR.strings.pref_novel_source_delay_none)
+                    } else {
+                        pluralStringResource(MR.plurals.pref_novel_source_delay_count, count = setCount, setCount)
+                    },
+                    onClick = { navigator.push(NovelSourceDelaysScreen()) },
+                ),
+            ),
+        )
+    }
+
     // One builder per content type; the manga and novel auto-download groups stay identical. Download-ahead
     // (preload while reading) lives here too, since it's another form of automatic downloading.
     @Composable
@@ -185,25 +216,6 @@ object SettingsDownloadScreen : SearchableSettings {
         showDownloadAheadInfo: Boolean,
     ): Preference.PreferenceGroup {
         val enabled by downloadNew.collectAsState()
-        val included by includedCategories.collectAsState()
-        val excluded by excludedCategories.collectAsState()
-        var showDialog by rememberSaveable { mutableStateOf(false) }
-        if (showDialog) {
-            TriStateListDialog(
-                title = stringResource(MR.strings.categories),
-                message = stringResource(MR.strings.pref_download_new_categories_details),
-                items = categories,
-                initialChecked = included.mapNotNull { id -> categories.find { it.id.toString() == id } },
-                initialInversed = excluded.mapNotNull { id -> categories.find { it.id.toString() == id } },
-                itemLabel = { it.visualName },
-                onDismissRequest = { showDialog = false },
-                onValueChanged = { newIncluded, newExcluded ->
-                    includedCategories.set(newIncluded.fastMap { it.id.toString() }.toSet())
-                    excludedCategories.set(newExcluded.fastMap { it.id.toString() }.toSet())
-                    showDialog = false
-                },
-            )
-        }
         val aheadEntries = listOf(0, 2, 3, 5, 10)
             .associateWith {
                 if (it == 0) {
@@ -222,17 +234,14 @@ object SettingsDownloadScreen : SearchableSettings {
                 Preference.PreferenceItem.SwitchPreference(
                     preference = downloadNewUnreadOnly,
                     title = stringResource(MR.strings.pref_download_new_unread_chapters_only),
-                    enabled = enabled,
+                    visible = enabled,
                 ),
-                Preference.PreferenceItem.TextPreference(
-                    title = stringResource(MR.strings.categories),
-                    subtitle = getCategoriesLabel(
-                        allCategories = categories,
-                        included = included,
-                        excluded = excluded,
-                    ),
-                    enabled = enabled,
-                    onClick = { showDialog = true },
+                categoryFilterPreference(
+                    categories,
+                    includedCategories,
+                    excludedCategories,
+                    MR.strings.pref_download_new_categories_details,
+                    visible = enabled,
                 ),
                 Preference.PreferenceItem.ListPreference(
                     preference = autoDownloadWhileReading,
@@ -247,4 +256,5 @@ object SettingsDownloadScreen : SearchableSettings {
             ),
         )
     }
+    // RK <--
 }

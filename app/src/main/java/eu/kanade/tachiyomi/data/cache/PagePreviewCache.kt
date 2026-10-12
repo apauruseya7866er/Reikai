@@ -3,9 +3,15 @@ package eu.kanade.tachiyomi.data.cache
 import android.content.Context
 import android.text.format.Formatter
 import com.jakewharton.disklrucache.DiskLruCache
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.source.PagePreviewPage
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.saveTo
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
@@ -14,7 +20,6 @@ import okio.buffer
 import okio.sink
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
-import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.IOException
 
@@ -26,20 +31,27 @@ import java.io.IOException
  *
  * @param context the application context.
  */
-class PagePreviewCache(private val context: Context) {
+@Inject
+@SingleIn(AppScope::class)
+class PagePreviewCache(
+    private val context: Context,
+    private val json: Json,
+) {
 
     companion object {
         /** Name of cache directory. */
         const val PARAMETER_CACHE_DIRECTORY = "page_preview_disk_cache"
 
-        /** Application cache version. */
-        const val PARAMETER_APP_VERSION = 1
+        /**
+         * Application cache version. Bumping it makes DiskLruCache reject the journal header and
+         * delete the directory, which is the only way to clear page lists cached before they
+         * carried an invalidation path (version 1 kept expired gallery URLs forever).
+         */
+        const val PARAMETER_APP_VERSION = 2
 
         /** The number of values per cache entry. Must be positive. */
         const val PARAMETER_VALUE_COUNT = 1
     }
-
-    private val json: Json by injectLazy()
 
     /** Cache class used for cache management. */
     private var diskCache = setupDiskCache(75)
@@ -72,7 +84,7 @@ class PagePreviewCache(private val context: Context) {
      */
     fun getPageListFromCache(manga: Manga, chapterIds: List<Long>, page: Int): PagePreviewPage {
         // Get the key for the manga.
-        val key = DiskUtil.hashKeyForDisk(getKey(manga, chapterIds, page))
+        val key = DiskUtil.hashKeyForDisk(pageListKey(manga, chapterIds, page))
 
         // Convert JSON string to list of objects. Throws an exception if snapshot is null
         return diskCache.get(key).use {
@@ -95,7 +107,7 @@ class PagePreviewCache(private val context: Context) {
 
         try {
             // Get editor from md5 key.
-            val key = DiskUtil.hashKeyForDisk(getKey(manga, chapterIds, pages.page))
+            val key = DiskUtil.hashKeyForDisk(pageListKey(manga, chapterIds, pages.page))
             editor = diskCache.edit(key) ?: return
 
             // Write page preview urls to cache.
@@ -201,7 +213,24 @@ class PagePreviewCache(private val context: Context) {
         }
     }
 
-    private fun getKey(manga: Manga, chapterIds: List<Long>, page: Int): String {
+    /** Identifies one cached page list. Carried on every page preview so a dead image can drop it. */
+    fun pageListKey(manga: Manga, chapterIds: List<Long>, page: Int): String {
         return "${manga.id}_${chapterIds.joinToString(separator = "-")}_$page"
+    }
+
+    /** Keys of the page lists [removePageList] dropped, so a screen still showing one can fetch it again. */
+    val removedPageLists: SharedFlow<String>
+        field = MutableSharedFlow<String>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** Drops a cached page list so the next read refetches it. Returns whether anything was removed. */
+    fun removePageList(pageListKey: String): Boolean {
+        val removed = try {
+            diskCache.remove(DiskUtil.hashKeyForDisk(pageListKey))
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "Failed to remove page list from cache" }
+            false
+        }
+        if (removed) removedPageLists.tryEmit(pageListKey)
+        return removed
     }
 }

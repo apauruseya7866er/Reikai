@@ -4,37 +4,28 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.util.fastMap
-import androidx.core.content.ContextCompat
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.category.visualName
 import eu.kanade.presentation.more.settings.Preference
-import eu.kanade.presentation.more.settings.widget.TriStateListDialog
-import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
+import eu.kanade.tachiyomi.data.library.LibraryUpdateWorker
 import eu.kanade.tachiyomi.ui.category.CategoryScreen
 import kotlinx.coroutines.launch
-import reikai.data.novel.update.NovelUpdateJob
+import mihon.app.di.appGraph
+import reikai.data.novel.update.NovelUpdateWorker
+import reikai.domain.library.ReikaiLibraryPreferences
 import reikai.domain.novel.NovelPreferences
-import reikai.domain.novel.interactor.GetNovelCategories
-import reikai.domain.novel.interactor.ResetNovelCategoryFlags
-import reikai.domain.novel.model.toCategory
 import reikai.presentation.library.preferredsources.PreferredSourcesScreen
-import reikai.presentation.recommendation.SettingsRecommendationsScreen
-import tachiyomi.domain.category.interactor.GetCategories
-import tachiyomi.domain.category.interactor.ResetCategoryFlags
+import reikai.presentation.library.sortedByCategoryPref
+import reikai.presentation.settings.categoryFilterPreference
+import reikai.presentation.settings.updateScheduleRows
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.service.LibraryPreferences
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_CHARGING
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_NETWORK_NOT_METERED
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_ONLY_ON_WIFI
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_HAS_UNREAD
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_COMPLETED
 import tachiyomi.domain.library.service.LibraryPreferences.Companion.MANGA_NON_READ
@@ -44,9 +35,6 @@ import tachiyomi.domain.library.service.LibraryPreferences.Companion.MARK_DUPLIC
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 object SettingsLibraryScreen : SearchableSettings {
 
@@ -56,13 +44,21 @@ object SettingsLibraryScreen : SearchableSettings {
 
     @Composable
     override fun getPreferences(): List<Preference> {
-        val getCategories = remember { Injekt.get<GetCategories>() }
-        val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
-        val novelPreferences = remember { Injekt.get<NovelPreferences>() }
+        val context = LocalContext.current
+        val getCategories = remember { context.appGraph.getCategories }
+        val libraryPreferences = remember { context.appGraph.libraryPreferences }
+        val novelPreferences = remember { context.appGraph.novelPreferences }
+        // RK: master merging switch, hosted in the Sources group below
+        val reikaiLibraryPreferences = remember { context.appGraph.reikaiLibraryPreferences }
         // RK: novel categories for the novel update-categories filter
-        val getNovelCategories = remember { Injekt.get<GetNovelCategories>() }
-        val allCategories by getCategories.subscribe().collectAsState(initial = emptyList())
-        val novelCategories by getNovelCategories.subscribe().collectAsState(initial = emptyList())
+        val getNovelCategories = remember { context.appGraph.getNovelCategories }
+        // RK --> in the category sort order, as every other category picker lists them
+        val allCategories by remember { getCategories.subscribe().sortedByCategoryPref(reikaiLibraryPreferences) }
+            .collectAsState(initial = emptyList())
+        val novelCategories by remember {
+            getNovelCategories.subscribe().sortedByCategoryPref(reikaiLibraryPreferences)
+        }.collectAsState(initial = emptyList())
+        // RK <--
 
         return listOf(
             // RK: pass novel prefs + categories so the Categories group also hosts the novel default category
@@ -71,125 +67,103 @@ object SettingsLibraryScreen : SearchableSettings {
                 allCategories,
                 libraryPreferences,
                 novelPreferences,
-                novelCategories.map { it.toCategory() },
+                novelCategories,
             ),
-            getGlobalUpdateGroup(allCategories, libraryPreferences),
+            getGlobalUpdateGroup(allCategories, libraryPreferences, reikaiLibraryPreferences), // RK: update errors
             // RK: background light-novel chapter updates
-            getNovelUpdateGroup(novelPreferences, novelCategories.map { it.toCategory() }),
-            getBehaviorGroup(libraryPreferences),
+            getNovelUpdateGroup(novelPreferences, novelCategories, reikaiLibraryPreferences),
+            getBehaviorGroup(libraryPreferences, novelPreferences),
             // RK: merge-group preferred-source ranking
-            getSourcesGroup(LocalNavigator.currentOrThrow),
+            getSourcesGroup(LocalNavigator.currentOrThrow, reikaiLibraryPreferences),
         )
     }
 
-    // RK --> background light-novel chapter updates (P5 S7)
+    // RK --> background light-novel chapter updates
     @Composable
     private fun getNovelUpdateGroup(
         novelPreferences: NovelPreferences,
         allNovelCategories: List<Category>,
+        reikaiLibraryPreferences: ReikaiLibraryPreferences,
     ): Preference.PreferenceGroup {
-        val context = LocalContext.current
-        val intervalPref = novelPreferences.libraryUpdateInterval()
-        val interval by intervalPref.collectAsState()
-
-        val includePref = novelPreferences.novelUpdateCategories()
-        val excludePref = novelPreferences.novelUpdateCategoriesExclude()
-        val included by includePref.collectAsState()
-        val excluded by excludePref.collectAsState()
-        var showCategoriesDialog by rememberSaveable { mutableStateOf(false) }
-        if (showCategoriesDialog) {
-            TriStateListDialog(
-                title = stringResource(MR.strings.categories),
-                message = stringResource(MR.strings.pref_library_update_categories_details),
-                items = allNovelCategories,
-                initialChecked = included.mapNotNull { id -> allNovelCategories.find { it.id.toString() == id } },
-                initialInversed = excluded.mapNotNull { id -> allNovelCategories.find { it.id.toString() == id } },
-                itemLabel = { it.visualName },
-                onDismissRequest = { showCategoriesDialog = false },
-                onValueChanged = { newIncluded, newExcluded ->
-                    includePref.set(newIncluded.map { it.id.toString() }.toSet())
-                    excludePref.set(newExcluded.map { it.id.toString() }.toSet())
-                    showCategoriesDialog = false
-                },
-            )
-        }
         return Preference.PreferenceGroup(
             // RK: same "Global update" concept as the manga group, content-typed for consistency.
             title = contentTypedCategory(MR.strings.pref_category_library_update, MR.strings.content_type_novels),
-            preferenceItems = listOf(
-                Preference.PreferenceItem.ListPreference(
-                    preference = intervalPref,
-                    entries = mapOf(
-                        0 to stringResource(MR.strings.update_never),
-                        12 to stringResource(MR.strings.update_12hour),
-                        24 to stringResource(MR.strings.update_24hour),
-                        48 to stringResource(MR.strings.update_48hour),
-                        72 to stringResource(MR.strings.update_72hour),
-                        168 to stringResource(MR.strings.update_weekly),
-                    ),
-                    title = stringResource(MR.strings.pref_library_update_interval),
-                    onValueChanged = {
-                        NovelUpdateJob.setupTask(context, it)
-                        true
-                    },
-                ),
-                Preference.PreferenceItem.MultiSelectListPreference(
-                    preference = novelPreferences.libraryUpdateDeviceRestrictions(),
-                    entries = mapOf(
-                        DEVICE_ONLY_ON_WIFI to stringResource(MR.strings.connected_to_wifi),
-                        DEVICE_NETWORK_NOT_METERED to stringResource(MR.strings.network_not_metered),
-                        DEVICE_CHARGING to stringResource(MR.strings.charging),
-                    ),
-                    title = stringResource(MR.strings.pref_library_update_restriction),
-                    subtitle = stringResource(MR.strings.restrictions),
-                    enabled = interval > 0,
-                    onValueChanged = {
-                        // Post to the main looper so the preference write lands before rescheduling.
-                        ContextCompat.getMainExecutor(context).execute { NovelUpdateJob.setupTask(context) }
-                        true
-                    },
-                ),
+            preferenceItems = updateScheduleRows(
+                novelPreferences.libraryUpdateInterval(),
+                novelPreferences.libraryUpdateDeviceRestrictions(),
+                NovelUpdateWorker::setupTask,
+            ) + listOf(
                 // Categories + Smart update are ungated (always shown), matching the manga Global-update
                 // group where only the device-restriction row is gated on interval > 0.
-                Preference.PreferenceItem.TextPreference(
-                    title = stringResource(MR.strings.categories),
-                    subtitle = getCategoriesLabel(allNovelCategories, included, excluded),
-                    onClick = { showCategoriesDialog = true },
+                categoryFilterPreference(
+                    allNovelCategories,
+                    novelPreferences.novelUpdateCategories(),
+                    novelPreferences.novelUpdateCategoriesExclude(),
+                    MR.strings.pref_library_update_categories_details,
                 ),
                 Preference.PreferenceItem.MultiSelectListPreference(
                     preference = novelPreferences.novelUpdateRestrictions(),
-                    entries = mapOf(
-                        MANGA_NON_COMPLETED to stringResource(MR.strings.pref_update_only_non_completed),
-                        MANGA_HAS_UNREAD to stringResource(MR.strings.pref_update_only_completely_read),
-                        MANGA_NON_READ to stringResource(MR.strings.pref_update_only_started),
-                    ),
+                    entries = smartUpdateEntries(),
                     title = stringResource(MR.strings.pref_library_update_smart_update),
                 ),
-                // RK: novel twin of manga's hide-missing-chapter-indicators toggle (same string).
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = novelPreferences.hideMissingChapters(),
-                    title = stringResource(MR.strings.pref_hide_missing_chapter_indicators),
+                    preference = reikaiLibraryPreferences.trackNovelUpdateErrors,
+                    title = stringResource(MR.strings.pref_track_update_errors),
+                    subtitle = stringResource(MR.strings.pref_track_update_errors_summary),
                 ),
             ),
         )
     }
+
+    /** Smart update's options in upstream's order, shared so the manga and light-novel groups cannot drift. */
+    @Composable
+    private fun smartUpdateEntries() = mapOf(
+        MANGA_HAS_UNREAD to stringResource(MR.strings.pref_update_only_completely_read),
+        MANGA_NON_READ to stringResource(MR.strings.pref_update_only_started),
+        MANGA_NON_COMPLETED to stringResource(MR.strings.pref_update_only_non_completed),
+        MANGA_OUTSIDE_RELEASE_PERIOD to stringResource(MR.strings.pref_update_only_in_release_period),
+    )
     // RK <--
 
     // RK -->
     @Composable
-    private fun getSourcesGroup(navigator: Navigator): Preference.PreferenceGroup {
+    private fun getSourcesGroup(
+        navigator: Navigator,
+        reikaiLibraryPreferences: ReikaiLibraryPreferences,
+    ): Preference.PreferenceGroup {
         return Preference.PreferenceGroup(
-            title = stringResource(MR.strings.label_sources),
+            // RK: named for what it holds. Every row here is about merging a series across its
+            // sources, including the preferred-sources ranking, which only the merge path reads.
+            title = stringResource(MR.strings.label_merged_series),
             preferenceItems = listOf(
+                // RK: master switch for source merging (also in the library display menu). Off resolves
+                // every series standalone and hides the merge UI, keeping the groups.
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = reikaiLibraryPreferences.seriesMergingEnabled,
+                    title = stringResource(MR.strings.action_series_merging),
+                    subtitle = stringResource(MR.strings.pref_series_merging_summary),
+                ),
+                // RK: same-title grouping suggestion at add time, per content type.
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = reikaiLibraryPreferences.autoMergeSameTitle,
+                    title = contentTypedCategory(
+                        MR.strings.pref_suggest_group_same_title,
+                        MR.strings.content_type_manga,
+                    ),
+                    subtitle = stringResource(MR.strings.pref_suggest_group_same_title_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = reikaiLibraryPreferences.novelAutoMergeSameTitle,
+                    title = contentTypedCategory(
+                        MR.strings.pref_suggest_group_same_title,
+                        MR.strings.content_type_novels,
+                    ),
+                    subtitle = stringResource(MR.strings.pref_suggest_group_same_title_summary),
+                ),
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(MR.strings.pref_preferred_sources),
                     subtitle = stringResource(MR.strings.pref_preferred_sources_summary),
                     onClick = { navigator.push(PreferredSourcesScreen()) },
-                ),
-                Preference.PreferenceItem.TextPreference(
-                    title = stringResource(MR.strings.pref_recommendations),
-                    subtitle = stringResource(MR.strings.pref_recommendations_summary),
-                    onClick = { navigator.push(SettingsRecommendationsScreen) },
                 ),
             ),
         )
@@ -205,8 +179,12 @@ object SettingsLibraryScreen : SearchableSettings {
         novelPreferences: NovelPreferences,
         novelCategories: List<Category>,
     ): Preference.PreferenceGroup {
+        val context = LocalContext.current
         val scope = rememberCoroutineScope()
-        val userCategoriesCount = allCategories.filterNot(Category::isSystemCategory).size
+        // RK: the edit-categories screen lists every category of both libraries, so this counts them all
+        val everyCategory by remember { context.appGraph.categoryRepository.getUnfilteredAsFlow() }
+            .collectAsState(initial = emptyList())
+        val userCategoriesCount = everyCategory.filterNot(Category::isSystemCategory).size
 
         // For default category
         val ids = listOf(libraryPreferences.defaultCategory.defaultValue()) +
@@ -251,9 +229,8 @@ object SettingsLibraryScreen : SearchableSettings {
                     onValueChanged = {
                         if (!it) {
                             scope.launch {
-                                Injekt.get<ResetCategoryFlags>().await()
-                                // RK: reset novel category sorts too, so novels honor the toggle like manga
-                                Injekt.get<ResetNovelCategoryFlags>().await()
+                                // RK: the shared table's clear covers novel categories too
+                                context.appGraph.resetCategoryFlags.await()
                             }
                         }
                         true
@@ -267,80 +244,24 @@ object SettingsLibraryScreen : SearchableSettings {
     private fun getGlobalUpdateGroup(
         allCategories: List<Category>,
         libraryPreferences: LibraryPreferences,
+        reikaiLibraryPreferences: ReikaiLibraryPreferences, // RK: update errors
     ): Preference.PreferenceGroup {
-        val context = LocalContext.current
-
-        val autoUpdateIntervalPref = libraryPreferences.autoUpdateInterval
-        val autoUpdateCategoriesPref = libraryPreferences.updateCategories
-        val autoUpdateCategoriesExcludePref = libraryPreferences.updateCategoriesExclude
-
-        val autoUpdateInterval by autoUpdateIntervalPref.collectAsState()
-
-        val included by autoUpdateCategoriesPref.collectAsState()
-        val excluded by autoUpdateCategoriesExcludePref.collectAsState()
-        var showCategoriesDialog by rememberSaveable { mutableStateOf(false) }
-        if (showCategoriesDialog) {
-            TriStateListDialog(
-                title = stringResource(MR.strings.categories),
-                message = stringResource(MR.strings.pref_library_update_categories_details),
-                items = allCategories,
-                initialChecked = included.mapNotNull { id -> allCategories.find { it.id.toString() == id } },
-                initialInversed = excluded.mapNotNull { id -> allCategories.find { it.id.toString() == id } },
-                itemLabel = { it.visualName },
-                onDismissRequest = { showCategoriesDialog = false },
-                onValueChanged = { newIncluded, newExcluded ->
-                    autoUpdateCategoriesPref.set(newIncluded.map { it.id.toString() }.toSet())
-                    autoUpdateCategoriesExcludePref.set(newExcluded.map { it.id.toString() }.toSet())
-                    showCategoriesDialog = false
-                },
-            )
-        }
-
         return Preference.PreferenceGroup(
             // RK: content-type header, pairs with the novel library-update group.
             title = contentTypedCategory(MR.strings.pref_category_library_update, MR.strings.content_type_manga),
-            preferenceItems = listOf(
-                Preference.PreferenceItem.ListPreference(
-                    preference = autoUpdateIntervalPref,
-                    entries = mapOf(
-                        0 to stringResource(MR.strings.update_never),
-                        12 to stringResource(MR.strings.update_12hour),
-                        24 to stringResource(MR.strings.update_24hour),
-                        48 to stringResource(MR.strings.update_48hour),
-                        72 to stringResource(MR.strings.update_72hour),
-                        168 to stringResource(MR.strings.update_weekly),
-                    ),
-                    title = stringResource(MR.strings.pref_library_update_interval),
-                    onValueChanged = {
-                        LibraryUpdateJob.setupTask(context, it)
-                        true
-                    },
+            // RK --> interval, restrictions and categories rows shared with the novel and gallery checkers
+            preferenceItems = updateScheduleRows(
+                libraryPreferences.autoUpdateInterval,
+                libraryPreferences.autoUpdateDeviceRestrictions,
+                LibraryUpdateWorker::setupTask,
+            ) + listOf(
+                categoryFilterPreference(
+                    allCategories,
+                    libraryPreferences.updateCategories,
+                    libraryPreferences.updateCategoriesExclude,
+                    MR.strings.pref_library_update_categories_details,
                 ),
-                Preference.PreferenceItem.MultiSelectListPreference(
-                    preference = libraryPreferences.autoUpdateDeviceRestrictions,
-                    entries = mapOf(
-                        DEVICE_ONLY_ON_WIFI to stringResource(MR.strings.connected_to_wifi),
-                        DEVICE_NETWORK_NOT_METERED to stringResource(MR.strings.network_not_metered),
-                        DEVICE_CHARGING to stringResource(MR.strings.charging),
-                    ),
-                    title = stringResource(MR.strings.pref_library_update_restriction),
-                    subtitle = stringResource(MR.strings.restrictions),
-                    enabled = autoUpdateInterval > 0,
-                    onValueChanged = {
-                        // Post to event looper to allow the preference to be updated.
-                        ContextCompat.getMainExecutor(context).execute { LibraryUpdateJob.setupTask(context) }
-                        true
-                    },
-                ),
-                Preference.PreferenceItem.TextPreference(
-                    title = stringResource(MR.strings.categories),
-                    subtitle = getCategoriesLabel(
-                        allCategories = allCategories,
-                        included = included,
-                        excluded = excluded,
-                    ),
-                    onClick = { showCategoriesDialog = true },
-                ),
+                // RK <--
                 Preference.PreferenceItem.SwitchPreference(
                     preference = libraryPreferences.autoUpdateMetadata,
                     title = stringResource(MR.strings.pref_library_update_refresh_metadata),
@@ -348,18 +269,20 @@ object SettingsLibraryScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.MultiSelectListPreference(
                     preference = libraryPreferences.autoUpdateMangaRestrictions,
-                    entries = mapOf(
-                        MANGA_HAS_UNREAD to stringResource(MR.strings.pref_update_only_completely_read),
-                        MANGA_NON_READ to stringResource(MR.strings.pref_update_only_started),
-                        MANGA_NON_COMPLETED to stringResource(MR.strings.pref_update_only_non_completed),
-                        MANGA_OUTSIDE_RELEASE_PERIOD to stringResource(MR.strings.pref_update_only_in_release_period),
-                    ),
+                    entries = smartUpdateEntries(), // RK: shared with the light-novel group
                     title = stringResource(MR.strings.pref_library_update_smart_update),
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = libraryPreferences.newShowUpdatesCount,
                     title = stringResource(MR.strings.pref_library_update_show_tab_badge),
                 ),
+                // RK --> records update failures for the Update errors screen, moved here from Advanced
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = reikaiLibraryPreferences.trackUpdateErrors,
+                    title = stringResource(MR.strings.pref_track_update_errors),
+                    subtitle = stringResource(MR.strings.pref_track_update_errors_summary),
+                ),
+                // RK <--
             ),
         )
     }
@@ -367,6 +290,9 @@ object SettingsLibraryScreen : SearchableSettings {
     @Composable
     private fun getBehaviorGroup(
         libraryPreferences: LibraryPreferences,
+        // RK: novels' own missing-chapter toggle sits here too, so the pair reads as one setting per
+        // content type rather than a row that looks duplicated.
+        novelPreferences: NovelPreferences,
     ): Preference.PreferenceGroup {
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_behavior),
@@ -411,8 +337,21 @@ object SettingsLibraryScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     preference = libraryPreferences.hideMissingChapters,
-                    title = stringResource(MR.strings.pref_hide_missing_chapter_indicators),
+                    // RK: content-typed, because the novel twin below is otherwise the same row twice.
+                    title = contentTypedCategory(
+                        MR.strings.pref_hide_missing_chapter_indicators,
+                        MR.strings.content_type_manga,
+                    ),
                 ),
+                // RK -->
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = novelPreferences.hideMissingChapters(),
+                    title = contentTypedCategory(
+                        MR.strings.pref_hide_missing_chapter_indicators,
+                        MR.strings.content_type_novels,
+                    ),
+                ),
+                // RK <--
             ),
         )
     }

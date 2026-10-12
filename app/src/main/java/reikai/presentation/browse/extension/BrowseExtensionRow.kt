@@ -1,0 +1,119 @@
+package reikai.presentation.browse.extension
+
+import androidx.compose.runtime.Immutable
+import reikai.domain.library.ContentType
+import reikai.novel.source.NovelExtensionFormat
+import reikai.presentation.browse.compareBrowseLanguages
+import reikai.presentation.browse.matchesBrowseQuery
+
+/** Identity for an installable source, whichever kind it is: a package name or a plugin id. */
+sealed interface ExtensionKey {
+    val contentType: ContentType
+
+    /** How a novel extension is packaged; null for manga, whose extensions come one way only. */
+    val format: NovelExtensionFormat? get() = null
+
+    data class Manga(val pkgName: String) : ExtensionKey {
+        override val contentType: ContentType get() = ContentType.MANGA
+    }
+
+    data class Novel(val pluginId: String) : ExtensionKey {
+        override val contentType: ContentType get() = ContentType.NOVELS
+        override val format: NovelExtensionFormat get() = NovelExtensionFormat.JS
+    }
+
+    /**
+     * A novel extension shipped as an apk, which installs and updates the way a manga one does. Its
+     * [format] tells a tachiyomi-format apk from an IReader one.
+     */
+    data class NovelApk(val pkgName: String, override val format: NovelExtensionFormat) : ExtensionKey {
+        override val contentType: ContentType get() = ContentType.NOVELS
+    }
+}
+
+/**
+ * Where a row sits in the Extensions list. Updates, Not loaded and Installed are one section each across
+ * both content types; what is available is split by language, as the manga list has always done.
+ */
+sealed interface ExtensionSection {
+    data object Updates : ExtensionSection
+
+    /** Installed but not loaded, so it provides no sources: untrusted, filtered out or broken. */
+    data object NotLoaded : ExtensionSection
+    data object Installed : ExtensionSection
+    data class Available(val lang: String) : ExtensionSection
+}
+
+/**
+ * One installable source as the shared Extensions list sees it.
+ *
+ * [payload] is the provider's own object, unwrapped only by the leaf that renders its type. The two
+ * search fields match differently: a term on containment, an id only as the whole query, which is
+ * the rule the manga list already had. [needsAttention] lifts a row to the top of its section
+ * because something is wrong with it, today only an apk extension gone obsolete.
+ */
+@Immutable
+data class BrowseExtensionRow(
+    val key: ExtensionKey,
+    val name: String,
+    /** The language as an ISO code, normalised, so a row renders the same name as its section. */
+    val lang: String,
+    val section: ExtensionSection,
+    val needsAttention: Boolean,
+    val searchTerms: List<String>,
+    val searchIds: List<String>,
+    val payload: Any,
+    /** The version a pending update brings, for a row under Updates. */
+    val updateVersion: String? = null,
+)
+
+/** Whether a row names its language: every section but a language's own, whose heading already does. */
+val ExtensionSection.namesLanguage: Boolean get() = this !is ExtensionSection.Available
+
+/** A row's version, followed by the one a pending update brings. */
+fun versionLabel(version: String, update: String?): String = if (update == null) version else "$version → $update"
+
+/** A rendered Extensions list: section headings interleaved with the rows under them. */
+sealed interface ExtensionsListItem {
+    data class Header(val section: ExtensionSection) : ExtensionsListItem
+    data class Row(val row: BrowseExtensionRow) : ExtensionsListItem
+}
+
+/**
+ * Groups every row into the one sectioned list the Extensions tab draws: pending updates, then what
+ * is installed but not loaded, then what is installed, then what is available, a section per language. Mihon's order, for both content
+ * types, so the chips cannot drift.
+ */
+fun sectionExtensions(rows: List<BrowseExtensionRow>): List<ExtensionsListItem> {
+    val sections = rows
+        .sortedWith(
+            compareByDescending<BrowseExtensionRow> { it.needsAttention }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name },
+        )
+        .groupBy { it.section }
+        .toSortedMap(SECTION_ORDER)
+    return sections.flatMap { (section, rows) ->
+        listOf(ExtensionsListItem.Header(section)) + rows.map { ExtensionsListItem.Row(it) }
+    }
+}
+
+/** Whether [row] survives the search box, by the rule every Browse list shares. */
+fun matchesExtensionQuery(row: BrowseExtensionRow, query: String?): Boolean =
+    matchesBrowseQuery(query, row.searchTerms, row.searchIds)
+
+private val SECTION_ORDER = Comparator<ExtensionSection> { a, b ->
+    val byRank = a.rank().compareTo(b.rank())
+    when {
+        byRank != 0 -> byRank
+        a is ExtensionSection.Available && b is ExtensionSection.Available ->
+            compareBrowseLanguages(a.lang, b.lang)
+        else -> 0
+    }
+}
+
+private fun ExtensionSection.rank() = when (this) {
+    ExtensionSection.Updates -> 0
+    ExtensionSection.NotLoaded -> 1
+    ExtensionSection.Installed -> 2
+    is ExtensionSection.Available -> 3
+}

@@ -1,535 +1,146 @@
 package eu.kanade.tachiyomi.data.backup.restore.restorers
 
-import app.cash.sqldelight.async.coroutines.awaitAsList
-import app.cash.sqldelight.async.coroutines.awaitAsOne
-import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
-import eu.kanade.domain.manga.interactor.UpdateManga
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
-import eu.kanade.tachiyomi.data.backup.models.BackupChapter
-import eu.kanade.tachiyomi.data.backup.models.BackupCustomMangaInfo
-import eu.kanade.tachiyomi.data.backup.models.BackupHistory
+import eu.kanade.tachiyomi.data.backup.models.BackupCustomInfo
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupMangaMergeGroup
+import eu.kanade.tachiyomi.data.backup.models.BackupMangaSourceRef
 import eu.kanade.tachiyomi.data.backup.models.BackupSearchMetadata
-import eu.kanade.tachiyomi.data.backup.models.BackupTracking
+import eu.kanade.tachiyomi.data.backup.models.customInfo
 import exh.metadata.metadata.base.FlatMetadata
 import exh.metadata.sql.models.SearchMetadata
 import exh.metadata.sql.models.SearchTag
 import exh.metadata.sql.models.SearchTitle
-import reikai.domain.library.ReikaiLibraryPreferences
-import tachiyomi.data.Database
-import tachiyomi.data.MemoColumnAdapter
-import tachiyomi.data.UpdateStrategyColumnAdapter
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import reikai.domain.backup.restoredNextUpdate
+import reikai.domain.category.CategoryContentType
+import reikai.domain.category.byNamePreferring
+import reikai.domain.chapter.backedUpOverrides
+import reikai.domain.library.ContentType
+import reikai.domain.merge.PrefEraGrouping
+import reikai.domain.merge.RestoreMergeGroups
+import tachiyomi.domain.backup.model.RestoredHistory
+import tachiyomi.domain.backup.model.RestoredManga
+import tachiyomi.domain.backup.repository.RestoreRepository
 import tachiyomi.domain.category.interactor.GetCategories
-import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
-import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.interactor.FetchInterval
 import tachiyomi.domain.manga.interactor.GetMangaByUrlAndSourceId
 import tachiyomi.domain.manga.interactor.SetCustomMangaInfo
 import tachiyomi.domain.manga.model.CustomMangaInfo
-import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.manga.repository.MangaMetadataRepository
-import tachiyomi.domain.track.interactor.GetTracks
-import tachiyomi.domain.track.interactor.InsertTrack
-import tachiyomi.domain.track.model.Track
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import java.time.ZonedDateTime
-import java.util.Date
-import kotlin.math.max
+import kotlin.time.Clock
 
+@Inject
 class MangaRestorer(
-    private val database: Database = Injekt.get(),
-    private val getCategories: GetCategories = Injekt.get(),
-    private val getMangaByUrlAndSourceId: GetMangaByUrlAndSourceId = Injekt.get(),
-    private val getChaptersByMangaId: GetChaptersByMangaId = Injekt.get(),
-    private val updateManga: UpdateManga = Injekt.get(),
-    private val getTracks: GetTracks = Injekt.get(),
-    private val insertTrack: InsertTrack = Injekt.get(),
-    fetchInterval: FetchInterval = Injekt.get(),
-    // RK: target of the rebuilt manga merge/unmerge prefs (see restoreMerges).
-    private val reikaiLibraryPreferences: ReikaiLibraryPreferences = Injekt.get(),
-    // RK: restores captured adult/EXH gallery metadata (search_metadata/tags/titles).
-    private val mangaMetadataRepository: MangaMetadataRepository = Injekt.get(),
-    // RK: applies the restored manga custom-info overlay (re-keyed by url+source).
-    private val setCustomMangaInfo: SetCustomMangaInfo = Injekt.get(),
+    private val restoreRepository: RestoreRepository,
+    private val getCategories: GetCategories,
+    private val fetchInterval: FetchInterval,
+    // RK --> the merge groups and older custom info a backup carries outside its entries
+    private val getMangaByUrlAndSourceId: GetMangaByUrlAndSourceId,
+    private val restoreMergeGroups: RestoreMergeGroups,
+    private val setCustomMangaInfo: SetCustomMangaInfo,
+    // RK <--
 ) {
 
-    private var now = ZonedDateTime.now()
-    private var currentFetchWindow = fetchInterval.getWindow(now)
+    private val timeZone = TimeZone.currentSystemDefault()
+    private val now = Clock.System.now().toLocalDateTime(timeZone)
+    private val currentFetchWindow = fetchInterval.getWindow(now.date, timeZone)
 
-    init {
-        now = ZonedDateTime.now()
-        currentFetchWindow = fetchInterval.getWindow(now)
-    }
-
-    suspend fun sortByNew(backupMangas: List<BackupManga>): List<BackupManga> {
-        val urlsBySource = database.mangasQueries
-            .getAllMangaSourceAndUrl()
-            .awaitAsList()
-            .groupBy({ it.source }, { it.url })
-
-        return backupMangas
-            .sortedWith(
-                compareBy<BackupManga> { it.url in urlsBySource[it.source].orEmpty() }
-                    .then(compareByDescending { it.lastModifiedAt }),
-            )
-    }
-
+    /**
+     * Restores [backupMangas] all together, so either every one of them is restored or none is.
+     */
     suspend fun restore(
-        backupManga: BackupManga,
+        backupMangas: List<BackupManga>,
         backupCategories: List<BackupCategory>,
     ) {
-        database.transaction {
-            val dbManga = findExistingManga(backupManga)
-            val manga = backupManga.getMangaImpl()
-            val restoredManga = if (dbManga == null) {
-                restoreNewManga(manga)
-            } else {
-                restoreExistingManga(manga, dbManga)
-            }
-
-            restoreMangaDetails(
-                manga = restoredManga,
-                chapters = backupManga.chapters,
-                categories = backupManga.categories,
-                backupCategories = backupCategories,
-                history = backupManga.history,
-                tracks = backupManga.tracking,
-                excludedScanlators = backupManga.excludedScanlators,
-                searchMetadata = backupManga.searchMetadata,
-            )
-        }
-    }
-
-    private suspend fun findExistingManga(backupManga: BackupManga): Manga? {
-        return getMangaByUrlAndSourceId.await(backupManga.url, backupManga.source)
-    }
-
-    private suspend fun restoreExistingManga(manga: Manga, dbManga: Manga): Manga {
-        return if (manga.version > dbManga.version) {
-            updateManga(dbManga.copyFrom(manga).copy(id = dbManga.id))
-        } else {
-            updateManga(manga.copyFrom(dbManga).copy(id = dbManga.id))
-        }
-    }
-
-    private fun Manga.copyFrom(newer: Manga): Manga {
-        return this.copy(
-            favorite = this.favorite || newer.favorite,
-            author = newer.author,
-            artist = newer.artist,
-            description = newer.description,
-            genre = newer.genre,
-            thumbnailUrl = newer.thumbnailUrl,
-            status = newer.status,
-            initialized = this.initialized || newer.initialized,
-            version = newer.version,
-        )
-    }
-
-    private suspend fun updateManga(manga: Manga): Manga {
-        database.mangasQueries.update(
-            source = manga.source,
-            url = manga.url,
-            artist = manga.artist,
-            author = manga.author,
-            description = manga.description,
-            genre = manga.genre?.joinToString(separator = ", "),
-            title = manga.title,
-            status = manga.status,
-            thumbnailUrl = manga.thumbnailUrl,
-            favorite = manga.favorite,
-            lastUpdate = manga.lastUpdate,
-            nextUpdate = null,
-            calculateInterval = null,
-            initialized = manga.initialized,
-            viewer = manga.viewerFlags,
-            chapterFlags = manga.chapterFlags,
-            coverLastModified = manga.coverLastModified,
-            dateAdded = manga.dateAdded,
-            mangaId = manga.id,
-            updateStrategy = manga.updateStrategy.let(UpdateStrategyColumnAdapter::encode),
-            version = manga.version,
-            isSyncing = 1,
-            notes = manga.notes,
-            memo = manga.memo.let(MemoColumnAdapter::encode),
-        )
-        return manga
-    }
-
-    private suspend fun restoreNewManga(
-        manga: Manga,
-    ): Manga {
-        return manga.copy(
-            id = insertManga(manga),
-        )
-    }
-
-    private suspend fun restoreChapters(manga: Manga, backupChapters: List<BackupChapter>) {
-        val dbChaptersByUrl = getChaptersByMangaId.await(manga.id)
-            .associateBy { it.url }
-
-        val (existingChapters, newChapters) = backupChapters
-            .mapNotNull {
-                val chapter = it.toChapterImpl().copy(mangaId = manga.id)
-
-                val dbChapter = dbChaptersByUrl[chapter.url]
-                    ?: // New chapter
-                    return@mapNotNull chapter
-
-                if (chapter.forComparison() == dbChapter.forComparison()) {
-                    // Same state; skip
-                    return@mapNotNull null
-                }
-
-                // Update to an existing chapter
-                var updatedChapter = chapter
-                    .copyFrom(dbChapter)
-                    .copy(
-                        id = dbChapter.id,
-                        bookmark = chapter.bookmark || dbChapter.bookmark,
-                    )
-                if (dbChapter.read && !updatedChapter.read) {
-                    updatedChapter = updatedChapter.copy(
-                        read = true,
-                        lastPageRead = dbChapter.lastPageRead,
-                    )
-                } else if (updatedChapter.lastPageRead == 0L && dbChapter.lastPageRead != 0L) {
-                    updatedChapter = updatedChapter.copy(
-                        lastPageRead = dbChapter.lastPageRead,
-                    )
-                }
-                updatedChapter
-            }
-            .partition { it.id > 0 }
-
-        insertNewChapters(newChapters)
-        updateExistingChapters(existingChapters)
-    }
-
-    private fun Chapter.forComparison() =
-        this.copy(id = 0L, mangaId = 0L, dateFetch = 0L, dateUpload = 0L, lastModifiedAt = 0L, version = 0L)
-
-    private suspend fun insertNewChapters(chapters: List<Chapter>) {
-        database.transaction {
-            chapters.forEach { chapter ->
-                database.chaptersQueries.insert(
-                    chapter.mangaId,
-                    chapter.url,
-                    chapter.name,
-                    chapter.scanlator,
-                    chapter.read,
-                    chapter.bookmark,
-                    chapter.lastPageRead,
-                    chapter.chapterNumber,
-                    chapter.sourceOrder,
-                    chapter.dateFetch,
-                    chapter.dateUpload,
-                    chapter.version,
-                    chapter.memo,
-                )
-            }
-        }
-    }
-
-    private suspend fun updateExistingChapters(chapters: List<Chapter>) {
-        database.transaction {
-            chapters.forEach { chapter ->
-                database.chaptersQueries.update(
-                    mangaId = null,
-                    url = null,
-                    name = null,
-                    scanlator = null,
-                    read = chapter.read,
-                    bookmark = chapter.bookmark,
-                    lastPageRead = chapter.lastPageRead,
-                    chapterNumber = null,
-                    sourceOrder = null,
-                    dateFetch = null,
-                    dateUpload = null,
-                    chapterId = chapter.id,
-                    version = chapter.version,
-                    isSyncing = 0,
-                    memo = chapter.memo.let(MemoColumnAdapter::encode),
-                )
-            }
-        }
-    }
-
-    /**
-     * Inserts manga and returns id
-     *
-     * @return id of [Manga], null if not found
-     */
-    private suspend fun insertManga(manga: Manga): Long {
-        return database.mangasQueries.insertReturningId(
-            source = manga.source,
-            url = manga.url,
-            artist = manga.artist,
-            author = manga.author,
-            description = manga.description,
-            genre = manga.genre,
-            title = manga.title,
-            status = manga.status,
-            thumbnailUrl = manga.thumbnailUrl,
-            favorite = manga.favorite,
-            lastUpdate = manga.lastUpdate,
-            nextUpdate = 0L,
-            calculateInterval = 0L,
-            initialized = manga.initialized,
-            viewerFlags = manga.viewerFlags,
-            chapterFlags = manga.chapterFlags,
-            coverLastModified = manga.coverLastModified,
-            dateAdded = manga.dateAdded,
-            updateStrategy = manga.updateStrategy,
-            version = manga.version,
-            notes = manga.notes,
-            memo = manga.memo,
-        )
-            .awaitAsOne()
-    }
-
-    private suspend fun restoreMangaDetails(
-        manga: Manga,
-        chapters: List<BackupChapter>,
-        categories: List<Long>,
-        backupCategories: List<BackupCategory>,
-        history: List<BackupHistory>,
-        tracks: List<BackupTracking>,
-        excludedScanlators: List<String>,
-        searchMetadata: BackupSearchMetadata?,
-    ): Manga {
-        restoreCategories(manga, categories, backupCategories)
-        restoreChapters(manga, chapters)
-        restoreTracking(manga, tracks)
-        restoreHistory(history)
-        restoreExcludedScanlators(manga, excludedScanlators)
-        restoreSearchMetadata(manga, searchMetadata)
-        updateManga.awaitUpdateFetchInterval(manga, now, currentFetchWindow)
-        return manga
-    }
-
-    // RK: re-insert captured adult/EXH gallery metadata for a restored gallery, keyed to its new id.
-    private suspend fun restoreSearchMetadata(manga: Manga, backup: BackupSearchMetadata?) {
-        backup ?: return
-        mangaMetadataRepository.insertFlatMetadata(
-            FlatMetadata(
-                metadata = SearchMetadata(
-                    mangaId = manga.id,
-                    uploader = backup.uploader,
-                    extra = backup.extra,
-                    indexedExtra = backup.indexedExtra,
-                    extraVersion = backup.extraVersion,
-                ),
-                tags = backup.tags.map {
-                    SearchTag(id = null, mangaId = manga.id, namespace = it.namespace, name = it.name, type = it.type)
-                },
-                titles = backup.titles.map {
-                    SearchTitle(id = null, mangaId = manga.id, title = it.title, type = it.type)
-                },
-            ),
-        )
-    }
-
-    /**
-     * Restores the categories a manga is in.
-     *
-     * @param manga the manga whose categories have to be restored.
-     * @param categories the categories to restore.
-     */
-    private suspend fun restoreCategories(
-        manga: Manga,
-        categories: List<Long>,
-        backupCategories: List<BackupCategory>,
-    ) {
-        val dbCategories = getCategories.await()
-        val dbCategoriesByName = dbCategories.associateBy { it.name }
-
+        // RK: a universal row may share a manga row's name
+        val dbCategoriesByName = getCategories.await().byNamePreferring(CategoryContentType.MANGA)
         val backupCategoriesByOrder = backupCategories.associateBy { it.order }
 
-        val mangaCategoriesToUpdate = categories.mapNotNull { backupCategoryOrder ->
-            backupCategoriesByOrder[backupCategoryOrder]?.let { backupCategory ->
-                dbCategoriesByName[backupCategory.name]?.let { dbCategory ->
-                    Pair(manga.id, dbCategory.id)
-                }
-            }
-        }
-
-        if (mangaCategoriesToUpdate.isNotEmpty()) {
-            database.transaction {
-                database.mangas_categoriesQueries.deleteMangaCategoryByMangaId(manga.id)
-                mangaCategoriesToUpdate.forEach { (mangaId, categoryId) ->
-                    database.mangas_categoriesQueries.insert(mangaId, categoryId)
-                }
-            }
-        }
-    }
-
-    /**
-     * RK: rebuild the manga merge/unmerge prefs from the backup's stable {url, source} refs once the
-     * manga have been restored (their IDs differ from the source device). The manga twin of
-     * NovelRestorer.restoreMerges. Unioned with any device-local entries so a partial restore does not
-     * wipe existing merges. Call this AFTER the manga loop completes.
-     */
-    suspend fun restoreMerges(merges: List<BackupMangaMergeGroup>, unmerges: List<BackupMangaMergeGroup>) {
-        val resolvedMerges = resolveMergeGroups(merges)
-        val resolvedUnmerges = resolveMergeGroups(unmerges)
-        if (resolvedMerges.isNotEmpty()) {
-            reikaiLibraryPreferences.mangaManualMerges.set(
-                reikaiLibraryPreferences.mangaManualMerges.get() + resolvedMerges,
-            )
-        }
-        if (resolvedUnmerges.isNotEmpty()) {
-            reikaiLibraryPreferences.mangaManualUnmerges.set(
-                reikaiLibraryPreferences.mangaManualUnmerges.get() + resolvedUnmerges,
-            )
-        }
-    }
-
-    private suspend fun resolveMergeGroups(groups: List<BackupMangaMergeGroup>): Set<String> {
-        if (groups.isEmpty()) return emptySet()
-        return groups.mapNotNull { group ->
-            val ids = group.refs
-                .mapNotNull { getMangaByUrlAndSourceId.await(it.url, it.source)?.id }
-                .distinct()
-                .sorted()
-            ids.takeIf { it.size >= 2 }?.joinToString(",")
-        }.toSet()
-    }
-
-    // RK: apply the restored manga custom-info overlay. Each entry is re-keyed from its {url, source} ref
-    // to the restored manga's fresh id; an unresolved ref is skipped. Call AFTER the manga loop.
-    suspend fun restoreCustomInfo(customInfo: List<BackupCustomMangaInfo>) {
-        customInfo.forEach { backup ->
-            val mangaId = getMangaByUrlAndSourceId.await(backup.url, backup.source)?.id ?: return@forEach
-            setCustomMangaInfo.set(
-                CustomMangaInfo(
-                    mangaId = mangaId,
-                    title = backup.title,
-                    author = backup.author,
-                    artist = backup.artist,
-                    description = backup.description,
-                    genre = backup.genre.takeIf { it.isNotEmpty() },
-                    status = backup.status,
-                    thumbnailUrl = backup.thumbnailUrl,
+        val entries = backupMangas.map { backupManga ->
+            RestoredManga(
+                manga = backupManga.getMangaImpl(),
+                chapters = backupManga.chapters.map { it.toChapterImpl() },
+                categoryIds = backupManga.categories.mapNotNull { backupCategoryOrder ->
+                    backupCategoriesByOrder[backupCategoryOrder]?.let { backupCategory ->
+                        dbCategoriesByName[backupCategory.name]?.id
+                    }
+                },
+                history = backupManga.history.map {
+                    val history = it.getHistoryImpl()
+                    RestoredHistory(it.url, history.readAt, history.readDuration)
+                },
+                tracks = backupManga.tracking.map { it.getTrackImpl() },
+                excludedScanlators = backupManga.excludedScanlators,
+                // RK --> adult gallery metadata and custom info, keyed to the restored id in the repository
+                searchMetadata = backupManga.searchMetadata?.toFlatMetadata(),
+                customInfo = backupManga.customInfo?.toCustomMangaInfo(mangaId = 0L),
+                chapterNumberOverrides = backedUpOverrides(
+                    backupManga.chapters,
+                    urlOf = { it.url },
+                    numberOf = { it.chapterNumber.toDouble() },
+                    sourceNumberOf = { it.sourceChapterNumber },
                 ),
-            )
-        }
-    }
-
-    private suspend fun restoreHistory(backupHistory: List<BackupHistory>) {
-        val toUpdate = backupHistory.mapNotNull { history ->
-            val dbHistory = database.historyQueries
-                .getHistoryByChapterUrl(history.url)
-                .awaitAsOneOrNull()
-            val item = history.getHistoryImpl()
-
-            if (dbHistory == null) {
-                val chapter = database.chaptersQueries
-                    .getChapterByUrl(history.url)
-                    .awaitAsOneOrNull()
-                return@mapNotNull if (chapter == null) {
-                    // Chapter doesn't exist; skip
-                    null
-                } else {
-                    // New history entry
-                    item.copy(chapterId = chapter._id)
-                }
-            }
-
-            // Update history entry
-            item.copy(
-                id = dbHistory._id,
-                chapterId = dbHistory.chapter_id,
-                readAt = max(item.readAt?.time ?: 0L, dbHistory.last_read?.time ?: 0L)
-                    .takeIf { it > 0L }
-                    ?.let { Date(it) },
-                readDuration = max(item.readDuration, dbHistory.time_read) - dbHistory.time_read,
+                // RK <--
             )
         }
 
-        if (toUpdate.isEmpty()) return
-        database.transaction {
-            toUpdate.forEach {
-                database.historyQueries.upsert(
-                    it.chapterId,
-                    it.readAt,
-                    it.readDuration,
-                )
+        restoreRepository.restoreManga(entries) { manga ->
+            fetchInterval.withFetchInterval(manga, now, timeZone, currentFetchWindow).apply {
+                // RK: a next update still ahead is kept by the kernel the novel restore calls too
+                nextUpdate = restoredNextUpdate(manga.nextUpdate, nextUpdate, currentFetchWindow)
             }
         }
     }
 
-    private suspend fun restoreTracking(manga: Manga, backupTracks: List<BackupTracking>) {
-        val dbTrackByTrackerId = getTracks.await(manga.id).associateBy { it.trackerId }
-
-        val (existingTracks, newTracks) = backupTracks
-            .mapNotNull {
-                val track = it.getTrackImpl()
-                val dbTrack = dbTrackByTrackerId[track.trackerId]
-                    ?: // New track
-                    return@mapNotNull track.copy(
-                        id = 0, // Let DB assign new ID
-                        mangaId = manga.id,
-                    )
-
-                if (track.forComparison() == dbTrack.forComparison()) {
-                    // Same state; skip
-                    return@mapNotNull null
-                }
-
-                // Update to an existing track
-                dbTrack.copy(
-                    remoteId = track.remoteId,
-                    libraryId = track.libraryId,
-                    lastChapterRead = max(dbTrack.lastChapterRead, track.lastChapterRead),
-                )
-            }
-            .partition { it.id > 0 }
-
-        if (newTracks.isNotEmpty()) {
-            insertTrack.awaitAll(newTracks)
-        }
-
-        if (existingTracks.isEmpty()) return
-        database.transaction {
-            existingTracks.forEach { track ->
-                database.manga_syncQueries.update(
-                    track.mangaId,
-                    track.trackerId,
-                    track.remoteId,
-                    track.libraryId,
-                    track.title,
-                    track.lastChapterRead,
-                    track.totalChapters,
-                    track.status,
-                    track.score,
-                    track.remoteUrl,
-                    track.startDate,
-                    track.finishDate,
-                    track.private,
-                    track.id,
-                )
-            }
-        }
-    }
-
-    private fun Track.forComparison() = this.copy(id = 0L, mangaId = 0L)
+    // RK --> merge groups and custom info restore
 
     /**
-     * Restores the excluded scanlators for the manga.
-     *
-     * @param manga the manga whose excluded scanlators have to be restored.
-     * @param excludedScanlators the excluded scanlators to restore.
+     * RK: materialize the backup's manga merge groups into the merge_group tables once the manga have
+     * been restored (their ids differ from the source device). Members resolve from the backup's stable
+     * {url, source} refs; the shared [RestoreMergeGroups] decides the rest. Call this AFTER the manga
+     * loop completes.
      */
-    private suspend fun restoreExcludedScanlators(manga: Manga, excludedScanlators: List<String>) {
-        if (excludedScanlators.isEmpty()) return
-        val existingExcludedScanlators = database.excluded_scanlatorsQueries
-            .getExcludedScanlatorsByMangaId(manga.id)
-            .awaitAsList()
-        val toInsert = excludedScanlators.filter { it !in existingExcludedScanlators }
-        if (toInsert.isEmpty()) return
-        toInsert.forEach { database.excluded_scanlatorsQueries.insert(manga.id, it) }
+    suspend fun restoreMerges(
+        merges: List<BackupMangaMergeGroup>,
+        prefEra: PrefEraGrouping<BackupMangaSourceRef>?,
+    ) {
+        restoreMergeGroups.fromBackup(ContentType.MANGA, merges.map { it.refs }, prefEra) {
+            getMangaByUrlAndSourceId.await(it.url, it.source)?.id
+        }
     }
+
+    // RK: an older root-list row for a series the backup does not list, applied when the device has it
+    suspend fun restoreCustomInfo(source: Long, url: String, info: BackupCustomInfo) {
+        getMangaByUrlAndSourceId.await(url, source)?.let { setCustomMangaInfo.set(info.toCustomMangaInfo(it.id)) }
+    }
+
+    // RK: the novel twin is NovelRestorer.restoreCustomInfo; both read BackupCustomInfoFields.customInfo.
+    private fun BackupCustomInfo.toCustomMangaInfo(mangaId: Long) = CustomMangaInfo(
+        mangaId = mangaId,
+        title = title,
+        author = author,
+        artist = artist,
+        description = description,
+        genre = genre,
+        status = status,
+        thumbnailUrl = thumbnailUrl,
+    )
+
+    // RK: the id is a placeholder; the repository writes the rows under the restored entry's own
+    private fun BackupSearchMetadata.toFlatMetadata() = FlatMetadata(
+        metadata = SearchMetadata(
+            mangaId = 0L,
+            uploader = uploader,
+            extra = extra,
+            indexedExtra = indexedExtra,
+            extraVersion = extraVersion,
+        ),
+        tags = tags.map {
+            SearchTag(id = null, mangaId = 0L, namespace = it.namespace, name = it.name, type = it.type)
+        },
+        titles = titles.map { SearchTitle(id = null, mangaId = 0L, title = it.title, type = it.type) },
+    )
+    // RK <--
 }

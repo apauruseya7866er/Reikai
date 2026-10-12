@@ -1,0 +1,92 @@
+package reikai.presentation.library
+
+import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
+import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.presentation.recents.EmittingPreferenceStore
+import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import tachiyomi.domain.category.model.Category
+
+/**
+ * Collapse is one library-wide value written through these three helpers, so both content types share it:
+ * a category is one row in one list, whichever chip is filtering the view.
+ */
+class LibraryCategoryCollapseTest {
+
+    private val preferences = ReikaiLibraryPreferences(InMemoryPreferenceStore())
+
+    private fun real(id: Long, name: String) =
+        LibraryBucket.Real(Category(id = id, name = name, order = 0, flags = 0))
+
+    // A dynamic group carries the normalized key the grouping kernel built for it.
+    private fun dynamic(name: String) = LibraryBucket.Dynamic(normalizeDynamicKey(name), name)
+
+    @Test
+    fun `collapsing a real category stores its id`() {
+        preferences.toggleCategoryCollapsed("7")
+
+        preferences.collapsedCategories.get() shouldBe setOf("7")
+    }
+
+    @Test
+    fun `collapsing the same category twice expands it again`() {
+        preferences.toggleCategoryCollapsed("7")
+        preferences.toggleCategoryCollapsed("7")
+
+        preferences.collapsedCategories.get() shouldBe emptySet()
+    }
+
+    @Test
+    fun `a dynamic group collapses into its own set`() {
+        preferences.toggleDynamicCategoryCollapsed("Action")
+
+        preferences.collapsedDynamicCategories.get() shouldBe setOf("Action")
+    }
+
+    @Test
+    fun `a dynamic group never lands in the real-category set`() {
+        preferences.toggleDynamicCategoryCollapsed("Action")
+
+        preferences.collapsedCategories.get() shouldBe emptySet()
+    }
+
+    @Test
+    fun `collapse all splits real categories from dynamic groups`() {
+        preferences.toggleAllCategoriesCollapsed(listOf(real(7, "Reading"), dynamic("Action")))
+
+        // Dynamic keys store normalized (case-folded), so the key survives the merged bucket's
+        // first-seen display spelling changing.
+        preferences.collapsedCategories.get() to preferences.collapsedDynamicCategories.get() shouldBe
+            (setOf("7") to setOf("action"))
+    }
+
+    @Test
+    fun `toggling with a normalized key expands a legacy raw-spelling entry`() {
+        preferences.collapsedDynamicCategories.set(setOf("Sci-Fi"))
+
+        preferences.toggleDynamicCategoryCollapsed("sci fi")
+
+        preferences.collapsedDynamicCategories.get() shouldBe emptySet()
+    }
+
+    @Test
+    fun `collapse all expands everything when it is already collapsed`() {
+        val buckets = listOf(real(7, "Reading"), dynamic("Action"))
+        preferences.toggleAllCategoriesCollapsed(buckets)
+        preferences.toggleAllCategoriesCollapsed(buckets)
+
+        preferences.collapsedCategories.get() to preferences.collapsedDynamicCategories.get() shouldBe
+            (emptySet<String>() to emptySet<String>())
+    }
+
+    /** The tab checks collapse with a plain lookup per bucket per frame, so the stored side arrives normalized. */
+    @Test
+    fun `the display state carries stored dynamic keys normalized`() = runTest {
+        val emitting = ReikaiLibraryPreferences(EmittingPreferenceStore())
+        emitting.collapsedDynamicCategories.set(setOf("Sci-Fi"))
+
+        emitting.libraryStateFlow().first().collapsedDynamicCategories shouldBe setOf("sci fi")
+    }
+}

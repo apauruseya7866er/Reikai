@@ -15,30 +15,31 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import reikai.novel.network.applyNovelDefaults
+import reikai.novel.source.httpFailure
+import reikai.novel.source.lnStorageScope
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.util.system.logcat
 import java.net.URLDecoder
 
 /**
- * Engine-agnostic host services for LN plugins: HTTP via OkHttp, per-plugin storage via the
- * shared [PreferenceStore], and logging. [LnPluginHost] binds these to the JS runtime as host
- * functions (`__lnFetch` / `__lnGetStorage` / `__lnSetStorage` / `__lnLog`). Nothing here touches
- * a WebView.
- *
- * RK: per-plugin storage is namespaced keys over the injected [PreferenceStore] (the project
- * forbids raw SharedPreferences), keyed `ln_storage::<pluginId>::<key>`; clearing a scope deletes
- * every key with that prefix.
+ * Engine-agnostic host services for LN plugins: HTTP over OkHttp, per-plugin storage over the shared
+ * [PreferenceStore], and logging. [LnPluginHost] binds these to the JS runtime as host functions
+ * (`__lnFetch` / `__lnGetStorage` / `__lnSetStorage` / `__lnLog`); nothing here touches a WebView.
+ * Storage is namespaced keys rather than raw SharedPreferences, which the project forbids, keyed
+ * `ln_storage::<pluginId>::<key>`; clearing a scope deletes every key with that prefix.
  */
 class LnHostBridge(
     private val preferenceStore: PreferenceStore,
     private val client: OkHttpClient,
-    // the device's real WebView User-Agent (see [LnPluginHost]); empty when unavailable.
-    private val userAgent: String = "",
+    // The device's real WebView User-Agent, resolved per request rather than passed in: reading it
+    // loads the WebView provider, which blocks for seconds on a cold device. Doing that while
+    // constructing froze the UI, because Metro holds this object's singleton lock across the call.
+    private val userAgent: () -> String = { "" },
 ) {
 
     /** One OkHttp call, response shaped as the runtime's `makeResponse` expects. Blocking; callers
      *  must invoke it off the engine thread (the host wraps it in a Dispatchers.IO async binding). */
-    fun runFetch(url: String, optsJson: String): String {
+    fun runFetch(url: String, optsJson: String, onFailure: (Throwable) -> Unit): String {
         return try {
             val opts = parseFetchOpts(optsJson)
             val builder = Request.Builder().url(url)
@@ -58,10 +59,9 @@ class LnHostBridge(
                 ?: ByteArray(0).toRequestBody().takeIf { method == "POST" || method == "PUT" || method == "PATCH" }
             builder.method(method, body)
             opts.headers?.forEach { (k, v) -> builder.header(k, v) }
-            // Default the device WebView UA unless the plugin set one (the Referer is left to the
-            // plugin for host fetches); shared with the cover fetcher via [applyNovelDefaults].
+            // Default the device WebView UA unless the plugin set one; the Referer is left to the plugin.
             val pluginSetUa = opts.headers?.keys?.any { it.equals("User-Agent", ignoreCase = true) } == true
-            builder.applyNovelDefaults(userAgent, pluginSetUserAgent = pluginSetUa)
+            builder.applyNovelDefaults(userAgent(), pluginSetUserAgent = pluginSetUa)
             // Laravel / Inertia sources expect the XSRF-TOKEN cookie echoed back as the X-XSRF-TOKEN
             // header. Derive it from the shared cookie jar unless the plugin set the header itself. The
             // token is a per-session CSRF value, applied but never logged.
@@ -74,6 +74,8 @@ class LnHostBridge(
                 }
             }
             val res = client.newCall(builder.build()).execute()
+            // A browser's fetch resolves on an error status too, so the plugin gets the page as it is.
+            httpFailure(res.code)?.let(onFailure)
             // Final URL after redirects. lnreader's Response shim exposes this as `response.url`;
             // the Madara plugin family compares it to the request host to detect Cloudflare/captcha
             // redirects, and crashes on `undefined.split('/')` if it's missing.
@@ -98,6 +100,7 @@ class LnHostBridge(
             )
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e) { "fetch($url) failed" }
+            onFailure(e)
             JSON.encodeToString(
                 FetchResponseDto.serializer(),
                 FetchResponseDto(0, "", emptyMap(), "", url, e.message ?: e.javaClass.simpleName, null),
@@ -124,16 +127,7 @@ class LnHostBridge(
         }
     }
 
-    /** Wipe a plugin's @libs/storage scope. Called on uninstall (so a reinstall doesn't pick up
-     *  stale login state) and from the Clear data overflow action. */
-    fun clearPluginStorage(pluginId: String) {
-        val prefix = scopePrefix(pluginId)
-        preferenceStore.getAll().keys
-            .filter { it.startsWith(prefix) }
-            .forEach { preferenceStore.getString(it).delete() }
-    }
-
-    private fun scopePrefix(pluginId: String): String = "ln_storage::$pluginId::"
+    private fun scopePrefix(pluginId: String): String = lnStorageScope(pluginId)
 
     private fun scopedKey(pluginId: String, key: String): String = "${scopePrefix(pluginId)}$key"
 

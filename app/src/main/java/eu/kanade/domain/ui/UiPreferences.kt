@@ -1,6 +1,9 @@
 package eu.kanade.domain.ui
 
 import com.materialkolor.PaletteStyle
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.ui.model.AppTheme
 import eu.kanade.domain.ui.model.TabletUiMode
 import eu.kanade.domain.ui.model.ThemeMode
@@ -13,6 +16,8 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import java.util.Locale
 
+@Inject
+@SingleIn(AppScope::class)
 class UiPreferences(
     preferenceStore: PreferenceStore,
 ) {
@@ -38,7 +43,11 @@ class UiPreferences(
 
     val imagesInDescription: Preference<Boolean> = preferenceStore.getBoolean("pref_render_images_description", true)
 
-    // RK --> cover-based theming (Y11)
+    // RK --> Updates and History as one Recents tab, off so nothing moves until it is asked for
+    val combinedRecentsTab: Preference<Boolean> = preferenceStore.getBoolean("pref_combined_recents_tab", false)
+    // RK <--
+
+    // RK --> cover-based theming
     val themeCoverBased: Preference<Boolean> = preferenceStore.getBoolean("pref_theme_cover_based_key", true)
 
     val themeCoverBasedStyle: Preference<PaletteStyle> =

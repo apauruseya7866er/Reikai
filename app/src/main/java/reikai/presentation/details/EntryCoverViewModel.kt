@@ -1,0 +1,182 @@
+package reikai.presentation.details
+
+import android.content.Context
+import android.net.Uri
+import androidx.compose.material3.SnackbarHostState
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import coil3.asDrawable
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import coil3.size.Size
+import eu.kanade.tachiyomi.data.saver.Image
+import eu.kanade.tachiyomi.data.saver.ImageSaver
+import eu.kanade.tachiyomi.data.saver.Location
+import eu.kanade.tachiyomi.util.system.getBitmapOrNull
+import eu.kanade.tachiyomi.util.system.toShareIntent
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.WhileSubscribed
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import logcat.LogPriority
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.i18n.MR
+import java.io.InputStream
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * Shared backing for the full-cover dialog, holding the save / share / set-custom / delete-custom logic
+ * once for both content types (it replaces Mihon's per-type cover model). Subclasses supply only the
+ * per-type seams: the entry subscription, its coil model + save name, whether it can keep a custom
+ * cover, the custom-cover check, and the two custom-cover writes (each keyed by its own
+ * [reikai.domain.entry.EntryId], so ids never collide).
+ */
+abstract class EntryCoverViewModel<T : Any>(
+    private val imageSaver: ImageSaver,
+    val snackbarHostState: SnackbarHostState = SnackbarHostState(),
+) : ViewModel() {
+
+    /** The reactive entry the cover belongs to; emits null until loaded. */
+    protected abstract suspend fun subscribe(): Flow<T?>
+
+    /** The coil model fed to `ImageRequest.data` (a `Manga`, or a `NovelCover`). */
+    protected abstract fun coilModel(entry: T): Any
+
+    /** Filename for a saved or shared cover. */
+    protected abstract fun coverName(entry: T): String
+
+    /** Whether [entry] can keep a custom cover; one set outside the library is orphaned, as removal deletes it. */
+    protected abstract fun canEditCover(entry: T): Boolean
+
+    /** True when the entry has a user-set custom cover (drives the edit/delete dropdown). */
+    abstract fun hasCustomCover(): Boolean
+
+    /** Persist a picked image as the custom cover and bump `coverLastModified`. */
+    protected abstract suspend fun persistCustomCover(entry: T, stream: InputStream)
+
+    /** Remove the custom cover and bump `coverLastModified`. */
+    protected abstract suspend fun removeCustomCover(entry: T)
+
+    /**
+     * The loaded entry. Collection starts on the first subscriber, never from the base constructor:
+     * an init-block collect would call the overridden [subscribe] (which reads the subclass's injected deps)
+     * while the super constructor is still running, before those deps are assigned, so they would be null.
+     * It also stops once the dialog goes away, matching upstream's cover model (mihonapp/mihon#3716).
+     */
+    val entry: StateFlow<T?> = flow { emitAll(subscribe()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
+
+    /** The loaded entry's coil model, so the shared dialog can render the cover without knowing the type. */
+    val coverModel: StateFlow<Any?> = entry
+        .map { it?.let(::coilModel) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), null)
+
+    /** Whether the dialog offers Edit and Delete, which are hidden rather than left to write nothing. */
+    val isCoverEditable: StateFlow<Boolean> = entry
+        .map { it != null && canEditCover(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), false)
+
+    /** Saves [cover], the model the dialog draws: [coverModel] or a merged series' fallback over it. */
+    fun saveCover(context: Context, cover: Any) {
+        viewModelScope.launch {
+            try {
+                saveCoverInternal(context, cover, temp = false)
+                snackbarHostState.showSnackbar(context.stringResource(MR.strings.cover_saved), withDismissAction = true)
+            } catch (e: Throwable) {
+                logcat(LogPriority.ERROR, e)
+                snackbarHostState.showSnackbar(
+                    context.stringResource(MR.strings.error_saving_cover),
+                    withDismissAction = true,
+                )
+            }
+        }
+    }
+
+    fun shareCover(context: Context, cover: Any) {
+        viewModelScope.launch {
+            try {
+                val uri = saveCoverInternal(context, cover, temp = true) ?: return@launch
+                withUIContext { context.startActivity(uri.toShareIntent(context)) }
+            } catch (e: Throwable) {
+                logcat(LogPriority.ERROR, e)
+                snackbarHostState.showSnackbar(
+                    context.stringResource(MR.strings.error_sharing_cover),
+                    withDismissAction = true,
+                )
+            }
+        }
+    }
+
+    private suspend fun saveCoverInternal(context: Context, cover: Any, temp: Boolean): Uri? {
+        val entry = entry.value ?: return null
+        val request = ImageRequest.Builder(context)
+            .data(cover)
+            .size(Size.ORIGINAL)
+            .build()
+
+        return withIOContext {
+            val result = context.imageLoader.execute(request).image?.asDrawable(context.resources)
+            val bitmap = result?.getBitmapOrNull() ?: return@withIOContext null
+            imageSaver.save(
+                Image.Cover(
+                    bitmap = bitmap,
+                    name = coverName(entry),
+                    location = if (temp) Location.Cache else Location.Pictures.create(),
+                ),
+            )
+        }
+    }
+
+    fun editCover(context: Context, data: Uri) {
+        val entry = entry.value ?: return
+        viewModelScope.launchIO {
+            try {
+                // Not a null-safe call with the notify after it: an unreadable Uri gives no stream,
+                // and the success snackbar fired anyway over a cover that was never written.
+                val input = context.contentResolver.openInputStream(data)
+                    ?: error("Could not open the chosen image")
+                input.use { persistCustomCover(entry, it) }
+                notifyCoverUpdated(context)
+            } catch (e: Exception) {
+                notifyFailed(context, e)
+            }
+        }
+    }
+
+    fun deleteCustomCover(context: Context) {
+        val entry = entry.value ?: return
+        viewModelScope.launchIO {
+            try {
+                removeCustomCover(entry)
+                notifyCoverUpdated(context)
+            } catch (e: Exception) {
+                notifyFailed(context, e)
+            }
+        }
+    }
+
+    private fun notifyCoverUpdated(context: Context) {
+        viewModelScope.launch {
+            snackbarHostState.showSnackbar(context.stringResource(MR.strings.cover_updated), withDismissAction = true)
+        }
+    }
+
+    private fun notifyFailed(context: Context, e: Throwable) {
+        viewModelScope.launch {
+            snackbarHostState.showSnackbar(
+                context.stringResource(MR.strings.notification_cover_update_failed),
+                withDismissAction = true,
+            )
+            logcat(LogPriority.ERROR, e)
+        }
+    }
+}

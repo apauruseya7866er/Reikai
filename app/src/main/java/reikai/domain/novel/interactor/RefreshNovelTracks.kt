@@ -1,5 +1,6 @@
 package reikai.domain.novel.interactor
 
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import kotlinx.coroutines.async
@@ -9,16 +10,18 @@ import reikai.domain.novel.track.toDbTrack
 import reikai.domain.novel.track.toNovelTrack
 
 /**
- * Novel twin of [eu.kanade.domain.track.interactor.RefreshTracks]: pulls the latest remote state for
- * every bound novel track and persists it. No EnhancedTracker chapter-sync (a no-op for the four
- * light-novel trackers). Merge-group-aware: refreshes tracks bound on any member of the group.
+ * Novel twin of [eu.kanade.domain.track.interactor.RefreshTracks], pinned by RefreshTracksConformanceTest:
+ * pulls the latest remote state for every bound novel track and persists it. No EnhancedTracker
+ * chapter-sync: no novel-capable tracker is an EnhancedTracker. Merge-group-aware: refreshes tracks
+ * bound on any member of the group.
  *
  * @return the failed updates.
  */
+@Inject
 class RefreshNovelTracks(
     private val getNovelTracks: GetNovelTracks,
     private val trackerManager: TrackerManager,
-    private val insertNovelTrack: InsertNovelTrack,
+    private val upsertNovelTrack: UpsertNovelTrack,
 ) {
 
     suspend fun await(novelId: Long): List<Pair<Tracker?, Throwable>> {
@@ -30,7 +33,7 @@ class RefreshNovelTracks(
                     async {
                         return@async try {
                             val updatedTrack = service!!.refresh(track.toDbTrack()).toNovelTrack()!!
-                            insertNovelTrack.await(updatedTrack)
+                            upsertNovelTrack.await(updatedTrack)
                             null
                         } catch (e: Throwable) {
                             service to e

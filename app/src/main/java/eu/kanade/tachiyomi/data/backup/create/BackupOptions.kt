@@ -18,10 +18,13 @@ data class BackupOptions(
     val extensionStores: Boolean = true,
     val sourceSettings: Boolean = true,
     val privateSettings: Boolean = false,
+    // RK: saved browse searches and the Browse feed built on them.
+    val savedSearches: Boolean = true,
 ) {
 
     fun asBooleanArray() = booleanArrayOf(
         libraryEntries,
+        // RK: the content-type and custom-info options, positioned right after libraryEntries
         includeManga,
         includeNovels,
         customInfo,
@@ -34,9 +37,12 @@ data class BackupOptions(
         extensionStores,
         sourceSettings,
         privateSettings,
+        savedSearches, // RK
     )
 
-    fun canCreate() = libraryEntries || categories || appSettings || extensionStores || sourceSettings
+    // RK: saved searches count as something to back up
+    fun canCreate() =
+        libraryEntries || categories || appSettings || extensionStores || sourceSettings || savedSearches
 
     companion object {
         val libraryOptions = listOf(
@@ -112,6 +118,13 @@ data class BackupOptions(
                 getter = BackupOptions::sourceSettings,
                 setter = { options, enabled -> options.copy(sourceSettings = enabled) },
             ),
+            // RK: the feed and the searches saved on a source, which are data rather than settings but
+            // belong beside the source options a reader thinks of them with.
+            Entry(
+                label = MR.strings.backup_feed_and_saved_searches,
+                getter = BackupOptions::savedSearches,
+                setter = { options, enabled -> options.copy(savedSearches = enabled) },
+            ),
             Entry(
                 label = MR.strings.private_settings,
                 getter = BackupOptions::privateSettings,
@@ -122,6 +135,7 @@ data class BackupOptions(
 
         fun fromBooleanArray(array: BooleanArray) = BackupOptions(
             libraryEntries = array[0],
+            // RK: the three options after libraryEntries shift every later index by three
             includeManga = array[1],
             includeNovels = array[2],
             customInfo = array[3],
@@ -134,6 +148,10 @@ data class BackupOptions(
             extensionStores = array[10],
             sourceSettings = array[11],
             privateSettings = array[12],
+            // RK: a job queued before this option existed carries a shorter array and would throw on
+            //     the index when it finally runs. Every option added after this one reads the same way.
+            //     The array is positional by upstream's design, which is what makes that possible.
+            savedSearches = array.getOrElse(13) { true },
         )
     }
 

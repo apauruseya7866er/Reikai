@@ -1,40 +1,24 @@
 package eu.kanade.presentation.browse.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Checklist
-import androidx.compose.material.icons.outlined.DoneAll
-import androidx.compose.material.icons.outlined.FilterList
-import androidx.compose.material.icons.outlined.PushPin
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarScrollBehavior
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.SearchToolbar
-import eu.kanade.tachiyomi.ui.browse.source.globalsearch.SourceFilter
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.SelectAll
 import reikai.presentation.browse.EntrySearchSourceFilterChips
 import reikai.presentation.browse.components.BulkSelectionToolbar
+import reikai.presentation.browse.globalsearch.SearchSourceFilter
 import tachiyomi.i18n.MR
-import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 
 @Composable
@@ -46,17 +30,33 @@ fun GlobalSearchToolbar(
     onChangeSearchQuery: (String?) -> Unit,
     onSearch: (String) -> Unit,
     hideSourceFilter: Boolean,
-    sourceFilter: SourceFilter,
-    onChangeSearchFilter: (SourceFilter) -> Unit,
+    // RK: SearchSourceFilter is the shared filter both content types search with
+    sourceFilter: SearchSourceFilter,
+    onChangeSearchFilter: (SearchSourceFilter) -> Unit,
     onlyShowHasResults: Boolean,
     onToggleResults: () -> Unit,
-    scrollBehavior: TopAppBarScrollBehavior,
-    // RK: bulk-selection (Phase 4). onToggleSelectionMode present -> show the Select action.
+    // RK: null keeps the bar on plain `surface` instead of lerping to the scrolled container tint,
+    //      so the bar, the tab strip and the chip row read as one header block.
+    scrollBehavior: TopAppBarScrollBehavior? = null,
+    // RK: bulk-selection. onToggleSelectionMode present -> show the Select action.
     onToggleSelectionMode: (() -> Unit)? = null,
     selectionMode: Boolean = false,
     selectedCount: Int = 0,
+    // RK: overrides the plain count, so a selection spanning both content types can say how much of
+    //      each kind it holds.
+    selectionTitle: String? = null,
     onClickClearSelection: () -> Unit = {},
     onChangeCategoryClick: () -> Unit = {},
+    // RK: select-all / invert over every result currently listed, as the per-source catalogue
+    //      offers over its grid. Null hides the action, which is how the bar already treats them.
+    onSelectAll: (() -> Unit)? = null,
+    onReverseSelection: (() -> Unit)? = null,
+    // RK: the shared screen puts its content-type tab strip here, above the source-filter chips, so
+    //      the two controls read as different things rather than as two rows of chips.
+    tabs: @Composable () -> Unit = {},
+    // RK: a wait of unknown length (the migration search resolving a picked target) draws an
+    //      indeterminate bar, which takes the place of the searched-sources count while it lasts.
+    isBusy: Boolean = false,
 ) {
     Column(modifier = Modifier.background(MaterialTheme.colorScheme.surface)) {
         Box {
@@ -65,8 +65,11 @@ fun GlobalSearchToolbar(
             if (selectionMode) {
                 BulkSelectionToolbar(
                     selectedCount = selectedCount,
+                    title = selectionTitle,
                     onClickClearSelection = onClickClearSelection,
                     onChangeCategoryClick = onChangeCategoryClick,
+                    onSelectAll = onSelectAll,
+                    onReverseSelection = onReverseSelection,
                 )
             } else {
                 SearchToolbar(
@@ -76,7 +79,7 @@ fun GlobalSearchToolbar(
                     onClickCloseSearch = navigateUp,
                     navigateUp = navigateUp,
                     scrollBehavior = scrollBehavior,
-                    // RK: bulk-select entry (Phase 4)
+                    // RK: bulk-select entry
                     actions = {
                         if (onToggleSelectionMode != null) {
                             AppBarActions(
@@ -84,7 +87,7 @@ fun GlobalSearchToolbar(
                                     add(
                                         AppBar.Action(
                                             title = stringResource(MR.strings.action_bulk_select),
-                                            icon = Icons.Outlined.Checklist,
+                                            icon = MaterialSymbols.Rounded.SelectAll,
                                             onClick = onToggleSelectionMode,
                                         ),
                                     )
@@ -94,7 +97,16 @@ fun GlobalSearchToolbar(
                     },
                 )
             }
-            if (progress in 1..<total) {
+            // RK -->
+            if (isBusy) {
+                LinearProgressIndicator(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth(),
+                )
+            }
+            // RK <--
+            if (!isBusy && progress in 1..<total) { // RK: the busy bar above replaces the count
                 LinearProgressIndicator(
                     progress = { progress / total.toFloat() },
                     modifier = Modifier
@@ -104,14 +116,17 @@ fun GlobalSearchToolbar(
             }
         }
 
+        // RK: the content-type tab strip, above the source-filter chips
+        tabs()
+
         // RK: the filter chips moved to the shared reikai.presentation.browse.EntrySearchSourceFilterChips
-        // (manga + novel global search share them). Driven by primitives, not the SourceFilter enum.
+        // (manga + novel global search share them). Driven by primitives, not the SearchSourceFilter enum.
         EntrySearchSourceFilterChips(
-            isPinnedOnly = sourceFilter == SourceFilter.PinnedOnly,
+            isPinnedOnly = sourceFilter == SearchSourceFilter.PinnedOnly,
             onlyShowHasResults = onlyShowHasResults,
             showSourceFilter = !hideSourceFilter,
-            onSelectPinnedOnly = { onChangeSearchFilter(SourceFilter.PinnedOnly) },
-            onSelectAll = { onChangeSearchFilter(SourceFilter.All) },
+            onSelectPinnedOnly = { onChangeSearchFilter(SearchSourceFilter.PinnedOnly) },
+            onSelectAll = { onChangeSearchFilter(SearchSourceFilter.All) },
             onToggleResults = onToggleResults,
         )
     }

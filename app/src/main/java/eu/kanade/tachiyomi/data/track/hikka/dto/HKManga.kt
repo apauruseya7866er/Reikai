@@ -46,14 +46,14 @@ data class HKManga(
 ) {
     // RK: contentType ("manga"/"novel") keeps a novel bind on the /novel content tree; defaults to
     // manga so the existing manga callers are unchanged.
-    fun toTrack(trackId: Long, contentType: String = "manga"): TrackSearch {
-        return TrackSearch.create(trackId).apply {
+    fun toTrack(trackerId: Long, contentType: String = "manga"): TrackSearch {
+        return TrackSearch.create(trackerId).apply {
             remote_id = stringToNumber(this@HKManga.slug)
             title = this@HKManga.titleUa ?: this@HKManga.titleEn ?: this@HKManga.titleOriginal
             total_chapters = this@HKManga.chapters?.toLong() ?: 0
             cover_url = this@HKManga.image
             score = this@HKManga.score
-            tracking_url = "${HikkaApi.BASE_URL}/$contentType/${this@HKManga.slug}"
+            tracking_url = "${HikkaApi.BASE_URL}/$contentType/${this@HKManga.slug}" // RK: novel or manga tree
             publishing_status = this@HKManga.status
             publishing_type = this@HKManga.mediaType?.replace("_", " ").orEmpty()
 

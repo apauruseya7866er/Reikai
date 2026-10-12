@@ -15,10 +15,10 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.coil.MangaCoverFetcher.Companion.USE_CUSTOM_COVER_KEY
 import eu.kanade.tachiyomi.network.await
-import eu.kanade.tachiyomi.source.online.HttpSource
 import logcat.LogPriority
 import okhttp3.CacheControl
 import okhttp3.Call
+import okhttp3.Headers
 import okhttp3.Request
 import okhttp3.Response
 import okio.FileSystem
@@ -27,12 +27,13 @@ import okio.Source
 import okio.buffer
 import okio.sink
 import okio.source
+import reikai.data.coil.CoverRequestClient
+import reikai.data.coil.coverRequestClient
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.manga.model.asMangaCover
 import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.IOException
 
@@ -49,15 +50,16 @@ import java.io.IOException
 class MangaCoverFetcher(
     private val url: String?,
     private val isLibraryManga: Boolean,
-    // RK: cover used to extract the vibrant theming color (Y11); null when unavailable
+    // RK: cover used to extract the vibrant theming color; null when unavailable
     private val mangaCover: MangaCover?,
     private val options: Options,
     private val coverFileLazy: Lazy<File?>,
     private val customCoverFileLazy: Lazy<File>,
     private val diskCacheKeyLazy: Lazy<String>,
-    private val sourceLazy: Lazy<HttpSource?>,
-    private val callFactoryLazy: Lazy<Call.Factory>,
+    // RK: in place of upstream's getSource and callFactoryLazy, so novel covers share this fetcher
+    private val getClient: suspend () -> CoverRequestClient,
     private val imageLoader: ImageLoader,
+    private val mangaCoverMetadata: MangaCoverMetadata, // RK: cover-colour extraction
 ) : Fetcher {
 
     private val diskCacheKey: String
@@ -78,14 +80,15 @@ class MangaCoverFetcher(
         return when (getResourceType(url)) {
             Type.File -> fileLoader(File(url.substringAfter("file://")))
             Type.URI -> fileUriLoader(url)
-            Type.URL -> httpLoader()
+            // Requests for the same cover at different sizes or through Manga and MangaCover would each download it
+            Type.URL -> concurrentRequests.apply(diskCacheKey) { httpLoader() }
             null -> error("Invalid image")
         }
     }
 
     private fun fileLoader(file: File): FetchResult {
-        // RK --> extract the cover's vibrant color for reader/details theming (Y11)
-        mangaCover?.let { MangaCoverMetadata.setVibrantColorAsync(it, ogFile = file) }
+        // RK --> extract the cover's vibrant color for reader/details theming
+        mangaCover?.let { mangaCoverMetadata.setVibrantColorAsync(it, ogFile = file) }
         // RK <--
         return SourceFetchResult(
             source = ImageSource(
@@ -133,10 +136,10 @@ class MangaCoverFetcher(
 
                 // Read from snapshot
                 // RK --> extract the theming color on the browse/non-library path too, so a
-                // non-favorited manga's cover tints on first open (Komikku parity, Y11)
+                // non-favorited manga's cover tints on first open (Komikku parity)
                 val snap = snapshot
                 mangaCover?.let {
-                    MangaCoverMetadata.setVibrantColorAsync(it, bufferedSource = snap.toImageSource().source())
+                    mangaCoverMetadata.setVibrantColorAsync(it, bufferedSource = snap.toImageSource().source())
                 }
                 // RK <--
                 return SourceFetchResult(
@@ -159,10 +162,10 @@ class MangaCoverFetcher(
                 // Read from disk cache
                 snapshot = writeToDiskCache(response)
                 if (snapshot != null) {
-                    // RK --> Komikku parity: warm the theming color on the network path too (Y11)
+                    // RK --> Komikku parity: warm the theming color on the network path too
                     val snap = snapshot
                     mangaCover?.let {
-                        MangaCoverMetadata.setVibrantColorAsync(it, bufferedSource = snap.toImageSource().source())
+                        mangaCoverMetadata.setVibrantColorAsync(it, bufferedSource = snap.toImageSource().source())
                     }
                     // RK <--
                     return SourceFetchResult(
@@ -173,9 +176,9 @@ class MangaCoverFetcher(
                 }
 
                 // RK --> Komikku parity: warm the theming color when serving straight from the
-                // response body; peekBody so the returned stream isn't consumed (Y11)
+                // response body; peekBody so the returned stream isn't consumed
                 mangaCover?.let {
-                    MangaCoverMetadata.setVibrantColorAsync(
+                    mangaCoverMetadata.setVibrantColorAsync(
                         it,
                         bufferedSource = response.peekBody(Long.MAX_VALUE).source(),
                     )
@@ -198,8 +201,10 @@ class MangaCoverFetcher(
     }
 
     private suspend fun executeNetworkRequest(): Response {
-        val client = sourceLazy.value?.client ?: callFactoryLazy.value
-        val response = client.newCall(newRequest()).await()
+        // RK -->
+        val client = getClient()
+        val response = client.callFactory.newCall(newRequest(client.headers)).await()
+        // RK <--
         if (!response.isSuccessful && response.code != HTTP_NOT_MODIFIED) {
             response.close()
             throw IOException(response.message)
@@ -207,11 +212,10 @@ class MangaCoverFetcher(
         return response
     }
 
-    private fun newRequest(): Request {
+    private fun newRequest(sourceHeaders: Headers?): Request { // RK: headers from getClient
         val request = Request.Builder().apply {
             url(url!!)
 
-            val sourceHeaders = sourceLazy.value?.headers
             if (sourceHeaders != null) {
                 headers(sourceHeaders)
             }
@@ -327,10 +331,10 @@ class MangaCoverFetcher(
 
     class MangaFactory(
         private val callFactoryLazy: Lazy<Call.Factory>,
+        private val coverCache: CoverCache,
+        private val sourceManager: SourceManager,
+        private val mangaCoverMetadata: MangaCoverMetadata, // RK
     ) : Fetcher.Factory<Manga> {
-
-        private val coverCache: CoverCache by injectLazy()
-        private val sourceManager: SourceManager by injectLazy()
 
         override fun create(data: Manga, options: Options, imageLoader: ImageLoader): Fetcher {
             return MangaCoverFetcher(
@@ -341,19 +345,19 @@ class MangaCoverFetcher(
                 coverFileLazy = lazy { coverCache.getCoverFile(data.thumbnailUrl) },
                 customCoverFileLazy = lazy { coverCache.getCustomCoverFile(data.id) },
                 diskCacheKeyLazy = lazy { imageLoader.components.key(data, options)!! },
-                sourceLazy = lazy { sourceManager.get(data.source) as? HttpSource },
-                callFactoryLazy = callFactoryLazy,
+                getClient = { sourceManager.get(data.source).coverRequestClient(callFactoryLazy) }, // RK
                 imageLoader = imageLoader,
+                mangaCoverMetadata = mangaCoverMetadata, // RK
             )
         }
     }
 
     class MangaCoverFactory(
         private val callFactoryLazy: Lazy<Call.Factory>,
+        private val coverCache: CoverCache,
+        private val sourceManager: SourceManager,
+        private val mangaCoverMetadata: MangaCoverMetadata, // RK
     ) : Fetcher.Factory<MangaCover> {
-
-        private val coverCache: CoverCache by injectLazy()
-        private val sourceManager: SourceManager by injectLazy()
 
         override fun create(data: MangaCover, options: Options, imageLoader: ImageLoader): Fetcher {
             return MangaCoverFetcher(
@@ -364,9 +368,9 @@ class MangaCoverFetcher(
                 coverFileLazy = lazy { coverCache.getCoverFile(data.url) },
                 customCoverFileLazy = lazy { coverCache.getCustomCoverFile(data.mangaId) },
                 diskCacheKeyLazy = lazy { imageLoader.components.key(data, options)!! },
-                sourceLazy = lazy { sourceManager.get(data.sourceId) as? HttpSource },
-                callFactoryLazy = callFactoryLazy,
+                getClient = { sourceManager.get(data.sourceId).coverRequestClient(callFactoryLazy) }, // RK
                 imageLoader = imageLoader,
+                mangaCoverMetadata = mangaCoverMetadata, // RK
             )
         }
     }
@@ -378,5 +382,7 @@ class MangaCoverFetcher(
         private val CACHE_CONTROL_NO_NETWORK_NO_CACHE = CacheControl.Builder().noCache().onlyIfCached().build()
 
         private const val HTTP_NOT_MODIFIED = 304
+
+        private val concurrentRequests = DeDupeConcurrentRequests<FetchResult>()
     }
 }

@@ -1,0 +1,93 @@
+package reikai.presentation.browse
+
+import reikai.domain.category.resolveDefaultCategoryIds
+import tachiyomi.core.common.preference.CheckboxState
+import tachiyomi.core.common.preference.mapAsCheckboxState
+import tachiyomi.domain.category.model.Category
+
+/** How an add ended. Nothing is written on [NeedsCategoryChoice] or [Failed]. */
+sealed interface AddOutcome {
+    data object Added : AddOutcome
+
+    /** No usable default category: the caller shows its picker, whose confirm finishes the add. */
+    data object NeedsCategoryChoice : AddOutcome
+
+    /** The favorite write failed, so the entry is not in the library and nothing was filed. */
+    data object Failed : AddOutcome
+}
+
+/**
+ * The add-to-library order, one sequence for both content types: decide where the entry lands, then
+ * favorite, then file it there. Only the order is shared; each step is the type's own verb.
+ *
+ * Favorite-before-file is what makes the abort meaningful: filing first and failing to favorite
+ * leaves categories against a row outside the library, which no screen shows. [favorite] answers the
+ * stored id, or null when its write failed; an already-favorited caller returns the id unwritten.
+ */
+suspend fun addEntry(
+    resolveCategories: suspend () -> List<Long>?,
+    favorite: suspend () -> Long?,
+    fileCategories: suspend (id: Long, categoryIds: List<Long>) -> Unit,
+): AddOutcome {
+    val categoryIds = resolveCategories() ?: return AddOutcome.NeedsCategoryChoice
+    return finishAdd(categoryIds, favorite, fileCategories)
+}
+
+/**
+ * The half a category picker's confirm owes: the writes [addEntry] deferred when it had to ask. Both
+ * happen here, so dismissing the picker instead of confirming adds nothing.
+ */
+suspend fun finishAdd(
+    categoryIds: List<Long>,
+    favorite: suspend () -> Long?,
+    fileCategories: suspend (id: Long, categoryIds: List<Long>) -> Unit,
+): AddOutcome {
+    val id = favorite() ?: return AddOutcome.Failed
+    fileCategories(id, categoryIds)
+    return AddOutcome.Added
+}
+
+/**
+ * How an add ended, for a caller that has a picker to show. The prompt travels with the outcome, so a
+ * caller never has to ask its own content type what to offer.
+ */
+sealed interface AddFavoriteResult {
+    data object Added : AddFavoriteResult
+
+    data object Failed : AddFavoriteResult
+
+    data class NeedsCategoryChoice(
+        val initialSelection: List<CheckboxState.State<Category>>,
+    ) : AddFavoriteResult
+}
+
+/**
+ * [addEntry] plus the prompt to raise when it has to ask, so that mapping exists once rather than per
+ * content type. [categoryPicker] is read only on the branch that asks, and never when nothing is left
+ * to choose.
+ */
+suspend fun addEntryOrPrompt(
+    resolveCategories: suspend () -> List<Long>?,
+    favorite: suspend () -> Long?,
+    fileCategories: suspend (id: Long, categoryIds: List<Long>) -> Unit,
+    categoryPicker: suspend () -> List<CheckboxState.State<Category>>,
+): AddFavoriteResult = when (addEntry(resolveCategories, favorite, fileCategories)) {
+    AddOutcome.Added -> AddFavoriteResult.Added
+    AddOutcome.Failed -> AddFavoriteResult.Failed
+    AddOutcome.NeedsCategoryChoice -> AddFavoriteResult.NeedsCategoryChoice(categoryPicker())
+}
+
+/** Where a bulk add files its whole batch, decided once for the batch by [batchCategories]. */
+sealed interface BatchCategories {
+    data class Default(val categoryIds: List<Long>) : BatchCategories
+
+    data class Ask(val initialSelection: List<CheckboxState.State<Category>>) : BatchCategories
+}
+
+/**
+ * The bulk add's one category decision: the default when one is usable, else a picker over
+ * [categories] in the order given, all unchecked, since entries not yet added have no categories.
+ */
+fun batchCategories(categories: List<Category>, defaultCategoryId: Int): BatchCategories =
+    resolveDefaultCategoryIds(categories, defaultCategoryId)?.let(BatchCategories::Default)
+        ?: BatchCategories.Ask(categories.mapAsCheckboxState { false })

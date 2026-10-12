@@ -1,0 +1,664 @@
+package reikai.presentation.reader
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.drawable.ColorDrawable
+import android.os.Handler
+import android.os.Looper
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebView
+import coil3.imageLoader
+import eu.kanade.tachiyomi.util.system.setDefaultSettings
+import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import reikai.data.coil.fetchNovelImage
+import reikai.domain.reader.ChapterProgress
+import reikai.domain.reader.fraction
+import reikai.novel.content.NovelChapterAddress
+import reikai.novel.content.NovelCodeSnippet
+import reikai.novel.font.NovelFontManager
+import reikai.novel.network.NovelImageRequests
+import reikai.novel.source.NovelChapterStylesheet
+import reikai.presentation.reader.text.NovelSeam
+import reikai.presentation.reader.text.ResumeVeil
+import reikai.presentation.reader.web.NovelDocumentGate
+import reikai.presentation.reader.web.NovelWebBridge
+import reikai.presentation.reader.web.NovelWebDocument
+import reikai.presentation.reader.web.NovelWebFonts
+import reikai.presentation.reader.web.NovelWebImages
+import reikai.presentation.reader.web.NovelWebSnippets
+import reikai.util.isDebugInspectorBuild
+import reikai.util.webContentsDebugging
+import tachiyomi.core.common.i18n.pluralStringResource
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.preference.Preference
+import tachiyomi.i18n.MR
+import kotlin.coroutines.resume
+
+/**
+ * The light-novel adapter under [ReaderViewport], rendering chapters into a document that is
+ * Reikai's own: its stylesheet and engine come from `assets/novel-web/`, not the vendored bundle.
+ *
+ * The volume-key preferences arrive as values rather than a preferences class, so the viewport is
+ * constructible without the graph. The switch is read on each press, and the direction and distance
+ * come from the last settings push.
+ */
+@SuppressLint("SetJavaScriptEnabled")
+class NovelWebViewport(
+    private val context: Context,
+    /** The user's added fonts, which the page embeds when one is chosen. */
+    private val fontManager: NovelFontManager,
+    /** Each picture's fetch with its source's client and headers, the text renderer's own. */
+    private val imageRequests: NovelImageRequests,
+    /** Long press selects text, the same setting the native viewport reads. Links keep working here,
+     *  which the native one cannot offer alongside selection. */
+    private val textSelectable: Boolean,
+    private val callbacks: NovelViewportCallbacks,
+    /** Two settings only a WebView renderer can honour, so the rows are gated to this mode. A change to
+     *  either rebuilds the viewport (`NovelReaderProvider.viewportRebuilds`). */
+    private val useOriginalFonts: Boolean,
+    private val sourceCssPriority: Boolean,
+    /** Chrome's inspector and a toast per script error, for the user's own snippets and a source's scripts.
+     *  The inspector is process-wide, so building a viewport with this off closes it for every WebView. */
+    private val devTools: Boolean = false,
+    /** Auto-scroll's speed, which the engine runs this at while it is on. */
+    autoScrollSpeed: Preference<Float>,
+) : ReaderViewport, TextViewport, ChapterWindow {
+
+    /** The chapter the reader is actually in, which the rail seeks inside of. */
+    private var visibleChapterId: Long? = null
+
+    /** The document URL the chapter was loaded as, so the navigation policy can tell a footnote jump
+     *  from the chapter trying to leave. */
+    private var loadedBaseUrl: String? = null
+
+    /** Above the WebView, whose client is built with it. */
+    private val webImages = NovelWebImages()
+
+    /** The last auto-scroll speed the engine asked for, 0 when stopped, so a new document can be given it. */
+    private var autoScrollPixelsPerFrame = 0f
+
+    /** What the chrome covers from each edge in CSS pixels, held for the same reason. */
+    private var obscuredTop = 0f
+    private var obscuredBottom = 0f
+
+    /**
+     * Window verbs the page was not up to receive yet. Loading a document is asynchronous, so the
+     * host's first append and prepend arrive while the page is still an empty frame, where the call
+     * would find no engine and be dropped without a trace. Held in order and flushed on ready.
+     */
+    private val pendingWindowVerbs = mutableListOf<PendingCall>()
+
+    /** A call held for the page, with where its result goes when the caller wants one. */
+    private class PendingCall(val js: String, val onResult: ((String?) -> Unit)?)
+
+    /**
+     * Every call still owed a result, held or already handed to the page. A page replaced or destroyed
+     * never answers what it was handed, so these are answered null then, and a result that still
+     * arrives afterwards finds its call gone.
+     */
+    private val awaitingResult = mutableSetOf<PendingCall>()
+
+    /** Which document the host hears, and whether it has reported ready. A stale ready opening it sent
+     *  the new document's verbs to a page that dropped them. */
+    private val gate = NovelDocumentGate()
+
+    /**
+     * The chapters the open document holds, in reading order, as the verbs sent to it leave them. A
+     * seam names the chapter either side of it, and one of the two is always the chapter already there,
+     * so its marker is worked out here from what was sent rather than read back off the page.
+     */
+    private val held = mutableListOf<NovelReaderViewModel.LoadedChapter>()
+
+    /** What each edge of the open document shows. A window change that leaves an edge alone must not
+     *  redraw it, or the Retry the reader just tapped comes back while that retry is still running. */
+    private var shownPrevious: NovelReaderViewModel.BoundaryFailure? = null
+    private var shownNext: NovelReaderViewModel.BoundaryFailure? = null
+
+    /** The end marker the open document shows, so a window change that keeps it sends nothing. */
+    private var shownEnd: NovelSeam? = null
+
+    /** What the open document's variables were last written from, so an inset that changes after the
+     *  build can be written again. A document rebuilt before its window attached reads an inset of 0. */
+    private var documentSettings: NovelReaderSettings? = null
+    private var documentInset = 0
+
+    // Bridge messages arrive on a WebView background thread, so UI-affecting callbacks marshal here.
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    private val webFonts = NovelWebFonts()
+
+    /** The source stylesheets the document holds, so a merged series adds each source's once. */
+    private val sourceStylesheets = mutableSetOf<NovelChapterStylesheet>()
+
+    /** The family the page holds a face for, so a settings push knows when the face has to change. */
+    private var faceFamily: String? = null
+    private var faceJob: Job? = null
+
+    private var fingerDown = false
+
+    /** Up from a document opening on a saved percent until it reports ready, which the page holds until that
+     *  percent has landed on its pictures. Declared above the WebView that reads it. */
+    private val resumeVeil: ResumeVeil = ResumeVeil { up ->
+        webView.foreground = documentSettings?.takeIf { up }?.let {
+            ColorDrawable(readerBackgroundColorInt(it.backgroundColor))
+        }
+    }
+
+    /** Whether the touch on screen went down under the veil, which keeps all of it from the page. */
+    private var touchHeld = false
+
+    private val webView = WebView(context).apply {
+        setDefaultSettings()
+        WebView.setWebContentsDebuggingEnabled(webContentsDebugging(devTools, context.isDebugInspectorBuild()))
+        if (devTools) {
+            webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                    if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                        context.toast(message.message().take(CONSOLE_TOAST_CHARS))
+                    }
+                    // Not consumed, so the message still reaches logcat and the inspector's console.
+                    return false
+                }
+            }
+        }
+        webViewClient = NovelChapterNavigationClient(context, { loadedBaseUrl }, webImages, scope) { image ->
+            // The text renderer's fetch and cache, so switching modes downloads nothing again.
+            fetchNovelImage(
+                image,
+                imageRequests,
+                context.imageLoader.diskCache,
+                readCache = true,
+                writeCache = true,
+            )
+        }
+        // The stylesheet and engine are inlined into the document, so this mode needs no file origin at
+        // all and the flag stays off.
+        settings.allowFileAccess = false
+        isLongClickable = textSelectable
+        if (textSelectable) {
+            isFocusable = true
+            isFocusableInTouchMode = true
+            addOnAttachStateChangeListener(SelectableWhileAttached())
+        }
+        addJavascriptInterface(
+            NovelWebBridge(
+                // All on one thread, so a live progress report still queued cannot land after a settled one.
+                fromDocument = { token, call -> mainHandler.post { if (gate.admitsReport(token)) call() } },
+                fromReader = { token, call -> mainHandler.post { if (gate.admitsReaderCall(token)) call() } },
+                onVisibleChapter = { id ->
+                    visibleChapterId = id
+                    callbacks.onVisibleChapter(id)
+                },
+                onProgress = { id, f -> callbacks.onProgressChanged(id, f.toPercent()) },
+                onProgressSettled = { id, f -> callbacks.onProgressSettled(id, f.toPercent()) },
+                onTopLine = callbacks.onTopLine,
+                onRetryBoundary = callbacks.onRetryBoundary,
+                onTap = ::onPageTap,
+                onStepChapter = callbacks.onStepChapter,
+                onChapterFits = callbacks.onChapterFits,
+                onChapterEndSeen = callbacks.onChapterEndSeen,
+                // Auto-scroll is a call into the document, so one that was not up yet dropped it.
+                onReady = { token -> mainHandler.post { onPageReady(token) } },
+            ),
+            NovelWebBridge.NAME,
+        )
+        // Only a scroll made while a finger is down is the reader's: the page's own seek, keys, read aloud
+        // and auto-scroll move the window too. Not consumed, so selection and the page's touches still run,
+        // except under the veil, where a scroll would cancel the landing the veil is waiting on.
+        setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    fingerDown = true
+                    touchHeld = resumeVeil.isUp
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> fingerDown = false
+            }
+            touchHeld
+        }
+        setOnGenericMotionListener { _, _ -> resumeVeil.isUp }
+        setOnScrollChangeListener { _, _, y, _, oldY -> if (fingerDown) callbacks.onReaderScrolled(y - oldY) }
+        // Every layout, because the inset is only known once the window has one and it moves with the
+        // system bars; comparing first keeps an unchanged one from rewriting the page.
+        addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            val settings = documentSettings
+            if (settings != null && callbacks.cutoutTopDp() != documentInset) applySettings(settings)
+        }
+    }
+
+    override val view: View
+        get() = webView
+
+    // A novel chapter is one vertically scrolling document, so there is no right-to-left shape to report.
+    override val isRtl: Boolean
+        get() = false
+
+    /**
+     * Seeks inside the chapter being read rather than across the document, because with a window the
+     * two stopped being the same thing: a rail at half way means half of this chapter, not half of
+     * everything loaded around it. A paged progress is not this medium's unit and is ignored. Queued
+     * like a window verb: the engine runs ahead of the chapter, so a seek while a long one still parses
+     * measured half a page, and could count the chapter's end as seen, which is reported only once.
+     */
+    override fun seekTo(progress: ChapterProgress) {
+        if (progress !is ChapterProgress.Percent) return
+        val chapterId = visibleChapterId ?: return
+        runOrQueue("rkReader.seekWithin(${JSONObject.quote(chapterId.toString())}, ${progress.fraction});")
+    }
+
+    // Nothing to do: a step reloads the document, which starts at that chapter's own stored position.
+    override fun onChapterStepped() = Unit
+
+    override fun destroy() {
+        // First: a caller dropPendingCalls resumes can queue again, and a closed gate parks it.
+        gate.close()
+        dropPendingCalls()
+        scope.cancel()
+        webView.stopLoading()
+        // The bridge captures the host and is called off the main thread, so drop it before teardown.
+        // destroy() on an attached WebView is undefined and pins the hierarchy, hence the detach.
+        webView.removeJavascriptInterface(NovelWebBridge.NAME)
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        webView.destroy()
+    }
+
+    override fun handleKeyEvent(event: KeyEvent): Boolean {
+        if (!NovelVolumeKeys.isVolumeKey(event.keyCode) || !callbacks.volumeKeysActive()) return false
+        val current = documentSettings ?: return false
+        if (event.action == KeyEvent.ACTION_DOWN && !resumeVeil.isUp) {
+            scrollByFraction(
+                NovelVolumeKeys.scrollFraction(
+                    event.keyCode,
+                    current.volumeButtonsInverted,
+                    current.volumeButtonsFraction,
+                ),
+            )
+        }
+        // Consume the key-up too, so the system volume UI never shows during a press.
+        return true
+    }
+
+    override fun handleGenericMotionEvent(event: MotionEvent): Boolean = false
+
+    /**
+     * The document is assembled here rather than by the host, because it is this renderer's own
+     * format: the cutout inset is a custom property only this document has, and the build itself is
+     * off the main thread because a downloaded chapter has its images inlined and the string runs to
+     * megabytes.
+     */
+    override suspend fun load(chapter: NovelReaderViewModel.LoadedChapter, settings: NovelReaderSettings) {
+        visibleChapterId = chapter.chapterId
+        // A new document has no engine until it says so, and whatever the old one had queued belongs
+        // to a window that is being replaced.
+        dropPendingCalls()
+        held.clear()
+        held += chapter
+        shownPrevious = null
+        shownNext = null
+        shownEnd = null
+        val token = gate.open()
+        // A new page has run none of them.
+        snippetsRan.clear()
+        sourceStylesheets.clear()
+        chapter.sourceStylesheet?.let { sourceStylesheets += it }
+        // The document is built with this family's face, and any swap still resolving is for the old page.
+        faceJob?.cancel()
+        faceFamily = settings.fontFamily
+        val inset = callbacks.cutoutTopDp()
+        documentSettings = settings
+        documentInset = inset
+        // Resolving a user font copies it out of the user's storage folder on first use, which is
+        // disk work over SAF, so it happens off the main thread with the document build rather than
+        // in front of it.
+        val fontSource = webFonts.dataUri(context, fontManager, settings.fontFamily)
+        val initialFraction = chapter.progressPercent / 100f
+        val html = withContext(Dispatchers.Default) {
+            NovelWebDocument.build(
+                context = context,
+                chapterId = chapter.chapterId,
+                documentToken = token,
+                chapterHtml = webImages.rewrite(chapter.html, chapter.baseUrl, chapter.sourceId),
+                // Carried into the document rather than scrolled to afterwards, because the page has
+                // to exist before it has anywhere to scroll and the load is asynchronous.
+                initialFraction = initialFraction,
+                initialLine = chapter.topLine,
+                settings = settings,
+                statusBarHeightPx = inset,
+                fontSource = fontSource,
+                useOriginalFonts = useOriginalFonts,
+                sourceCssPriority = sourceCssPriority,
+                textSelectable = textSelectable,
+                sourceStylesheet = chapter.sourceStylesheet?.css,
+            )
+        }
+        val safeBaseUrl = NovelChapterAddress.trustedBase(chapter.baseUrl)
+        loadedBaseUrl = safeBaseUrl
+        resumeVeil.set(ResumeVeil.pageWaits(initialFraction))
+        webView.loadDataWithBaseURL(safeBaseUrl, html, "text/html", "UTF-8", null)
+        syncEnd()
+    }
+
+    /**
+     * Pushes changed display settings into the live document, so a size or colour change reflows in
+     * place rather than waiting for the next chapter. The custom properties are rewritten wholesale,
+     * since the stylesheet reads them; only what CSS cannot express goes to the page's own settings
+     * object. Queued like a window verb, because a change made while a document is still loading
+     * would otherwise find no engine and be dropped with no trace until the next chapter.
+     */
+    override fun applySettings(settings: NovelReaderSettings) {
+        val previous = documentSettings
+        val seamsMoved = documentSettings?.alwaysShowChapterTransition != settings.alwaysShowChapterTransition
+        documentSettings = settings
+        documentInset = callbacks.cutoutTopDp()
+        val variables = NovelWebDocument.variables(settings, documentInset)
+        val behaviour = NovelWebDocument.behaviourJson(settings).toString()
+        // A block, since runOrQueue's guard would otherwise cover only the first of the two.
+        runOrQueue(
+            "{ document.documentElement.setAttribute('style', ${JSONObject.quote(variables)}); " +
+                "rkReader.setSettings($behaviour); }",
+        )
+        if (settings.fontFamily != faceFamily) swapFontFace(settings.fontFamily)
+        if (seamsMoved) redrawSeams()
+        if (settings.webSnippets.css != previous?.webSnippets?.css) {
+            runOrQueue("rkReader.setSnippetCss(${NovelWebSnippets.jsLiteral(settings.webSnippets.css)});")
+        }
+        // Before the page is up, the ready report runs them all; after, only an added or edited one.
+        if (gate.isReady) runSnippets(settings.webSnippets.jsChangedSince(snippetsRan))
+    }
+
+    /** Code of each JavaScript snippet as it last ran in this page, by id, so an edit runs it again. */
+    private val snippetsRan = mutableMapOf<String, String>()
+
+    private fun runSnippets(snippets: List<NovelCodeSnippet>) {
+        NovelWebSnippets.runner(snippets)?.let { webView.evaluateJavascript(it, null) }
+        snippets.forEach { snippetsRan[it.id] = it.code }
+    }
+
+    // A chapter that lands before the page's own run would run its per-append code before the setup it
+    // relies on, so those runs are counted and made after it, from the snippets as they stand then.
+    private var appendsBeforeReady = 0
+
+    private fun appendRunner(): String? =
+        documentSettings?.webSnippets?.js?.filter { it.runOnAppend }?.let(NovelWebSnippets::runner)
+
+    /** Re-decides every seam the document holds, each named by the chapter it introduces, since the
+     *  page cannot tell which of its seams the setting hides. The end marker shows either way. */
+    private fun redrawSeams() {
+        held.zipWithNext { finished, next ->
+            val seam = NovelSeam.between(finished, next).drawn(documentSettings?.alwaysShowChapterTransition)
+            runOrQueue(
+                "rkReader.setSeam(${JSONObject.quote(next.chapterId.toString())}, " +
+                    "${seam?.let(::seamJson) ?: "null"});",
+            )
+        }
+    }
+
+    /** The variable above already names the new family; without its face the text falls back. */
+    private fun swapFontFace(family: String) {
+        faceFamily = family
+        faceJob?.cancel()
+        faceJob = scope.launch {
+            // The face travels as a data URI, so resolving it reads the file and escaping it copies
+            // megabytes for a CJK one; neither belongs on the thread the reader is scrolling on.
+            val js = withContext(Dispatchers.Default) {
+                val source = webFonts.dataUri(context, fontManager, family)
+                "rkReader.setFontFace(${JSONObject.quote(NovelWebDocument.fontFace(family, source))});"
+            }
+            runOrQueue(js)
+        }
+    }
+
+    /**
+     * Auto-scroll, run by the page. The speed is held because the document is rebuilt on every chapter
+     * and starts with the scroller stopped, so it is pushed again from the page's ready report. The
+     * engine sends its stop after [destroy] when the viewport is replaced, which must not reach the
+     * destroyed WebView.
+     */
+    override val autoScroll = ViewportAutoScroll.Continuous(autoScrollSpeed) { pixelsPerFrame ->
+        autoScrollPixelsPerFrame = pixelsPerFrame
+        if (scope.isActive) pushAutoScroll()
+    }
+
+    private fun pushAutoScroll() {
+        val js = if (autoScrollPixelsPerFrame > 0f) {
+            "if (window.rkReader) rkReader.autoScrollStart($autoScrollPixelsPerFrame);"
+        } else {
+            "if (window.rkReader) rkReader.autoScrollStop();"
+        }
+        webView.evaluateJavascript(js, null)
+    }
+
+    /** A tap the page passed up, read through the session's tap zones as the native renderer reads one. */
+    private fun onPageTap(x: Float, y: Float) {
+        when (documentSettings?.tapZones?.actionAt(x, y) ?: NovelTapAction.MENU) {
+            NovelTapAction.MENU -> callbacks.onToggleMenu()
+            NovelTapAction.BACK -> scrollByFraction(-NovelTapZones.SCROLL_FRACTION)
+            NovelTapAction.FORWARD -> scrollByFraction(NovelTapZones.SCROLL_FRACTION)
+            NovelTapAction.NONE -> Unit
+        }
+    }
+
+    /** Scrolls by a signed fraction of the screen (positive = forward), through the page's own
+     *  relative animation so a volume press moves exactly as a tap does. */
+    private fun scrollByFraction(fraction: Float) {
+        webView.evaluateJavascript(
+            "if (window.rkReader) rkReader.scrollSmoothlyBy(window.innerHeight * $fraction);",
+            null,
+        )
+    }
+
+    // The renderer holds a window, so the host drives these rather than reloading the document.
+    override val window: ChapterWindow
+        get() = this
+
+    override suspend fun append(chapter: NovelReaderViewModel.LoadedChapter) =
+        insert(chapter, atStart = false)
+
+    override suspend fun prepend(chapter: NovelReaderViewModel.LoadedChapter) =
+        insert(chapter, atStart = true)
+
+    /** Nothing is compensated here: the page holds the reader's line itself when content lands above it,
+     *  at scroll offset zero as anywhere else (`place` in reader.js). */
+    private suspend fun insert(chapter: NovelReaderViewModel.LoadedChapter, atStart: Boolean) {
+        // The page drops a chapter it already holds, so this list does too.
+        if (held.any { it.chapterId == chapter.chapterId }) return
+        val seam = if (atStart) {
+            held.firstOrNull()?.let { NovelSeam.between(chapter, it) }
+        } else {
+            held.lastOrNull()?.let { NovelSeam.between(it, chapter) }
+        }?.drawn(documentSettings?.alwaysShowChapterTransition)
+        held.add(if (atStart) 0 else held.size, chapter)
+        val verb = if (atStart) "prependChapter" else "appendChapter"
+        // Its own base, since the document's is the opened chapter's and a neighbour can come from a
+        // download or, in a merged series, another site.
+        val baseUrl = NovelChapterAddress.trustedBase(chapter.baseUrl)?.let(JSONObject::quote) ?: "null"
+        val seamJs = seam?.let(::seamJson)?.toString() ?: "null"
+        // Off the main thread for the reason the document build is: a downloaded chapter carries its
+        // images inline, so escaping it and copying the result runs past a frame on the string alone.
+        val js = withContext(Dispatchers.Default) {
+            "rkReader.$verb(" +
+                "${JSONObject.quote(chapter.chapterId.toString())}, " +
+                "${JSONObject.quote(webImages.rewrite(chapter.html, chapter.baseUrl, chapter.sourceId))}, " +
+                "$baseUrl, " +
+                "$seamJs);"
+        }
+        // Ahead of the chapter, so it never draws without the stylesheet its source ships.
+        chapter.sourceStylesheet?.takeIf { sourceStylesheets.add(it) }?.let {
+            runOrQueue("rkReader.addSourceCss(${NovelWebDocument.sourceCssLiteral(it.css)});")
+        }
+        runOrQueue(js)
+        if (gate.isReady) appendRunner()?.let(::runOrQueue) else appendsBeforeReady++
+        syncEnd()
+    }
+
+    /** Draws the end marker below the last chapter held when nothing follows it, and takes it away
+     *  once that chapter is no longer the last one held. Outside the chapters, as a failure is. */
+    private fun syncEnd() {
+        val end = held.lastOrNull()?.let(NovelSeam::end)?.drawn(documentSettings?.alwaysShowChapterTransition)
+        if (end == shownEnd) return
+        shownEnd = end
+        runOrQueue("rkReader.setEnd(${end?.let(::seamJson) ?: "null"});")
+    }
+
+    /** The marker's text, resolved here since the page has no resources. The labels are the document's.
+     *  One with no next chapter is the end marker, which the page draws with the no-next notice. */
+    private fun seamJson(seam: NovelSeam): JSONObject = JSONObject().apply {
+        put("finished", JSONObject().put("title", seam.finishedTitle).put("downloaded", seam.finishedDownloaded))
+        seam.nextTitle?.let { put("next", JSONObject().put("title", it).put("downloaded", seam.nextDownloaded)) }
+        if (seam.missingChapters > 0) {
+            put(
+                "missing",
+                context.pluralStringResource(
+                    MR.plurals.missing_chapters_warning,
+                    seam.missingChapters,
+                    seam.missingChapters,
+                ),
+            )
+        }
+    }
+
+    override fun evict(chapterId: Long) {
+        held.removeAll { it.chapterId == chapterId }
+        runOrQueue("rkReader.evictChapter(${JSONObject.quote(chapterId.toString())});")
+        syncEnd()
+    }
+
+    /** Runs [js] against the page, or holds it in order until the page says it has an engine. */
+    private fun runOrQueue(js: String, onResult: ((String?) -> Unit)? = null) {
+        val call = PendingCall(js, onResult)
+        if (onResult != null) awaitingResult += call
+        if (gate.isReady) {
+            evaluate(call)
+        } else {
+            pendingWindowVerbs += call
+        }
+    }
+
+    private fun evaluate(call: PendingCall) {
+        val answer = call.onResult?.let { onResult ->
+            ValueCallback<String> { if (awaitingResult.remove(call)) onResult(it) }
+        }
+        webView.evaluateJavascript("if (window.rkReader) ${call.js}", answer)
+    }
+
+    /**
+     * A document being replaced will never answer, so whoever waits on one of its calls hears null.
+     * Cleared before anyone hears it, since a caller resumed here can queue a call for the next document.
+     */
+    private fun dropPendingCalls() {
+        pendingWindowVerbs.clear()
+        appendsBeforeReady = 0
+        val unanswered = awaitingResult.toList()
+        awaitingResult.clear()
+        unanswered.forEach { it.onResult?.invoke(null) }
+    }
+
+    /** What [js] evaluates to in the page, as JSON, or null for a null or a page replaced before it answered. */
+    private suspend fun query(js: String): String? = withContext(Dispatchers.Main.immediate) {
+        suspendCancellableCoroutine { continuation ->
+            runOrQueue(js) { result -> if (continuation.isActive) continuation.resume(result.takeIf { it != "null" }) }
+        }
+    }
+
+    override val readAloud: ReadAloudSurface = object : ReadAloudSurface {
+        override suspend fun paragraphs(chapterId: Long): List<String>? {
+            val json = query("rkReader.readAloud.paragraphs(${JSONObject.quote(chapterId.toString())});") ?: return null
+            // The page's script can overwrite rkReader, so an answer that will not read is no answer.
+            return runCatching { JSONArray(json).let { array -> List(array.length(), array::getString) } }.getOrNull()
+        }
+
+        override suspend fun firstVisibleParagraph(): ReadAloudPosition? {
+            val json = query("rkReader.readAloud.firstVisible();") ?: return null
+            return runCatching {
+                val position = JSONObject(json)
+                ReadAloudPosition(position.getString("id").toLong(), position.getInt("paragraph"))
+            }.getOrNull()
+        }
+
+        override fun highlight(position: ReadAloudPosition?, range: IntRange?) {
+            val id = position?.let { JSONObject.quote(it.chapterId.toString()) } ?: "null"
+            val from = range?.first ?: -1
+            val to = range?.let { it.last + 1 } ?: -1
+            runOrQueue("rkReader.readAloud.highlight($id, ${position?.paragraph ?: -1}, $from, $to);")
+        }
+    }
+
+    override fun setObscured(top: Int, bottom: Int) {
+        val density = context.resources.displayMetrics.density
+        obscuredTop = top / density
+        obscuredBottom = bottom / density
+        pushObscured()
+    }
+
+    /** Pushed straight rather than queued, since the ready report pushes it again to each new page. */
+    private fun pushObscured() {
+        webView.evaluateJavascript(
+            "if (window.rkReader) rkReader.readAloud.setObscured($obscuredTop, $obscuredBottom);",
+            null,
+        )
+    }
+
+    private fun onPageReady(token: String) {
+        if (!gate.markReady(token)) return
+        // Ready follows the opening seek in the same task on the page, so the landed place is what shows.
+        resumeVeil.set(false)
+        // Ahead of the held calls, which can be read-aloud questions the covered edges answer.
+        pushObscured()
+        pendingWindowVerbs.forEach(::evaluate)
+        pendingWindowVerbs.clear()
+        pushAutoScroll()
+        // After the held calls, so a snippet finds every chapter that arrived while the page loaded.
+        documentSettings?.let { runSnippets(it.webSnippets.js) }
+        appendRunner()?.let { runner -> repeat(appendsBeforeReady) { webView.evaluateJavascript(runner, null) } }
+        appendsBeforeReady = 0
+    }
+
+    override fun setBoundaryFailures(
+        previous: NovelReaderViewModel.BoundaryFailure?,
+        next: NovelReaderViewModel.BoundaryFailure?,
+    ) {
+        if (previous != shownPrevious) {
+            shownPrevious = previous
+            pushBoundaryFailure(atStart = true, previous)
+        }
+        if (next != shownNext) {
+            shownNext = next
+            pushBoundaryFailure(atStart = false, next)
+        }
+    }
+
+    /** The same heading, message and action NovelBoundaryFailureView draws, resolved here because the
+     *  page has no resources. */
+    private fun pushBoundaryFailure(atStart: Boolean, failure: NovelReaderViewModel.BoundaryFailure?) {
+        val json = failure?.let {
+            JSONObject()
+                .put("heading", context.stringResource(MR.strings.chapter_load_failed))
+                .put("message", it.message ?: JSONObject.NULL)
+                .put("retry", context.stringResource(MR.strings.action_retry))
+        }
+        runOrQueue("rkReader.setBoundaryFailure($atStart, ${json ?: "null"});")
+    }
+
+    private fun Double.toPercent(): Int = ChapterProgress.Percent.wholeOf(this)
+}
+
+/** How much of a script error a toast shows, which is enough to find it in the inspector. */
+private const val CONSOLE_TOAST_CHARS = 120

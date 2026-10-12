@@ -1,0 +1,51 @@
+package reikai.domain.track
+
+import eu.kanade.tachiyomi.data.track.Tracker
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
+import eu.kanade.tachiyomi.data.database.models.Track as DbTrack
+
+/**
+ * The trackers one chapter push failed at. Both chapter interactors return it, so a caller that tells
+ * the user can name the trackers that refused the push; one that landed needs no word.
+ */
+data class ChapterPushOutcome(val failed: List<Pair<Tracker, Throwable>>) {
+
+    companion object {
+        /** Folds each tracker's result; failures are logged here, as both interactors did before. */
+        fun of(results: List<Pair<Tracker, Result<*>>>): ChapterPushOutcome {
+            val failed = results.mapNotNull { (tracker, result) -> result.exceptionOrNull()?.let { tracker to it } }
+            failed.forEach { (_, error) -> logcat(LogPriority.WARN, error) }
+            return ChapterPushOutcome(failed)
+        }
+    }
+}
+
+/**
+ * Push [chapterNumber] onto [track], the row just refreshed from the service; returns the row to persist.
+ *
+ * `update` is what flips the status to reading and stamps the start date, so writing back the row
+ * that went in loses both. Most trackers mutate and return that same instance; the server-backed
+ * ones re-fetch and return a `TrackSearch` with no local id, so a foreign answer is folded into the
+ * caller's row rather than replacing it. Shared by both chapter interactors, so the rule lives once.
+ */
+suspend fun Tracker.pushChapterProgress(track: DbTrack, chapterNumber: Double): DbTrack {
+    // Forward only, judged on the refreshed row: the caller's local row can be stale (read on another
+    // device). Nothing is sent, status included, and the service's progress comes back to be stored.
+    // A deliberate divergence from Mihon, whose push moves the service back to the chapter read.
+    val followsRereads = this is RereadPushTracker && followsRereads
+    if (chapterNumber <= track.last_chapter_read && !followsRereads) return track
+    // Each tracker's update starts the series only when the push is exactly chapter 1, which misses a
+    // series begun anywhere else. A push off zero is the start (both callers only push upwards), and a
+    // date already there is never replaced. The service's progress is read before this push overwrites it.
+    val startsSeries = track.last_chapter_read <= 0.0
+    track.last_chapter_read = chapterNumber
+    if (supportsReadingDates && startsSeries && track.started_reading_date == 0L) {
+        track.started_reading_date = System.currentTimeMillis()
+    }
+    val returned = update(track, didReadChapter = true)
+    if (returned !== track) {
+        track.copyPersonalFrom(returned)
+    }
+    return track
+}

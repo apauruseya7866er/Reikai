@@ -5,10 +5,10 @@ import java.time.Instant
 import java.util.Locale
 
 /**
- * Parse an lnreader plugin's chapter `releaseTime` string into epoch millis for the `dateUpload`
- * column. Plugins emit inconsistent shapes (ISO instants, relative phrases like "3 days ago", and a
+ * Parse an lnreader plugin's chapter `releaseTime` string into epoch millis, which `toNovelChapter`
+ * turns into the chapter's upload date. Plugins emit inconsistent shapes (ISO instants, relative phrases like "3 days ago", and a
  * handful of locale date formats), so each shape is tried in turn and anything unrecognized falls back
- * to 0L (unknown, rendered as no date) rather than guessing. Ported from tsundoku's JsSource.
+ * to 0L (unknown, which the sync fills as it does for manga) rather than guessing. Ported from tsundoku's JsSource.
  */
 object NovelDateParser {
 
@@ -54,9 +54,13 @@ object NovelDateParser {
             return now - millis
         }
 
-        // Common absolute date formats (day-precision, device-local midnight).
+        // Common absolute date formats (day-precision, device-local midnight). Strict, so a month or day
+        // out of range falls through to the next format instead of rolling over: a lenient dd/MM/yyyy
+        // read 12/25/2024 as January 2026 and left MM/dd/yyyy unreachable.
         for (format in DATE_FORMATS) {
-            val parsed = runCatching { SimpleDateFormat(format, Locale.US).parse(trimmed)?.time }.getOrNull()
+            val parsed = runCatching {
+                SimpleDateFormat(format, Locale.US).apply { isLenient = false }.parse(trimmed)?.time
+            }.getOrNull()
             if (parsed != null) return parsed
         }
 

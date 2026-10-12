@@ -8,19 +8,26 @@ import android.widget.Toast
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
+import eu.kanade.tachiyomi.util.system.setUserAgent
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CoroutineScope
 import okhttp3.Headers
+import okhttp3.HttpUrl // RK
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
 import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.i18n.MR
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap // RK
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantReadWriteLock // RK
+import kotlin.concurrent.withLock // RK
 
 abstract class WebViewInterceptor(
     private val context: Context,
+    private val scope: CoroutineScope,
     private val defaultUserAgentProvider: () -> String,
 ) : Interceptor {
 
@@ -46,25 +53,69 @@ abstract class WebViewInterceptor(
 
     abstract fun shouldIntercept(response: Response): Boolean
 
-    abstract fun intercept(chain: Interceptor.Chain, request: Request, response: Response): Response
+    // RK --> the per-host solve lock, from mihonapp/mihon#3858, which upstream has not merged.
+
+    /**
+     * The token that proves the host is currently cleared, read before and after a solve so a
+     * sibling request can tell whether one happened while it waited.
+     */
+    abstract fun getNonce(url: HttpUrl): String?
+
+    /** Whether a solve has landed since [oldNonce] was read. */
+    open fun isBypassed(url: HttpUrl, oldNonce: String?): Boolean = getNonce(url).let {
+        !it.isNullOrBlank() && it != oldNonce
+    }
+
+    /** Returns null to mean "solved, retry the request normally". */
+    abstract fun intercept(chain: Interceptor.Chain, request: Request, response: Response, nonce: String?): Response?
+
+    /**
+     * One solve per host at a time. A challenged page usually fires several requests at once, and
+     * without this each one opens its own WebView for a challenge one solve would clear.
+     *
+     * Held for the process rather than evicted: an entry is a bare lock, and the key space is the
+     * hosts the user actually browses. Upstream's version (mihonapp/mihon#3858) caps this at 256 with
+     * a second lock per entry guarding removal, which is a lot of machinery for the bytes it saves.
+     */
+    private val locksByHost = ConcurrentHashMap<String, ReentrantReadWriteLock>()
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
-        val response = chain.proceed(request)
-        if (!shouldIntercept(response)) {
-            return response
+        val url = request.url
+        val lock = locksByHost.computeIfAbsent(url.host) { ReentrantReadWriteLock() }
+
+        // Read lock for the ordinary request, so unchallenged requests to a host do not queue behind
+        // each other. They do wait out a solve in progress, which holds the write lock, and that is
+        // what they need: the solve is about to issue the clearance they would otherwise be refused for.
+        val (response, nonce) = lock.readLock().withLock {
+            chain.proceed(request).also {
+                if (!shouldIntercept(it)) return it
+            } to getNonce(url)
         }
 
-        if (!WebViewUtil.supportsWebView(context)) {
-            launchUI {
-                context.toast(MR.strings.information_webview_required, Toast.LENGTH_LONG)
+        val solved = lock.writeLock().withLock {
+            // A sibling may have solved this host while this thread queued for the write lock. Close
+            // the challenge response before the retry below reuses this call, or OkHttp refuses the
+            // new request; the subclass closes it on the path that reaches it, and this path does not.
+            if (isBypassed(url, nonce)) {
+                response.close()
+                return@withLock null
             }
-            return response
-        }
-        initWebView
 
-        return intercept(chain, request, response)
+            if (!WebViewUtil.supportsWebView(context)) {
+                scope.launchUI {
+                    context.toast(MR.strings.information_webview_required, Toast.LENGTH_LONG)
+                }
+                return@withLock response
+            }
+            initWebView
+
+            intercept(chain, request, response, nonce)
+        }
+
+        return solved ?: chain.proceed(request)
     }
+    // RK <--
 
     fun parseHeaders(headers: Headers): Map<String, String> {
         return headers
@@ -84,7 +135,7 @@ abstract class WebViewInterceptor(
         return WebView(context).apply {
             setDefaultSettings()
             // Avoid sending empty User-Agent, Chromium WebView will reset to default if empty
-            settings.userAgentString = request.header("User-Agent") ?: defaultUserAgentProvider()
+            setUserAgent(request.header("User-Agent") ?: defaultUserAgentProvider())
         }
     }
 }

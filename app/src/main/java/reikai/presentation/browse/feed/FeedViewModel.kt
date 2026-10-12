@@ -1,0 +1,280 @@
+package reikai.presentation.browse.feed
+
+import androidx.compose.runtime.Immutable
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesIntoMap
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.binding
+import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import eu.kanade.domain.source.interactor.GetEnabledSources
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
+import mihon.core.metro.AppCoroutineScope
+import reikai.domain.novel.FavoritedNovels
+import reikai.domain.novel.NovelRepository
+import reikai.domain.source.FeedSavedSearchRepository
+import reikai.domain.source.GetEnabledNovelSources
+import reikai.domain.source.ReikaiSourcePreferences
+import reikai.domain.source.SavedSearchRepository
+import reikai.domain.source.SourceKey
+import reikai.domain.source.isGlobalFeedFull
+import reikai.domain.source.model.FeedSavedSearch
+import reikai.domain.source.model.SavedSearch
+import reikai.novel.source.NovelExtensionFormat
+import reikai.novel.source.NovelSourceManager
+import reikai.presentation.browse.MangaAddFlow
+import reikai.presentation.browse.MangaLibraryAdder
+import reikai.presentation.browse.catalogue.EntryBrowseRow
+import reikai.presentation.browse.fillEntryRows
+import reikai.presentation.browse.globalsearch.BrowseSearchRow
+import reikai.presentation.browse.globalsearch.EntrySearchState
+import reikai.presentation.novel.browse.NovelAddFlow
+import reikai.presentation.novel.browse.NovelLibraryAdder
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.manga.interactor.NetworkToLocalManga
+import tachiyomi.domain.source.service.SourceManager
+
+/**
+ * The Browse feed: a row per source the reader added, showing what it has right now.
+ *
+ * Content-type neutral by construction. A row is stored as a [SourceKey] and an optional saved
+ * search, and the two providers answer for their own sources; nothing here knows what a manga or a
+ * plugin looks like.
+ */
+@Inject
+@ViewModelKey
+@ContributesIntoMap(AppScope::class, binding = binding<ViewModel>())
+class FeedViewModel(
+    @AppCoroutineScope private val appScope: CoroutineScope,
+    private val feedRepository: FeedSavedSearchRepository,
+    private val savedSearchRepository: SavedSearchRepository,
+    private val preferences: ReikaiSourcePreferences,
+    private val novelRepository: NovelRepository,
+    getManga: GetManga,
+    mangaAdder: MangaLibraryAdder,
+    novelAdder: NovelLibraryAdder,
+    sourceManager: SourceManager,
+    getEnabledSources: GetEnabledSources,
+    networkToLocalManga: NetworkToLocalManga,
+    novelSourceManager: NovelSourceManager,
+    getEnabledNovelSources: GetEnabledNovelSources,
+) : ViewModel() {
+
+    /** The library's (source, url) keys, which every novel result row reads its in-library badge off. */
+    private val favoritedNovels = MutableStateFlow(FavoritedNovels.None)
+
+    private val providers = listOf(
+        MangaFeedProvider(sourceManager, getEnabledSources, networkToLocalManga, getManga),
+        NovelFeedProvider(novelSourceManager, getEnabledNovelSources, favoritedNovels),
+    )
+
+    val state: StateFlow<FeedState>
+        field = MutableStateFlow(FeedState())
+
+    /** Adding from a cover, the same flow every browse surface runs, one per content type. */
+    val mangaAddFlow = MangaAddFlow(mangaAdder, viewModelScope, appScope)
+    val novelAddFlow = NovelAddFlow(novelAdder, viewModelScope, appScope)
+
+    private var loadJob: Job? = null
+
+    init {
+        viewModelScope.launchIO {
+            // Every type's registry as well as the table, since a source installed or removed later
+            // changes which rows can be shown and the table does not emit for that.
+            combine(
+                feedRepository.subscribeGlobal(),
+                combine(providers.map { it.sourceChanges }) {},
+            ) { feeds, _ -> feeds }
+                .collectLatest(::onFeedChanged)
+        }
+        viewModelScope.launchIO {
+            novelRepository.getFavoritedKeysAsFlow().collectLatest { favoritedNovels.value = it }
+        }
+    }
+
+    /**
+     * Rebuilds the feed whenever its rows change. Every row refetches: adding or removing one is rare
+     * and deliberate, so keeping results across a rebuild would buy little for the bookkeeping it
+     * costs. A row whose source is gone is kept and marked unavailable, never dropped: dropping it
+     * hid the row from the list while it still counted against the cap, so it could not be removed.
+     */
+    private suspend fun onFeedChanged(feeds: List<FeedSavedSearch>) {
+        loadJob?.cancel()
+        val searches = savedSearchRepository.getAll().associateBy { it.id }
+        val entries = feeds.map { feed ->
+            val provider = providers.firstOrNull { it.contentType == feed.sourceKey.contentType }
+            val row = provider?.source(feed.sourceKey)
+            val search = feed.savedSearchId?.let { searches[it] }
+            // A gone source keeps the name it was stored with; the stored key stands in only where it
+            // has none (a row restored for a source never installed here).
+            val sourceName = row?.name
+                ?: provider?.missingName(feed.sourceKey)?.ifBlank { null }
+                ?: feed.sourceKey.serialize()
+            FeedEntry(
+                feedId = feed.id,
+                savedSearch = search,
+                row = row?.copy(id = feed.id.toString(), name = search?.name ?: row.name)
+                    ?: unavailableRow(feed, search, sourceName),
+                sourceName = sourceName,
+                supportsLatest = row != null && provider.supportsLatest(row),
+            )
+        }
+        state.update { it.copy(entries = entries, loaded = true) }
+        startFilling(entries)
+    }
+
+    private fun unavailableRow(feed: FeedSavedSearch, search: SavedSearch?, sourceName: String) = BrowseSearchRow(
+        key = feed.sourceKey,
+        name = search?.name ?: sourceName,
+        lang = "",
+        isPinned = false,
+        state = EntrySearchState.Unavailable,
+        // Never read: only a filled row unwraps this, and an unavailable one is never filled.
+        source = Unit,
+        id = feed.id.toString(),
+    )
+
+    /** Runs every waiting row of [entries], replacing whatever pass was already going. */
+    private fun startFilling(entries: List<FeedEntry>) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launchIO {
+            fillEntryRows(
+                rows = entries.map { it.row },
+                group = { it.key.contentType },
+                updateRows = { transform ->
+                    state.update { current -> current.copy(entries = current.entries.withRows(transform)) }
+                },
+                load = { row ->
+                    val entry = entries.first { it.row.id == row.id }
+                    val provider = providers.first { it.contentType == row.key.contentType }
+                    provider.load(row, entry.savedSearch).filterInLibrary()
+                },
+            )
+        }
+    }
+
+    /** Hides what is already in the library, when the reader asked for that. */
+    private fun List<EntryBrowseRow>.filterInLibrary(): List<EntryBrowseRow> {
+        if (!preferences.hideInLibraryFeedItems.get()) return this
+        return filterNot { it.content.value.ui.favorite }
+    }
+
+    fun openAddDialog() {
+        viewModelScope.launchIO {
+            if (feedRepository.isGlobalFeedFull()) {
+                state.update { it.copy(dialog = FeedDialog.TooManyRows) }
+                return@launchIO
+            }
+            val sources = providers.flatMap { it.sources() }.sortedBy { it.name.lowercase() }
+            state.update { it.copy(dialog = FeedDialog.PickSource(sources)) }
+        }
+    }
+
+    /** Second step: the source's own saved searches, plus its plain listing. */
+    fun pickSource(source: BrowseSearchRow) {
+        viewModelScope.launchIO {
+            val searches = savedSearchRepository.getBySource(source.key)
+            val provider = providers.first { it.contentType == source.key.contentType }
+            state.update {
+                it.copy(dialog = FeedDialog.PickSearch(source, searches, provider.supportsLatest(source)))
+            }
+        }
+    }
+
+    fun add(source: BrowseSearchRow, savedSearch: SavedSearch?) {
+        viewModelScope.launchIO {
+            feedRepository.insert(source.key, savedSearch?.id, global = true)
+            state.update { it.copy(dialog = null) }
+        }
+    }
+
+    /** Commits a drag. The table re-emits, which rebuilds and refetches every row once. */
+    fun reorder(orderedFeedIds: List<Long>) {
+        viewModelScope.launchIO { feedRepository.updateOrders(orderedFeedIds) }
+    }
+
+    fun confirmRemove(entry: FeedEntry) {
+        state.update { it.copy(dialog = FeedDialog.Remove(entry)) }
+    }
+
+    fun remove(entry: FeedEntry) {
+        viewModelScope.launchIO {
+            feedRepository.delete(entry.feedId)
+            state.update { it.copy(dialog = null) }
+        }
+    }
+
+    /**
+     * Asks every row again. Nothing else does: a feed left open would otherwise go stale. An
+     * unavailable row is left as it is, because there is no source behind it to ask.
+     */
+    fun refresh() {
+        // Read and written in one update, so a row list arriving from the table between the two
+        // cannot be filled from the stale snapshot and left showing a spinner that never clears.
+        lateinit var entries: List<FeedEntry>
+        state.update { current ->
+            entries = current.entries.map {
+                if (it.row.state is EntrySearchState.Unavailable) {
+                    it
+                } else {
+                    it.copy(row = it.row.copy(state = EntrySearchState.Loading))
+                }
+            }
+            current.copy(entries = entries)
+        }
+        startFilling(entries)
+    }
+
+    fun dismissDialog() = state.update { it.copy(dialog = null) }
+}
+
+/** One row of the feed: what it shows, and what it was built from. */
+@Immutable
+data class FeedEntry(
+    val feedId: Long,
+    val savedSearch: SavedSearch?,
+    val row: BrowseSearchRow,
+    /** Named separately because a saved-search row is titled by the search, not by its source. */
+    val sourceName: String,
+    /** Where opening this row lands: its Latest, or Popular where the source has no latest. */
+    val supportsLatest: Boolean,
+)
+
+@Immutable
+data class FeedState(
+    val entries: List<FeedEntry> = emptyList(),
+    /** False until the first read of the table lands, so an empty feed is not claimed too early. */
+    val loaded: Boolean = false,
+    val dialog: FeedDialog? = null,
+) {
+    /** Novel sources of more than one packaging are in the feed, so each heading names its own. */
+    val showsFormat: Boolean = NovelExtensionFormat.tellsApart(entries.map { it.row.format })
+}
+
+sealed interface FeedDialog {
+    data class PickSource(val sources: List<BrowseSearchRow>) : FeedDialog
+    data class PickSearch(
+        val source: BrowseSearchRow,
+        val searches: List<SavedSearch>,
+        /** Names the plain-listing option for what it will show, Latest or Popular. */
+        val supportsLatest: Boolean,
+    ) : FeedDialog
+    data class Remove(val entry: FeedEntry) : FeedDialog
+    data object TooManyRows : FeedDialog
+}
+
+/** Applies a row transform to the entries wrapping them, keeping each entry's own fields. */
+private fun List<FeedEntry>.withRows(
+    transform: (List<BrowseSearchRow>) -> List<BrowseSearchRow>,
+): List<FeedEntry> {
+    val byId = transform(map { it.row }).associateBy { it.id }
+    return map { entry -> byId[entry.row.id]?.let { entry.copy(row = it) } ?: entry }
+}

@@ -1,0 +1,76 @@
+package reikai.presentation.browse.catalogue
+
+import androidx.paging.PagingData
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import reikai.presentation.browse.EntryAddFlow
+import tachiyomi.domain.library.model.LibraryDisplayMode
+
+/**
+ * The neutral behaviour both content types expose to the shared catalogue screen: the state stream,
+ * the paged rows, and the verbs the toolbar, chip row, grid and dialogs call. Only actions both types
+ * answer for real live here, so the spine never grows a method one adapter no-ops. What one type
+ * alone can do goes on a capability slot instead. Navigation is not here either: the screen routes on
+ * the source key, the way the shared global search does.
+ */
+interface EntryBrowseBehavior {
+    val state: StateFlow<EntryBrowseScreenState>
+
+    /** The paged catalogue. The outer flow re-emits when the listing changes, which is what restarts
+     *  paging; this is the shape `collectAsLazyPagingItems` takes. */
+    val rows: StateFlow<Flow<PagingData<EntryBrowseRow>>>
+
+    // Listing and search.
+    fun setListing(listing: EntryBrowseListing)
+
+    /** The in-toolbar text as it is typed. Does not run a search. */
+    fun setQuery(query: String?)
+
+    /** Commit [query] as the listing, or clear the search when it is null or blank. */
+    fun search(query: String?)
+
+    /** Search [genre] through the source's own filters, or as text when it offers none of that name. */
+    fun searchGenre(genre: String)
+
+    fun setDisplayMode(mode: LibraryDisplayMode)
+
+    // Filters. The sheet itself is dispatched per type; these are the verbs both sides share.
+    fun openFilterSheet()
+    fun resetFilters()
+
+    /** The listing as it stands, in the form a saved search stores. */
+    fun captureSearch(): SavedSearchDraft
+
+    /** Show what a saved search held. Both parts are applied together where the source takes both. */
+    fun applySearch(query: String?, filtersJson: String?)
+
+    // Rows and bulk selection. A row is passed whole so each adapter unwraps its own payload rather
+    // than the shared layer keeping a key-to-entry table beside the pager.
+    fun onRowLongClick(row: EntryBrowseRow)
+    fun setSelectionMode(enabled: Boolean)
+    fun toggleSelection(row: EntryBrowseRow)
+    fun selectAll(rows: List<EntryBrowseRow>)
+    fun invertSelection(rows: List<EntryBrowseRow>)
+
+    /** Add every selected row to the library. A category prompt, when one is needed, is the bulk
+     *  model's own and the screen draws it the way every bulk surface does. */
+    fun addSelectionToLibrary()
+
+    /** Close the filter sheet. */
+    fun dismissDialog()
+
+    /** What a long press on a row asks, and the verbs that answer it; [onRowLongClick] starts it. */
+    val addFlow: EntryAddFlow<*>
+}
+
+/**
+ * What a saved search records: the committed query, and the source's filters in whatever form its own
+ * content type encodes them. Either may be null, and a draft with neither is not worth saving.
+ *
+ * Where filters go follows the source's filter kind: a manga source or a novel source with a Mihon
+ * filter list takes both at once, while an LNReader plugin takes a query or filters, never both, so
+ * its searches with a query are saved without filters (see `NovelSavedSearchRun`).
+ */
+data class SavedSearchDraft(val query: String?, val filtersJson: String?) {
+    val isEmpty: Boolean get() = query.isNullOrBlank() && filtersJson == null
+}

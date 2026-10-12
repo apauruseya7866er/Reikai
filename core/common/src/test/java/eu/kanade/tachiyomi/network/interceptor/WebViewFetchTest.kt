@@ -1,0 +1,276 @@
+package eu.kanade.tachiyomi.network.interceptor
+
+import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.shouldBe
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MultipartBody
+import okhttp3.Protocol
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okio.Buffer
+import okio.BufferedSink
+import org.junit.jupiter.api.Test
+import java.util.Base64
+
+class WebViewFetchTest {
+
+    private fun get(url: String = "https://www.example.com/page") = Request.Builder().url(url)
+
+    private fun headersSent(request: Request): List<Pair<String, String>> =
+        webViewFetchMessage("id", request, manualRedirect = false)!!["headers"]!!.jsonArray.map {
+            it.jsonArray[0].jsonPrimitive.content to it.jsonArray[1].jsonPrimitive.content
+        }
+
+    @Test
+    fun `a method outside the fixed set never reaches the page`() {
+        webViewFetchMessage("id", get().method("GET'});alert(1)//", null).build(), false).shouldBeNull()
+    }
+
+    @Test
+    fun `a header value reaches the page as data, quotes and all`() {
+        val value = "x'});navigator.serviceWorker.register('/sw.js');//"
+
+        headersSent(get().header("X-Token", value).build()) shouldBe listOf("X-Token" to value)
+    }
+
+    @Test
+    fun `headers the WebView supplies itself or a page may not set stay behind`() {
+        val request = get()
+            .header("Cookie", "a=b").header("User-Agent", "ua").header("Sec-Fetch-Mode", "cors")
+            .header("Proxy-Authorization", "p").header("Authorization", "Bearer t")
+            .build()
+
+        headersSent(request) shouldBe listOf("Authorization" to "Bearer t")
+    }
+
+    @Test
+    fun `a posted form goes as its bytes with its multipart type`() {
+        val body = MultipartBody.Builder("b").setType(MultipartBody.FORM).addFormDataPart("action", "x").build()
+        val message = webViewFetchMessage("id", get().post(body).build(), false)!!
+
+        message["contentType"]!!.jsonPrimitive.content shouldBe "multipart/form-data; boundary=b"
+    }
+
+    @Test
+    fun `a body that can only be sent once is not carried`() {
+        val oneShot = object : okhttp3.RequestBody() {
+            override fun contentType() = null
+            override fun writeTo(sink: BufferedSink) = Unit
+            override fun isOneShot() = true
+        }
+
+        webViewFetchMessage("id", get().post(oneShot).build(), false).shouldBeNull()
+    }
+
+    @Test
+    fun `a posted body round-trips through base64`() {
+        val message = webViewFetchMessage("id", get().post("a=1&b=2".toRequestBody()).build(), false)!!
+
+        String(Base64.getDecoder().decode(message["body"]!!.jsonPrimitive.content)) shouldBe "a=1&b=2"
+    }
+
+    @Test
+    fun `an opaque answer is not a response`() {
+        webViewFetchResponse(get().build(), 0, "", emptyList(), null, Buffer()).shouldBeNull()
+    }
+
+    @Test
+    fun `the decoded body does not keep the encoding the server sent`() {
+        val headers = listOf("Content-Encoding" to "gzip", "Content-Length" to "5", "Content-Type" to "text/html")
+        val response = webViewFetchResponse(get().build(), 200, "OK", headers, null, Buffer().writeUtf8("hello"))!!
+
+        response.headers.names() shouldBe setOf("Content-Type")
+    }
+
+    @Test
+    fun `a final URL on the same site becomes the response's URL`() {
+        val response = webViewFetchResponse(
+            get().build(),
+            200,
+            "OK",
+            emptyList(),
+            "https://www.example.com/moved",
+            Buffer(),
+        )!!
+
+        response.request.url.encodedPath shouldBe "/moved"
+    }
+
+    @Test
+    fun `a final URL on another site is not taken`() {
+        val response = webViewFetchResponse(
+            get().build(),
+            200,
+            "OK",
+            emptyList(),
+            "https://evil.example.net/",
+            Buffer(),
+        )!!
+
+        response.request.url.host shouldBe "www.example.com"
+    }
+
+    @Test
+    fun `a body a browser decoded keeps neither its framing nor its cookies`() {
+        val headers = listOf("Transfer-Encoding" to "chunked", "Set-Cookie" to "a=b", "Content-Type" to "text/html")
+        val response = webViewFetchResponse(get().build(), 200, "OK", headers, null, Buffer().writeUtf8("hello"))!!
+
+        response.headers.names() shouldBe setOf("Content-Type")
+    }
+
+    @Test
+    fun `a challenge in a browser's lower-case header names is recognised`() {
+        isCloudflareChallenge(listOf("cf-mitigated" to "challenge", "server" to "cloudflare")) shouldBe true
+    }
+
+    @Test
+    fun `a challenge is recognised in a server's mixed-case header names`() {
+        isCloudflareChallenge(listOf("CF-Mitigated" to "challenge", "Server" to "cloudflare")) shouldBe true
+    }
+
+    @Test
+    fun `cf-mitigated from a server that is not Cloudflare is no challenge`() {
+        isCloudflareChallenge(listOf("cf-mitigated" to "challenge")) shouldBe false
+    }
+
+    @Test
+    fun `a plain Cloudflare answer is no challenge`() {
+        isCloudflareChallenge(listOf("server" to "cloudflare")) shouldBe false
+    }
+
+    @Test
+    fun `two IPv6 origins that print alike are still apart`() {
+        isSameOrigin("http://[::1]:8080/".toHttpUrl(), "http://[::1:8080]/".toHttpUrl()) shouldBe false
+    }
+
+    // Only which request is challenged: that CloudflareInterceptor.served solves and reopens that page
+    // runs a WebView, so it is checked on a device, not here.
+    @Test
+    fun `a served hop that Cloudflare challenges names the hop's own request`() {
+        val challenge = Response.Builder()
+            .request(get("https://target.example.net/chapter").build())
+            .protocol(Protocol.HTTP_1_1)
+            .code(403)
+            .message("Forbidden")
+            .header("cf-mitigated", "challenge")
+            .header("Server", "cloudflare")
+            .build()
+
+        webViewFetchChallengedHop(challenge)!!.url.host shouldBe "target.example.net"
+    }
+
+    @Test
+    fun `a served answer that is no challenge is passed on`() {
+        val answer = Response.Builder()
+            .request(get("https://target.example.net/chapter").build())
+            .protocol(Protocol.HTTP_1_1)
+            .code(200)
+            .message("OK")
+            .header("Server", "cloudflare")
+            .build()
+
+        webViewFetchChallengedHop(answer).shouldBeNull()
+    }
+
+    @Test
+    fun `a redirect to another site drops the credentials`() {
+        val request = get().header("Authorization", "Bearer t").build()
+
+        webViewFetchFollowUp(
+            request,
+            "https://other.example.net/x",
+            true,
+            true,
+        )!!.header("Authorization").shouldBeNull()
+    }
+
+    @Test
+    fun `a redirect on the same site keeps the credentials`() {
+        val request = get().header("Authorization", "Bearer t").build()
+
+        webViewFetchFollowUp(request, "/next", true, true)!!.header("Authorization") shouldBe "Bearer t"
+    }
+
+    @Test
+    fun `a redirected post is not replayed`() {
+        webViewFetchFollowUp(get().post("a".toRequestBody()).build(), "/next", true, true).shouldBeNull()
+    }
+
+    @Test
+    fun `a redirect off the web is not followed`() {
+        webViewFetchFollowUp(get().build(), "file:///data/data/app/secret", true, true).shouldBeNull()
+    }
+
+    @Test
+    fun `a redirect from https to http follows the client's setting`() {
+        webViewFetchFollowUp(get().build(), "http://www.example.com/", true, followSslRedirects = false).shouldBeNull()
+    }
+
+    @Test
+    fun `a redirect from https to http is followed when the client allows it`() {
+        webViewFetchFollowUp(get().build(), "http://www.example.com/", true, followSslRedirects = true)!!
+            .url.scheme shouldBe "http"
+    }
+
+    @Test
+    fun `a referrer on the request's own site is named to the page`() {
+        val request = get().header("Referer", "https://www.example.com/list").build()
+
+        webViewFetchMessage("id", request, false)!!["referrer"]!!.jsonPrimitive.content shouldBe
+            "https://www.example.com/list"
+    }
+
+    @Test
+    fun `a referrer on another site is left out rather than replaced by the page's own`() {
+        val request = get().header("Referer", "https://other.example.net/").build()
+
+        webViewFetchMessage("id", request, false)!!["referrer"].shouldBeNull()
+    }
+
+    @Test
+    fun `a fetch that landed on another site is a redirect there`() {
+        webViewFetchLandedElsewhere(get().build(), "https://mirror.example.net/c/1") shouldBe
+            "https://mirror.example.net/c/1"
+    }
+
+    @Test
+    fun `a fetch that stayed on its site is no redirect`() {
+        webViewFetchLandedElsewhere(get().build(), "https://www.example.com/moved").shouldBeNull()
+    }
+
+    @Test
+    fun `a client that follows no redirects gets none here either`() {
+        webViewFetchFollowUp(get().build(), "/next", followRedirects = false, followSslRedirects = true).shouldBeNull()
+    }
+
+    private fun servedLog(verbose: Boolean): List<String> {
+        val answer = Response.Builder()
+            .request(get().build())
+            .protocol(Protocol.HTTP_1_1)
+            .code(200)
+            .message("OK")
+            .header("Set-Cookie", "session=secret")
+            .build()
+        val lines = mutableListOf<String>()
+        logBypassServed(answer, "solved in WebView", verbose) { lines += it }
+        return lines
+    }
+
+    @Test
+    fun `a served answer logs its own status line and no headers`() {
+        servedLog(verbose = true) shouldBe listOf("<-- 200 OK (solved in WebView) https://www.example.com/page")
+    }
+
+    @Test
+    fun `a served answer logs nothing without verbose logging`() {
+        servedLog(verbose = false) shouldBe emptyList()
+    }
+
+    @Test
+    fun `a custom port is a different page`() {
+        webViewFetchOrigin("https://h.example.com:8443/x".toHttpUrl()) shouldBe "https://h.example.com:8443"
+    }
+}

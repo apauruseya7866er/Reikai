@@ -1,167 +1,68 @@
 package reikai.presentation.library
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import eu.kanade.tachiyomi.ui.library.LibrarySettingsScreenModel
-import reikai.presentation.category.CategoryFilterRow
-import reikai.presentation.category.CategoryFilterSection
-import reikai.presentation.category.toLongIdSet
-import tachiyomi.domain.category.model.Category
+import eu.kanade.tachiyomi.ui.library.LibrarySettingsViewModel
+import reikai.domain.library.CategorySortOrder
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.CheckboxItem
 import tachiyomi.presentation.core.components.HeadingItem
 import tachiyomi.presentation.core.components.SettingsChipRow
-import tachiyomi.presentation.core.components.SettingsItemsPaddings
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 
 /**
- * Reikai-specific settings-sheet pieces grafted into Mihon's `LibrarySettingsDialog` (Stage 4):
- * a Group tab (Y3 dynamic grouping) and the include/exclude category filter (ported from Komikku's
- * `CategoriesFilter`, re-typed onto Mihon's `Category` + Reikai prefs). The category picker's Edit
- * also reaches Mihon's full category management screen via [onManageCategories].
+ * Reikai's category and hopper settings, under a "Categories" heading at the bottom of the Display tab
+ * ([EntryDisplayPage]). They are library-wide rather than per-content-type, which is why they hang off
+ * the shared display model rather than off a [LibrarySettingsBinding].
  *
- * Follows Mihon's settings idiom (prefs read in the composable via `collectAsState`), consistent
- * with the rest of `LibrarySettingsDialog`.
- */
-
-private val groupModes = listOf(
-    LibraryGroup.BY_DEFAULT to MR.strings.group_by_default,
-    LibraryGroup.BY_TAG to MR.strings.group_by_tag,
-    LibraryGroup.BY_SOURCE to MR.strings.group_by_source,
-    LibraryGroup.BY_STATUS to MR.strings.group_by_status,
-    LibraryGroup.BY_TRACK_STATUS to MR.strings.group_by_tracking_status,
-    LibraryGroup.BY_AUTHOR to MR.strings.group_by_author,
-    LibraryGroup.BY_LANGUAGE to MR.strings.group_by_language,
-    LibraryGroup.UNGROUPED to MR.strings.group_ungrouped,
-)
-
-@Composable
-fun ColumnScope.ReikaiGroupPage(screenModel: LibrarySettingsScreenModel) {
-    val groupLibraryBy by screenModel.reikaiLibraryPreferences.groupLibraryBy.collectAsState()
-    groupModes.forEach { (mode, labelRes) ->
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { screenModel.setGrouping(mode) }
-                .padding(
-                    horizontal = SettingsItemsPaddings.Horizontal,
-                    vertical = SettingsItemsPaddings.Vertical,
-                ),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
-        ) {
-            RadioButton(selected = groupLibraryBy == mode, onClick = null)
-            Text(text = stringResource(labelRes), style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-private val categorySortOrders = listOf(
-    MR.strings.category_sort_off to 0,
-    MR.strings.category_sort_a_to_z to 1,
-    MR.strings.category_sort_z_to_a to 2,
-)
-
-private val hopperLongPressActions = listOf(
-    MR.strings.hopper_action_search to 0,
-    MR.strings.hopper_action_expand_collapse to 1,
-    MR.strings.hopper_action_display to 2,
-    MR.strings.hopper_action_group to 3,
-    MR.strings.hopper_action_random to 4,
-    MR.strings.hopper_action_random_global to 5,
-)
-
-/**
- * The wired Reikai category/hopper settings, rendered under a "Categories" heading at the bottom
- * of the Display tab. The category-in-title, show-empty-while-filtering, hopper autohide-on-scroll,
- * and hopper long-press settings are intentionally absent until their backing behavior is wired
- * (they would otherwise be inert toggles).
+ * Follows Mihon's settings idiom (preferences read in the composable via `collectAsState`), consistent
+ * with the rest of the settings sheet.
  */
 @Composable
-fun ColumnScope.ReikaiCategoriesPage(screenModel: LibrarySettingsScreenModel) {
+fun ColumnScope.ReikaiCategoriesPage(viewModel: LibrarySettingsViewModel) {
     HeadingItem(MR.strings.categories)
-    val categorySortOrder by screenModel.reikaiLibraryPreferences.categorySortOrder.collectAsState()
+    val categorySortOrder by viewModel.reikaiLibraryPreferences.categorySortOrder.collectAsState()
     SettingsChipRow(MR.strings.pref_category_sort_order) {
-        categorySortOrders.forEach { (labelRes, value) ->
+        CategorySortOrder.entries.forEach { order ->
             FilterChip(
-                selected = categorySortOrder == value,
-                onClick = { screenModel.setCategorySortOrder(value) },
-                label = { Text(stringResource(labelRes)) },
+                selected = categorySortOrder == order,
+                onClick = { viewModel.setCategorySortOrder(order) },
+                label = { Text(stringResource(order.titleRes)) },
             )
         }
     }
     CheckboxItem(
         label = stringResource(MR.strings.always_show_current_category),
-        pref = screenModel.reikaiLibraryPreferences.showCategoryInTitle,
+        pref = viewModel.reikaiLibraryPreferences.showCategoryInTitle,
     )
     CheckboxItem(
         label = stringResource(MR.strings.move_dynamic_to_bottom),
-        pref = screenModel.reikaiLibraryPreferences.collapsedDynamicAtBottom,
-    )
-    CheckboxItem(
-        label = stringResource(MR.strings.show_categories_while_filtering),
-        pref = screenModel.reikaiLibraryPreferences.showEmptyCategoriesWhileFiltering,
+        pref = viewModel.reikaiLibraryPreferences.collapsedDynamicAtBottom,
     )
     CheckboxItem(
         label = stringResource(MR.strings.show_hidden_categories),
-        pref = screenModel.reikaiLibraryPreferences.showHiddenCategories,
+        pref = viewModel.reikaiLibraryPreferences.showHiddenCategories,
     )
     CheckboxItem(
         label = stringResource(MR.strings.hide_category_hopper),
-        pref = screenModel.reikaiLibraryPreferences.hideHopper,
+        pref = viewModel.reikaiLibraryPreferences.hideHopper,
     )
     CheckboxItem(
         label = stringResource(MR.strings.autohide_category_hopper),
-        pref = screenModel.reikaiLibraryPreferences.autohideHopper,
+        pref = viewModel.reikaiLibraryPreferences.autohideHopper,
     )
-    val hopperLongPress by screenModel.reikaiLibraryPreferences.hopperLongPressAction.collectAsState()
+    val hopperLongPress by viewModel.reikaiLibraryPreferences.hopperLongPressAction.collectAsState()
     SettingsChipRow(MR.strings.hopper_long_press) {
-        hopperLongPressActions.forEach { (labelRes, value) ->
+        HopperLongPressAction.entries.forEach { action ->
             FilterChip(
-                selected = hopperLongPress == value,
-                onClick = { screenModel.setHopperLongPressAction(value) },
-                label = { Text(stringResource(labelRes)) },
+                selected = hopperLongPress == action.code,
+                onClick = { viewModel.setHopperLongPressAction(action) },
+                label = { Text(stringResource(action.labelRes)) },
             )
         }
     }
-}
-
-@Composable
-fun ColumnScope.ReikaiCategoriesFilter(
-    screenModel: LibrarySettingsScreenModel,
-    categories: List<Category>,
-    onManageCategories: () -> Unit,
-) {
-    val filterCategories by screenModel.reikaiLibraryPreferences.filterCategories.collectAsState()
-    val included by screenModel.reikaiLibraryPreferences.filterCategoriesInclude.collectAsState()
-    val excluded by screenModel.reikaiLibraryPreferences.filterCategoriesExclude.collectAsState()
-
-    CategoryFilterRow(
-        enabled = filterCategories,
-        onToggleEnabled = screenModel::setFilterCategories,
-        sections = listOf(
-            CategoryFilterSection(
-                headingRes = null,
-                categories = categories,
-                included = included.toLongIdSet(),
-                excluded = excluded.toLongIdSet(),
-                onConfirm = screenModel::setCategoryFilterSelections,
-            ),
-        ),
-        onManageCategories = onManageCategories,
-    )
 }

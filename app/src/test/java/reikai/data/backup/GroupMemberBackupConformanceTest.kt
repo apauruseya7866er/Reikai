@@ -1,0 +1,134 @@
+package reikai.data.backup
+
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import eu.kanade.tachiyomi.data.backup.create.BackupOptions
+import eu.kanade.tachiyomi.data.backup.create.creators.MangaBackupCreator
+import eu.kanade.tachiyomi.data.backup.create.creators.NovelBackupCreator
+import io.kotest.matchers.shouldBe
+import io.mockk.coEvery
+import io.mockk.mockk
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
+import reikai.data.merge.MergeGroupRepositoryImpl
+import reikai.data.novel.NovelHistoryRepositoryImpl
+import reikai.data.novel.NovelRepositoryImpl
+import reikai.domain.chapter.NoChapterNumberOverrides
+import reikai.domain.library.ContentType
+import tachiyomi.data.Database
+import tachiyomi.data.DatabaseBindings
+import tachiyomi.data.manga.MangaRepositoryImpl
+import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.manga.model.Manga
+import kotlin.time.Instant
+
+/**
+ * A merge group member removed from the library is written into the backup as an entry of its own, for
+ * both content types, even with "All read entries" off and nothing read. The group itself is always
+ * written, and a restore resolves a member only against a row it restored, so without the entry a
+ * fresh install loses the member, and a two-member group loses the whole group.
+ */
+class GroupMemberBackupConformanceTest {
+
+    private lateinit var driver: JdbcSqliteDriver
+    private lateinit var database: Database
+
+    @BeforeEach
+    fun setUp() {
+        runTest {
+            driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+            Database.Schema.create(driver).await()
+            driver.execute(null, "PRAGMA foreign_keys=ON", 0).await()
+            database = DatabaseBindings.providesDatabase(driver)
+        }
+    }
+
+    @AfterEach
+    fun tearDown() {
+        driver.close()
+    }
+
+    @ParameterizedTest
+    @EnumSource(ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a group member outside the library is backed up once, as outside the library`(type: ContentType) =
+        runTest {
+            entries(type) shouldBe listOf("url-1" to true, "url-2" to false)
+        }
+
+    /** Backs up a group of entries 1 and 2 after 2 left the library, as (url, favorite) per entry. */
+    private suspend fun entries(type: ContentType): List<Pair<String, Boolean>> {
+        listOf(1L, 2L).forEach { id ->
+            val insert = if (type == ContentType.MANGA) {
+                "INSERT INTO manga(id, source_id, remote_url, remote_title, remote_status, " +
+                    "state_initialized, user_reader_flags, user_chapter_flags, " +
+                    "state_cover_last_modified, user_favorite_at, remote_update_strategy, " +
+                    "state_chapter_fetch_interval, user_notes, remote_memo) VALUES ($id, 1, " +
+                    "'url-$id', 'title', 0, 0, 0, 0, 0, 0, 0, 0, '', '{}')"
+            } else {
+                "INSERT INTO novels(_id, source, url, title, status, initialized, chapter_flags, " +
+                    "favorite_at) VALUES ($id, 'src', 'url-$id', 'title', 0, 0, 0, 0)"
+            }
+            driver.execute(null, insert, 0).await()
+        }
+        val groups = MergeGroupRepositoryImpl(database)
+        groups.createGroup(type, listOf(1L, 2L))!!
+        val leave = if (type == ContentType.MANGA) {
+            "UPDATE manga SET user_favorite_at = NULL WHERE id = 2"
+        } else {
+            "UPDATE novels SET favorite_at = NULL WHERE _id = 2"
+        }
+        driver.execute(null, leave, 0).await()
+
+        val options = BackupOptions(
+            readEntries = false,
+            chapters = false,
+            categories = false,
+            tracking = false,
+            history = false,
+            customInfo = false,
+        )
+        return if (type == ContentType.MANGA) {
+            val creator = MangaBackupCreator(
+                mangaRepository = MangaRepositoryImpl(database),
+                chapterRepository = mockk(),
+                trackRepository = mockk(),
+                getCategories = mockk(),
+                getHistory = mockk(),
+                mangaMetadataRepository = mockk { coEvery { getMetadataById(any()) } returns null },
+                customMangaInfoRepository = mockk(),
+                getFavorites = mockk {
+                    coEvery { await() } returns
+                        listOf(
+                            Manga.create().copy(
+                                id = 1,
+                                url = "url-1",
+                                source = 1L,
+                                favoriteAt = Instant.fromEpochMilliseconds(0L),
+                            ),
+                        )
+                },
+                getManga = GetManga(MangaRepositoryImpl(database)),
+                mergeGroupRepository = groups,
+                chapterNumberOverrides = NoChapterNumberOverrides,
+            )
+            options.backupEntries(creator).toList().map { it.url to it.favorite }
+        } else {
+            val novels = NovelRepositoryImpl(database)
+            val creator = NovelBackupCreator(
+                novelRepository = novels,
+                novelChapterRepository = mockk(),
+                categoryRepository = mockk(),
+                novelTrackRepository = mockk(),
+                mergeGroupRepository = groups,
+                customNovelInfoRepository = mockk(),
+                novelHistoryRepository = NovelHistoryRepositoryImpl(database),
+                novelSourceManager = mockk(),
+                chapterNumberOverrides = NoChapterNumberOverrides,
+            )
+            options.backupEntries(creator).toList().map { it.url to it.favorite }
+        }
+    }
+}

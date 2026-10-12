@@ -5,6 +5,7 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.LibraryNovel
 import reikai.domain.novel.model.Novel
+import kotlin.time.Instant
 
 class NovelMergeCollapseTest {
 
@@ -12,35 +13,33 @@ class NovelMergeCollapseTest {
         id: Long,
         title: String,
         author: String? = null,
+        source: String = "src",
         chapters: Long = 1,
-        downloads: Long = 0,
         dateAdded: Long = 0,
-        lastReadAt: Long? = null,
     ) = LibraryNovel(
         novel = Novel.create().copy(
             id = id,
+            source = source,
             title = title,
             author = author,
-            favorite = true,
-            dateAdded = dateAdded,
-            lastReadAt = lastReadAt,
+            favoriteAt = Instant.fromEpochMilliseconds(dateAdded),
         ),
         categories = emptyList(),
         totalChapters = chapters,
         readCount = 0,
         bookmarkCount = 0,
-        downloadCount = downloads,
-        latestUpload = 0,
-        chapterFetchedAt = 0,
+        downloadCount = 0,
+        latestUpload = null,
+        chapterFetchedAt = null,
+        lastRead = null,
     )
 
     private fun collapse(
         library: List<LibraryNovel>,
-        merges: Set<String> = emptySet(),
-        unmerges: Set<String> = emptySet(),
-        autoMergeSameTitle: Boolean = true,
-        requireAuthor: Boolean = true,
-    ) = NovelMergeCollapse.collapse(library, merges, unmerges, autoMergeSameTitle, requireAuthor)
+        membership: Map<Long, Long> = emptyMap(),
+        overrideRankings: Map<Long, List<Long>> = emptyMap(),
+        preferredSourceIds: List<String> = emptyList(),
+    ) = NovelMergeCollapse.collapse(library, membership, mergingEnabled = true, overrideRankings, preferredSourceIds)
 
     @Test
     fun `a lone novel is its own single-member group`() {
@@ -50,10 +49,12 @@ class NovelMergeCollapseTest {
     }
 
     @Test
-    fun `a manual merge collapses to the most-chapters representative`() {
+    fun `with no ranking set the most-chapters novel is the representative`() {
+        // No per-group override and no preferred-source list: the representative falls back to the
+        // most-chapters novel (then lowest id), matching the details trunk's own fallback.
         val result = collapse(
             listOf(libNovel(1, "A", chapters = 3), libNovel(2, "B", chapters = 5)),
-            merges = setOf("1,2"),
+            membership = mapOf(1L to 7L, 2L to 7L),
         )
         result.size shouldBe 1
         val group = result.first()
@@ -62,68 +63,43 @@ class NovelMergeCollapseTest {
     }
 
     @Test
-    fun `download counts are summed across the group`() {
+    fun `a per-group override picks the representative over chapter count`() {
+        // The override orders members [2, 1] (member 2 is the trunk) even though member 1 has more
+        // chapters, so the library row leads on the same source the details chapter list trunks on.
         val result = collapse(
-            listOf(libNovel(1, "A", downloads = 2), libNovel(2, "B", downloads = 3)),
-            merges = setOf("1,2"),
+            listOf(libNovel(1, "A", chapters = 5), libNovel(2, "B", chapters = 3)),
+            membership = mapOf(1L to 7L, 2L to 7L),
+            overrideRankings = mapOf(7L to listOf(2L, 1L)),
         )
-        result.first().totalDownloadCount shouldBe 5L
+        result.single().representative.novel.id shouldBe 2L // override trunk wins despite fewer chapters
     }
 
     @Test
-    fun `same-title same-author auto-merges with the author guard on`() {
-        val result = collapse(listOf(libNovel(1, "A", "X"), libNovel(2, "A", "X")))
-        result.size shouldBe 1
-        result.first().memberIds shouldContainExactlyInAnyOrder listOf(1L, 2L)
-    }
-
-    @Test
-    fun `same-title different-author stays separate with the guard on`() {
-        val result = collapse(listOf(libNovel(1, "A", "X"), libNovel(2, "A", "Y")))
-        result.size shouldBe 2
-    }
-
-    @Test
-    fun `same-title different-author auto-merges with the guard off`() {
-        val result = collapse(listOf(libNovel(1, "A", "X"), libNovel(2, "A", "Y")), requireAuthor = false)
-        result.size shouldBe 1
-        result.first().memberIds shouldContainExactlyInAnyOrder listOf(1L, 2L)
-    }
-
-    @Test
-    fun `a blank author keeps same-title novels apart with the guard on`() {
-        val result = collapse(listOf(libNovel(1, "A", null), libNovel(2, "A", null)))
-        result.size shouldBe 2
-    }
-
-    @Test
-    fun `the representative reports the most recent read across the whole group`() {
-        // Novel 2 is the representative (more chapters), but novel 1's read is more recent: the
-        // merged entry must sort by the group max so reading any source bubbles it up.
+    fun `the lowest id wins the representative when counts tie and no ranking is set`() {
+        // Novel 2 is listed first and added earlier, so neither input order nor date_added can pass this
+        // in the id rule's place.
         val result = collapse(
             listOf(
-                libNovel(1, "A", chapters = 3, lastReadAt = 500),
-                libNovel(2, "B", chapters = 5, lastReadAt = 100),
+                libNovel(2, "B", chapters = 5, dateAdded = 100),
+                libNovel(1, "A", chapters = 5, dateAdded = 200),
             ),
-            merges = setOf("1,2"),
+            membership = mapOf(1L to 7L, 2L to 7L),
         )
-        result.size shouldBe 1
-        val group = result.first()
-        group.representative.novel.id shouldBe 2L
-        group.representative.lastRead shouldBe 500L
+        result.single().representative.novel.id shouldBe 1L
     }
 
     @Test
-    fun `an unmerge pair splits a manually-merged bucket`() {
+    fun `the global preferred-source list picks the representative when no override is set`() {
+        // Source "b" outranks "a" in the global list, so its member is the representative even with fewer
+        // chapters. The override map is empty, so this is the fallback ranking.
         val result = collapse(
-            listOf(libNovel(1, "A"), libNovel(2, "A"), libNovel(3, "A")),
-            merges = setOf("1,2,3"),
-            unmerges = setOf("1,3"),
-            autoMergeSameTitle = false,
+            listOf(
+                libNovel(1, "A", source = "a", chapters = 5),
+                libNovel(2, "B", source = "b", chapters = 3),
+            ),
+            membership = mapOf(1L to 7L, 2L to 7L),
+            preferredSourceIds = listOf("b", "a"),
         )
-        // 1 and 3 can't share a subgroup; greedy placement yields {1,2} and {3}.
-        result.size shouldBe 2
-        val merged = result.first { it.memberIds.size > 1 }
-        merged.memberIds shouldContainExactlyInAnyOrder listOf(1L, 2L)
+        result.single().representative.novel.id shouldBe 2L // preferred source wins despite fewer chapters
     }
 }

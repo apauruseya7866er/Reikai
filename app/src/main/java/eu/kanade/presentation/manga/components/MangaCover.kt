@@ -15,6 +15,8 @@ import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import eu.kanade.presentation.util.rememberResourceBitmapPainter
 import eu.kanade.tachiyomi.R
+import exh.debug.HiddenCover
+import exh.debug.LocalCoverImagesHidden
 
 enum class MangaCover(val ratio: Float) {
     Square(1f / 1f),
@@ -29,28 +31,35 @@ enum class MangaCover(val ratio: Float) {
         shape: Shape = MaterialTheme.shapes.extraSmall,
         onClick: (() -> Unit)? = null,
         // RK: scale + load callback let the panorama display mode letterbox wide covers and measure
-        // each cover's real aspect ratio at load (see reikai.presentation.library panorama cell).
+        // each cover's real aspect ratio at load (see MangaComfortableGridItem's usePanoramaCover).
         scale: ContentScale = ContentScale.Crop,
         onSuccess: ((AsyncImagePainter.State.Success) -> Unit)? = null,
     ) {
+        // RK --> the frame is shared with the debug menu's hidden cover, which draws in the image's place
+        val frame = modifier
+            .aspectRatio(ratio)
+            .clip(shape)
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(
+                        role = Role.Button,
+                        onClick = onClick,
+                    )
+                } else {
+                    Modifier
+                },
+            )
+        if (LocalCoverImagesHidden.current) {
+            HiddenCover(background = CoverPlaceholderColor, modifier = frame)
+            return
+        }
+        // RK <--
         AsyncImage(
             model = data,
             placeholder = ColorPainter(CoverPlaceholderColor),
             error = rememberResourceBitmapPainter(id = R.drawable.cover_error),
             contentDescription = contentDescription,
-            modifier = modifier
-                .aspectRatio(ratio)
-                .clip(shape)
-                .then(
-                    if (onClick != null) {
-                        Modifier.clickable(
-                            role = Role.Button,
-                            onClick = onClick,
-                        )
-                    } else {
-                        Modifier
-                    },
-                ),
+            modifier = frame, // RK
             contentScale = scale,
             // RK: report the loaded image so the caller can measure its aspect ratio
             onSuccess = onSuccess,

@@ -1,109 +1,184 @@
 package reikai.domain.novel
 
+import reikai.domain.chapter.isRecognizedChapterNumber
+import reikai.domain.merge.MergedChapterOrder
+import reikai.domain.merge.MergedChapters
+import reikai.domain.merge.sourcePriority
+import reikai.domain.merge.stampedReadingOrder
+import reikai.domain.merge.stitchOrder
+import reikai.domain.merge.trunkOrder
+import reikai.domain.merge.unstitchedChapters
 import reikai.domain.novel.model.NovelChapter
 
 /**
  * Pure cross-source chapter stitcher for merged novel groups, the novel analogue of
- * [reikai.domain.manga.ChapterAggregation]. Given each grouped novel's chapters, produces ONE unified
- * list.
- *
- * **Trunk = the preferred source if one is in the group, else the source with the most chapters.**
- *
- * Chapters are matched across sources by [matchKey]: the normalized **title text** when the name has
- * any (e.g. "Chapter 1 - 0 Surviving Just To Die" and "0 Surviving Just to Die" both reduce to
- * `surviving just to die`), otherwise the recognized **chapter number** (for numeric-only names like
- * "Chapter 5"). Title-first is more forgiving than raw numbers, which often disagree across sources
- * (an off-by-one from a prologue), and survives the title-only MTL sources that ship no number at all.
- * **Every trunk chapter is kept** (novels have no scanlator variants, so each row is a distinct
- * chapter); a sibling chapter is added only when its key isn't already present (gap-fill), and a
- * sibling with no usable key is dropped (it can't be matched). So the unified list always contains at
- * least the whole trunk. Each returned [NovelChapter] keeps its own `novelId`, so the caller can read
- * a chapter from its origin source. Output is unsorted.
- *
- * Stateless and side-effect-free for unit testing.
+ * [reikai.domain.manga.ChapterAggregation]. Trunk = the preferred source if one is in the group, else the
+ * source with the most chapters. Chapters match across sources by [matchKey]: normalized TITLE TEXT when
+ * the name has any, else the recognized number. Title-first survives the off-by-one numbers sources
+ * disagree on and the title-only MTL sources that ship no number. Each [NovelChapter] keeps its own
+ * `novelId`, so it can be read from its origin source.
  */
 object NovelChapterAggregation {
 
     /**
+     * The group's chapter list in reading order, plus which merged chapter every input chapter belongs
+     * to, for the callers that have to count the group once rather than render it. Each chapter's
+     * `sourceOrder` is restamped as its position in that order, which is the only index comparable
+     * across the group.
+     *
      * @param chaptersByNovel each grouped novel's id mapped to that novel's chapters.
      * @param sourceIdByNovel each grouped novel's id mapped to its source id (for the priority rank).
      * @param preferredSourceIds the global preferred-source ranking, highest priority first.
-     * @return the unified chapter list (unsorted). For 0 or 1 novel, returns the input unchanged.
+     * @param memberRanking a per-group override: the member novel ids in the group's trunk order. When
+     *   non-empty it ranks members by position and [preferredSourceIds] is ignored, so two members
+     *   sharing a source still order distinctly. Empty uses the source list.
+     * @return for 0 or 1 novel, the input unchanged.
      */
-    fun aggregate(
+    fun merge(
         chaptersByNovel: Map<Long, List<NovelChapter>>,
         sourceIdByNovel: Map<Long, String> = emptyMap(),
         preferredSourceIds: List<String> = emptyList(),
-    ): List<NovelChapter> {
-        if (chaptersByNovel.size <= 1) return chaptersByNovel.values.firstOrNull().orEmpty()
+        memberRanking: List<Long> = emptyList(),
+    ): MergedChapters<NovelChapter> {
+        if (chaptersByNovel.size <= 1) {
+            return unstitchedChapters(chaptersByNovel.values.firstOrNull().orEmpty()) { it.id }
+        }
 
-        // Rank by preferred-source priority first (a ranked source wins the trunk regardless of
-        // count), then chapter count desc, then novel id asc for a stable order.
-        val ranked = chaptersByNovel.entries
-            .map { (novelId, chapters) ->
-                val prefRank = sourceIdByNovel[novelId]
-                    ?.let { preferredSourceIds.indexOf(it) }
-                    ?.takeIf { it >= 0 }
-                    ?: Int.MAX_VALUE
-                RankedSource(novelId, chapters, prefRank)
-            }
-            .sortedWith(
-                compareBy<RankedSource> { it.prefRank }
-                    .thenByDescending { it.chapters.size }
-                    .thenBy { it.novelId },
-            )
+        val ranked = walkOrder(chaptersByNovel, sourceIdByNovel, preferredSourceIds, memberRanking)
 
         // No usable keys on the trunk -> no reliable cross-source matching, so just show its full list.
         val trunk = ranked.first()
-        if (trunk.chapters.none { matchKey(it) != null }) return trunk.chapters
+        if (trunk.chapters.none { matchKey(it) != null }) return unstitchedChapters(trunk.chapters) { it.id }
 
-        val unified = mutableListOf<NovelChapter>()
-        val seenKeys = HashSet<String>()
+        val order = MergedChapterOrder(
+            isTitle = { (it as String).startsWith(TITLE_KEY_PREFIX) },
+            boundsBackwardMatch = true,
+            boundsForwardMatch = true,
+            keyOf = ::matchKey,
+        )
         ranked.forEachIndexed { index, source ->
+            order.startSource(source.chapters)
             val isTrunk = index == 0
             for (chapter in source.chapters) {
-                val key = matchKey(chapter)
-                when {
-                    // Keep every trunk chapter (no intra-source collapse: novels have no scanlator
-                    // variants, so distinct rows that happen to share a title are still distinct).
-                    isTrunk -> {
-                        unified.add(chapter)
-                        if (key != null) seenKeys.add(key)
-                    }
-                    // Gap-fill a sibling chapter only when its key is new; unkeyable siblings drop.
-                    key != null && seenKeys.add(key) -> unified.add(chapter)
+                // Keep every trunk chapter: the novel stitch collapses no source's own rows, so two
+                // sharing a title stay two, a multi-branch source's group copies included (parked.md).
+                if (isTrunk) {
+                    order.place(chapter)
+                    continue
                 }
+                val existing = order.positionOf(chapter)
+                // Already covered, so this source carries on from where its copy sits.
+                if (existing >= 0) {
+                    order.followTo(existing, chapter)
+                    continue
+                }
+                // Unkeyable siblings drop: nothing identifies them and nothing places them. A new
+                // title may be a chapter this source alone has, or one the trunk names by number
+                // only ("685 Chapter 685"), and a number is counted differently per source, so
+                // position decides both: a run matching the one already there is the same chapters.
+                if (matchKey(chapter) != null) order.defer(chapter)
             }
         }
-        return unified
+        val stitched = order.result()
+        val merged = stampedReadingOrder(stitched.merged) { chapter, position -> chapter.copy(sourceOrder = position) }
+        return MergedChapters(merged, stitched.units { it.id })
     }
 
     /**
+     * The member novel ids in trunk order (first = trunk), the same ranking [merge] applies. Lets the
+     * manage-sources dialog badge the primary source without stitching the whole chapter list.
+     */
+    fun rankedMemberIds(
+        chaptersByNovel: Map<Long, List<NovelChapter>>,
+        sourceIdByNovel: Map<Long, String> = emptyMap(),
+        preferredSourceIds: List<String> = emptyList(),
+        memberRanking: List<Long> = emptyList(),
+    ): List<Long> = rank(chaptersByNovel, sourceIdByNovel, preferredSourceIds, memberRanking).map { it.novelId }
+
+    /** The member [merge] walks first, the trunk, or null for an empty group. */
+    fun trunkId(
+        chaptersByNovel: Map<Long, List<NovelChapter>>,
+        sourceIdByNovel: Map<Long, String>,
+        preferredSourceIds: List<String>,
+        memberRanking: List<Long>,
+    ): Long? = walkOrder(chaptersByNovel, sourceIdByNovel, preferredSourceIds, memberRanking).firstOrNull()?.novelId
+
+    private fun walkOrder(
+        chaptersByNovel: Map<Long, List<NovelChapter>>,
+        sourceIdByNovel: Map<Long, String>,
+        preferredSourceIds: List<String>,
+        memberRanking: List<Long>,
+    ): List<RankedSource> = stitchOrder(rank(chaptersByNovel, sourceIdByNovel, preferredSourceIds, memberRanking)) {
+        it.chapters.isNotEmpty()
+    }
+
+    // The shared trunk order, counting rows: the novel stitch collapses no scanlator variants.
+    private fun rank(
+        chaptersByNovel: Map<Long, List<NovelChapter>>,
+        sourceIdByNovel: Map<Long, String>,
+        preferredSourceIds: List<String>,
+        memberRanking: List<Long>,
+    ): List<RankedSource> = chaptersByNovel.entries
+        .map { (novelId, chapters) ->
+            val prefRank = sourcePriority(novelId, sourceIdByNovel[novelId], preferredSourceIds, memberRanking)
+            RankedSource(novelId, chapters, prefRank)
+        }
+        .sortedWith(trunkOrder({ it.prefRank }, { it.chapters.size.toLong() }, { it.novelId }))
+
+    /**
      * The cross-source identity of a chapter, or null when it has none. Prefers the normalized title
-     * text (drops "chapter"/"vol" label words, standalone numbers, and punctuation); falls back to the
-     * recognized chapter number for numeric-only names. Used for both the unified merge and the
-     * read/bookmark propagation across grouped sources.
+     * text (drops "chapter"/"vol" label words, the leading chapter-number tokens, and punctuation);
+     * falls back to a number for numeric-only names that have a recognized one. What the stitch pairs sources'
+     * chapters on before it places the rest by position.
      */
     fun matchKey(chapter: NovelChapter): String? {
         val title = normalizedTitle(chapter.name)
-        if (title.isNotEmpty()) return "t:$title"
-        if (chapter.chapterNumber > 0.0) return "n:${chapter.chapterNumber}"
-        return null
+        if (title.isNotEmpty()) return "$TITLE_KEY_PREFIX$title"
+        if (!isRecognizedChapterNumber(chapter.chapterNumber)) return null
+        return "n:${shownNumber(chapter.name) ?: chapter.chapterNumber}"
     }
+
+    // A source may store its own list position as the number ("Chapter 320" stored as 322), so the
+    // one number a wordless name shows is the identity; a name showing several keeps the stored one.
+    private fun shownNumber(name: String): Double? =
+        nameNumber.findAll(name).map { it.value.toDouble() }.distinct().singleOrNull()
+
+    /** Marks a key built from title text rather than from a number, which is the identity that
+     *  survives two sources counting differently. */
+    private const val TITLE_KEY_PREFIX = "t:"
 
     private val labelWords = setOf(
         "chapter", "ch", "chap", "episode", "ep", "part", "pt", "vol", "volume", "book", "season", "s",
     )
     private val numberToken = Regex("""^[0-9]+(\.[0-9]+)?$""")
+    private val nameNumber = Regex("""[0-9]+(\.[0-9]+)?""")
     private val nonAlphanumeric = Regex("""[^a-z0-9]+""")
 
-    private fun normalizedTitle(name: String): String =
-        name.lowercase()
-            .replace(nonAlphanumeric, " ")
-            .trim()
-            .split(' ')
-            .filter { it.isNotEmpty() && it !in labelWords && !numberToken.matches(it) }
-            .joinToString(" ")
+    // Removed rather than turned into a space: one site writes "Courts" for "Court's", and the split
+    // "court s" lost its "s" as a label word. Some sites put a double quote or a replacement character
+    // where the apostrophe goes, or zero-width characters inside a word.
+    private val elided = Regex("""['`\u00B4\u2018\u2019\u201C\u201D\uFFFD\p{Cf}]""")
+
+    // Drops label words anywhere and only the LEADING chapter-number tokens; a number that follows a
+    // title word is kept, so "Pleasureful Repeats 2" stays distinct from "Pleasureful Repeats" (else a
+    // sequel-titled sibling chapter collides and gets deduped out of the unified list), while
+    // "Chapter 1 - 0 Surviving Just to Die" and "0 Surviving Just to Die" still both reduce to
+    // "surviving just to die".
+    private fun normalizedTitle(name: String): String {
+        val out = mutableListOf<String>()
+        var seenWord = false
+        for (token in name.lowercase().replace(elided, "").replace(nonAlphanumeric, " ").trim().split(' ')) {
+            when {
+                token.isEmpty() || token in labelWords -> {}
+                numberToken.matches(token) -> if (seenWord) out.add(token)
+                else -> {
+                    out.add(token)
+                    seenWord = true
+                }
+            }
+        }
+        return out.joinToString(" ")
+    }
 
     private class RankedSource(
         val novelId: Long,

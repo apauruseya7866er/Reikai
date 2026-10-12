@@ -1,0 +1,163 @@
+package reikai.domain.source.filter
+
+import eu.kanade.tachiyomi.source.model.Filter
+import eu.kanade.tachiyomi.source.model.FilterList
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.float
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
+import logcat.LogPriority
+import logcat.asLog
+import tachiyomi.core.common.util.system.logcat
+import kotlin.reflect.KMutableProperty1
+import kotlin.reflect.full.isSubclassOf
+
+/**
+ * Encodes a source's [FilterList] to JSON and applies it back onto a freshly built one, so a saved
+ * search outlives the screen that made it. Encoding is Komikku's, whose own came from TachiyomiSY, so
+ * the stored payload stays compatible with both.
+ *
+ * Matching on the way back is not theirs: both match by position, which applies a saved value to the
+ * wrong filter as soon as a source adds or removes one. See [deserializeInto].
+ */
+class FilterSerializer {
+    private val serializers = listOf<Serializer<*>>(
+        AutoCompleteSerializer(this),
+        HeaderSerializer(this),
+        SeparatorSerializer(this),
+        SelectSerializer(this),
+        TextSerializer(this),
+        CheckboxSerializer(this),
+        TriStateSerializer(this),
+        GroupSerializer(this),
+        SortSerializer(this),
+    )
+
+    fun serialize(filters: FilterList) = buildJsonArray {
+        filters.filterIsInstance<Filter<Any?>>().forEach {
+            add(serialize(it))
+        }
+    }
+
+    fun serialize(filter: Filter<Any?>): JsonObject {
+        return serializerFor(filter)?.let { serializer ->
+            buildJsonObject {
+                with(serializer) { serialize(filter) }
+
+                val classMappings = mutableListOf<Pair<String, Any>>()
+
+                serializer.mappings().forEach {
+                    val res = it.second.get(filter)
+                    put(it.first, res.toString())
+                    classMappings += it.first to (res?.javaClass?.name ?: "null")
+                }
+
+                putJsonObject(CLASS_MAPPINGS) {
+                    classMappings.forEach { (t, u) ->
+                        put(t, u.toString())
+                    }
+                }
+
+                put(TYPE, serializer.type)
+            }
+        } ?: throw IllegalArgumentException("Cannot serialize this Filter object!")
+    }
+
+    fun deserialize(filters: FilterList, json: JsonArray) {
+        deserializeInto(filters.filterIsInstance<Filter<Any?>>(), json)
+    }
+
+    /**
+     * Applies [json] onto [filters], pairing each live filter with the stored entry of the same kind
+     * and name and consuming matches in order, so repeated names still line up. A filter with no match
+     * keeps the source's own default: dropping a value the source no longer has a home for is safe,
+     * where guessing by position silently sets a filter the reader never chose.
+     */
+    internal fun deserializeInto(filters: List<Filter<Any?>>, json: JsonArray) {
+        val unmatched = mutableMapOf<String, ArrayDeque<JsonObject>>()
+        json.forEach { element ->
+            val stored = element as? JsonObject ?: return@forEach
+            val key = storedKey(stored) ?: return@forEach
+            unmatched.getOrPut(key) { ArrayDeque() }.addLast(stored)
+        }
+
+        filters.forEach { filter ->
+            val stored = liveKey(filter)?.let { unmatched[it]?.removeFirstOrNull() } ?: return@forEach
+            // Per element, so one filter the source has since changed costs its own value rather than
+            // the whole saved search. This catch is Komikku's addition over TachiyomiSY.
+            try {
+                deserialize(filter, stored)
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR) { e.asLog() }
+            }
+        }
+    }
+
+    fun deserialize(filter: Filter<Any?>, json: JsonObject) {
+        val serializer = serializers
+            .filterIsInstance<Serializer<Filter<Any?>>>()
+            .firstOrNull {
+                it.type == json[TYPE]!!.jsonPrimitive.content
+            } ?: throw IllegalArgumentException("Cannot deserialize this type!")
+
+        serializer.deserialize(json, filter)
+
+        serializer.mappings().forEach {
+            if (it.second is KMutableProperty1) {
+                val obj = json[it.first]!!.jsonPrimitive
+                val res: Any? = when (json[CLASS_MAPPINGS]!!.jsonObject[it.first]!!.jsonPrimitive.content) {
+                    java.lang.Integer::class.java.name -> obj.int
+                    java.lang.Long::class.java.name -> obj.long
+                    java.lang.Float::class.java.name -> obj.float
+                    java.lang.Double::class.java.name -> obj.double
+                    java.lang.String::class.java.name -> obj.content
+                    java.lang.Boolean::class.java.name -> obj.boolean
+                    java.lang.Byte::class.java.name -> obj.content.toByte()
+                    java.lang.Short::class.java.name -> obj.content.toShort()
+                    java.lang.Character::class.java.name -> obj.content[0]
+                    "null" -> null
+                    else -> throw IllegalArgumentException("Cannot deserialize this type!")
+                }
+                @Suppress("UNCHECKED_CAST")
+                (it.second as KMutableProperty1<in Filter<Any?>, in Any?>).set(filter, res)
+            }
+        }
+
+        serializer.afterDeserialize(json, filter)
+    }
+
+    private fun serializerFor(filter: Filter<Any?>): Serializer<Filter<Any?>>? =
+        serializers
+            .filterIsInstance<Serializer<Filter<Any?>>>()
+            .firstOrNull { filter::class.isSubclassOf(it.clazz) }
+
+    /** Identity of a live filter: its kind plus its name, which is what a stored entry carries too.
+     *  Joined on a NUL because a filter name may contain anything else, including a separator. */
+    private fun liveKey(filter: Filter<Any?>): String? =
+        serializerFor(filter)?.let { "${it.type}\u0000${filter.name}" }
+
+    private fun storedKey(stored: JsonObject): String? {
+        val type = (stored[TYPE] as? JsonPrimitive)?.contentOrNull ?: return null
+        val name = (stored[NAME] as? JsonPrimitive)?.contentOrNull ?: return null
+        return "$type\u0000$name"
+    }
+
+    companion object {
+        const val TYPE = "_type"
+        const val CLASS_MAPPINGS = "_cmaps"
+
+        /** Every serializer maps the filter's name under this key, which is what makes it matchable. */
+        private const val NAME = "name"
+    }
+}

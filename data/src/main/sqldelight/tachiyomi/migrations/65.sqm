@@ -1,0 +1,15 @@
+-- The count each manga member was ranked on when its group was last stitched, which the library ranks
+-- members by instead of re-reading every member chapter on each chapter write.
+CREATE TABLE merged_member_count (
+    manga_id INTEGER NOT NULL PRIMARY KEY,
+    group_id INTEGER NOT NULL,
+    recognized_count INTEGER NOT NULL,
+    FOREIGN KEY(manga_id) REFERENCES manga (id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(group_id) REFERENCES merge_group (_id)
+    ON DELETE CASCADE
+);
+
+-- Every manga group restitches once, which saves its counts. Until then the library counts a member's
+-- chapter rows, as it did before.
+DELETE FROM merged_chapter_unit;

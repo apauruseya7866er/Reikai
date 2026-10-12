@@ -13,11 +13,11 @@ after the next check rather than re-deriving it. What to diff: `website/src/docs
 `.vitepress/config/shortcodes.ts` and `theme/styles/tree.styl` for the pieces the website repo borrowed.
 
 **They are live on the site.** `sync-docs.mjs` walks the whole `docs/` tree, carrying the markdown
-into `src/docs/` and everything else into `src/public/docs/`, and the sidebar follows Mihon's own shape:
-site pages, then Frequently Asked Questions, then Guides. What is still outstanding is the content: **the text has been debranded and
-spot-corrected, not audited against how Reikai actually behaves.** The known-wrong statements found
-so far are listed under "Where Reikai already differs" below, and the two that were flatly false
-about Reikai (light novels, and Yōkai backup compatibility) are fixed.
+into `src/docs/` and everything else into `src/public/docs/`, and the sidebar groups pages by task:
+site pages, then Start here, Library, Sources, Reading, the single-page topics, Troubleshooting, Reference and the FAQ. The text has been debranded and then read
+page by page against how Reikai behaves (see "What still has to happen"). The two statements that were
+flatly false about Reikai (light novels, and Yōkai backup compatibility) were fixed, and are recorded under
+"Where Reikai already differs" below.
 
 ## Licence and attribution
 
@@ -100,12 +100,12 @@ guide that already covered the topic, and their files are gone:
 Three answers moved out of what is now `about.md` into the FAQ page that owns their topic: a failing download into
 `faq/downloads.md`, edited titles versus sorting into `faq/library.md`, auto webtoon mode into
 `faq/reader.md`. What is left of it is about the project rather than the app, which is why it is `about.md`, so it stays whole
-and leads the Frequently Asked Questions group.
+and leads the FAQ group.
 
 The rest of Reikai's docs are guides in their own right with no Mihon counterpart, so they keep their
-files and sit in the Guides group: multi-source grouping, library search, related manga, adult
-sources, and FlareSolverr under Troubleshooting. `built-in-sources.md` is reference and sits under
-Browse.
+files and sit in the group for what they help with: merged series and library search under Library,
+adult sources under Sources, the novel reader under Reading, the bypass proxy under Troubleshooting.
+`built-in-sources.md` and the two reader settings pages sit under Reference.
 
 ## The content pass: what it found
 
@@ -117,29 +117,28 @@ doc that quotes it.
 
 Fixed:
 
-- **Extension repos are Extension stores.** Upstream renamed the screen (`extensionStores`), and the
-  index URL is now a `repo.json` rather than the `index.min.json` the guide told people to paste.
-  Both `getting-started.md` and `backups.md` sent readers looking for a menu item that is not there.
+- **The repo screen is Repos.** Browse opens it as **Repos**, with **Add repo** (the backup option
+  is still labelled **Extension stores**), and the index URL is now a `repo.json` rather than the
+  `index.min.json` the guide told people to paste.
 - **"Viewer for this series" does not exist.** The per-series override is **Reading mode**.
 - **"Download badges" is "Downloaded chapters"**, under **Badges** in the Display tab.
 - **"Download only" is "Downloaded only".**
 - **"Clear cache" is not in Advanced.** The two clears there are **Clear cookies** and **Clear
   WebView data**.
 - **Light novels were missing from `getting-started.md` entirely**, which is the page a new user
-  reads first. Novel repos live in their own section of the same Extension stores screen, and the
-  plugins install from the Extensions tab beside manga extensions.
-- **Smart updates reach novels, the prediction does not.** `NovelUpdateJob` applies the same three
-  skip rules (unstarted, completed, unread) and cannot apply the fourth, because novel sources
-  publish no release schedule. That also keeps novels off the Upcoming calendar entirely. Three
-  pages presented all four conditions as universal.
+  reads first. Novel repos are added from the same Repos screen, where **Add repo** works out which
+  kind an address is, and the plugins install from the Extensions tab beside manga extensions.
+- **Smart updates reach novels, the Upcoming calendar does not.** `NovelUpdateWorker` applies all four
+  skip rules through the same `smartUpdateSkip` kernel as manga, predicting a novel's next chapter
+  from its own chapter history, but the calendar stays manga-only by owner ruling. The pages say so.
 - **The pre-Android-8 leftovers**, now that `minSdk` is 26: the WebView table's "Android 6 and
   below" row is gone and its "Android 7 - 9" row is "Android 8 - 9".
 - **`source-migration.md` described a flow the app no longer has.** Its Reikai tab said "a global
   search of all sources, tap a thumbnail to pick", which has not been true since the migrate rebuild.
   Rewritten from a device walk: the three entry points, the merge-group pick step, the config screen
-  and its search options, the list screen with its per-row actions, and the confirm. **The five other
-  fork tabs stay** (owner, 2026-08-21): they are useful to a reader arriving from one of those apps,
-  and being irrelevant to Reikai is not a reason to delete them.
+  and its search options, the list screen with its per-row actions, and the confirm. **The other
+  apps' tabs are gone**: they buried Reikai's own steps, so the page now covers Reikai only and sends a
+  reader of another app to that app's own docs. Do not restore them.
 
   Two of the entry points were wrong in the first draft, written from the route table rather than the
   screen: **Migrate** is in the overflow on the details screen and in the selection bar's overflow in
@@ -207,8 +206,3 @@ Do not assume a file is accurate just because it reads plausibly. Two statements
 stale but flatly wrong about Reikai, and both were found by reading rather than by any check:
 `faq/general.md` said Reikai cannot read light novels, and `guides/backups.md` said Yōkai backups do
 not restore.
-
-Known divergences still to check page by page: Reikai's library has two view modes, categories carry
-a sort override and span both content types, the reader picks webtoon mode automatically, and merged
-entries fold several sources into one card. A label check cannot catch any of those, because each one
-is a page that is silent where it should say something.

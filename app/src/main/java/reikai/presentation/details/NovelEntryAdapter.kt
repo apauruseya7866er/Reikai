@@ -1,0 +1,305 @@
+package reikai.presentation.details
+
+import androidx.lifecycle.viewModelScope
+import eu.kanade.presentation.manga.DownloadAction
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
+import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.data.track.Tracker
+import eu.kanade.tachiyomi.data.track.model.TrackMangaMetadata
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import reikai.data.novel.expectedNextUpdate
+import reikai.domain.chapter.ChapterNumberEdit
+import reikai.domain.entry.EntryId
+import reikai.domain.merge.GroupMarks
+import reikai.domain.merge.coverFallbacks
+import reikai.domain.novel.NovelChapterListEntry
+import reikai.domain.novel.model.NovelChapter
+import reikai.domain.reader.ChapterProgress
+import reikai.presentation.components.UndatedChapterDate
+import reikai.presentation.components.chapterSubtitle
+import reikai.presentation.components.mergeSourceLabels
+import reikai.presentation.components.progressWhileUnread
+import reikai.presentation.novel.details.NovelCoverViewModel
+import reikai.presentation.novel.details.NovelDetailsState
+import reikai.presentation.novel.details.NovelDetailsViewModel
+import reikai.presentation.selection.EntrySelection
+import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.track.model.Track
+
+/** A details row for a novel chapter, read and bookmarked as the merge group's [marks] answer for it. */
+internal fun NovelChapter.toEntryChapter(
+    sourceName: String?,
+    marks: GroupMarks,
+    downloadState: Download.State,
+    numberHinted: Boolean,
+): EntryChapterListItem.Chapter {
+    // Read on any source of the merge group, matching the manga side and the badge.
+    val shownRead = marks.isRead(id, read)
+    return EntryChapterListItem.Chapter(
+        id = id,
+        name = name,
+        subtitle = chapterSubtitle(sourceName, scanlator),
+        read = shownRead,
+        bookmark = marks.isBookmarked(id, bookmark),
+        dateUpload = dateUpload,
+        chapterNumber = chapterNumber,
+        progress = progressWhileUnread(ChapterProgress.Percent(lastTextProgress), shownRead),
+        downloadState = downloadState,
+        numberHinted = numberHinted,
+    )
+}
+
+/**
+ * Adapts the live [NovelDetailsViewModel] to the neutral [EntryDetailsBehavior]. The model keeps its
+ * own novel-typed state machine; this maps [NovelDetailsState] to [EntryDetailsScreenState] and
+ * forwards neutral actions to the model's methods, resolving a neutral chapter id back to a
+ * [NovelChapter] where one is needed. Symmetric with the manga adapter, so one shared
+ * `EntryDetailsContent` can drive both content types. Novel-only actions stay off the interface.
+ */
+class NovelEntryAdapter(
+    private val model: NovelDetailsViewModel,
+    private val coverViewModelFactory: NovelCoverViewModel.Factory,
+) : EntryDetailsBehavior {
+
+    override val state: StateFlow<EntryDetailsScreenState> =
+        model.state
+            .map { it.toNeutral() }
+            // Seed with the current mapped value so a screen collecting this renders without a
+            // Loading frame. WhileSubscribed, not Eagerly: the adapter is rebuilt per composition
+            // entry while its sharing coroutine lives in the model's scope, so an eager start left
+            // one orphaned mapper running per re-entry (rotation, reader round-trips).
+            .stateIn(model.viewModelScope, SharingStarted.WhileSubscribed(), model.state.value.toNeutral())
+
+    // A novel chapter is one request, so there is no percentage to report while it runs.
+    override val downloadProgress = EntryDownloadProgress.Unsupported
+
+    private fun NovelDetailsState.toNeutral(): EntryDetailsScreenState = when (this) {
+        NovelDetailsState.Loading -> EntryDetailsScreenState.Loading
+        is NovelDetailsState.Failed -> EntryDetailsScreenState.Failed(message)
+        is NovelDetailsState.Loaded -> toNeutralLoaded()
+    }
+
+    private fun NovelDetailsState.Loaded.toNeutralLoaded(): EntryDetailsScreenState.Loaded {
+        val sibling = displayNovel.takeIf { it.id != novel.id }
+        val display = shownNovel(novel, sibling, customInfo, chipCustomInfo)
+        return EntryDetailsScreenState.Loaded(
+            entryId = EntryId.Novel(novel.id),
+            viewedEntryId = displayNovel.id,
+            details = EntryDetailsUiState(
+                header = display.toEntryHeader(
+                    sourceName = model.headerSourceName(this),
+                    sourceState = sourceState,
+                    sourceQuery = model.headerSourceQuery(this),
+                    // Filled on the All view only; a chip shows its own source's cover.
+                    coverFallbacks = coverFallbacks(novel.id, groupNovels) { it.id },
+                ),
+                favorite = novel.favorite,
+                trackingCount = trackingCount,
+                nextUpdate = intervalNovel.expectedNextUpdate(),
+                isUserIntervalMode = intervalNovel.fetchInterval < 0,
+                description = display.description,
+                tags = display.genre,
+                notes = novel.notes,
+                descriptionDefaultExpanded = model.isFromSource,
+            ),
+            chapters = EntryChapterListUiState(
+                items = mergeSourceLabels(mergeSources.associate { it.id to it.sourceName })
+                    .let { sourceNames -> chapterListEntries.map { it.toNeutralItem(this, sourceNames) } },
+                missingChapterCount = missingChapterCount,
+                showHidden = showHidden,
+                hasHiddenChapters = hasHiddenChapters,
+                hiddenChapterIds = hiddenChapterIds,
+                // Novel sources hardly ever date a chapter, so upstream's "N/A" would land on nearly
+                // every row and say nothing.
+                undatedChapterDate = UndatedChapterDate.Blank,
+            ),
+            capabilities = EntryCapabilities(
+                novelPageSelector = if (pages.size > 1) {
+                    NovelPageSelectorCapability(pages = pages, pageIndex = pageIndex, isPageLoading = isPageLoading)
+                } else {
+                    null
+                },
+            ),
+            mergeSources = mergeSources,
+            selectedSourceId = selectedSourceNovelId,
+            hasActiveFilter = chapterFilters.isActive,
+            isRefreshing = isRefreshing,
+            selection = EntrySelection.selectedAmong(selection, chapters.map { it.id }),
+            resumeChapterId = resumeChapter?.id,
+            hasStarted = hasStarted,
+            hasViewedDownloads = downloadFolderOwner != null,
+            showChapterNumberOnly = hideChapterTitles,
+            seedColor = seedColor,
+            webPage = webPage,
+            downloadTargets = downloadTargets,
+        )
+    }
+
+    private fun NovelChapterListEntry.toNeutralItem(
+        loaded: NovelDetailsState.Loaded,
+        sourceNames: Map<Long, String>,
+    ): EntryChapterListItem =
+        when (this) {
+            is NovelChapterListEntry.Item ->
+                chapter.toEntryChapter(
+                    sourceNames[chapter.novelId],
+                    loaded.marks,
+                    loaded.downloadStateOf(chapter.id),
+                    numberHinted = chapter.id in loaded.numberHints,
+                )
+            is NovelChapterListEntry.Missing -> EntryChapterListItem.Missing(id = id, count = count)
+        }
+
+    private fun chapterById(id: Long): NovelChapter? =
+        (model.state.value as? NovelDetailsState.Loaded)?.chapters?.firstOrNull { it.id == id }
+
+    // --- EntryDetailsBehavior: forward to the model (resolving id -> NovelChapter where needed). ---
+
+    override fun toggleSelection(chapterId: Long, fromLongPress: Boolean) {
+        model.toggleSelection(chapterId, fromLongPress)
+    }
+
+    override fun selectAll() {
+        model.selectAll()
+    }
+    override fun invertSelection() {
+        model.invertSelection()
+    }
+    override fun clearSelection() {
+        model.clearSelection()
+    }
+    override fun markSelectedRead(read: Boolean) {
+        model.markSelectedRead(read)
+    }
+    override fun bookmarkSelected(bookmark: Boolean) {
+        model.bookmarkSelected(bookmark)
+    }
+    override fun markPreviousRead() {
+        model.markPreviousRead()
+    }
+
+    override fun runDownloadAction(action: DownloadAction) {
+        model.runDownloadAction(action)
+    }
+
+    override fun onChapterDownloadAction(chapterId: Long, action: ChapterDownloadAction) {
+        chapterById(chapterId)?.let { model.onChapterDownloadAction(it, action) }
+    }
+
+    override fun downloadSelected() {
+        model.downloadSelected()
+    }
+    override fun deleteSelected() {
+        model.deleteSelected()
+    }
+
+    override fun deleteChapters(chapterIds: List<Long>) {
+        model.deleteChapters(chapterIds.mapNotNull { chapterById(it) })
+    }
+
+    override fun chapterSwipe(chapterId: Long, action: LibraryPreferences.ChapterSwipeAction) {
+        chapterById(chapterId)?.let { model.chapterSwipe(it, action) }
+    }
+
+    override fun hideSelected() {
+        model.hideSelected()
+    }
+
+    override fun showChapterNumberDialog() {
+        model.showChapterNumberDialog()
+    }
+
+    override fun showChapterNumberDialog(chapterId: Long) {
+        model.showChapterNumberDialog(chapterId)
+    }
+
+    override fun saveChapterNumber(edit: ChapterNumberEdit, number: Double?) {
+        model.saveChapterNumber(edit, number)
+    }
+    override fun unhideSelected() {
+        model.unhideSelected()
+    }
+    override fun toggleShowHidden() {
+        model.toggleShowHidden()
+    }
+    override fun showChangeCategoryDialog() {
+        model.showChangeCategoryDialog()
+    }
+    override fun showCoverDialog() {
+        model.showCoverDialog()
+    }
+    override fun createCoverViewModel(): EntryCoverViewModel<*> = coverArgs().let { (url, source) ->
+        coverViewModelFactory.create(novelUrl = url, novelSource = source)
+    }
+
+    override fun coverKey(): String = coverArgs().let { (url, source) -> "$url|$source" }
+
+    /** Follows the source chip like manga, so the cover matches the page. Editing is gated by
+     *  EntryDetailsScreenState.Loaded.isCoverAnchored instead, since a custom cover must land on the
+     *  entry the library renders. */
+    private fun coverArgs(): Pair<String, String> {
+        val shown = loadedState()?.displayNovel
+        return shown?.url.orEmpty() to shown?.source.orEmpty()
+    }
+
+    private fun loadedState(): NovelDetailsState.Loaded? = model.state.value as? NovelDetailsState.Loaded
+    override fun showEditInfoDialog() {
+        model.showEditNovelInfoDialog()
+    }
+    override fun saveInfo(edited: EntryEditInfoUi) {
+        model.saveNovelInfo(edited)
+    }
+    override fun resetInfo() {
+        model.resetNovelInfo()
+    }
+    override suspend fun autofillCandidates(): List<Pair<Track, Tracker>> = model.autofillCandidates()
+
+    override suspend fun fetchTrackerMetadata(track: Track, tracker: Tracker): TrackMangaMetadata =
+        model.fetchTrackerMetadata(track, tracker)
+
+    override fun toggleFavorite() {
+        model.toggleFavorite()
+    }
+    override fun removeFromLibrary(entryIds: List<Long>) {
+        model.removeFromLibrary(entryIds)
+    }
+    override fun selectSource(entryId: Long?) {
+        model.selectSource(entryId)
+    }
+    override fun showClearDownloadsDialog() {
+        model.showClearDownloadsDialog()
+    }
+
+    override fun clearDownloads(entryIds: List<Long>) {
+        model.clearDownloads(entryIds)
+    }
+
+    override fun setFetchInterval(days: Int) {
+        model.setFetchInterval(days)
+    }
+
+    override fun showManageSourcesDialog() {
+        model.showManageSourcesDialog()
+    }
+    override fun reorderSources(orderedIds: List<Long>) {
+        model.reorderSources(orderedIds)
+    }
+    override fun resetSourceOrder() {
+        model.resetSourceOrder()
+    }
+    override fun splitSources(targetIds: List<Long>) {
+        model.splitSources(targetIds)
+    }
+    override fun removeSourcesFromLibrary(targetIds: List<Long>) {
+        model.removeSourcesFromLibrary(targetIds)
+    }
+    override fun removeAllSourcesFromLibrary() {
+        model.removeAllSourcesFromLibrary()
+    }
+    override fun refresh() {
+        model.refresh()
+    }
+}

@@ -58,7 +58,7 @@ class PagerTransitionHolder(
         val sidePadding = 64.dpToPx
         setPadding(sidePadding, 0, sidePadding, 0)
 
-        val transitionView = ReaderTransitionView(context, seedColor = viewer.seedColor) // RK: Y11
+        val transitionView = ReaderTransitionView(context, seedColor = viewer.seedColor) // RK: cover-based theming
         addView(transitionView)
         addView(pagesContainer)
 
@@ -134,7 +134,7 @@ class PagerTransitionHolder(
             setOnClickListener {
                 val toChapter = transition.to
                 if (toChapter != null) {
-                    this@PagerTransitionHolder.viewer.activity.requestPreloadChapter(toChapter)
+                    this@PagerTransitionHolder.viewer.activity.requestPreloadChapter(toChapter, userAsked = true) // RK
                 }
             }
         }

@@ -1,3 +1,4 @@
+// RK: whole file, rebuilt on the searchable settings DSL, see docs/dev/subsystems/architecture.md
 package eu.kanade.presentation.more.settings.screen.about
 
 import android.content.Context
@@ -8,9 +9,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -23,156 +24,147 @@ import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.ui.UiPreferences
-import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.more.LogoHeader
-import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
-import eu.kanade.presentation.util.LocalBackPress
-import eu.kanade.presentation.util.Screen
+import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.screen.SearchableSettings
 import eu.kanade.tachiyomi.BuildConfig
-import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
 import eu.kanade.tachiyomi.data.updater.RELEASE_URL
 import eu.kanade.tachiyomi.ui.more.NewUpdateScreen
-import eu.kanade.tachiyomi.util.CrashLogUtil
 import eu.kanade.tachiyomi.util.lang.toDateTimestampString
 import eu.kanade.tachiyomi.util.system.copyToClipboard
-import eu.kanade.tachiyomi.util.system.isPreviewBuildType
+import eu.kanade.tachiyomi.util.system.isNightlyBuildType
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.system.updaterEnabled
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import logcat.LogPriority
+import mihon.app.di.appGraph
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Public
+import mihon.icons.simpleicons.Github
+import mihon.icons.simpleicons.SimpleIcons
+import tachiyomi.core.common.Constants
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.release.interactor.GetApplicationRelease
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.LinkIcon
-import tachiyomi.presentation.core.components.ScrollbarLazyColumn
-import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.presentation.core.icons.CustomIcons
-import tachiyomi.presentation.core.icons.Discord
-import tachiyomi.presentation.core.icons.Facebook
-import tachiyomi.presentation.core.icons.Github
-import tachiyomi.presentation.core.icons.Reddit
-import tachiyomi.presentation.core.icons.X
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.time.Instant
-import java.time.LocalDateTime
-import java.time.ZoneId
+import kotlin.time.Instant
 
-object AboutScreen : Screen() {
+/**
+ * About, built on the preference DSL like every other settings screen so its rows reach settings
+ * search: someone looking for "licenses" or "check for updates" finds them by name.
+ *
+ * The logo and the link row are [Preference.PreferenceItem.CustomPreference]s with a blank title,
+ * which the search index skips (it filters on a non-blank title), so neither becomes a junk result.
+ */
+object AboutScreen : SearchableSettings {
+
+    @ReadOnlyComposable
+    @Composable
+    override fun getTitleRes() = MR.strings.pref_category_about
 
     @Composable
-    override fun Content() {
+    override fun getPreferences(): List<Preference> {
         val scope = rememberCoroutineScope()
         val context = LocalContext.current
         val uriHandler = LocalUriHandler.current
-        val handleBack = LocalBackPress.current
         val navigator = LocalNavigator.currentOrThrow
+        val crashLogUtil = remember { context.appGraph.crashLogUtil }
         var isCheckingUpdates by remember { mutableStateOf(false) }
 
-        Scaffold(
-            topBar = { scrollBehavior ->
-                AppBar(
-                    title = stringResource(MR.strings.pref_category_about),
-                    navigateUp = if (handleBack != null) handleBack::invoke else null,
-                    scrollBehavior = scrollBehavior,
-                )
+        return listOfNotNull(
+            Preference.PreferenceItem.CustomPreference(title = "") {
+                LogoHeader(iconPadding = PaddingValues(vertical = 56.dp))
             },
-        ) { contentPadding ->
-            ScrollbarLazyColumn(
-                contentPadding = contentPadding,
-            ) {
-                item {
-                    LogoHeader(
-                        iconPadding = PaddingValues(vertical = 56.dp),
-                    )
-                }
-
-                item {
-                    TextPreferenceWidget(
-                        title = stringResource(MR.strings.version),
-                        subtitle = getVersionName(withBuildDate = true),
-                        onPreferenceClick = {
-                            val deviceInfo = CrashLogUtil(context).getDebugInfo()
-                            context.copyToClipboard("Debug information", deviceInfo)
-                        },
-                    )
-                }
-
-                if (updaterEnabled) {
-                    item {
-                        TextPreferenceWidget(
-                            title = stringResource(MR.strings.check_for_updates),
-                            widget = {
-                                AnimatedVisibility(visible = isCheckingUpdates) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(28.dp),
-                                        strokeWidth = 3.dp,
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.version),
+                subtitle = getVersionName(withBuildDate = true),
+                onClick = { context.copyToClipboard("Debug information", crashLogUtil.getDebugInfo()) },
+            ),
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.check_for_updates),
+                widget = {
+                    AnimatedVisibility(visible = isCheckingUpdates) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(28.dp),
+                            strokeWidth = 3.dp,
+                        )
+                    }
+                },
+                onClick = {
+                    if (!isCheckingUpdates) {
+                        scope.launch {
+                            isCheckingUpdates = true
+                            checkVersion(
+                                context = context,
+                                onAvailableUpdate = { result ->
+                                    navigator.push(
+                                        NewUpdateScreen(
+                                            versionName = result.release.version,
+                                            changelogInfo = result.release.info,
+                                            releaseLink = result.release.releaseLink,
+                                            downloadLink = result.release.downloadLink,
+                                        ),
                                     )
-                                }
-                            },
-                            onPreferenceClick = {
-                                if (!isCheckingUpdates) {
-                                    scope.launch {
-                                        isCheckingUpdates = true
-
-                                        checkVersion(
-                                            context = context,
-                                            onAvailableUpdate = { result ->
-                                                val updateScreen = NewUpdateScreen(
-                                                    versionName = result.release.version,
-                                                    changelogInfo = result.release.info,
-                                                    releaseLink = result.release.releaseLink,
-                                                    downloadLink = result.release.downloadLink,
-                                                )
-                                                navigator.push(updateScreen)
-                                            },
-                                            onFinish = {
-                                                isCheckingUpdates = false
-                                            },
-                                        )
-                                    }
-                                }
-                            },
-                        )
+                                },
+                                onFinish = { isCheckingUpdates = false },
+                            )
+                        }
                     }
-                }
-
-                if (!BuildConfig.DEBUG) {
-                    item {
-                        TextPreferenceWidget(
-                            title = stringResource(MR.strings.whats_new),
-                            onPreferenceClick = { uriHandler.openUri(RELEASE_URL) },
-                        )
-                    }
-                }
-
-                item {
-                    TextPreferenceWidget(
+                },
+            ).takeIf { updaterEnabled },
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.whats_new),
+                onClick = { uriHandler.openUri(RELEASE_URL) },
+            ).takeIf { !BuildConfig.DEBUG },
+            Preference.PreferenceGroup(
+                title = stringResource(MR.strings.pref_category_legal),
+                preferenceItems = listOf(
+                    Preference.PreferenceItem.TextPreference(
                         title = stringResource(MR.strings.licenses),
-                        onPreferenceClick = { navigator.push(OpenSourceLicensesScreen()) },
-                    )
-                }
-
-                // RK: Reikai has no website, socials, Discord, or privacy page; keep only the source repo.
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        LinkIcon(
-                            label = "GitHub",
-                            icon = CustomIcons.Github,
-                            url = "https://github.com/unseensnick/Reikai",
-                        )
-                    }
-                }
-            }
-        }
+                        onClick = { navigator.push(OpenSourceLicensesScreen()) },
+                    ),
+                    // RK: Reikai's own privacy policy, on the docs site.
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.privacy_policy),
+                        onClick = { uriHandler.openUri("${Constants.URL_SITE}/privacy/") },
+                    ),
+                ),
+            ),
+            // RK: Reikai has no socials or Discord; the site and the source repo are the whole list.
+            Preference.PreferenceGroup(
+                title = stringResource(MR.strings.pref_category_links),
+                preferenceItems = listOf(
+                    Preference.PreferenceItem.CustomPreference(title = "") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            horizontalArrangement = Arrangement.Center,
+                        ) {
+                            LinkIcon(
+                                label = stringResource(MR.strings.website),
+                                icon = MaterialSymbols.Rounded.Public,
+                                url = Constants.URL_SITE,
+                            )
+                            LinkIcon(
+                                label = "GitHub",
+                                icon = SimpleIcons.Github,
+                                url = "https://github.com/unseensnick/Reikai",
+                            )
+                        }
+                    },
+                ),
+            ),
+        )
     }
 
     /**
@@ -183,10 +175,10 @@ object AboutScreen : Screen() {
         onAvailableUpdate: (GetApplicationRelease.Result.NewUpdate) -> Unit,
         onFinish: () -> Unit,
     ) {
-        val updateChecker = AppUpdateChecker()
+        val updateChecker = context.appGraph.updateChecker
         withUIContext {
             try {
-                when (val result = withIOContext { updateChecker.checkForUpdate(context, forceCheck = true) }) {
+                when (val result = updateChecker.checkForUpdate(forceCheck = true)) {
                     is GetApplicationRelease.Result.NewUpdate -> {
                         onAvailableUpdate(result)
                     }
@@ -217,8 +209,8 @@ object AboutScreen : Screen() {
                     }
                 }
             }
-            isPreviewBuildType -> {
-                "Beta r${BuildConfig.COMMIT_COUNT}".let {
+            isNightlyBuildType -> {
+                "Nightly r${BuildConfig.COMMIT_COUNT}".let {
                     if (withBuildDate) {
                         "$it (${BuildConfig.COMMIT_SHA}, ${getFormattedBuildTime()})"
                     } else {
@@ -240,16 +232,15 @@ object AboutScreen : Screen() {
 
     internal fun getFormattedBuildTime(): String {
         return try {
-            LocalDateTime.ofInstant(
-                Instant.parse(BuildConfig.BUILD_TIME),
-                ZoneId.systemDefault(),
-            )
+            Instant.parse(BuildConfig.BUILD_TIME)
+                .toLocalDateTime(TimeZone.currentSystemDefault())
                 .toDateTimestampString(
                     UiPreferences.dateFormat(
-                        Injekt.get<UiPreferences>().dateFormat.get(),
+                        // Not a composable, so Injekt survives here only as a Context locator.
+                        Injekt.get<Context>().appGraph.uiPreferences.dateFormat.get(),
                     ),
                 )
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             BuildConfig.BUILD_TIME
         }
     }

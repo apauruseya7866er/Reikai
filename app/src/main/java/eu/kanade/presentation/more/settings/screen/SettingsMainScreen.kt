@@ -7,18 +7,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ChromeReaderMode
-import androidx.compose.material.icons.outlined.Code
-import androidx.compose.material.icons.outlined.CollectionsBookmark
-import androidx.compose.material.icons.outlined.Explore
-import androidx.compose.material.icons.outlined.GetApp
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Security
-import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TopAppBarDefaults
@@ -26,7 +14,6 @@ import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,16 +32,23 @@ import eu.kanade.presentation.more.settings.screen.about.AboutScreen
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.presentation.util.LocalBackPress
 import eu.kanade.presentation.util.Screen
-import exh.assets.EhAssets
-import exh.assets.ehassets.EhLogo
-import exh.md.MangaDexLogo
-import exh.source.ExhPreferences
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.automirroredrounded.ChromeReaderMode
+import mihon.icons.materialsymbols.rounded.Code
+import mihon.icons.materialsymbols.rounded.CollectionsBookmark
+import mihon.icons.materialsymbols.rounded.Download
+import mihon.icons.materialsymbols.rounded.Explore
+import mihon.icons.materialsymbols.rounded.Info
+import mihon.icons.materialsymbols.rounded.Palette
+import mihon.icons.materialsymbols.rounded.Search
+import mihon.icons.materialsymbols.rounded.Security
+import mihon.icons.materialsymbols.rounded.Storage
+import mihon.icons.materialsymbols.rounded.Sync
+import mihon.icons.materialsymbols.rounded.Verified
+import reikai.presentation.recommendation.SettingsRecommendationsScreen
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import cafe.adriel.voyager.core.screen.Screen as VoyagerScreen
 
 object SettingsMainScreen : Screen() {
@@ -98,7 +92,7 @@ object SettingsMainScreen : Screen() {
                             listOf(
                                 AppBar.Action(
                                     title = stringResource(MR.strings.action_search),
-                                    icon = Icons.Outlined.Search,
+                                    icon = MaterialSymbols.Rounded.Search,
                                     onClick = { navigator.navigate(SettingsSearchScreen(), twoPane) },
                                 ),
                             ),
@@ -110,14 +104,6 @@ object SettingsMainScreen : Screen() {
             containerColor = containerColor,
             content = { contentPadding ->
                 val state = rememberLazyListState()
-                // RK: hide screens that opt out (E-Hentai stays hidden until adult sources are enabled).
-                //     isEnabled() is a plain pref read, so observe the gate here as state; without this
-                //     snapshot dependency the list stays stale until the screen is recreated (the bug:
-                //     toggling adult sources in Advanced didn't reveal the E-Hentai category live).
-                val adultEnabled by remember { Injekt.get<ExhPreferences>().isHentaiEnabled() }.collectAsState()
-                val items = remember(adultEnabled) {
-                    items.filter { it.screen !is SearchableSettings || it.screen.isEnabled() }
-                }
                 val indexSelected = if (twoPane) {
                     items.indexOfFirst { it.screen::class == navigator.items.first()::class }
                         .also {
@@ -190,71 +176,74 @@ object SettingsMainScreen : Screen() {
         Item(
             titleRes = MR.strings.pref_category_appearance,
             subtitleRes = MR.strings.pref_appearance_summary,
-            icon = Icons.Outlined.Palette,
+            icon = MaterialSymbols.Rounded.Palette,
             screen = SettingsAppearanceScreen,
         ),
         Item(
             titleRes = MR.strings.pref_category_library,
             subtitleRes = MR.strings.pref_library_summary,
-            icon = Icons.Outlined.CollectionsBookmark,
+            icon = MaterialSymbols.Rounded.CollectionsBookmark,
             screen = SettingsLibraryScreen,
         ),
+        // RK --> one reader entry per content type, replacing the single Reader screen. Each is
+        // self-contained: every setting on it applies to that reader only, so neither screen has to
+        // explain a value shared with the other one.
         Item(
-            titleRes = MR.strings.pref_category_reader,
-            subtitleRes = MR.strings.pref_reader_summary,
-            icon = Icons.AutoMirrored.Outlined.ChromeReaderMode,
-            screen = SettingsReaderScreen,
+            titleRes = MR.strings.pref_category_manga_reader,
+            subtitleRes = MR.strings.pref_category_manga_reader_summary,
+            icon = MaterialSymbols.AutoMirroredRounded.ChromeReaderMode,
+            screen = SettingsMangaReaderScreen,
         ),
+        Item(
+            titleRes = MR.strings.pref_category_novel_reader,
+            subtitleRes = MR.strings.pref_category_novel_reader_summary,
+            icon = MaterialSymbols.AutoMirroredRounded.ChromeReaderMode,
+            screen = SettingsNovelReaderScreen,
+        ),
+        // RK <--
         Item(
             titleRes = MR.strings.pref_category_downloads,
             subtitleRes = MR.strings.pref_downloads_summary,
-            icon = Icons.Outlined.GetApp,
+            icon = MaterialSymbols.Rounded.Download,
             screen = SettingsDownloadScreen,
         ),
         Item(
             titleRes = MR.strings.pref_category_tracking,
             subtitleRes = MR.strings.pref_tracking_summary,
-            icon = Icons.Outlined.Sync,
+            icon = MaterialSymbols.Rounded.Sync,
             screen = SettingsTrackingScreen,
         ),
         Item(
-            titleRes = MR.strings.browse,
+            titleRes = MR.strings.pref_category_browse, // RK: "Browse and sources", which holds source settings
             subtitleRes = MR.strings.pref_browse_summary,
-            icon = Icons.Outlined.Explore,
+            icon = MaterialSymbols.Rounded.Explore,
             screen = SettingsBrowseScreen,
+        ),
+        // RK: recommendations, a top-level entry of its own rather than a page inside Library.
+        Item(
+            titleRes = MR.strings.pref_recommendations,
+            subtitleRes = MR.strings.pref_recommendations_summary,
+            icon = MaterialSymbols.Rounded.Verified,
+            screen = SettingsRecommendationsScreen,
         ),
         Item(
             titleRes = MR.strings.label_data_storage,
             subtitleRes = MR.strings.pref_backup_summary,
-            icon = Icons.Outlined.Storage,
+            icon = MaterialSymbols.Rounded.Storage,
             screen = SettingsDataScreen,
         ),
         Item(
             titleRes = MR.strings.pref_category_security,
             subtitleRes = MR.strings.pref_security_summary,
-            icon = Icons.Outlined.Security,
+            icon = MaterialSymbols.Rounded.Security,
             screen = SettingsSecurityScreen,
         ),
-        // RK --> E-Hentai as its own top-level category (gated by SettingsEhScreen.isEnabled), matching
-        //     Komikku's placement between Security and Advanced.
-        Item(
-            titleRes = MR.strings.pref_category_eh,
-            subtitleRes = MR.strings.pref_ehentai_summary,
-            icon = EhAssets.EhLogo,
-            screen = SettingsEhScreen,
-        ),
-        // RK: MangaDex enhanced-source hub as its own top-level category (gated by isEnabled).
-        Item(
-            titleRes = MR.strings.pref_category_mangadex,
-            subtitleRes = MR.strings.pref_mangadex_summary,
-            icon = MangaDexLogo,
-            screen = SettingsMangaDexScreen,
-        ),
-        // RK <--
+        // RK: E-Hentai and MangaDex are reached from Browse and sources now, in its Source settings
+        // group, so every source's settings live in one place rather than two.
         Item(
             titleRes = MR.strings.pref_category_advanced,
             subtitleRes = MR.strings.pref_advanced_summary,
-            icon = Icons.Outlined.Code,
+            icon = MaterialSymbols.Rounded.Code,
             screen = SettingsAdvancedScreen,
         ),
         Item(
@@ -262,7 +251,7 @@ object SettingsMainScreen : Screen() {
             formatSubtitle = {
                 "${stringResource(MR.strings.app_name)} ${AboutScreen.getVersionName(withBuildDate = false)}"
             },
-            icon = Icons.Outlined.Info,
+            icon = MaterialSymbols.Rounded.Info,
             screen = AboutScreen,
         ),
     )

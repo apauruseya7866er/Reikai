@@ -1,37 +1,116 @@
 package eu.kanade.tachiyomi.extension.model
 
-import android.graphics.drawable.Drawable
 import eu.kanade.tachiyomi.source.Source
+import mihon.domain.extension.model.ContentWarning
 import mihon.domain.extension.model.ExtensionStore
+import reikai.domain.extension.hasSigningKey
 import tachiyomi.domain.source.model.StubSource
 
-sealed class Extension {
+sealed interface Extension {
 
-    abstract val name: String
-    abstract val pkgName: String
-    abstract val versionName: String
-    abstract val versionCode: Long
-    abstract val libVersion: Double
-    abstract val lang: String?
-    abstract val isNsfw: Boolean
+    val name: String
+    val pkgName: String
+    val versionName: String
+    val versionCode: Long
+    val libVersion: Double?
+    val lang: String?
+    val contentWarning: ContentWarning
 
-    data class Installed(
-        override val name: String,
-        override val pkgName: String,
-        override val versionName: String,
-        override val versionCode: Long,
-        override val libVersion: Double,
-        override val lang: String,
-        override val isNsfw: Boolean,
-        val pkgFactory: String?,
-        val sources: List<Source>,
-        val icon: Drawable?,
-        val hasUpdate: Boolean = false,
-        val isObsolete: Boolean = false,
-        val isShared: Boolean,
-        val store: ExtensionStore? = null,
-    ) : Extension()
+    // RK -->
+    val kind: Kind
+    // RK <--
 
+    /**
+     * An extension whose apk is on the device, whether or not it ended up being loaded.
+     */
+    sealed interface Installed : Extension {
+        val isShared: Boolean
+
+        /** SHA-256 digests of the certificates its apk is signed with. */
+        val signatures: List<String>
+
+        val hasUpdate: Boolean
+
+        val store: ExtensionStore?
+
+        /**
+         * The newest listing of this extension among the stores whose signing key it's signed with. An
+         * apk from any other store can't replace it, so only these are where its updates come from.
+         */
+        fun findListing(
+            available: Collection<Available>,
+            storeKeys: Set<String>, // RK: see canComeFrom
+        ): Available? {
+            return available
+                .filter { it.pkgName == pkgName && canComeFrom(it.store, storeKeys) } // RK
+                .maxWithOrNull(compareBy<Available> { it.versionCode }.thenBy { it.libVersion })
+        }
+
+        fun findUpdate(
+            available: Collection<Available>,
+            storeKeys: Set<String>, // RK
+        ): Available? {
+            val installedLibVersion = libVersion
+            return findListing(available, storeKeys)?.takeIf {
+                // RK
+                it.versionCode > versionCode || (installedLibVersion != null && it.libVersion > installedLibVersion)
+            }
+        }
+
+        // RK -->
+
+        /**
+         * Upstream's rule: the store's key signs this apk. A keyless store (a third-party IReader repo, a
+         * store carried over from a preference) cannot pass it, so it counts only for an apk no added
+         * store's key signs. [storeKeys] are the stored keys, not the fetched ones, so a keyed store whose
+         * fetch failed still claims its apks. See docs/dev/subsystems/browse-and-sources.md.
+         */
+        fun canComeFrom(store: ExtensionStore, storeKeys: Set<String>): Boolean =
+            if (store.hasSigningKey) {
+                store.signingKey in signatures
+            } else {
+                signatures.none { it in storeKeys }
+            }
+        // RK <--
+    }
+
+    // RK -->
+
+    /**
+     * Which manifest format an installed apk declares, and so what its sources serve. [manifestKey]
+     * is the `uses-feature` name, and [metadataPrefix] the prefix of the kind's metadata keys.
+     */
+    enum class Kind(val manifestKey: String, val metadataPrefix: String = manifestKey) {
+        MANGA("tachiyomi.extension"),
+
+        /** A novel apk built on the tachiyomi extension library (NovelSourcery). */
+        TACHIYOMI_NOVEL("tachiyomi.novelextension"),
+
+        /** A novel apk built on IReader's source API, whose metadata keys are `source.*`. */
+        IREADER("ireader", metadataPrefix = "source"),
+        ;
+
+        companion object {
+            /** Declaration order settles an apk declaring several, so a manga apk loads as it always did. */
+            fun fromFeatures(features: Collection<String?>): Kind? = entries.firstOrNull { it.manifestKey in features }
+
+            /**
+             * The kind of a store index entry. [isNovel] is the index's field 8000; an old-format index
+             * has no such field, so the novel package namespace answers there.
+             */
+            fun fromIndex(pkgName: String, isNovel: Boolean = false): Kind {
+                val novel = isNovel || pkgName.startsWith(NOVEL_PACKAGE_NAMESPACE)
+                return if (novel) TACHIYOMI_NOVEL else MANGA
+            }
+
+            private const val NOVEL_PACKAGE_NAMESPACE = "eu.kanade.tachiyomi.novelextension."
+        }
+    }
+    // RK <--
+
+    /**
+     * An extension that isn't on the device yet, as listed by an [ExtensionStore].
+     */
     data class Available(
         override val name: String,
         override val pkgName: String,
@@ -39,12 +118,15 @@ sealed class Extension {
         override val versionCode: Long,
         override val libVersion: Double,
         override val lang: String,
-        override val isNsfw: Boolean,
+        override val contentWarning: ContentWarning,
+        // RK -->
+        override val kind: Kind,
+        // RK <--
         val sources: List<Source>,
         val apkUrl: String,
         val iconUrl: String,
         val store: ExtensionStore,
-    ) : Extension() {
+    ) : Extension {
 
         data class Source(
             val id: Long,
@@ -62,14 +144,69 @@ sealed class Extension {
         }
     }
 
-    data class Untrusted(
+    /**
+     * An installed extension whose sources are registered and usable.
+     */
+    data class Loaded(
         override val name: String,
         override val pkgName: String,
         override val versionName: String,
         override val versionCode: Long,
         override val libVersion: Double,
-        val signatureHash: String,
+        override val lang: String,
+        override val contentWarning: ContentWarning,
+        override val isShared: Boolean,
+        override val signatures: List<String>,
+        // RK -->
+        override val kind: Kind,
+        // RK <--
+        val pkgFactory: String?,
+        val sources: List<Source>,
+        override val hasUpdate: Boolean = false,
+        val isObsolete: Boolean = false,
+        override val store: ExtensionStore? = null,
+    ) : Installed
+
+    /**
+     * An installed extension that was never loaded, so it provides no sources. [lang] is derived
+     * from the sources and [libVersion] from metadata, so neither is always known here.
+     */
+    data class NotLoaded(
+        override val name: String,
+        override val pkgName: String,
+        override val versionName: String,
+        override val versionCode: Long,
+        override val isShared: Boolean,
+        override val contentWarning: ContentWarning,
+        override val signatures: List<String>,
+        // RK -->
+        override val kind: Kind,
+        // RK <--
+        override val libVersion: Double? = null,
         override val lang: String? = null,
-        override val isNsfw: Boolean = false,
-    ) : Extension()
+        override val hasUpdate: Boolean = false,
+        override val store: ExtensionStore? = null,
+        val reason: Reason,
+    ) : Installed {
+
+        sealed interface Reason {
+            /** Signature isn't trusted yet. Resolvable by the user accepting it. */
+            data class Untrusted(val signatureHash: String) : Reason
+
+            /** Its [contentWarning] isn't one the user chose to load. */
+            data object Filtered : Reason
+
+            /** No signature to check against at all. */
+            data object Unsigned : Reason
+
+            /** Built against an extension lib this app version can't run. */
+            data object UnsupportedLibVersion : Reason
+
+            /** Required package metadata is missing. */
+            data object Malformed : Reason
+
+            /** Threw while its classes or sources were being instantiated. */
+            data class Failed(val message: String, val stackTrace: String) : Reason
+        }
+    }
 }

@@ -1,0 +1,114 @@
+package reikai.presentation.recents
+
+import androidx.compose.animation.graphics.res.animatedVectorResource
+import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
+import androidx.compose.animation.graphics.vector.AnimatedImageVector
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.Navigator
+import cafe.adriel.voyager.navigator.currentOrThrow
+import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
+import cafe.adriel.voyager.navigator.tab.TabOptions
+import eu.kanade.presentation.util.Tab
+import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.ui.download.DownloadQueueScreen
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.receiveAsFlow
+import reikai.domain.category.RecentsSurface
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.stringResource
+
+/**
+ * Updates and History as one tab, with the four modes inside it. A third object rather than a reused
+ * one because the bottom nav selects by tab class: a shared Tab would light two entries at once, and
+ * the badge asks what kind of tab it is drawing.
+ */
+data object RecentsTab : Tab, ShowsUpdatesBadge {
+
+    private val snackbarHostState = SnackbarHostState()
+
+    private val reselectEvent = Channel<Unit>()
+
+    /**
+     * Buffered, so a launcher shortcut can name a mode before this tab has ever been composed: the
+     * value waits for the first collector instead of being dropped, and a newer one replaces it.
+     */
+    private val showModeEvent = Channel<RecentsMode>(1, BufferOverflow.DROP_OLDEST)
+
+    /** Opens this tab on [mode], for the Updates and History shortcuts while this tab replaces both. */
+    fun showMode(mode: RecentsMode) {
+        showModeEvent.trySend(mode)
+    }
+
+    override val options: TabOptions
+        @Composable
+        get() {
+            val isSelected = LocalTabNavigator.current.current.key == key
+            val image = AnimatedImageVector.animatedVectorResource(R.drawable.animated_updates)
+            return TabOptions(
+                index = 1u,
+                title = stringResource(MR.strings.label_recents),
+                icon = rememberAnimatedVectorPainter(image, isSelected),
+            )
+        }
+
+    override suspend fun onReselect(navigator: Navigator) {
+        reselectEvent.send(Unit)
+    }
+
+    @Composable
+    override fun Content() {
+        val navigator = LocalNavigator.currentOrThrow
+        val context = LocalContext.current
+        val engine = rememberRecentsEngine()
+        val mode by engine.mode.collectAsState()
+        // Held for the badge reset and the two feeds' own error reports. The engine builds these same
+        // instances out of this tab's store, so none of them is a second model.
+        val updatesModel = mangaUpdatesModel(RecentsSurface.RECENTS)
+        val mangaHistory = mangaHistoryModel(RecentsSurface.RECENTS)
+        val novelHistory = novelHistoryModel(RecentsSurface.RECENTS)
+
+        RecentsTabBody(
+            engine = engine,
+            title = stringResource(MR.strings.label_recents),
+            snackbarHostState = snackbarHostState,
+        )
+
+        // The badge counts what the updated lane shows, so a mode that does not draw that lane must
+        // not clear a count the user has had no chance to look at.
+        val showsUpdated = RecentsLaneKind.UPDATED in mode.lanes
+        DisposableEffect(showsUpdated) {
+            if (showsUpdated) updatesModel.resetNewUpdatesCount()
+
+            onDispose {
+                if (showsUpdated) updatesModel.resetNewUpdatesCount()
+            }
+        }
+
+        HistoryFeedErrors(mangaHistory, novelHistory, snackbarHostState)
+
+        LaunchedEffect(Unit) {
+            showModeEvent.receiveAsFlow().collectLatest(engine::setMode)
+        }
+
+        LaunchedEffect(Unit) {
+            reselectEvent.receiveAsFlow().collectLatest {
+                // Reselect resumes wherever there is reading to resume. Updates is the one mode with
+                // no read lane, and it keeps the download-queue shortcut it has always had.
+                if (RecentsLaneKind.READ in engine.mode.value.lanes) {
+                    engine.resumeLatestOrSay(context, snackbarHostState)
+                } else {
+                    navigator.push(DownloadQueueScreen)
+                }
+            }
+        }
+    }
+}

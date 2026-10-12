@@ -1,0 +1,475 @@
+package reikai.novel.source
+
+import androidx.paging.PagingSource
+import eu.kanade.tachiyomi.extension.model.Extension
+import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.model.MangasPage
+import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.source.model.SChapter
+import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.SMangaUpdate
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.source.online.ResolvableSource
+import eu.kanade.tachiyomi.source.online.UriType
+import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.matchers.shouldBe
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import ireader.core.source.DeepLinkSource
+import ireader.core.source.model.ChapterInfo
+import ireader.core.source.model.DeepLink
+import ireader.core.source.model.Listing
+import ireader.core.source.model.MangaInfo
+import ireader.core.source.model.MangasPageInfo
+import ireader.core.source.model.Text
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.test.runTest
+import mihon.domain.extension.model.ContentWarning
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
+import reikai.novel.host.ChapterItem
+import reikai.novel.host.LnPluginHost
+import reikai.novel.host.LnPluginInfo
+import reikai.novel.host.NovelItem
+import reikai.novel.host.SourceNovel
+import reikai.novel.source.ireader.IReaderNovelSource
+import ireader.core.source.CatalogSource as IReaderCatalogSource
+import ireader.core.source.model.Filter as IReaderFilter
+
+/**
+ * What every novel source owes the app, whatever format it comes in. Each kind is fed its format's own
+ * native answer (a plugin and an IReader source list chapters oldest first, a tachiyomi source newest
+ * first) and must hand the app the same result.
+ */
+class NovelSourceConformanceTest {
+
+    enum class Kind { PLUGIN, APP, IREADER }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a novel's chapters come in reading order`(kind: Kind) = runTest {
+        source(kind).parseNovel("novel").chapters.orEmpty().map { it.path } shouldBe listOf("c1", "c2")
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a chapter's control characters are stripped`(kind: Kind) = runTest {
+        source(kind).parseChapter("c1") shouldBe "<p>ab</p>"
+    }
+
+    // An lnreader registry names a language in that language ("English"); the APK formats give the code.
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a source names its language as an ISO code`(kind: Kind) {
+        source(kind).lang shouldBe "en"
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a listing ends at its last page`(kind: Kind) = runTest {
+        val pager = NovelListingPagingSource(source(kind), NovelListing.Popular, filters = null)
+
+        val result = pager.load(PagingSource.LoadParams.Append(key = 2L, loadSize = 20, placeholdersEnabled = false))
+
+        (result as PagingSource.LoadResult.Page).nextKey shouldBe null
+    }
+
+    // A listed name must match the decoded one its novel is stored under, or the row and the novel disagree.
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a listed novel's name is decoded`(kind: Kind) = runTest {
+        source(kind).browse(NovelListing.Popular, page = 3, filters = null).items.single().name shouldBe DECODED
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a searched novel's name is decoded`(kind: Kind) = runTest {
+        source(kind).search("query", page = 1, filters = null).items.single().name shouldBe DECODED
+    }
+
+    // A down site answers with an error page, which a plugin or an IReader extension parses into nothing.
+    // A manga source's awaitSuccess reports the status instead, and every novel kind owes the same.
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a listing whose request failed reports the failure, not an empty page`(kind: Kind) = runTest {
+        shouldThrow<HttpException> { failing(kind).browse(NovelListing.Popular, page = 1, filters = null) }
+            .code shouldBe 521
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a search whose request failed reports the failure, not an empty page`(kind: Kind) = runTest {
+        shouldThrow<HttpException> { failing(kind).search("query", page = 1, filters = null) }.code shouldBe 521
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a novel whose request failed reports the failure, not an empty chapter list`(kind: Kind) = runTest {
+        shouldThrow<HttpException> { failing(kind).parseNovel("novel") }.code shouldBe 521
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class)
+    fun `a chapter whose request failed reports the failure, not an empty text`(kind: Kind) = runTest {
+        shouldThrow<HttpException> { failing(kind).parseChapter("c1") }.code shouldBe 521
+    }
+
+    // Unsupported for an app catalogue: its awaitSuccess fails the call on any failed request, as manga's does.
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["PLUGIN", "IREADER"])
+    fun `a request that failed beside a found result keeps the result`(kind: Kind) = runTest {
+        failing(kind, finding = true).browse(NovelListing.Popular, page = 1, filters = null).items.size shouldBe 1
+    }
+
+    /** Owed by the adapters that convert a native chapter; a plugin hands its own fields over as they are. */
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `a chapter's upload date is kept to the millisecond`(kind: Kind) = runTest {
+        source(kind).parseNovel("novel").chapters.orEmpty().first().releaseTime shouldBe "2023-11-14T22:13:20.123Z"
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `a chapter's group is kept`(kind: Kind) = runTest {
+        source(kind).parseNovel("novel").chapters.orEmpty().first().scanlator shouldBe "Group"
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `a chapter with no upload date has none`(kind: Kind) = runTest {
+        source(kind).parseNovel("novel").chapters.orEmpty().last().releaseTime shouldBe null
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `a chapter the source did not number has no number`(kind: Kind) = runTest {
+        source(kind).parseNovel("novel").chapters.orEmpty().last().chapterNumber shouldBe null
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `a catalogue without filters offers none`(kind: Kind) {
+        source(kind).filters shouldBe null
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `a catalogue carries its app's name and content warning`(kind: Kind) {
+        source(kind).let { it.extensionName to it.contentWarning } shouldBe ("Pack" to ContentWarning.NSFW)
+    }
+
+    // The plugin format has no adult flag, so a plugin answers SAFE rather than a guess.
+    @Test
+    fun `a plugin is its own extension and warns of nothing`() {
+        source(Kind.PLUGIN).let { it.extensionName to it.contentWarning } shouldBe ("P" to ContentWarning.SAFE)
+    }
+
+    // An app built against a class this build no longer ships throws a LinkageError, which is not an
+    // Exception, so every caller let it crash the app. A plugin is out of scope: it runs in QuickJS, and
+    // the host bridge already turns any Throwable into a failed call.
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `an outdated app fails a listing, not the app`(kind: Kind) = runTest {
+        shouldThrow<Exception> { linkBroken(kind).browse(NovelListing.Popular, page = 1, filters = null) }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `an outdated app fails a search, not the app`(kind: Kind) = runTest {
+        shouldThrow<Exception> { linkBroken(kind).search("query", page = 1, filters = null) }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `an outdated app fails a novel's details, not the app`(kind: Kind) = runTest {
+        shouldThrow<Exception> { linkBroken(kind).parseNovel("novel") }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `an outdated app fails a chapter, not the app`(kind: Kind) = runTest {
+        shouldThrow<Exception> { linkBroken(kind).parseChapter("c1") }
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `a source with link hooks names the novel a novel link opens`(kind: Kind) = runTest {
+        linking(kind).links!!.resolve(NOVEL_LINK) shouldBe NovelLink.Novel("novel")
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `a source with link hooks names a chapter link's chapter and novel`(kind: Kind) = runTest {
+        linking(kind).links!!.resolve(CHAPTER_LINK) shouldBe NovelLink.Chapter("novel", "c1")
+    }
+
+    @ParameterizedTest
+    @EnumSource(Kind::class, names = ["APP", "IREADER"])
+    fun `a source whose link reading throws claims no link`(kind: Kind) = runTest {
+        linking(kind, broken = true).links!!.resolve(NOVEL_LINK) shouldBe null
+    }
+
+    // Unsupported for a plugin: the lnreader Plugin type declares no link hook (plugin.ts), only resolveUrl
+    // from a path to an address.
+    @Test
+    fun `a plugin offers no link reading`() {
+        source(Kind.PLUGIN).links shouldBe null
+    }
+
+    // Unsupported for IReader past its hooks: its search reads a Title filter, and no IReader convention
+    // sends a link there as a query.
+    @Test
+    fun `an IReader catalogue without link hooks offers no link reading`() {
+        source(Kind.IREADER).links shouldBe null
+    }
+
+    @Test
+    fun `an app catalogue without link hooks reads a link on its site through its search`() = runTest {
+        searching(listOf("/novel")).links.resolve(NOVEL_LINK) shouldBe NovelLink.Novel("/novel")
+    }
+
+    @Test
+    fun `an app catalogue's search with more than one result claims no link`() = runTest {
+        searching(listOf("/novel", "/other")).links.resolve(NOVEL_LINK) shouldBe null
+    }
+
+    // Its search would name the link, so only the site check keeps it from being asked.
+    @Test
+    fun `an app catalogue does not search a link to another site`() = runTest {
+        searching(listOf(OTHER_SITE_LINK)).links.resolve(OTHER_SITE_LINK) shouldBe null
+    }
+
+    private fun searching(results: List<String>) = TachiyomiNovelSource(
+        mockk<HttpSource> {
+            every { id } returns 7L
+            every { name } returns "App"
+            every { lang } returns "en"
+            every { supportsLatest } returns false
+            every { baseUrl } returns "https://example.com"
+            every { getFilterList() } returns FilterList()
+            every { getMangaUrl(any()) } answers {
+                firstArg<SManga>().url.let { if (it.startsWith("http")) it else "https://example.com$it" }
+            }
+            coEvery { getSearchManga(1, any(), any()) } returns MangasPage(results.map(::manga), false)
+        },
+        app(),
+    )
+
+    private fun linking(kind: Kind, broken: Boolean = false): NovelSource = when (kind) {
+        Kind.APP -> TachiyomiNovelSource(
+            mockk<CatalogueSource>(moreInterfaces = arrayOf(ResolvableSource::class)) {
+                every { id } returns 7L
+                every { name } returns "App"
+                every { lang } returns "en"
+                every { supportsLatest } returns false
+                every { getFilterList() } returns FilterList()
+                val resolvable = this as ResolvableSource
+                if (broken) {
+                    every { resolvable.getUriType(any()) } throws NoSuchMethodError("gone")
+                } else {
+                    every { resolvable.getUriType(NOVEL_LINK) } returns UriType.Manga
+                    every { resolvable.getUriType(CHAPTER_LINK) } returns UriType.Chapter
+                    coEvery { resolvable.getManga(any()) } returns manga("novel")
+                    coEvery { resolvable.getChapter(CHAPTER_LINK) } returns chapter("c1")
+                }
+            },
+            app(),
+        )
+        Kind.IREADER -> IReaderNovelSource(
+            mockk<IReaderCatalogSource>(moreInterfaces = arrayOf(DeepLinkSource::class)) {
+                every { id } returns 7L
+                every { name } returns "IReader"
+                every { lang } returns "en"
+                every { getFilters() } returns emptyList()
+                every { getListings() } returns listOf(listing)
+                val deepLinks = this as DeepLinkSource
+                if (broken) {
+                    every { deepLinks.handleLink(any()) } throws IllegalStateException("parse failed")
+                } else {
+                    every { deepLinks.handleLink(NOVEL_LINK) } returns DeepLink.Manga("novel")
+                    every { deepLinks.handleLink(CHAPTER_LINK) } returns DeepLink.Chapter("c1")
+                    every { deepLinks.findMangaKey("c1") } returns "novel"
+                }
+            },
+            app(Extension.Kind.IREADER),
+        )
+        Kind.PLUGIN -> error("a plugin has no link hook")
+    }
+
+    private fun linkBroken(kind: Kind): NovelSource {
+        val missing = NoSuchMethodError("a method this build no longer ships")
+        return when (kind) {
+            Kind.APP -> TachiyomiNovelSource(
+                catalogue().also {
+                    coEvery { it.getPopularManga(any()) } throws missing
+                    coEvery { it.getSearchManga(any(), any(), any()) } throws missing
+                    coEvery { it.getMangaUpdate(any(), any(), any(), any()) } throws missing
+                    coEvery { it.getPageList(any()) } throws missing
+                },
+                app(),
+            )
+            Kind.IREADER -> IReaderNovelSource(
+                iReaderCatalogue().also {
+                    coEvery { it.getMangaList(any<Listing>(), any()) } throws missing
+                    coEvery { it.getMangaList(any<List<IReaderFilter<*>>>(), any()) } throws missing
+                    coEvery { it.getMangaDetails(any(), any()) } throws missing
+                    coEvery { it.getPageList(any(), any()) } throws missing
+                },
+                app(Extension.Kind.IREADER),
+            )
+            Kind.PLUGIN -> error("out of scope, see above")
+        }
+    }
+
+    private fun source(kind: Kind): NovelSource = when (kind) {
+        Kind.PLUGIN -> LnPluginSource(pluginHost(), LnPluginInfo(id = "p", name = "P", lang = "English"))
+        Kind.APP -> TachiyomiNovelSource(catalogue(), app())
+        Kind.IREADER -> IReaderNovelSource(iReaderCatalogue(), app(Extension.Kind.IREADER))
+    }
+
+    // Each kind's transport reporting a 521: the plugin host and the IReader client record it on the call,
+    // an app catalogue throws it from awaitSuccess. [finding] answers with one novel all the same.
+    private fun failing(kind: Kind, finding: Boolean = false): NovelSource {
+        val found = if (finding) 1 else 0
+        return when (kind) {
+            Kind.PLUGIN -> LnPluginSource(
+                mockk<LnPluginHost> {
+                    coEvery { popularNovels("p", any(), any()) } coAnswers
+                        { failed { List(found) { NovelItem("n", "n") } } }
+                    coEvery { searchNovels("p", any(), any()) } coAnswers { failed { emptyList() } }
+                    coEvery { parseNovel("p", any()) } coAnswers { failed { SourceNovel(path = "novel") } }
+                    coEvery { parseChapter("p", any()) } coAnswers { failed { "" } }
+                },
+                LnPluginInfo(id = "p", name = "P", lang = "English"),
+            )
+            Kind.IREADER -> IReaderNovelSource(
+                iReaderCatalogue().also {
+                    coEvery { it.getMangaList(any<Listing>(), any()) } coAnswers
+                        { failed { MangasPageInfo(List(found) { MangaInfo(key = "n", title = "n") }, false) } }
+                    coEvery { it.getMangaList(any<List<IReaderFilter<*>>>(), any()) } coAnswers
+                        { failed { MangasPageInfo(emptyList(), false) } }
+                    coEvery { it.getChapterList(any(), any()) } coAnswers { failed { emptyList() } }
+                    coEvery { it.getPageList(any(), any()) } coAnswers { failed { emptyList() } }
+                },
+                app(Extension.Kind.IREADER),
+            )
+            Kind.APP -> TachiyomiNovelSource(
+                catalogue().also {
+                    coEvery { it.getPopularManga(any()) } throws HttpException(521)
+                    coEvery { it.getSearchManga(any(), any(), any()) } throws HttpException(521)
+                    coEvery { it.getMangaUpdate(any(), any(), any(), any()) } throws HttpException(521)
+                    coEvery { it.getPageList(any()) } throws HttpException(521)
+                },
+                app(),
+            )
+        }
+    }
+
+    // The call's FetchFailures must be there to record into, or the source never installed it.
+    private suspend fun <T> failed(answer: () -> T): T {
+        currentCoroutineContext()[FetchFailures]!!.record(HttpException(521))
+        return answer()
+    }
+
+    private val listing = object : Listing("Latest") {}
+
+    // IReader hands a chapter over as pages, and lists chapters oldest first as novels keep them.
+    private fun iReaderCatalogue() = mockk<IReaderCatalogSource> {
+        every { id } returns 7L
+        every { name } returns "IReader"
+        every { lang } returns "en"
+        every { getFilters() } returns emptyList()
+        every { getListings() } returns listOf(listing)
+        coEvery { getMangaDetails(any(), any()) } returns MangaInfo(key = "novel", title = "Novel")
+        coEvery { getChapterList(any(), any()) } returns
+            listOf(
+                ChapterInfo(key = "c1", name = "1", dateUpload = UPLOADED, scanlator = "Group"),
+                ChapterInfo(key = "c2", name = "2"),
+            )
+        coEvery { getPageList(any(), any()) } returns listOf(Text("a\u0000b"))
+        coEvery { getMangaList(listing, 2) } returns
+            MangasPageInfo(listOf(MangaInfo(key = "last", title = "last")), false)
+        coEvery { getMangaList(listing, 3) } returns
+            MangasPageInfo(listOf(MangaInfo(key = "n", title = ENCODED)), false)
+        coEvery { getMangaList(any<List<IReaderFilter<*>>>(), 1) } returns
+            MangasPageInfo(listOf(MangaInfo(key = "n", title = ENCODED)), false)
+    }
+
+    private fun pluginHost() = mockk<LnPluginHost> {
+        coEvery { parseNovel("p", "novel") } returns SourceNovel(
+            path = "novel",
+            chapters = listOf(ChapterItem(name = "1", path = "c1"), ChapterItem(name = "2", path = "c2")),
+        )
+        coEvery { parseChapter("p", "c1") } returns "<p>a\u0000b</p>"
+        // A plugin says it has run out by answering with nothing.
+        coEvery { popularNovels("p", 2, any()) } returns emptyList()
+        coEvery { popularNovels("p", 3, any()) } returns listOf(NovelItem(ENCODED, "n"))
+        coEvery { searchNovels("p", "query", 1) } returns listOf(NovelItem(ENCODED, "n"))
+    }
+
+    private fun catalogue() = mockk<CatalogueSource> {
+        every { id } returns 7L
+        every { name } returns "App"
+        every { lang } returns "en"
+        every { supportsLatest } returns false
+        every { getFilterList() } returns FilterList()
+        coEvery { getMangaUpdate(any(), any(), any(), any()) } answers {
+            SMangaUpdate(
+                firstArg(),
+                listOf(
+                    chapter("c2"),
+                    chapter("c1").apply {
+                        date_upload = UPLOADED
+                        scanlator = "Group"
+                    },
+                ),
+            )
+        }
+        coEvery { getPageList(any()) } returns listOf(Page(0, "c1"))
+        coEvery { fetchPageText(any()) } returns "<p>a\u0000b</p>"
+        coEvery { getPopularManga(2) } returns MangasPage(listOf(manga("last")), hasNextPage = false)
+        coEvery { getPopularManga(3) } returns MangasPage(listOf(manga("n").apply { title = ENCODED }), false)
+        coEvery { getSearchManga(1, "query", any()) } returns
+            MangasPage(listOf(manga("n").apply { title = ENCODED }), false)
+    }
+
+    private fun chapter(url: String) = SChapter.create().apply {
+        this.url = url
+        name = url
+    }
+
+    private fun manga(url: String) = SManga.create().apply {
+        this.url = url
+        title = url
+    }
+
+    private fun app(kind: Extension.Kind = Extension.Kind.TACHIYOMI_NOVEL) = Extension.Loaded(
+        name = "Pack",
+        pkgName = "eu.kanade.tachiyomi.novelextension.en.app",
+        versionName = "1.6.1",
+        versionCode = 1,
+        libVersion = 1.6,
+        lang = "en",
+        contentWarning = ContentWarning.NSFW,
+        isShared = true,
+        signatures = emptyList(),
+        kind = kind,
+        pkgFactory = null,
+        sources = emptyList(),
+    )
+
+    private companion object {
+        const val UPLOADED = 1_700_000_000_123L
+        const val NOVEL_LINK = "https://example.com/novel"
+        const val CHAPTER_LINK = "https://example.com/novel/c1"
+        const val OTHER_SITE_LINK = "https://other.example/novel"
+
+        // Plugins hand a name over HTML-escaped, as they scraped it.
+        const val ENCODED = "Tom &amp; Jerry&#39;s"
+        const val DECODED = "Tom & Jerry's"
+    }
+}

@@ -1,6 +1,13 @@
 package reikai.data.novel
 
-import app.cash.sqldelight.async.coroutines.awaitAsOne
+import reikai.domain.chapter.ArrivingChapter
+import reikai.domain.chapter.ChapterNumberOverrideRepository
+import reikai.domain.chapter.StoredChapter
+import reikai.domain.chapter.appliedTo
+import reikai.domain.chapter.chapterArrivals
+import reikai.domain.chapter.foundRelease
+import reikai.domain.chapter.recognizeChapterNumbers
+import reikai.domain.library.ContentType
 import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
@@ -8,190 +15,185 @@ import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.model.NovelUpdate
 import reikai.novel.download.NovelDownloadManager
 import reikai.novel.host.ChapterItem
-import tachiyomi.data.Database
-import tachiyomi.domain.chapter.service.ChapterRecognition
-import java.util.TreeSet
+import tachiyomi.data.chapter.ChapterSanitizer
+import tachiyomi.domain.chapter.model.NoChaptersException
+import tachiyomi.domain.library.service.LibraryPreferences
+import kotlin.time.Clock
 
 /**
- * Novel-side parallel of the manga `syncChaptersWithSource`: reconcile a freshly-parsed source
- * chapter list against the stored `novel_chapters` rows, in one transaction. Stripped of manga-only
- * concerns (no scanlators, no download-manager hook, no duplicate-read library pref).
- *
- * Re-typed from the Yōkai helper onto the S1 repos + [Database] directly. Chapter-number recognition
- * runs only when the plugin gave none (drives sort + display); plugin-supplied numbers are trusted.
- * A re-added chapter (same recognized number as a just-deleted one) inherits its read/bookmark state
- * and original `dateFetch`, so it doesn't bubble up as "new".
- *
- * [page] scopes the sync to one page of a paged source: reconciliation runs against that page's stored
- * rows plus any leftover unpaged ("") rows (so a novel that flipped from unpaged to paged re-tags
- * those rows in place instead of duplicating them, e.g. a source whose pagination is a toggleable
- * setting), and each synced chapter is tagged with [page] as its transport index. Other numbered
- * pages are left untouched. Null = whole-novel sync (the unpaged / parseNovel path), which keeps each
- * chapter's own `ChapterItem.page` (volume label or empty).
- *
- * @return (newly inserted chapters, deleted chapters), each excluding entries whose only change was a
- *   duplicate-read carry-over, so a caller's "new chapters" signal doesn't fire on reorders.
+ * Novel-side parallel of the manga `syncChaptersWithSource`, in one transaction. A re-added chapter
+ * inherits the read/bookmark state and `dateFetch` of the one it replaces, so it is not new. A [page]
+ * sync matches against the whole novel, so a chapter that moved pages is re-tagged in place, and never
+ * deletes: one page cannot tell a removed chapter from one that moved to a page this run did not fetch.
+ * Null syncs the whole novel and drops what the source no longer lists. Predicting the next update is
+ * the caller's, once per whole-novel sync ([predictNovelFetchInterval]).
  */
 suspend fun syncChaptersWithNovelSource(
     rawSourceChapters: List<ChapterItem>,
     novel: Novel,
     novelChapterRepository: NovelChapterRepository,
     novelRepository: NovelRepository,
-    database: Database,
+    libraryPreferences: LibraryPreferences,
+    numberOverrides: ChapterNumberOverrideRepository,
     page: String? = null,
     novelDownloadManager: NovelDownloadManager? = null,
-): Pair<List<NovelChapter>, List<NovelChapter>> {
-    if (rawSourceChapters.isEmpty()) throw Exception("No chapters found")
+): NovelChapterSyncResult {
+    if (rawSourceChapters.isEmpty()) throw NoChaptersException()
 
     val novelId = novel.id
     require(novelId > 0L) { "syncChaptersWithNovelSource requires a persisted novel (id > 0)" }
 
-    val dbChapters = if (page != null) {
-        // This page's rows + any unpaged remnants from a prior single-page state; the latter get
-        // re-tagged (toChange) or deduped here rather than left as cross-page duplicates.
-        novelChapterRepository.getByNovelIdAndPage(novelId, page) +
-            novelChapterRepository.getByNovelIdAndPage(novelId, "")
-    } else {
-        novelChapterRepository.getByNovelId(novelId)
-    }
+    val dbChapters = novelChapterRepository.getByNovelId(novelId)
 
-    val sourceChapters = rawSourceChapters
-        .distinctBy { it.path }
-        .mapIndexed { i, item ->
-            val draft = item.toNovelChapter(novelId, sourceOrder = i.toLong())
-            // Recognize a number from the name only when the plugin gave none (lands as 0.0); a
-            // plugin-supplied positive number is trusted as-is. ChapterRecognition strips the title.
-            val number = ChapterRecognition.parseChapterNumber(
-                novel.title,
-                draft.name,
-                draft.chapterNumber.takeIf { it > 0.0 },
-            )
-            // A paged sync stamps the transport index; otherwise keep the plugin's own page label.
-            draft.copy(chapterNumber = number, page = page ?: draft.page)
-        }
+    val drafts = rawSourceChapters.toDrafts(novelId, novel.title, page)
+    val draftUrls = drafts.mapTo(HashSet()) { it.url }
+    // A page sync numbers the novel's whole stored list with its page in place, in page then listing
+    // order, so a chapter at a page edge reads as one list reads it, whichever page arrived first. Its
+    // source order is the place in that list too: a plugin's index restarts on every page, and every
+    // reading order (details, reader, stitch) sorts by source order alone.
+    val listed = if (page?.toLongOrNull() == null) {
+        drafts
+    } else {
+        dbChapters.filter { it.url !in draftUrls && it.page != page && it.page.toLongOrNull() != null }
+            .plus(drafts)
+            .sortedWith(compareBy({ it.page.toLong() }, { it.sourceOrder }))
+            .mapIndexed { i, chapter -> chapter.copy(sourceOrder = i.toLong()) }
+    }
+    // A number the user corrected replaces the source's, by the rule the manga sync applies too.
+    val overridden = numberOverrides.getByOwner(ContentType.NOVELS, novelId).appliedTo(
+        numbered(novel.title, listed),
+        urlOf = { it.url },
+        numberOf = { it.chapterNumber },
+        withNumber = { chapter, number -> chapter.copy(chapterNumber = number) },
+    )
+    numberOverrides.updateSourceNumbers(ContentType.NOVELS, novelId, overridden.moved)
+    val (sourceChapters, aroundPage) = overridden.chapters.partition { it.url in draftUrls }
 
     val toAdd = mutableListOf<NovelChapter>()
     val toChange = mutableListOf<NovelChapter>()
     // (old, new) pairs for chapters whose title changed; their downloaded file is renamed post-commit.
     val downloadRenames = mutableListOf<Pair<NovelChapter, NovelChapter>>()
 
-    val duplicates = dbChapters.groupBy { it.url }
-        .filter { it.value.size > 1 }
-        .flatMap { (_, chapters) -> chapters.drop(1) }
-    val notInSource = dbChapters.filterNot { dbChapter -> sourceChapters.any { it.url == dbChapter.url } }
-    val toDelete = duplicates + notInSource
+    // A novel stores a url once (51.sqm merged the copies earlier page-scoped syncs left)
+    val dbByUrl = dbChapters.associateBy { it.url }
+    val sourceUrls = sourceChapters.mapTo(mutableSetOf()) { it.url }
+    val sourceNumbers = overridden.chapters.associate { it.url to it.chapterNumber }
+    val toDelete = if (page == null) dbChapters.filterNot { it.url in sourceUrls } else emptyList()
 
     val managedUrls = mutableSetOf<String>()
     for (sourceChapter in sourceChapters) {
         if (sourceChapter.url in managedUrls) continue
         managedUrls += sourceChapter.url
 
-        val dbChapter = dbChapters.find { it.url == sourceChapter.url }
+        val dbChapter = dbByUrl[sourceChapter.url]
         if (dbChapter == null) {
             toAdd.add(sourceChapter)
-        } else if (shouldUpdateDbNovelChapter(dbChapter, sourceChapter)) {
-            val updated = dbChapter.copy(
-                name = sourceChapter.name,
-                dateUpload = sourceChapter.dateUpload,
-                chapterNumber = sourceChapter.chapterNumber,
-                sourceOrder = sourceChapter.sourceOrder,
-                page = sourceChapter.page,
-            )
+            continue
+        }
+        // A source that stops dating a chapter or naming its group keeps the stored value, as manga's
+        // coalescing update does.
+        val updated = dbChapter.copy(
+            name = sourceChapter.name,
+            dateUpload = sourceChapter.dateUpload ?: dbChapter.dateUpload,
+            chapterNumber = sourceChapter.chapterNumber,
+            sourceOrder = sourceChapter.sourceOrder,
+            page = sourceChapter.page,
+            scanlator = sourceChapter.scanlator ?: dbChapter.scanlator,
+            rawChapterNumber = sourceChapter.rawChapterNumber,
+        )
+        if (updated != dbChapter) {
             toChange.add(updated)
             // A re-titled chapter changes its stable-name download path; queue its file rename below.
             if (dbChapter.name != sourceChapter.name) downloadRenames += dbChapter to updated
         }
     }
-
-    if (toAdd.isEmpty() && toDelete.isEmpty() && toChange.isEmpty()) {
-        return emptyList<NovelChapter>() to emptyList()
-    }
-
-    val deletedNumbers = TreeSet<Double>()
-    val deletedReadNumbers = TreeSet<Double>()
-    val deletedBookmarkedNumbers = TreeSet<Double>()
-    toDelete.forEach {
-        if (it.read) deletedReadNumbers.add(it.chapterNumber)
-        if (it.bookmark) deletedBookmarkedNumbers.add(it.chapterNumber)
-        deletedNumbers.add(it.chapterNumber)
-    }
-
-    val now = System.currentTimeMillis()
-    val changedOrDuplicateReadUrls = mutableSetOf<String>()
-
-    // Stagger date_fetch so newer-listed chapters get higher values; sources return most-to-least
-    // recent. A re-added chapter reuses its deleted twin's state + original fetch date.
-    var itemCount = toAdd.size
-    val updatedToAdd = toAdd.map { addItem ->
-        var dateFetch = now + itemCount--
-        var read = addItem.read
-        var bookmark = addItem.bookmark
-        if (addItem.chapterNumber >= 0.0 && addItem.chapterNumber in deletedNumbers) {
-            read = addItem.chapterNumber in deletedReadNumbers
-            bookmark = addItem.chapterNumber in deletedBookmarkedNumbers
-            toDelete.filter { it.chapterNumber == addItem.chapterNumber }
-                .minByOrNull { it.dateFetch }
-                ?.let { dateFetch = it.dateFetch }
-            changedOrDuplicateReadUrls.add(addItem.url)
-        }
-        addItem.copy(dateFetch = dateFetch, read = read, bookmark = bookmark)
-    }
-
-    val insertedChapters = mutableListOf<NovelChapter>()
-    database.transaction {
-        toDelete.forEach { database.novel_chaptersQueries.delete(it.id) }
-
-        for (chapter in updatedToAdd) {
-            database.novel_chaptersQueries.insert(
-                novelId = chapter.novelId,
-                url = chapter.url,
-                name = chapter.name,
-                read = chapter.read,
-                bookmark = chapter.bookmark,
-                lastTextProgress = chapter.lastTextProgress,
-                chapterNumber = chapter.chapterNumber,
-                sourceOrder = chapter.sourceOrder,
-                dateFetch = chapter.dateFetch,
-                dateUpload = chapter.dateUpload,
-                page = chapter.page,
-            )
-            val insertedId = database.novel_chaptersQueries.selectLastInsertedRowId().awaitAsOne()
-            insertedChapters += chapter.copy(id = insertedId)
-        }
-
-        for (chapter in toChange) {
-            // Null every column but the changed metadata so coalesce preserves read/bookmark/progress.
-            database.novel_chaptersQueries.update(
-                novelId = null,
-                url = null,
-                name = chapter.name,
-                read = null,
-                bookmark = null,
-                lastTextProgress = null,
-                chapterNumber = chapter.chapterNumber,
-                sourceOrder = chapter.sourceOrder,
-                dateFetch = null,
-                dateUpload = chapter.dateUpload,
-                page = chapter.page,
-                chapterId = chapter.id,
-            )
+    // A chapter on another page that the page in place renumbered or moved.
+    aroundPage.forEach { chapter ->
+        val dbChapter = dbByUrl.getValue(chapter.url)
+        if (chapter.chapterNumber != dbChapter.chapterNumber || chapter.sourceOrder != dbChapter.sourceOrder) {
+            toChange.add(dbChapter.copy(chapterNumber = chapter.chapterNumber, sourceOrder = chapter.sourceOrder))
         }
     }
+
+    if (toAdd.isEmpty() && toDelete.isEmpty() && toChange.isEmpty()) return NovelChapterSyncResult.UNCHANGED
+
+    val now = Clock.System.now()
+    val markDuplicateAsRead = libraryPreferences.markDuplicateReadChapterAsRead.get()
+        .contains(LibraryPreferences.MARK_DUPLICATE_CHAPTER_READ_NEW)
+    // Sources list newest first, so the kernel counts fetch dates down from now in that order.
+    val arrivals = chapterArrivals(
+        added = toAdd.map { ArrivingChapter(it.chapterNumber, it.read, it.bookmark, it.dateUpload) },
+        stored = dbChapters.map { it.toStoredChapter(sourceNumbers[it.url] ?: it.chapterNumber) },
+        removed = toDelete.map { it.toStoredChapter() },
+        markDuplicateAsRead = markDuplicateAsRead,
+        now = now,
+    )
+    val changedOrDuplicateReadUrls = toAdd.zip(arrivals)
+        .filter { (_, arrival) -> arrival.isChangedOrDuplicate }
+        .mapTo(mutableSetOf()) { (chapter, _) -> chapter.url }
+    val updatedToAdd = toAdd.zip(arrivals) { chapter, arrival ->
+        chapter.copy(
+            dateFetch = arrival.dateFetch,
+            dateUpload = arrival.dateUpload,
+            read = arrival.read,
+            bookmark = arrival.bookmark,
+        )
+    }
+
+    val insertedChapters = novelChapterRepository.updateFromRemote(toDelete.map { it.id }, updatedToAdd, toChange)
 
     // novels.last_update tracks the last time the chapter list changed at all; only on a real change.
-    novelRepository.update(NovelUpdate(id = novel.id, lastUpdate = System.currentTimeMillis()))
+    novelRepository.update(NovelUpdate(novel.id) { lastUpdate = now })
 
     // Relocate any downloaded file whose chapter was re-titled, so recognition follows the new name
-    // (mirrors the manga rename-on-sync). No-op when the chapter isn't downloaded.
+    // (mirrors the manga rename-on-sync, pinned by RenameOnSyncConformanceTest). No-op when the chapter
+    // isn't downloaded.
     downloadRenames.forEach { (old, new) -> novelDownloadManager?.renameChapter(novel, old, new) }
+    // The source no longer lists these, so their queued downloads could only fail, as the manga sync
+    // cancels them too (RemovedChapterQueueConformanceTest).
+    novelDownloadManager?.cancelDownloads(toDelete.map { it.id })
 
-    return insertedChapters.filterNot { it.url in changedOrDuplicateReadUrls } to
-        toDelete.filterNot { it.url in changedOrDuplicateReadUrls }
+    // A page is compared with what that page held: chapters filling a page never stored are the back
+    // catalogue, whatever other pages the novel has.
+    val hadChapters = if (page == null) dbChapters.isNotEmpty() else dbChapters.any { it.page == page }
+    return NovelChapterSyncResult(
+        insertedChapters.filterNot { it.url in changedOrDuplicateReadUrls },
+        changed = true,
+        foundRelease(hadChapters, arrivals),
+    )
 }
 
-private fun shouldUpdateDbNovelChapter(dbChapter: NovelChapter, sourceChapter: NovelChapter): Boolean =
-    dbChapter.name != sourceChapter.name ||
-        dbChapter.dateUpload != sourceChapter.dateUpload ||
-        dbChapter.chapterNumber != sourceChapter.chapterNumber ||
-        dbChapter.sourceOrder != sourceChapter.sourceOrder ||
-        dbChapter.page != sourceChapter.page
+/**
+ * A plugin's chapter list as a sync stores it: one row per path, names without the novel's title in
+ * front, numbers recognized from the whole list. Anything counting a plugin's list outside a sync
+ * counts this, so its numbers match what a commit stores. [novelId] may be -1 for rows that are only
+ * counted.
+ */
+fun List<ChapterItem>.toSourceChapters(novelId: Long, novelTitle: String, page: String? = null): List<NovelChapter> =
+    numbered(novelTitle, toDrafts(novelId, novelTitle, page))
+
+/** The rows a plugin's list becomes before numbering, each holding the number recognition starts from. */
+private fun List<ChapterItem>.toDrafts(novelId: Long, novelTitle: String, page: String?): List<NovelChapter> =
+    distinctBy { it.path }.mapIndexed { i, item ->
+        val draft = item.toNovelChapter(novelId, sourceOrder = i.toLong())
+        draft.copy(
+            name = with(ChapterSanitizer) { draft.name.sanitize(novelTitle) },
+            // A plugin that gives no number lands as 0.0, so only a positive one is the plugin's.
+            rawChapterNumber = draft.chapterNumber.takeIf { it > 0.0 } ?: -1.0,
+            // A paged sync stamps the transport index; otherwise keep the plugin's own page label.
+            page = page ?: draft.page,
+        )
+    }
+
+/** [chapters] numbered from the whole list: oldest first as plugins list them, reversed for the recognizer. */
+private fun numbered(novelTitle: String, chapters: List<NovelChapter>): List<NovelChapter> =
+    recognizeChapterNumbers(
+        novelTitle,
+        chapters.asReversed(),
+        nameOf = { it.name },
+        numberOf = { it.rawChapterNumber ?: it.chapterNumber },
+        withNumber = { chapter, number -> chapter.copy(chapterNumber = number) },
+    ).asReversed()
+
+private fun NovelChapter.toStoredChapter(number: Double = chapterNumber) =
+    StoredChapter(number, read, bookmark, dateFetch)

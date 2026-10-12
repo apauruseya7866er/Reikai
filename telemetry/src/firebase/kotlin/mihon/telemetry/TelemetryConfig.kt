@@ -50,6 +50,10 @@ object TelemetryConfig {
         crashlytics?.isCrashlyticsCollectionEnabled = enabled
     }
 
+    fun recordException(throwable: Throwable) {
+        crashlytics?.recordException(throwable)
+    }
+
     // RK --> Reikai's own packages and signing certificate, replacing Mihon's.
     private fun Context.isReikaiProductionApp(): Boolean {
         if (packageName !in REIKAI_PACKAGES) return false

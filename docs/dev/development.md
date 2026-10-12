@@ -1,4 +1,4 @@
-# Reikai — Development
+# Reikai development
 
 ## Project overview
 
@@ -8,26 +8,26 @@
 - Mihon upstream: `https://github.com/mihonapp/mihon`
 - Package ID: `app.reikai`, with no suffix on release and upstream's suffixes elsewhere (`.dev` debug, `.debug` preview, `.foss`, `.benchmark`). Renamed at 0.3.2 from `eu.kanade.tachiyomi` + `.y2k`. The `eu.kanade.tachiyomi` **namespace** is unchanged and shared with Mihon, so source classes and installed extensions resolve either way.
 - App name string: `Reikai` (`i18n/src/commonMain/moko-resources/base/strings.xml`).
-- Backups are **not** interchangeable with the old Yōkai-based builds: Mihon's database schema differs, so a Mihon-based install cannot open a Yōkai-Reikai database.
+- The **database** is not interchangeable with the old Yōkai-based builds: the schema differs, so a Mihon-based install cannot open a Yōkai-Reikai `tachiyomi.db`. Since the 0.3.2 rename a Yōkai install never shares a data folder with this one, so the two databases cannot meet ([data-and-backup.md](subsystems/data-and-backup.md) "Decisions"). **Backup files are** interchangeable: the proto is shared and unknown fields are skipped, so a Yōkai `.tachibk` restores its library, categories, chapters, history, tracking, settings and custom info here. Custom info sits on each entry at the field numbers Komikku and Yōkai use, so it restores both ways; a Reikai 0.3.x backup's root custom-info lists are folded onto their entries at decode, and a 0.3.x build restoring a newer backup loses that info. Per-category sort does not carry over (Yōkai keeps it in category field 800, which Reikai does not read). Category-id settings such as the default category keep only the Default category (id 0 in both apps), since Yōkai writes no category id (field 3) for `PreferenceRestorer` to map the others by.
 
 ## Rebase status
 
-The rebase has shipped: `main` is the Mihon-based main. The master plan and per-phase record live in [ROADMAP.md](../../ROADMAP.md), the per-feature implementation records in [plans/](plans/), and the `mihon-rebase` memory. The old Yōkai-based code stays on the `design/library-compose` branch as the porting reference.
+The rebase has shipped: `main` is the Mihon-based main. The forward backlog lives in [ROADMAP.md](../../ROADMAP.md) (forward-only), how each area works now in [subsystems/](subsystems/) (start with [content-layer.md](subsystems/content-layer.md)), design still in progress in [plans/](plans/), and what shipped in [CHANGELOG.md](../../CHANGELOG.md) and the release tags. The old Yōkai-based code stays on the `design/library-compose` branch as the porting reference.
 
 ## Canonical rules
 
 The working rules under `.claude/rules/` are the single source of truth; this doc points to them rather than duplicating:
 
-- [architecture.md](../../.claude/rules/architecture.md) — Compose + Voyager, Injekt DI, `PreferenceStore`, coroutines, domain models, modules, `// RK` patch markers.
-- [screen-conventions.md](../../.claude/rules/screen-conventions.md) — Reikai screen conventions on Mihon.
-- [workflow.md](../../.claude/rules/workflow.md) — CHANGELOG, commits/PRs, release-cut, upstream + feature porting.
+- [architecture.md](../../.claude/rules/architecture.md): Compose + Voyager, Metro DI, `PreferenceStore`, coroutines, domain models, modules, `// RK` patch markers.
+- [screen-conventions.md](../../.claude/rules/screen-conventions.md): Reikai screen conventions on Mihon.
+- [workflow.md](../../.claude/rules/workflow.md): CHANGELOG, commits/PRs, release-cut, upstream + feature porting.
 - [code-quality.md](../../.claude/rules/code-quality.md), [testing.md](../../.claude/rules/testing.md), [database.md](../../.claude/rules/database.md), [security.md](../../.claude/rules/security.md).
 
 ## Build
 
 - Android Studio (`Build → Make/Rebuild`). JDK 21 (Temurin 21.0.11; matches `.github/.java-version`). Formatting via Spotless (`./gradlew spotlessApply`).
-- `minSdk 26`, `targetSdk 36`, `compileSdk 37`.
-- No product flavors. Build types: `debug` (`.dev`), `release` (no suffix), `foss`, `preview` (`.debug`), `benchmark`. Release builds use AGP-native signing with the real key when CI secrets or a local `keystore.properties` are present, else they fall back to debug-signed (see the `// RK` signing block in `app/build.gradle.kts`). The `preview` build type doubles as the nightly channel.
+- `minSdk 26`, `targetSdk 36`, `compileSdk 37.2` (the `android-sdk-*` keys in `gradle/mihon.versions.toml`).
+- No product flavors. Build types: `debug` (`.dev`), `release` (no suffix), `foss`, `nightly` (`.debug`), `benchmark`. Release builds use AGP-native signing with the real key when CI secrets or a local `keystore.properties` are present, else they fall back to debug-signed (see the `// RK` signing block in `app/build.gradle.kts`). The `nightly` build type is the pre-release channel; it installs as `app.reikai.debug`.
 - Domain tests: `./gradlew :domain:test`.
 - CLI Gradle is intermittent on the dev machine (loopback flake); build/test on-device in Android Studio when it fails.
 
@@ -37,13 +37,15 @@ Multi-module Gradle project; convention plugins live in `gradle/build-logic` (`i
 
 | Module | Purpose |
 |---|---|
-| `app/` | Android application (Compose + Voyager UI, ScreenModels) |
+| `app/` | Android application (Compose + Voyager UI, AndroidX ViewModels) |
 | `core/common` | Shared utilities (coroutine + preference helpers) |
 | `core/archive` | Archive handling |
-| `core-metadata` | Metadata parsing |
+| `core/metro` | Metro DI helpers: graph lookup (`metroGraph`) and the `IsDebugBuild` and `AppCoroutineScope` qualifiers; ViewModel wiring comes from the `metrox-viewmodel` library |
+| `core-metadata` | Local-source metadata models (`ComicInfo.xml`, the legacy JSON details file) |
 | `data/` | SQLDelight database + repository implementations |
 | `domain/` | Business logic + interactors (immutable `tachiyomi.domain.*` models; has unit tests) |
 | `i18n/` | Strings via Moko Resources |
+| `icons/material-symbols` / `icons/simple-icons` | SVG icon packs compiled to Compose `ImageVector`s by the Valkyrie plugin |
 | `presentation-core` / `presentation-widget` | Reusable Compose components, home-screen widgets |
 | `source-api` | Extension contract loaded by 3rd-party extensions |
 | `source-local` | Local source |
@@ -52,26 +54,21 @@ Multi-module Gradle project; convention plugins live in `gradle/build-logic` (`i
 
 ## Key technologies
 
-Compose + Voyager (no Conductor), Injekt DI, SQLDelight, OkHttp, Coil 3, kotlinx.serialization, Kermit logging (+ optional Firebase Crashlytics), JUnit / MockK / Kotest.
+Compose + Voyager (no Conductor), Metro DI, SQLDelight, OkHttp, Coil 3, kotlinx.serialization, squareup logcat logging (+ optional Firebase Crashlytics), JUnit / MockK / Kotest.
 
 ## Reference clones
 
-Sibling read-only clones in `refs/` provide context:
-
-- `mihon` — the base; port upstream Mihon changes from here.
-- `yokai` — the Yōkai-era base; historical reference only.
-- `komikku` — Komikku (SY/EH lineage); reference for merge and feature approaches.
-- `lnreader-main` / `lnreader-plugins` — LNReader; reference for the light-novel subsystem.
-- `keiyoushi-extensions` / `keiyoushi-extensions-source` — Keiyoushi extensions (distribution + source).
-- `tachiyomi-extension` — Suwayomi's extension repo.
-- `blueth-yokai` — another Yōkai fork.
+The read-only clones sit in `../refs/`, a sibling of this repo. What each one is for is listed once, in the reference-clone entry of [CLAUDE.md](../../CLAUDE.md) "Where things live".
 
 Reikai's own pre-rebase features are read from the `design/library-compose` branch, not from a clone.
 
 ## Porting
 
-- **Mihon upstream:** port manually from `refs/mihon`. Fence edits to Mihon's own files with `// RK -->` / `// RK <--`.
-- **Reikai features:** port from the `design/library-compose` branch, re-typed onto Mihon's immutable domain models. The rebase plan defines the phase order.
+Two inbound flows, each with its own doc (this section is a pointer, not the record):
+
+- **Mihon upstream** (the base): ported by hand from `refs/mihon`, edits to Mihon's files fenced with `// RK`. Process, ledger and frontier: [upstream-sync.md](upstream-sync.md).
+- **Borrowed features** (Komikku / Tsundoku / IReader / LNReader): per-feature, no frontier. Record: [feature-ports.md](feature-ports.md).
+- **Reikai's own pre-rebase features**: ported from the `design/library-compose` branch, re-typed onto Mihon's immutable domain models.
 
 ## Build gotcha
 

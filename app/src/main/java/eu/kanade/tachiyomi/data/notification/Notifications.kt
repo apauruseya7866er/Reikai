@@ -20,6 +20,7 @@ object Notifications {
      */
     const val CHANNEL_COMMON = "common_channel"
     const val ID_DOWNLOAD_IMAGE = 2
+    const val ID_WORKER_START_FAILURE = 3 // RK: a background job that could not be built
 
     /**
      * Notification channel and ids used by the library updater.
@@ -31,17 +32,37 @@ object Notifications {
     const val CHANNEL_LIBRARY_ERROR = "library_errors_channel"
     const val ID_LIBRARY_ERROR = -102
 
-    // RK: light-novel chapter update job (P5 S7), grouped with the manga library updater
+    // RK: how many per-entry notifications either library updater may post. Android refuses
+    //     everything a package posts past 50 live notifications, so an unbounded update loses its
+    //     tail, and the group summary with it if the summary is posted last. Both updaters stop
+    //     short of the budget and leave room for downloads, backups and progress.
+    const val MAX_ENTRY_UPDATE_NOTIFICATIONS = 20
+
+    // RK: light-novel chapter update job, grouped with the manga library updater
     const val CHANNEL_NOVEL_LIBRARY_PROGRESS = "novel_library_progress_channel"
     const val ID_NOVEL_LIBRARY_PROGRESS = -104
     const val CHANNEL_NOVEL_LIBRARY_RESULT = "novel_library_result_channel"
     const val ID_NOVEL_LIBRARY_RESULT = -105
     const val GROUP_NOVEL_NEW_CHAPTERS = "eu.kanade.tachiyomi.NOVEL_NEW_CHAPTERS"
+    const val CHANNEL_NOVEL_LIBRARY_ERROR = "novel_library_errors_channel"
+    const val ID_NOVEL_LIBRARY_ERROR = -106
 
     // RK: E-Hentai favorited-gallery update checker, grouped with the library updater.
     const val CHANNEL_LIBRARY_EHENTAI = "library_ehentai_channel"
-    const val ID_EHENTAI_PROGRESS = -106
+
+    // -110, not -106: that collided with ID_NOVEL_LIBRARY_ERROR, so a gallery update replaced the
+    // novel updater's error notification and its cancel() dismissed one the user had not seen.
+    const val ID_EHENTAI_PROGRESS = -110
     const val ID_EHENTAI_ERROR = -107
+
+    // RK: the E-Hentai favorites backup's progress, apart from the update checker's so a backup
+    // and a gallery check running together never replace or cancel each other's notification.
+    const val ID_EHENTAI_BACKUP_PROGRESS = -111
+
+    // RK: library-wide tracker refresh. Its own ids on the shared library channels, so its progress
+    // neither overwrites nor is overwritten by a chapter update running beside it.
+    const val ID_TRACKER_REFRESH_PROGRESS = -108
+    const val ID_TRACKER_REFRESH_RESULT = -109
 
     /**
      * Notification channel and ids used by the downloader.
@@ -49,12 +70,17 @@ object Notifications {
     private const val GROUP_DOWNLOADER = "group_downloader"
     const val CHANNEL_DOWNLOADER_PROGRESS = "downloader_progress_channel"
     const val ID_DOWNLOAD_CHAPTER_PROGRESS = -201
+    const val ID_DOWNLOAD_CHAPTER_PAUSED = -203
     const val CHANNEL_DOWNLOADER_ERROR = "downloader_error_channel"
     const val ID_DOWNLOAD_CHAPTER_ERROR = -202
 
-    // RK: light-novel chapter downloader (P5 S5), grouped with the manga downloader
+    // RK: light-novel chapter downloader, grouped with the manga downloader
     const val CHANNEL_NOVEL_DOWNLOADER = "novel_downloader_progress_channel"
     const val ID_NOVEL_DOWNLOADER = -205
+
+    // RK: the novel downloader's paused entry. Not the worker's foreground id, which WorkManager
+    // takes down when the paused worker stops, sometimes after this has been posted.
+    const val ID_NOVEL_DOWNLOADER_PAUSED = -207
 
     // RK: novel download failure notification (own id on the shared errors channel, so it neither
     // overwrites nor is overwritten by the ongoing progress entry).
@@ -94,18 +120,14 @@ object Notifications {
     const val ID_NOVEL_TTS = -801
 
     /**
-     * Notification channel and ids used for app and extension updates.
+     * Notification channel and ids used for extension updates.
      */
     private const val GROUP_APK_UPDATES = "group_apk_updates"
-    const val CHANNEL_APP_UPDATE = "app_apk_update_channel"
-    const val ID_APP_UPDATER = 1
-    const val ID_APP_UPDATE_PROMPT = 2
-    const val ID_APP_UPDATE_ERROR = 3
     const val CHANNEL_EXTENSIONS_UPDATE = "ext_apk_update_channel"
     const val ID_UPDATES_TO_EXTS = -401
     const val ID_EXTENSION_INSTALLER = -402
 
-    // RK: light-novel plugin updates (P5 S3a), grouped with the APK/extension updates.
+    // RK: light-novel plugin updates, grouped with the APK/extension updates.
     const val CHANNEL_LN_PLUGIN_UPDATE = "ln_plugin_update_channel"
     const val ID_LN_PLUGIN_UPDATES = -403
 
@@ -119,6 +141,7 @@ object Notifications {
         "downloader_cache_renewal",
         "crash_logs_channel",
         "library_skipped_channel",
+        "app_apk_update_channel",
     )
 
     /**
@@ -165,23 +188,28 @@ object Notifications {
                     setGroup(GROUP_LIBRARY)
                     setShowBadge(false)
                 },
-                // RK --> light-novel chapter update job (P5 S7)
+                // RK --> light-novel chapter update job
                 buildNotificationChannel(CHANNEL_NOVEL_LIBRARY_PROGRESS, IMPORTANCE_LOW) {
-                    setName(context.stringResource(MR.strings.channel_progress))
+                    setName(context.stringResource(MR.strings.channel_novel_update_progress))
                     setGroup(GROUP_LIBRARY)
                     setShowBadge(false)
                 },
                 buildNotificationChannel(CHANNEL_NOVEL_LIBRARY_RESULT, IMPORTANCE_DEFAULT) {
-                    setName(context.stringResource(MR.strings.channel_new_chapters))
+                    setName(context.stringResource(MR.strings.channel_novel_new_chapters))
                     setGroup(GROUP_LIBRARY)
                 },
+                buildNotificationChannel(CHANNEL_NOVEL_LIBRARY_ERROR, IMPORTANCE_LOW) {
+                    setName(context.stringResource(MR.strings.channel_novel_update_errors))
+                    setGroup(GROUP_LIBRARY)
+                    setShowBadge(false)
+                },
                 buildNotificationChannel(CHANNEL_LIBRARY_EHENTAI, IMPORTANCE_LOW) {
-                    setName(context.stringResource(MR.strings.channel_progress))
+                    setName(context.stringResource(MR.strings.channel_ehentai_updates))
                     setGroup(GROUP_LIBRARY)
                     setShowBadge(false)
                 },
                 buildNotificationChannel(CHANNEL_MANGADEX, IMPORTANCE_LOW) {
-                    setName(context.stringResource(MR.strings.channel_progress))
+                    setName(context.stringResource(MR.strings.channel_mangadex_sync))
                     setGroup(GROUP_LIBRARY)
                     setShowBadge(false)
                 },
@@ -199,9 +227,9 @@ object Notifications {
                     setGroup(GROUP_DOWNLOADER)
                     setShowBadge(false)
                 },
-                // RK --> light-novel chapter downloader (P5 S5)
+                // RK --> light-novel chapter downloader
                 buildNotificationChannel(CHANNEL_NOVEL_DOWNLOADER, IMPORTANCE_LOW) {
-                    setName(context.stringResource(MR.strings.channel_progress))
+                    setName(context.stringResource(MR.strings.channel_novel_downloads))
                     setGroup(GROUP_DOWNLOADER)
                     setShowBadge(false)
                 },
@@ -224,10 +252,6 @@ object Notifications {
                 buildNotificationChannel(CHANNEL_NOVEL_TTS, IMPORTANCE_LOW) {
                     setName(context.stringResource(MR.strings.channel_novel_tts))
                     setShowBadge(false)
-                },
-                buildNotificationChannel(CHANNEL_APP_UPDATE, IMPORTANCE_DEFAULT) {
-                    setGroup(GROUP_APK_UPDATES)
-                    setName(context.stringResource(MR.strings.channel_app_updates))
                 },
                 buildNotificationChannel(CHANNEL_EXTENSIONS_UPDATE, IMPORTANCE_DEFAULT) {
                     setGroup(GROUP_APK_UPDATES)

@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.more.settings.screen.HighlightKey
 import eu.kanade.presentation.more.settings.widget.EditTextPreferenceWidget
@@ -27,7 +29,11 @@ import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TitleFontSize
 import eu.kanade.presentation.more.settings.widget.TrackingPreferenceWidget
+import eu.kanade.tachiyomi.data.track.RefreshResult
+import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.launch
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.BaseSliderItem
 import tachiyomi.presentation.core.util.collectAsState
 
@@ -42,7 +48,8 @@ fun StatusWrapper(
     groupTitle: String?,
     content: @Composable () -> Unit,
 ) {
-    val enabled = item.enabled
+    val enabled = item.visible
+    // RK: match title within its group, so a same-titled item elsewhere stays unlit
     val highlighted = highlightKey != null && HighlightKey(groupTitle, item.title).matches(highlightKey)
     AnimatedVisibility(
         visible = enabled,
@@ -60,6 +67,7 @@ fun StatusWrapper(
 @Composable
 internal fun PreferenceItem(
     item: Preference.PreferenceItem<*, *>,
+    // RK: group-scoped highlight, as in StatusWrapper
     highlightKey: HighlightKey?,
     groupTitle: String?,
 ) {
@@ -67,7 +75,7 @@ internal fun PreferenceItem(
     StatusWrapper(
         item = item,
         highlightKey = highlightKey,
-        groupTitle = groupTitle,
+        groupTitle = groupTitle, // RK: group-scoped highlight
     ) {
         when (item) {
             is Preference.PreferenceItem.SwitchPreference -> {
@@ -87,16 +95,19 @@ internal fun PreferenceItem(
                 )
             }
             is Preference.PreferenceItem.SliderPreference -> {
+                val value by item.preference.collectAsState()
                 BaseSliderItem(
-                    value = item.value,
+                    value = value,
                     valueRange = item.valueRange,
                     steps = item.steps,
                     title = item.title,
                     subtitle = item.subtitle,
-                    valueString = item.valueString.takeUnless { it.isNullOrEmpty() } ?: item.value.toString(),
-                    onChange = {
+                    valueString = item.valueText(value),
+                    onChange = { newValue ->
                         scope.launch {
-                            item.onValueChanged(it)
+                            if (item.onValueChanged(newValue)) {
+                                item.preference.set(newValue)
+                            }
                         }
                     },
                     titleStyle = MaterialTheme.typography.titleLarge.copy(fontSize = TitleFontSize),
@@ -174,12 +185,28 @@ internal fun PreferenceItem(
                 )
             }
             is Preference.PreferenceItem.TrackerPreference -> {
+                val context = LocalContext.current
+                LaunchedEffect(item.tracker) {
+                    item.tracker.refreshResultFlow.collect {
+                        when (it) {
+                            RefreshResult.Success -> context.toast(
+                                context.stringResource(MR.strings.refresh_tracker_success, item.tracker.name),
+                            )
+
+                            is RefreshResult.Error -> context.toast(
+                                context.stringResource(MR.strings.refresh_tracker_error, item.tracker.name, it.msg),
+                            )
+                        }
+                    }
+                }
                 val isLoggedIn by item.tracker.let { tracker ->
                     tracker.isLoggedInFlow.collectAsState(tracker.isLoggedIn)
                 }
+                val isRefreshing by item.tracker.isRefreshingFlow.collectAsState()
                 TrackingPreferenceWidget(
                     tracker = item.tracker,
                     isLoggedIn = isLoggedIn,
+                    isRefreshing = isRefreshing,
                     onClick = { if (isLoggedIn) item.logout() else item.login() },
                 )
             }

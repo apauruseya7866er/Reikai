@@ -1,0 +1,668 @@
+import eu.kanade.tachiyomi.source.model.UpdateStrategy;
+import kotlin.Boolean;
+import kotlin.String;
+import kotlin.collections.List;
+import kotlin.time.Instant;
+import kotlinx.serialization.json.JsonObject;
+
+-- Ported from Mihon (mihon 44c1e1915), Reikai-numbered (62, not Mihon's 19). A time that isn't known was
+-- stored as 0, which reads as the start of 1970 once it is an instant, so it is NULL instead. SQLite cannot
+-- drop NOT NULL from a column, so the tables holding one are rebuilt. On top of upstream: chapters keep
+-- page_count and chapter_remote_url_index, and the novel tables get the same treatment, so an unknown date
+-- reads the same for both content types.
+
+-- Every view reading a rebuilt table is dropped here, with the two reading those views, and recreated
+-- against the new tables below
+DROP VIEW novel_update_error_view;
+DROP VIEW novelUpdatesView;
+DROP VIEW novelLibraryView;
+DROP VIEW novelHistoryView;
+DROP VIEW mergedNovelUnitCopiesView;
+DROP VIEW mergedUnitCopiesView;
+DROP VIEW mergedNovelCountedUnitView;
+DROP VIEW mergedCountedUnitView;
+DROP VIEW mergedNovelChapterStaleView;
+DROP VIEW mergedChapterStaleView;
+DROP VIEW library_update_error_view;
+DROP VIEW updatesView;
+DROP VIEW libraryView;
+DROP VIEW historyView;
+
+-- Each table is renamed aside and rebuilt under its own name. Renaming a table also repoints the foreign
+-- keys of the tables that reference it, which would leave them on the copy that is dropped; the legacy
+-- behavior leaves them naming the table that takes its place.
+PRAGMA legacy_alter_table = 1;
+
+-- ---------------------------------------------------------------------------------------------------------
+-- table - manga
+-- ---------------------------------------------------------------------------------------------------------
+
+ALTER TABLE manga RENAME TO manga_temp;
+
+CREATE TABLE manga(
+    id INTEGER NOT NULL PRIMARY KEY,
+    source_id INTEGER NOT NULL,
+    remote_url TEXT NOT NULL,
+    remote_title TEXT NOT NULL,
+    remote_author TEXT,
+    remote_artist TEXT,
+    remote_description TEXT,
+    remote_genre TEXT AS List<String>,
+    remote_status INTEGER NOT NULL,
+    remote_cover TEXT,
+    remote_update_strategy INTEGER AS UpdateStrategy NOT NULL,
+    remote_memo BLOB AS JsonObject NOT NULL,
+    user_favorite_at INTEGER AS Instant,
+    user_notes TEXT NOT NULL,
+    user_reader_flags INTEGER NOT NULL,
+    user_chapter_flags INTEGER NOT NULL,
+    state_chapter_last_update INTEGER AS Instant,
+    state_chapter_next_update INTEGER AS Instant,
+    state_chapter_fetch_interval INTEGER NOT NULL,
+    state_cover_last_modified INTEGER AS Instant,
+    state_initialized INTEGER AS Boolean NOT NULL,
+    UNIQUE(source_id, remote_url)
+);
+
+-- `user_favorite_at` keeps its 0: NULL already means the entry isn't in the library, and 0 is an entry
+-- added before the time was recorded
+INSERT INTO manga(
+    id, source_id, remote_url, remote_title, remote_author, remote_artist, remote_description, remote_genre,
+    remote_status, remote_cover, remote_update_strategy, remote_memo, user_favorite_at, user_notes,
+    user_reader_flags, user_chapter_flags, state_chapter_last_update, state_chapter_next_update,
+    state_chapter_fetch_interval, state_cover_last_modified, state_initialized
+)
+SELECT
+    id, source_id, remote_url, remote_title, remote_author, remote_artist, remote_description, remote_genre,
+    remote_status, remote_cover, remote_update_strategy, remote_memo, user_favorite_at, user_notes,
+    user_reader_flags, user_chapter_flags, nullif(state_chapter_last_update, 0), nullif(state_chapter_next_update, 0),
+    state_chapter_fetch_interval, nullif(state_cover_last_modified, 0), state_initialized
+FROM manga_temp;
+
+DROP TABLE manga_temp;
+
+CREATE INDEX manga_user_favorite_at_index ON manga(user_favorite_at) WHERE user_favorite_at IS NOT NULL;
+
+-- ---------------------------------------------------------------------------------------------------------
+-- table - chapter
+-- ---------------------------------------------------------------------------------------------------------
+
+ALTER TABLE chapter RENAME TO chapter_temp;
+
+CREATE TABLE chapter(
+    id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    remote_url TEXT NOT NULL,
+    remote_name TEXT NOT NULL,
+    remote_scanlator TEXT,
+    remote_chapter_number REAL NOT NULL,
+    remote_date_upload INTEGER AS Instant,
+    remote_order INTEGER NOT NULL,
+    remote_memo BLOB AS JsonObject NOT NULL,
+    user_read INTEGER AS Boolean NOT NULL,
+    user_bookmark INTEGER AS Boolean NOT NULL,
+    user_last_page_read INTEGER NOT NULL,
+    state_date_fetch INTEGER AS Instant NOT NULL,
+-- How many pages the chapter has, so a progress line can say how far through reading stopped and
+-- not only where. Only the reader can fill it, from a chapter it loaded, so 0 means unknown rather
+-- than empty and every row predating this stays 0 until that chapter is next opened. Last in the
+-- table on purpose: the positional mappers read columns in order.
+    page_count INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(manga_id, remote_url),
+    FOREIGN KEY(manga_id) REFERENCES manga (id)
+    ON DELETE CASCADE
+);
+
+INSERT INTO chapter(
+    id, manga_id, remote_url, remote_name, remote_scanlator, remote_chapter_number, remote_date_upload,
+    remote_order, remote_memo, user_read, user_bookmark, user_last_page_read, state_date_fetch, page_count
+)
+SELECT
+    id, manga_id, remote_url, remote_name, remote_scanlator, remote_chapter_number, nullif(remote_date_upload, 0),
+    remote_order, remote_memo, user_read, user_bookmark, user_last_page_read, state_date_fetch, page_count
+FROM chapter_temp;
+
+DROP TABLE chapter_temp;
+
+CREATE INDEX chapter_state_date_fetch_index ON chapter(state_date_fetch);
+CREATE INDEX chapter_unread_state_date_fetch_index ON chapter(state_date_fetch) WHERE user_read = 0;
+CREATE INDEX chapter_remote_url_index ON chapter(remote_url);
+
+-- ---------------------------------------------------------------------------------------------------------
+-- table - manga_track
+-- ---------------------------------------------------------------------------------------------------------
+
+ALTER TABLE manga_track RENAME TO manga_track_temp;
+
+CREATE TABLE manga_track(
+    id INTEGER NOT NULL PRIMARY KEY,
+    manga_id INTEGER NOT NULL,
+    tracker_id INTEGER NOT NULL,
+    remote_id INTEGER NOT NULL,
+    remote_url TEXT NOT NULL,
+    library_id INTEGER,
+    title TEXT NOT NULL,
+    last_chapter_read REAL NOT NULL,
+    total_chapters INTEGER NOT NULL,
+    status INTEGER NOT NULL,
+    score REAL NOT NULL,
+    start_date INTEGER AS Instant,
+    finish_date INTEGER AS Instant,
+    private INTEGER AS Boolean NOT NULL DEFAULT 0,
+    UNIQUE (manga_id, tracker_id),
+    FOREIGN KEY(manga_id) REFERENCES manga (id)
+    ON DELETE CASCADE
+);
+
+INSERT INTO manga_track(
+    id, manga_id, tracker_id, remote_id, remote_url, library_id, title, last_chapter_read, total_chapters,
+    status, score, start_date, finish_date, private
+)
+SELECT
+    id, manga_id, tracker_id, remote_id, remote_url, library_id, title, last_chapter_read, total_chapters,
+    status, score, nullif(start_date, 0), nullif(finish_date, 0), private
+FROM manga_track_temp;
+
+DROP TABLE manga_track_temp;
+
+CREATE INDEX manga_track_tracker_id_remote_id_index ON manga_track(tracker_id, remote_id);
+
+-- ---------------------------------------------------------------------------------------------------------
+-- table - novels
+-- ---------------------------------------------------------------------------------------------------------
+
+ALTER TABLE novels RENAME TO novels_temp;
+
+CREATE TABLE novels(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    source TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    author TEXT,
+    artist TEXT,
+    description TEXT,
+    genre TEXT AS List<String>,
+    status INTEGER NOT NULL,
+    thumbnail_url TEXT,
+    last_update INTEGER AS Instant,
+    initialized INTEGER AS Boolean NOT NULL,
+    chapter_flags INTEGER NOT NULL,
+    update_strategy INTEGER AS UpdateStrategy NOT NULL DEFAULT 0,
+    cover_last_modified INTEGER AS Instant,
+    total_pages INTEGER NOT NULL DEFAULT 1,
+    notes TEXT NOT NULL DEFAULT '',
+    viewer_flags INTEGER NOT NULL DEFAULT 0,
+    next_update INTEGER AS Instant,
+    calculate_interval INTEGER NOT NULL DEFAULT 0,
+    -- When the novel was added to the library, null while it is not in it: the manga table's
+    -- favorite_at, which replaced its favorite flag and date added (mihon 986f46c09).
+    favorite_at INTEGER AS Instant
+);
+
+-- `favorite_at` keeps its 0, as manga's does
+INSERT INTO novels(
+    _id, source, url, title, author, artist, description, genre, status, thumbnail_url, last_update,
+    initialized, chapter_flags, update_strategy, cover_last_modified, total_pages, notes, viewer_flags,
+    next_update, calculate_interval, favorite_at
+)
+SELECT
+    _id, source, url, title, author, artist, description, genre, status, thumbnail_url, nullif(last_update, 0),
+    initialized, chapter_flags, update_strategy, nullif(cover_last_modified, 0), total_pages, notes, viewer_flags,
+    nullif(next_update, 0), calculate_interval, favorite_at
+FROM novels_temp;
+
+DROP TABLE novels_temp;
+
+CREATE INDEX novels_url_index ON novels(url);
+CREATE UNIQUE INDEX novels_source_url_index ON novels(source, url);
+CREATE INDEX novels_library_favorite_at_index ON novels(favorite_at) WHERE favorite_at IS NOT NULL;
+
+-- ---------------------------------------------------------------------------------------------------------
+-- table - novel_chapters
+-- ---------------------------------------------------------------------------------------------------------
+
+ALTER TABLE novel_chapters RENAME TO novel_chapters_temp;
+
+CREATE TABLE novel_chapters(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    novel_id INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    name TEXT NOT NULL,
+    read INTEGER AS Boolean NOT NULL,
+    bookmark INTEGER AS Boolean NOT NULL,
+    last_text_progress INTEGER NOT NULL DEFAULT 0,
+    chapter_number REAL NOT NULL,
+    source_order INTEGER NOT NULL,
+    date_fetch INTEGER AS Instant NOT NULL,
+    date_upload INTEGER AS Instant,
+    page TEXT NOT NULL DEFAULT '',
+    is_downloaded INTEGER AS Boolean NOT NULL DEFAULT 0,
+    scanlator TEXT,
+    FOREIGN KEY(novel_id) REFERENCES novels (_id)
+    ON DELETE CASCADE
+);
+
+INSERT INTO novel_chapters(
+    _id, novel_id, url, name, read, bookmark, last_text_progress, chapter_number, source_order, date_fetch,
+    date_upload, page, is_downloaded, scanlator
+)
+SELECT
+    _id, novel_id, url, name, read, bookmark, last_text_progress, chapter_number, source_order, date_fetch,
+    nullif(date_upload, 0), page, is_downloaded, scanlator
+FROM novel_chapters_temp;
+
+DROP TABLE novel_chapters_temp;
+
+CREATE UNIQUE INDEX novel_chapters_novel_id_url_index ON novel_chapters(novel_id, url);
+CREATE INDEX novel_chapters_unread_by_novel_index ON novel_chapters(novel_id, read) WHERE read = 0;
+CREATE INDEX novel_chapters_date_fetch_index ON novel_chapters(date_fetch);
+
+-- ---------------------------------------------------------------------------------------------------------
+-- table - novel_tracks
+-- ---------------------------------------------------------------------------------------------------------
+
+ALTER TABLE novel_tracks RENAME TO novel_tracks_temp;
+
+CREATE TABLE novel_tracks(
+    _id INTEGER NOT NULL PRIMARY KEY,
+    novel_id INTEGER NOT NULL,
+    sync_id INTEGER NOT NULL,
+    remote_id INTEGER NOT NULL,
+    library_id INTEGER,
+    title TEXT NOT NULL,
+    last_chapter_read REAL NOT NULL,
+    total_chapters INTEGER NOT NULL,
+    status INTEGER NOT NULL,
+    score REAL NOT NULL,
+    remote_url TEXT NOT NULL,
+    start_date INTEGER AS Instant,
+    finish_date INTEGER AS Instant,
+    private INTEGER AS Boolean NOT NULL DEFAULT 0,
+    UNIQUE (novel_id, sync_id) ON CONFLICT REPLACE,
+    FOREIGN KEY(novel_id) REFERENCES novels (_id)
+    ON DELETE CASCADE
+);
+
+INSERT INTO novel_tracks(
+    _id, novel_id, sync_id, remote_id, library_id, title, last_chapter_read, total_chapters, status, score,
+    remote_url, start_date, finish_date, private
+)
+SELECT
+    _id, novel_id, sync_id, remote_id, library_id, title, last_chapter_read, total_chapters, status, score,
+    remote_url, nullif(start_date, 0), nullif(finish_date, 0), private
+FROM novel_tracks_temp;
+
+DROP TABLE novel_tracks_temp;
+
+CREATE INDEX novel_tracks_novel_id_index ON novel_tracks(novel_id);
+
+PRAGMA legacy_alter_table = 0;
+
+-- ---------------------------------------------------------------------------------------------------------
+-- table - history, novel_history
+-- ---------------------------------------------------------------------------------------------------------
+
+-- 0 marked history the user removed, which NULL marks now
+UPDATE history
+SET read_at = NULL
+WHERE read_at = 0;
+
+UPDATE novel_history
+SET last_read = NULL
+WHERE last_read = 0;
+
+-- ---------------------------------------------------------------------------------------------------------
+-- views
+-- ---------------------------------------------------------------------------------------------------------
+
+CREATE VIEW historyView AS
+SELECT
+    history.id AS id,
+    manga.id AS mangaId,
+    chapter.id AS chapterId,
+    manga.remote_title AS title,
+    manga.remote_cover AS thumbnailUrl,
+    manga.source_id AS sourceId,
+    manga.user_favorite_at IS NOT NULL AS favorite,
+    manga.state_cover_last_modified AS coverLastModified,
+    chapter.remote_chapter_number AS chapterNumber,
+-- The recents read lane acts on the chapter it names, so the row carries that chapter's own
+-- state (read, bookmark, progress) and the four values its download state is looked up by. Upstream
+-- selects none of these: its History screen only ever showed a number and a time.
+    chapter.remote_name AS chapterName,
+    chapter.remote_scanlator AS scanlator,
+    chapter.remote_url AS chapterUrl,
+    chapter.user_read AS read,
+    chapter.user_bookmark AS bookmark,
+    chapter.user_last_page_read AS lastPageRead,
+    chapter.page_count AS pageCount,
+    history.read_at AS readAt,
+    history.read_duration AS readDuration,
+    max_read.read_at AS maxReadAt,
+    max_read.chapter_id AS maxReadAtChapterId
+FROM manga
+JOIN chapter
+ON manga.id = chapter.manga_id
+JOIN history
+ON chapter.id = history.chapter_id
+JOIN (
+    SELECT manga_id, chapter_id, MAX(read_at) AS read_at
+    FROM history
+    GROUP BY manga_id
+) AS max_read
+ON chapter.manga_id = max_read.manga_id;
+
+CREATE VIEW libraryView AS
+SELECT
+    M.*,
+    coalesce(C.total, 0) AS totalCount,
+    coalesce(C.readCount, 0) AS readCount,
+    C.latestUpload AS latestUpload,
+    C.fetchedAt AS chapterFetchedAt,
+    -- Joining history to every chapter is the slowest part of the query, and only entries with excluded
+    -- scanlators need the chapters to leave theirs out
+    CASE WHEN EXISTS (SELECT 0 FROM excluded_scanlator WHERE excluded_scanlator.manga_id = M.id)
+    THEN (
+        SELECT max(history.read_at)
+        FROM history
+        JOIN chapter
+        ON chapter.id = history.chapter_id
+        WHERE history.manga_id = M.id
+        AND NOT EXISTS (
+            SELECT 0 FROM excluded_scanlator
+            WHERE excluded_scanlator.manga_id = M.id
+            AND excluded_scanlator.scanlator = chapter.remote_scanlator
+        )
+    )
+    ELSE (SELECT max(history.read_at) FROM history WHERE history.manga_id = M.id)
+    END AS lastRead,
+    coalesce(C.bookmarkCount, 0) AS bookmarkCount,
+    coalesce(MC.categories, '0') AS categories
+FROM manga M
+LEFT JOIN (
+    SELECT
+        chapter.manga_id,
+        count(*) AS total,
+        sum(user_read) AS readCount,
+        max(chapter.remote_date_upload) AS latestUpload,
+        max(chapter.state_date_fetch) AS fetchedAt,
+        sum(chapter.user_bookmark) AS bookmarkCount
+    FROM chapter
+    LEFT JOIN excluded_scanlator
+    ON chapter.manga_id = excluded_scanlator.manga_id
+    AND chapter.remote_scanlator = excluded_scanlator.scanlator
+    WHERE excluded_scanlator.scanlator IS NULL
+    AND chapter.manga_id IN (SELECT id FROM manga WHERE user_favorite_at IS NOT NULL)
+    GROUP BY chapter.manga_id
+) AS C
+ON M.id = C.manga_id
+LEFT JOIN (
+    SELECT manga_id, group_concat(category_id) AS categories
+    FROM manga_category
+    WHERE manga_id IN (SELECT id FROM manga WHERE user_favorite_at IS NOT NULL)
+    GROUP BY manga_id
+) AS MC
+ON MC.manga_id = M.id
+WHERE M.user_favorite_at IS NOT NULL;
+
+CREATE VIEW updatesView AS
+SELECT
+    manga.id AS mangaId,
+    manga.remote_title AS mangaTitle,
+    chapter.id AS chapterId,
+    chapter.remote_name AS chapterName,
+    chapter.remote_scanlator AS scanlator,
+    chapter.remote_url AS chapterUrl,
+    chapter.user_read AS read,
+    chapter.user_bookmark AS bookmark,
+    chapter.user_last_page_read AS lastPageRead,
+    chapter.page_count AS pageCount, -- the progress line says how far through the chapter reading stopped
+    manga.source_id AS sourceId,
+    manga.user_favorite_at IS NOT NULL AS favorite,
+    manga.remote_cover AS thumbnailUrl,
+    manga.state_cover_last_modified AS coverLastModified,
+    chapter.remote_date_upload AS dateUpload,
+    chapter.state_date_fetch AS dateFetch,
+    excluded_scanlator.scanlator AS excludedScanlator
+FROM manga JOIN chapter
+ON manga.id = chapter.manga_id
+LEFT JOIN excluded_scanlator
+ON manga.id = excluded_scanlator.manga_id
+AND chapter.remote_scanlator = excluded_scanlator.scanlator
+WHERE user_favorite_at IS NOT NULL
+AND state_date_fetch > user_favorite_at
+ORDER BY state_date_fetch DESC;
+
+CREATE VIEW library_update_error_view AS
+SELECT
+    manga.id AS mangaId,
+    manga.remote_title AS mangaTitle,
+    manga.source_id AS source,
+    manga.remote_cover AS thumbnailUrl,
+    manga.state_cover_last_modified AS coverLastModified,
+    library_update_errors._id AS errorId,
+    library_update_errors.message AS message,
+    library_update_errors.last_update AS lastUpdate
+FROM manga JOIN library_update_errors
+ON manga.id = library_update_errors.manga_id
+WHERE manga.user_favorite_at IS NOT NULL
+ORDER BY library_update_errors.last_update DESC;
+
+CREATE VIEW mergedChapterStaleView AS
+SELECT MGM.group_id AS groupId
+FROM merge_group_manga MGM
+JOIN manga M
+ON M.id = MGM.manga_id
+AND M.user_favorite_at IS NOT NULL
+JOIN chapter C
+ON C.manga_id = MGM.manga_id
+LEFT JOIN merged_chapter_unit U
+ON U.chapter_id = C.id
+AND U.group_id = MGM.group_id
+WHERE U.chapter_id IS NULL OR U.derived_number != C.remote_chapter_number
+OR U.derived_order != C.remote_order
+UNION ALL
+SELECT U.group_id AS groupId
+FROM merged_chapter_unit U
+LEFT JOIN chapter C
+ON C.id = U.chapter_id
+LEFT JOIN merge_group_manga MGM
+ON MGM.manga_id = C.manga_id
+AND MGM.group_id = U.group_id
+LEFT JOIN manga M
+ON M.id = MGM.manga_id
+AND M.user_favorite_at IS NOT NULL
+WHERE M.id IS NULL
+UNION ALL
+SELECT R.group_id AS groupId
+FROM merged_group_ranking R
+WHERE EXISTS (SELECT 1 FROM merge_group_manga MGM WHERE MGM.group_id = R.group_id)
+AND R.chapter_count != (SELECT count(*) FROM merged_chapter_unit U WHERE U.group_id = R.group_id);
+
+CREATE VIEW mergedNovelChapterStaleView AS
+SELECT MGN.group_id AS groupId
+FROM merge_group_novel MGN
+JOIN novels N
+ON N._id = MGN.novel_id
+AND N.favorite_at IS NOT NULL
+JOIN novel_chapters C
+ON C.novel_id = MGN.novel_id
+LEFT JOIN merged_novel_chapter_unit U
+ON U.chapter_id = C._id
+AND U.group_id = MGN.group_id
+WHERE U.chapter_id IS NULL OR U.derived_name != C.name OR U.derived_number != C.chapter_number
+OR U.derived_order != C.source_order
+UNION ALL
+SELECT U.group_id AS groupId
+FROM merged_novel_chapter_unit U
+LEFT JOIN novel_chapters C
+ON C._id = U.chapter_id
+LEFT JOIN merge_group_novel MGN
+ON MGN.novel_id = C.novel_id
+AND MGN.group_id = U.group_id
+LEFT JOIN novels N
+ON N._id = MGN.novel_id
+AND N.favorite_at IS NOT NULL
+WHERE N._id IS NULL
+UNION ALL
+SELECT R.group_id AS groupId
+FROM merged_group_ranking R
+WHERE EXISTS (SELECT 1 FROM merge_group_novel MGN WHERE MGN.group_id = R.group_id)
+AND R.chapter_count != (SELECT count(*) FROM merged_novel_chapter_unit U WHERE U.group_id = R.group_id);
+
+CREATE VIEW mergedCountedUnitView AS
+SELECT U.group_id AS groupId, U.unit AS unit, U.chapter_id AS chapterId, C.manga_id AS ownerId,
+    C.user_read AS read, C.user_bookmark AS bookmark,
+    C.remote_name AS name, C.remote_scanlator AS scanlator, C.remote_url AS url
+FROM merged_chapter_unit U
+JOIN chapter C
+ON C.id = U.chapter_id
+JOIN manga M
+ON M.id = C.manga_id
+AND M.user_favorite_at IS NOT NULL
+LEFT JOIN excluded_scanlator ES
+ON C.manga_id = ES.manga_id
+AND C.remote_scanlator = ES.scanlator
+WHERE U.unit IS NOT NULL
+AND ES.scanlator IS NULL;
+
+CREATE VIEW mergedNovelCountedUnitView AS
+SELECT U.group_id AS groupId, U.unit AS unit, U.chapter_id AS chapterId, C.novel_id AS ownerId,
+    C.read AS read, C.bookmark AS bookmark, C.name AS name, C.url AS url
+FROM merged_novel_chapter_unit U
+JOIN novel_chapters C
+ON C._id = U.chapter_id
+JOIN novels N
+ON N._id = C.novel_id
+AND N.favorite_at IS NOT NULL
+WHERE U.unit IS NOT NULL;
+
+CREATE VIEW mergedUnitCopiesView AS
+SELECT groupId, unit,
+    sum(CASE WHEN read = 1 THEN 1 ELSE 0 END) AS readCopies,
+    sum(CASE WHEN bookmark = 1 THEN 1 ELSE 0 END) AS bookmarkedCopies
+FROM mergedCountedUnitView
+GROUP BY groupId, unit;
+
+CREATE VIEW mergedNovelUnitCopiesView AS
+SELECT groupId, unit,
+    sum(CASE WHEN read = 1 THEN 1 ELSE 0 END) AS readCopies,
+    sum(CASE WHEN bookmark = 1 THEN 1 ELSE 0 END) AS bookmarkedCopies
+FROM mergedNovelCountedUnitView
+GROUP BY groupId, unit;
+
+CREATE VIEW novelHistoryView AS
+SELECT
+    novel_history._id AS id,
+    novels._id AS novelId,
+    novel_chapters._id AS chapterId,
+    novels.title,
+    novels.thumbnail_url AS thumbnailUrl,
+    novels.source,
+    novels.favorite_at IS NOT NULL AS favorite,
+    novels.cover_last_modified,
+    novel_chapters.chapter_number AS chapterNumber,
+-- Twin of historyView's block: the read lane acts on the chapter it names, so the row carries that
+-- chapter's own state and the values its download state is looked up by. A novel's download name has no
+-- scanlator, and progress is a hundredths scroll percent rather than a page count.
+    novel_chapters.name AS chapterName,
+    novel_chapters.url AS chapterUrl,
+    novel_chapters.read,
+    novel_chapters.bookmark,
+    novel_chapters.last_text_progress AS lastTextProgress,
+    novel_history.last_read AS readAt,
+    novel_history.time_read AS readDuration,
+    max_last_read.last_read AS maxReadAt,
+    max_last_read.chapter_id AS maxReadAtChapterId
+FROM novels
+JOIN novel_chapters
+ON novels._id = novel_chapters.novel_id
+JOIN novel_history
+ON novel_chapters._id = novel_history.chapter_id
+JOIN (
+    SELECT novel_chapters.novel_id, novel_chapters._id AS chapter_id, MAX(novel_history.last_read) AS last_read
+    FROM novel_chapters JOIN novel_history
+    ON novel_chapters._id = novel_history.chapter_id
+    GROUP BY novel_chapters.novel_id
+) AS max_last_read
+ON novel_chapters.novel_id = max_last_read.novel_id;
+
+CREATE VIEW novelLibraryView AS
+SELECT
+    N.*,
+    coalesce(C.total, 0) AS totalCount,
+    coalesce(C.readCount, 0) AS readCount,
+    C.latestUpload AS latestUpload,
+    C.fetchedAt AS chapterFetchedAt,
+    -- Read per novel rather than joined to every chapter, as libraryView does; novel_history has no
+    -- novel id, so the subquery reaches it through the novel's chapters. NULL with no reading history,
+    -- as libraryView's
+    (
+        SELECT max(novel_history.last_read)
+        FROM novel_chapters
+        JOIN novel_history
+        ON novel_history.chapter_id = novel_chapters._id
+        WHERE novel_chapters.novel_id = N._id
+    ) AS lastRead,
+    coalesce(C.bookmarkCount, 0) AS bookmarkCount,
+    coalesce(NC.categories, '0') AS categories
+FROM novels N
+LEFT JOIN (
+    SELECT
+        novel_chapters.novel_id,
+        count(*) AS total,
+        sum(read) AS readCount,
+        max(novel_chapters.date_upload) AS latestUpload,
+        max(novel_chapters.date_fetch) AS fetchedAt,
+        sum(novel_chapters.bookmark) AS bookmarkCount
+    FROM novel_chapters
+    WHERE novel_chapters.novel_id IN (SELECT _id FROM novels WHERE favorite_at IS NOT NULL)
+    GROUP BY novel_chapters.novel_id
+) AS C
+ON N._id = C.novel_id
+LEFT JOIN (
+    SELECT novel_id, group_concat(category_id) AS categories
+    FROM novels_categories
+    WHERE novel_id IN (SELECT _id FROM novels WHERE favorite_at IS NOT NULL)
+    GROUP BY novel_id
+) AS NC
+ON NC.novel_id = N._id
+WHERE N.favorite_at IS NOT NULL;
+
+CREATE VIEW novelUpdatesView AS
+SELECT
+    novels._id AS novelId,
+    novels.title AS novelTitle,
+    novel_chapters._id AS chapterId,
+    novel_chapters.name AS chapterName,
+    novel_chapters.url AS chapterUrl,
+    novel_chapters.read,
+    novel_chapters.bookmark,
+    novel_chapters.last_text_progress AS lastTextProgress,
+    novels.source,
+    novels.favorite_at IS NOT NULL AS favorite,
+    novels.thumbnail_url AS thumbnailUrl,
+    novels.cover_last_modified AS coverLastModified,
+    novel_chapters.date_fetch AS dateFetch,
+    novels.url AS novelUrl
+FROM novels JOIN novel_chapters
+ON novels._id = novel_chapters.novel_id
+WHERE novels.favorite_at IS NOT NULL
+AND novel_chapters.date_fetch > novels.favorite_at
+ORDER BY novel_chapters.date_fetch DESC;
+
+CREATE VIEW novel_update_error_view AS
+SELECT
+    novels._id AS novelId,
+    novels.title AS novelTitle,
+    novels.source,
+    novels.url,
+    novels.thumbnail_url AS thumbnailUrl,
+    novels.cover_last_modified AS coverLastModified,
+    novel_update_errors._id AS errorId,
+    novel_update_errors.message AS message,
+    novel_update_errors.last_update AS lastUpdate
+FROM novels JOIN novel_update_errors
+ON novels._id = novel_update_errors.novel_id
+WHERE novels.favorite_at IS NOT NULL
+ORDER BY novel_update_errors.last_update DESC;

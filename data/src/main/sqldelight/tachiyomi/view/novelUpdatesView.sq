@@ -1,8 +1,7 @@
--- RK: novel twin of updatesView (P5 unified-Updates slice). Favorited novels' chapters that were
--- fetched after the novel was added to the library (date_fetch > date_added), i.e. the recent-updates
--- feed. Filters/sorts on date_fetch (not date_upload): many LN sources leave date_upload at 0, so the
--- manga side's dateUpload cutoff would hide them. No scanlator joins (novels have none); date_added is
--- nullable on novels so it is coalesced to 0.
+-- Novel twin of updatesView. Favorited novels' chapters that were
+-- fetched after the novel was added to the library (date_fetch > favorite_at), i.e. the recent-updates
+-- feed. Filters/sorts on date_fetch (not date_upload): many LN sources leave date_upload unknown, so the
+-- manga side's dateUpload cutoff would hide them. No scanlator joins (novels offer no scanlator filter).
 CREATE VIEW novelUpdatesView AS
 SELECT
     novels._id AS novelId,
@@ -14,19 +13,56 @@ SELECT
     novel_chapters.bookmark,
     novel_chapters.last_text_progress AS lastTextProgress,
     novels.source,
-    novels.favorite,
+    novels.favorite_at IS NOT NULL AS favorite,
     novels.thumbnail_url AS thumbnailUrl,
     novels.cover_last_modified AS coverLastModified,
     novel_chapters.date_fetch AS dateFetch,
     novels.url AS novelUrl
 FROM novels JOIN novel_chapters
 ON novels._id = novel_chapters.novel_id
-WHERE novels.favorite = 1
-AND novel_chapters.date_fetch > coalesce(novels.date_added, 0)
+WHERE novels.favorite_at IS NOT NULL
+AND novel_chapters.date_fetch > novels.favorite_at
 ORDER BY novel_chapters.date_fetch DESC;
 
-getRecentNovelUpdates:
+-- Novel twin of updatesView's getRecentUpdatesWithFilters, pinned by UpdatesFeedFilterConformanceTest:
+-- read/started/bookmarked, then the include/exclude category blocks with sentinel id 0
+-- for uncategorized. "Started" is progress without completion, measured in lastTextProgress rather
+-- than pages. Downloaded is not here on either side: download state is on disk, not in the database.
+getRecentNovelUpdatesWithFilters:
 SELECT *
 FROM novelUpdatesView
 WHERE dateFetch > :after
+AND (:read IS NULL OR read = :read)
+AND (
+    :started IS NULL
+    OR (:started = 1 AND lastTextProgress > 0 AND read = 0)
+    OR (:started = 0 AND lastTextProgress = 0 AND read = 0)
+)
+AND (:bookmarked IS NULL OR bookmark = :bookmarked)
+AND (
+    :includedEmpty
+    OR EXISTS (
+        SELECT 1 FROM novels_categories
+        WHERE novels_categories.novel_id = novelId
+        AND COALESCE(novels_categories.category_id, 0) IN :includedCategories
+    )
+    OR (0 IN :includedCategories AND NOT EXISTS (
+        SELECT 1 FROM novels_categories nc WHERE nc.novel_id = novelId)
+    )
+)
+AND (
+    :excludedEmpty
+    OR (
+        NOT EXISTS (
+            SELECT 1 FROM novels_categories
+            WHERE novels_categories.novel_id = novelId
+            AND COALESCE(novels_categories.category_id, 0) IN :excludedCategories
+        )
+        AND (
+            0 NOT IN :excludedCategories
+            OR EXISTS (SELECT 1 FROM novels_categories WHERE novels_categories.novel_id = novelId)
+        )
+    )
+)
+ORDER BY dateFetch DESC
 LIMIT :limit;

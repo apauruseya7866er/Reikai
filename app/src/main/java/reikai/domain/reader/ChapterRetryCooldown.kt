@@ -1,0 +1,51 @@
+package reikai.domain.reader
+
+import java.util.Collections
+
+/**
+ * Whether either reader may try a neighbour chapter again on its own after one failed.
+ *
+ * Suppressing and self-clearing are both load-bearing: without the first, a boundary the reader
+ * scrolls over re-requests a chapter that just failed; without the second, a session strands on one
+ * that has since recovered. The user's Retry and an explicit chapter open drop the record outright,
+ * so neither of those waits.
+ */
+object ChapterRetryCooldown {
+
+    /** How long a failed chapter is left alone before the reader may reach for it again unprompted. */
+    const val RETRY_COOLDOWN_MS = 15_000L
+
+    /**
+     * One boundary chapter's last failure. [failedAtElapsedMs] is monotonic uptime, not wall clock,
+     * so changing the device's time cannot strand the cooldown or skip it.
+     */
+    data class Failure(val failedAtElapsedMs: Long, val message: String?)
+
+    fun mayRetryUnprompted(failure: Failure?, nowElapsedMs: Long): Boolean =
+        failure == null || nowElapsedMs - failure.failedAtElapsedMs >= RETRY_COOLDOWN_MS
+
+    /** The last failure per chapter, safe to reach from loads running in parallel. */
+    class Failures {
+
+        private val byChapter: MutableMap<Long, Failure> = Collections.synchronizedMap(mutableMapOf())
+
+        /** Replaces any earlier failure of [chapterId], which is what restarts its cooldown: kept, a
+         *  chapter failing every time would be reached for again each time the first one ran out. */
+        fun record(chapterId: Long, nowElapsedMs: Long, message: String?) {
+            byChapter[chapterId] = Failure(nowElapsedMs, message)
+        }
+
+        operator fun get(chapterId: Long): Failure? = byChapter[chapterId]
+
+        operator fun contains(chapterId: Long): Boolean = chapterId in byChapter
+
+        fun remove(chapterId: Long) {
+            byChapter.remove(chapterId)
+        }
+
+        fun clear() = byChapter.clear()
+
+        fun mayRetryUnprompted(chapterId: Long, nowElapsedMs: Long): Boolean =
+            mayRetryUnprompted(byChapter[chapterId], nowElapsedMs)
+    }
+}

@@ -1,0 +1,180 @@
+package reikai.presentation.migrate.flow
+
+import android.widget.Toast
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.sync.Semaphore
+import reikai.domain.chapter.isRecognizedChapterNumber
+import reikai.domain.entry.EntryId
+import reikai.novel.source.NovelExtensionFormat
+import reikai.presentation.browse.fanOutPerSource
+import reikai.util.runCatchingCancellable
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.stringResource
+
+// Searching the chosen target sources, shared by the batch list's override picker and the
+// single-entry search screen. The two ran their own copies of all of this, which is how they came to
+// disagree about what an errored source means.
+
+/**
+ * What one source has to say. Sealed rather than a candidate list beside a nullable error and a
+ * loading flag: of those eight combinations only three mean anything, and the rest read as "this
+ * source has nothing", which is a different and wrong answer.
+ */
+sealed interface StripResult {
+    data object Loading : StripResult
+
+    data class Loaded(val candidates: List<MigrationCandidate>) : StripResult
+
+    /** Kept whole and worded at render, where the shared formatter can read an offline cause. */
+    data class Failed(val error: Throwable) : StripResult
+}
+
+/**
+ * One source's strip of candidates. Strips are published loading, before their searches run, so a
+ * single unreachable source cannot hold every other source's results behind one spinner.
+ */
+data class SourceStrip(
+    val sourceKey: String,
+    val sourceName: String,
+    /** Raw language tag, localized at render (the shared header shows it like global search). */
+    val sourceLang: String,
+    val sourceFormat: NovelExtensionFormat?,
+    val result: StripResult = StripResult.Loading,
+)
+
+fun MigrationSourceUi.loadingStrip(): SourceStrip = SourceStrip(key, name, lang, format)
+
+fun List<SourceStrip>.withResult(sourceKey: String, result: StripResult): List<SourceStrip> =
+    map { if (it.sourceKey == sourceKey) it.copy(result = result) else it }
+
+/** Novel sources of more than one packaging are searched, so each heading names its own. */
+val List<SourceStrip>.showsFormat: Boolean
+    get() = NovelExtensionFormat.tellsApart(map { it.sourceFormat })
+
+/** The candidates this source returned, empty while loading or on failure. */
+val StripResult.candidates: List<MigrationCandidate>
+    get() = (this as? StripResult.Loaded)?.candidates.orEmpty()
+
+/**
+ * A source worth showing under the has-results filter. A failure is kept: the user needs to tell a
+ * source that could not answer from one that answered "nothing", and hiding it strands the retry.
+ */
+val StripResult.hasSomethingToSay: Boolean
+    get() = this !is StripResult.Loaded || candidates.isNotEmpty()
+
+/**
+ * The highest chapter number in [this], or null when there is none to show.
+ *
+ * A negative number is the recognizer saying it could not read one off the chapter, so it is not a
+ * count the user should be shown or compared against. Both adapters read every latest chapter
+ * through this, so the rule has one place to be wrong.
+ */
+inline fun <T> List<T>.latestChapterNumber(number: (T) -> Double): Double? =
+    shownLatestChapter(maxOfOrNull(number))
+
+/** [highest], an entry's highest chapter number counted in the database, as [latestChapterNumber] shows it. */
+fun shownLatestChapter(highest: Double?): Double? = highest?.takeIf(::isRecognizedChapterNumber)
+
+/**
+ * The chosen target sources: the [saved] order, else the [pinned] sources, else everything
+ * [enabled]. The config screen seeds from this and the search layer searches under it, so what the
+ * screen showed is what gets searched.
+ */
+fun selectMigrationSources(
+    enabled: List<MigrationSourceUi>,
+    saved: List<String>,
+    pinned: Set<String>,
+): List<MigrationSourceUi> {
+    val byKey = enabled.associateBy { it.key }
+    return saved.mapNotNull { byKey[it] }
+        .ifEmpty { enabled.filter { it.key in pinned } }
+        .ifEmpty { enabled }
+}
+
+/** [selectMigrationSources] over this adapter's stored selection. */
+suspend fun MigrationFlowAdapter.sourcesFor(): List<MigrationSourceUi> =
+    selectMigrationSources(enabledSources(), savedSelection(), pinnedKeys())
+
+/**
+ * The user's [query] plus the run's extra query, which the config screen asks for and the flow
+ * carries as a screen argument. Only the manual searches need this: [MigrationFlowAdapter.suggest]
+ * takes the whole tuning and its engines fold the extra query in themselves.
+ */
+fun String.withExtraQuery(extraQuery: String?): String = listOfNotNull(
+    trim().takeIf(String::isNotBlank),
+    extraQuery?.trim()?.takeIf(String::isNotBlank),
+).joinToString(" ")
+
+/**
+ * Search every source for [query] at once, reporting each as it lands; a search cancelled by the
+ * one replacing it reports nothing more. Callers publish their placeholder strips BEFORE calling
+ * this: waiting for every source meant one dead source hid the rest.
+ */
+suspend fun MigrationFlowAdapter.fanOutCandidates(
+    entry: MigrationEntry,
+    query: String,
+    sources: List<MigrationSourceUi>,
+    permits: Semaphore,
+    onResult: (sourceKey: String, result: StripResult) -> Unit,
+) = fanOutPerSource(sources, { permits }, { candidates(entry, query, it.key) }) { source, result ->
+    onResult(source.key, result.fold({ StripResult.Loaded(it) }, { StripResult.Failed(it) }))
+}
+
+/** A hand-picked target once it has been read back: ready to take, or refused with the reason. */
+sealed interface PendingPick {
+    data class Ready(val candidate: MigrationCandidate) : PendingPick
+
+    data class Rejected(val outcome: PickOutcome) : PendingPick
+}
+
+/**
+ * Take the deep pick waiting for [entryId] and read it back into a candidate, or say why it cannot
+ * be applied. Null when there is no pick for this entry.
+ *
+ * Both screens that collect a pick can fail the same two ways, and the handoff clears on read, so a
+ * failure that returns quietly leaves the user staring at an unchanged screen.
+ */
+suspend fun MigrationFlowAdapter.takePendingPick(
+    handoff: MigrationPickHandoff,
+    entryId: EntryId,
+): PendingPick? {
+    val targetRawId = handoff.take(entryId) ?: return null
+    // An entry is never its own target: the engines refuse one at commit, so it is turned away here,
+    // where the user can still be told why.
+    if (targetRawId == entryId.rawId) return PendingPick.Rejected(PickOutcome.SameEntry)
+    val candidate = runCatchingCancellable { storedCandidate(targetRawId) }.getOrNull()
+        ?: return PendingPick.Rejected(PickOutcome.Unavailable)
+    return PendingPick.Ready(candidate)
+}
+
+/**
+ * Resolve a hand-picked target, refusing one that comes back with no chapters, which is upstream's
+ * refusal. A pick is the one target nothing else verified, and a chapterless one is what the commit
+ * throws on, where the user gets only a generic failure. Every route that takes a pick calls this.
+ */
+suspend fun MigrationFlowAdapter.resolvePick(candidate: MigrationCandidate): PendingPick {
+    val resolved = runCatchingCancellable { resolve(candidate) }.getOrNull()?.candidate
+    return resolved?.takeIf { it.chapterCount != null }?.let(PendingPick::Ready)
+        ?: PendingPick.Rejected(PickOutcome.NoChapters)
+}
+
+/** Announce a pick that could not be applied, then consume it. */
+@Composable
+fun PickOutcomeToast(outcome: PickOutcome?, onConsumed: () -> Unit) {
+    val context = LocalContext.current
+    val unavailable = stringResource(MR.strings.migrationFlow_pickUnavailable)
+    val sameEntry = stringResource(MR.strings.migrationFlow_pickSameEntry)
+    val noChapters = stringResource(MR.strings.migrationListScreen_matchWithoutChapterToast)
+    LaunchedEffect(outcome) {
+        when (outcome) {
+            PickOutcome.Unavailable -> context.toast(unavailable)
+            PickOutcome.SameEntry -> context.toast(sameEntry)
+            PickOutcome.NoChapters -> context.toast(noChapters, Toast.LENGTH_LONG)
+            null -> return@LaunchedEffect
+        }
+        onConsumed()
+    }
+}

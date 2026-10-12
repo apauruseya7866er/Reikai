@@ -10,6 +10,7 @@ import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import eu.kanade.domain.manga.model.PagePreview
 import eu.kanade.tachiyomi.data.cache.PagePreviewCache
+import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.PagePreviewSource
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -24,7 +25,6 @@ import okio.Path.Companion.toOkioPath
 import okio.Source
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.IOException
 
@@ -40,8 +40,9 @@ class PagePreviewFetcher(
     private val pagePreviewFile: () -> File,
     private val isInCache: () -> Boolean,
     private val writeToCache: (Source) -> Unit,
+    private val invalidatePageList: () -> Unit,
     private val diskCacheKeyLazy: Lazy<String>,
-    private val sourceLazy: Lazy<PagePreviewSource?>,
+    private val getSource: suspend () -> PagePreviewSource?,
     private val callFactoryLazy: Lazy<Call.Factory>,
     private val imageLoader: ImageLoader,
 ) : Fetcher {
@@ -124,16 +125,28 @@ class PagePreviewFetcher(
     }
 
     private suspend fun executeNetworkRequest(): Response {
-        val response = sourceLazy.value?.fetchPreviewImage(
-            page.getPagePreviewInfo(),
-            getCacheControl(),
-        ) ?: callFactoryLazy.value.newCall(newRequest()).await()
+        val source = getSource()
+        val response = try {
+            source?.fetchPreviewImage(
+                page.getPagePreviewInfo(),
+                getCacheControl(),
+            ) ?: callFactoryLazy.value.newCall(newRequest(source)).await()
+        } catch (e: HttpException) {
+            // The source throws before we see a Response, so the status check below never runs.
+            if (e.code.isPageListExpired()) invalidatePageList()
+            throw e
+        }
         if (!response.isSuccessful && response.code != HTTP_NOT_MODIFIED) {
             response.close()
+            if (response.code.isPageListExpired()) invalidatePageList()
             throw IOException(response.message)
         }
         return response
     }
+
+    // The cached page list holds the gallery host's time-limited URLs. Once they lapse every image
+    // behind them is gone for good, so drop the list and let the next open refetch it.
+    private fun Int.isPageListExpired() = this == HTTP_NOT_FOUND || this == HTTP_GONE
 
     private fun getCacheControl(): CacheControl {
         return when {
@@ -148,11 +161,11 @@ class PagePreviewFetcher(
         }
     }
 
-    private fun newRequest(): Request {
+    private fun newRequest(source: PagePreviewSource?): Request {
         val request = Request.Builder().apply {
             url(page.imageUrl)
 
-            val sourceHeaders = (sourceLazy.value as? HttpSource)?.headers
+            val sourceHeaders = (source as? HttpSource)?.headers
             if (sourceHeaders != null) {
                 headers(sourceHeaders)
             }
@@ -237,10 +250,14 @@ class PagePreviewFetcher(
 
     class Factory(
         private val callFactoryLazy: Lazy<Call.Factory>,
+        private val pagePreviewCacheLazy: Lazy<PagePreviewCache>,
+        private val sourceManager: SourceManager,
     ) : Fetcher.Factory<PagePreview> {
 
-        private val pagePreviewCache: PagePreviewCache by injectLazy()
-        private val sourceManager: SourceManager by injectLazy()
+        // Lazy because the cache opens its DiskLruCache journal on construction, and this factory is
+        // built while the app assembles its image loader: an eager read would put that I/O on the
+        // first image request for every user, adult sources or not.
+        private val pagePreviewCache by pagePreviewCacheLazy
 
         override fun create(data: PagePreview, options: Options, imageLoader: ImageLoader): Fetcher {
             return PagePreviewFetcher(
@@ -249,8 +266,9 @@ class PagePreviewFetcher(
                 pagePreviewFile = { pagePreviewCache.getImageFile(data.imageUrl) },
                 isInCache = { pagePreviewCache.isImageInCache(data.imageUrl) },
                 writeToCache = { pagePreviewCache.putImageToCache(data.imageUrl, it) },
+                invalidatePageList = { pagePreviewCache.removePageList(data.pageListKey) },
                 diskCacheKeyLazy = lazy { imageLoader.components.key(data, options)!! },
-                sourceLazy = lazy { sourceManager.get(data.source)?.getMainSource<PagePreviewSource>() },
+                getSource = { sourceManager.get(data.source)?.getMainSource<PagePreviewSource>() },
                 callFactoryLazy = callFactoryLazy,
                 imageLoader = imageLoader,
             )
@@ -262,5 +280,7 @@ class PagePreviewFetcher(
         private val CACHE_CONTROL_NO_NETWORK_NO_CACHE = CacheControl.Builder().noCache().onlyIfCached().build()
 
         private const val HTTP_NOT_MODIFIED = 304
+        private const val HTTP_NOT_FOUND = 404
+        private const val HTTP_GONE = 410
     }
 }

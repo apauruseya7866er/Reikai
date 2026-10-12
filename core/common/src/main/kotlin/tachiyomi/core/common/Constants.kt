@@ -1,11 +1,14 @@
 package tachiyomi.core.common
 
+import eu.kanade.tachiyomi.core.common.BuildConfig
+
 object Constants {
     // RK -->
     // Every user-facing doc link in the app builds from this, so the host is written once. Help URLs
-    // ship inside released APKs and outlive them, so a stale one cannot be recalled.
+    // ship inside released APKs and outlive them, so a stale one cannot be recalled. A nightly build
+    // links the nightly docs under /preview/, which describe what it runs.
     const val URL_SITE = "https://reikai.app"
-    const val URL_DOCS = "$URL_SITE/docs"
+    const val URL_DOCS = "$URL_SITE/${BuildConfig.DOCS_PATH}"
 
     const val URL_HELP = "$URL_DOCS/guides/troubleshooting/"
     const val URL_HELP_UPCOMING = "$URL_DOCS/faq/updates/upcoming"
@@ -21,6 +24,9 @@ object Constants {
     const val NOVEL_SOURCE_EXTRA = "novel_source"
     const val NOVEL_URL_EXTRA = "novel_url"
 
+    // RK: which content type an Update errors deep link opens on (a ContentType name)
+    const val CONTENT_TYPE_EXTRA = "content_type"
+
     const val MAIN_ACTIVITY = "eu.kanade.tachiyomi.ui.main.MainActivity"
 
     // Shortcut actions
@@ -33,4 +39,5 @@ object Constants {
     const val SHORTCUT_SOURCES = "eu.kanade.tachiyomi.SHOW_CATALOGUES"
     const val SHORTCUT_EXTENSIONS = "eu.kanade.tachiyomi.EXTENSIONS"
     const val SHORTCUT_DOWNLOADS = "eu.kanade.tachiyomi.SHOW_DOWNLOADS"
+    const val SHORTCUT_UPDATE_ERRORS = "eu.kanade.tachiyomi.SHOW_UPDATE_ERRORS" // RK
 }

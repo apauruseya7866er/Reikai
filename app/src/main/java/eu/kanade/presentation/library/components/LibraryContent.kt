@@ -8,45 +8,43 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import eu.kanade.core.preference.PreferenceMutableState
 import eu.kanade.tachiyomi.ui.library.LibraryItem
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import tachiyomi.domain.category.model.Category
+import reikai.domain.entry.EntryId // RK
+import reikai.presentation.components.LibraryUpdatePullRefresh // RK
+import reikai.presentation.library.LibraryBucket // RK
 import tachiyomi.domain.library.model.LibraryDisplayMode
-import tachiyomi.domain.library.model.LibraryManga
-import tachiyomi.presentation.core.components.material.PullRefresh
-import kotlin.time.Duration.Companion.seconds
 
 @Composable
 fun LibraryContent(
-    categories: List<Category>,
+    // RK: a page is one section of the assembled library, which is a category or a dynamic group
+    buckets: List<LibraryBucket>,
     searchQuery: String?,
-    selection: Set<Long>,
+    selection: Set<EntryId>, // RK: neutral identity, a manga and a novel can share a row id
     contentPadding: PaddingValues,
     // RK: pagerState hoisted to the caller so the category hopper can drive it directly
     pagerState: PagerState,
     hasActiveFilters: Boolean,
     showPageTabs: Boolean,
     onChangeCurrentPage: (Int) -> Unit,
-    onClickManga: (Long) -> Unit,
-    onContinueReadingClicked: ((LibraryManga) -> Unit)?,
-    onToggleSelection: (Category, LibraryManga) -> Unit,
-    onToggleRangeSelection: (Category, LibraryManga) -> Unit,
-    onRefresh: () -> Boolean,
+    // RK --> retyped to LibraryBucket, LibraryItem and EntryId in place of Category, LibraryManga and Long
+    onClickManga: (EntryId) -> Unit,
+    onContinueReadingClicked: ((LibraryItem) -> Unit)?,
+    onToggleSelection: (LibraryBucket, LibraryItem) -> Unit,
+    onToggleRangeSelection: (LibraryBucket, LibraryItem) -> Unit,
+    onRefresh: suspend () -> Boolean,
+    refreshing: Boolean,
     onGlobalSearchClicked: () -> Unit,
-    getItemCountForCategory: (Category) -> Int?,
+    getItemCountForCategory: (LibraryBucket) -> Int?,
     getDisplayMode: (Int) -> PreferenceMutableState<LibraryDisplayMode>,
     getColumnsForOrientation: (Boolean) -> PreferenceMutableState<Int>,
-    getItemsForCategory: (Category) -> List<LibraryItem>,
+    getItemsForCategory: (LibraryBucket) -> List<LibraryItem>,
+    // RK <--
 ) {
     Column(
         modifier = Modifier.padding(
@@ -56,16 +54,17 @@ fun LibraryContent(
         ),
     ) {
         val scope = rememberCoroutineScope()
-        var isRefreshing by remember(pagerState.currentPage) { mutableStateOf(false) }
 
-        if (showPageTabs && categories.isNotEmpty() && (categories.size > 1 || !categories.first().isSystemCategory)) {
-            LaunchedEffect(categories) {
-                if (categories.size <= pagerState.currentPage) {
-                    pagerState.scrollToPage(categories.size - 1)
+        // RK: a lone dynamic group still gets tabs; only a lone real Default category hides them.
+        val onlySystemCategory = buckets.size == 1 && buckets.first().realCategory?.isSystemCategory == true
+        if (showPageTabs && buckets.isNotEmpty() && !onlySystemCategory) {
+            LaunchedEffect(buckets) {
+                if (buckets.size <= pagerState.currentPage) {
+                    pagerState.scrollToPage(buckets.size - 1)
                 }
             }
             LibraryTabs(
-                categories = categories,
+                buckets = buckets, // RK: sections of the assembled library
                 pagerState = pagerState,
                 getItemCountForCategory = getItemCountForCategory,
                 onTabItemClick = {
@@ -76,19 +75,11 @@ fun LibraryContent(
             )
         }
 
-        PullRefresh(
-            refreshing = isRefreshing,
+        // RK: the spinner follows the update job instead of upstream's one-second fake
+        LibraryUpdatePullRefresh(
+            updating = refreshing,
             enabled = selection.isEmpty(),
-            onRefresh = {
-                val started = onRefresh()
-                if (!started) return@PullRefresh
-                scope.launch {
-                    // Fake refresh status but hide it after a second as it's a long running task
-                    isRefreshing = true
-                    delay(1.seconds)
-                    isRefreshing = false
-                }
-            },
+            onRefresh = onRefresh,
         ) {
             LibraryPager(
                 state = pagerState,
@@ -97,17 +88,19 @@ fun LibraryContent(
                 selection = selection,
                 searchQuery = searchQuery,
                 onGlobalSearchClicked = onGlobalSearchClicked,
-                getCategoryForPage = { page -> categories[page] },
+                getCategoryForPage = { page -> buckets[page] }, // RK: a page is a bucket
                 getDisplayMode = getDisplayMode,
                 getColumnsForOrientation = getColumnsForOrientation,
                 getItemsForCategory = getItemsForCategory,
-                onClickManga = { category, manga ->
+                // RK --> a LibraryItem row, clicked by its neutral identity so a novel routes to its own screen
+                onClickManga = { category, item ->
                     if (selection.isNotEmpty()) {
-                        onToggleSelection(category, manga)
+                        onToggleSelection(category, item)
                     } else {
-                        onClickManga(manga.manga.id)
+                        onClickManga(item.entryId)
                     }
                 },
+                // RK <--
                 onLongClickManga = onToggleRangeSelection,
                 onClickContinueReading = onContinueReadingClicked,
             )

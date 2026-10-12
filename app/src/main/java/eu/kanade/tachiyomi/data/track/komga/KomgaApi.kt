@@ -1,11 +1,12 @@
 package eu.kanade.tachiyomi.data.track.komga
 
-import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
 import okhttp3.Headers
@@ -13,6 +14,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import reikai.data.track.REIKAI_TRACKER_USER_AGENT
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.injectLazy
@@ -20,13 +22,14 @@ import uy.kohesive.injekt.injectLazy
 private const val READLIST_API = "/api/v1/readlists"
 
 class KomgaApi(
-    private val trackId: Long,
+    private val trackerId: Long,
     private val client: OkHttpClient,
 ) {
 
     private val headers: Headers by lazy {
         Headers.Builder()
-            .add("User-Agent", "Reikai v${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})")
+            // RK: identifies as Reikai
+            .add("User-Agent", REIKAI_TRACKER_USER_AGENT)
             .build()
     }
 
@@ -93,17 +96,17 @@ class KomgaApi(
                 .put(payload.toRequestBody("application/json".toMediaType()))
                 .build(),
         )
-            .awaitSuccess()
+            .awaitSuccess().close()
         return getTrackSearch(track.tracking_url)
     }
 
-    private fun SeriesDto.toTrack(): TrackSearch = TrackSearch.create(trackId).also {
+    private fun SeriesDto.toTrack(): TrackSearch = TrackSearch.create(trackerId).also {
         it.title = metadata.title
         it.summary = metadata.summary
         it.publishing_status = metadata.status
     }
 
-    private fun ReadListDto.toTrack(): TrackSearch = TrackSearch.create(trackId).also {
+    private fun ReadListDto.toTrack(): TrackSearch = TrackSearch.create(trackerId).also {
         it.title = name
     }
 }

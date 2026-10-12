@@ -1,0 +1,1070 @@
+package reikai.presentation.recents
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import cafe.adriel.voyager.core.screen.Screen
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
+import eu.kanade.presentation.category.components.ChangeCategoryDialog
+import eu.kanade.presentation.components.AppBar
+import eu.kanade.presentation.components.AppBarActions
+import eu.kanade.presentation.components.AppBarTitle
+import eu.kanade.presentation.components.SearchToolbar
+import eu.kanade.presentation.components.relativeDateText
+import eu.kanade.presentation.history.components.HistoryDeleteAllDialog
+import eu.kanade.presentation.history.components.HistoryDeleteDialog
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
+import eu.kanade.presentation.manga.components.ChapterDownloadIndicator
+import eu.kanade.presentation.manga.components.MangaBottomActionMenu
+import eu.kanade.presentation.updates.UpdatesDeleteConfirmationDialog
+import eu.kanade.presentation.util.formatChapterNumber
+import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.ui.category.CategoryScreen
+import eu.kanade.tachiyomi.util.lang.toLocalDate
+import eu.kanade.tachiyomi.util.lang.toTimestampString
+import kotlinx.coroutines.launch
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import mihon.feature.upcoming.UpcomingScreen
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Delete
+import mihon.icons.materialsymbols.rounded.Favorite
+import mihon.icons.materialsymbols.rounded.FilterList
+import mihon.icons.materialsymbols.rounded.FlipToBack
+import mihon.icons.materialsymbols.rounded.SelectAll
+import reikai.domain.chapter.isRecognizedChapterNumber
+import reikai.domain.download.whereDownloadOffered
+import reikai.domain.entry.EntryId
+import reikai.domain.library.ChapterSwipeActions
+import reikai.presentation.browse.components.EntryDuplicateDialog
+import reikai.presentation.components.ContentTypeFilterChips
+import reikai.presentation.components.HeaderTabRow
+import reikai.presentation.components.LibraryUpdatePullRefresh
+import reikai.presentation.components.libraryRefreshMessage
+import reikai.presentation.components.readProgressLabel
+import reikai.presentation.migrate.flow.EntryMigrateFor
+import reikai.presentation.selection.chapterSelectionOffers
+import reikai.presentation.updates.EntryUpdatesRow
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.FastScrollLazyColumn
+import tachiyomi.presentation.core.components.ListGroupHeader
+import tachiyomi.presentation.core.components.material.Scaffold
+import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.screens.EmptyScreen
+import tachiyomi.presentation.core.screens.EmptyScreenAction
+import tachiyomi.presentation.core.screens.LoadingScreen
+import tachiyomi.presentation.core.theme.active
+import kotlin.time.Clock
+
+/**
+ * The one recent-activity screen, rendering whichever mode its [engine] is on. Both tabs call it and
+ * keep their own identity: the bottom nav selects by tab class, so a single shared Tab would light
+ * both entries at once. Everything describing the list comes off the engine; this file decides only
+ * how it looks. Record: docs/dev/subsystems/recents.md.
+ */
+@Composable
+fun Screen.RecentsScreen(
+    engine: RecentsEngine,
+    title: String,
+    modifier: Modifier = Modifier,
+    // Hoisted so a tab that speaks for itself can be heard: History's reselect resume answers "no next
+    // chapter" from outside this screen, and a host of its own would render nowhere.
+    snackbarHostState: SnackbarHostState = remember { SnackbarHostState() },
+) {
+    val context = LocalContext.current
+    val navigator = LocalNavigator.currentOrThrow
+    val scope = rememberCoroutineScope()
+    var filterSheetOpen by rememberSaveable { mutableStateOf(false) }
+
+    val mode by engine.mode.collectAsState()
+    val contentType by engine.contentType.collectAsState()
+    val query by engine.query.collectAsState()
+    // The three flows the engine shares with WhileSubscribed are read with a lifecycle, so the window
+    // can actually close: a plain collectAsState runs for as long as this tab stays composed, which
+    // is the whole time the app is backgrounded, and the providers behind them never stop.
+    val refreshing by engine.refreshing.collectAsStateWithLifecycle()
+    // Collected, never read as `value`: shared while subscribed, it answers its seed to nobody.
+    val lastUpdated by engine.lastUpdated.collectAsStateWithLifecycle()
+    val filterActive by engine.filterActive.collectAsState()
+    val chipCapabilities by engine.chipCapabilities.collectAsState()
+    val selection by engine.selection.collectAsState()
+    val swipeActions by engine.swipeActions.collectAsState()
+    // Null until the assembly catches up with the chip, which is drawn as loading.
+    val rendered by engine.rendered.collectAsStateWithLifecycle()
+    // A row's download control polls its state, so this is what tells it a download came or went.
+    LaunchedEffect(engine) { engine.trackDownloads() }
+
+    val rows = rendered?.rows.orEmpty()
+    val selectionEnabled = mode.can(RecentsCapability.SELECTION)
+    // The order a sweep runs along: both types interleaved, grouping and collapsing already applied.
+    // The same list the engine prunes the selection to, so the two cannot disagree.
+    val orderedRefs = remember(rows) { rows.orderedChapterRefs() }
+    val showsUpdated = RecentsLaneKind.UPDATED in mode.lanes
+    val showsRead = RecentsLaneKind.READ in mode.lanes
+
+    // The membership behind the rows being drawn, which decides whether a row can name a chapter other
+    // than its record. Off the rendered emission, so the gate and the rows describe the same pass.
+    val membership = rendered?.membership.orEmpty()
+
+    fun open(item: RecentsItem) {
+        scope.launchIO {
+            val target = engine.open(item, mode, membership)
+            withUIContext {
+                // Every path that opens a chapter says so when there is none left; this one is the
+                // only one a recents row has.
+                target.launch(context) {
+                    snackbarHostState.showSnackbar(context.stringResource(MR.strings.no_next_chapter))
+                }
+            }
+        }
+    }
+
+    /**
+     * Run a bulk verb on what the selected rows are actually about. Resolved here rather than in the
+     * bar because this is where the coroutine is, and once rather than per verb so the four cannot
+     * disagree; a row whose target is still unresolved pays for it now, off the main thread.
+     */
+    fun actOnSelection(items: List<RecentsItem>, action: (Set<ChapterRef>) -> Unit) {
+        scope.launchIO {
+            val chapters = engine.actingChapters(items, mode, membership)
+            withUIContext { action(chapters) }
+        }
+    }
+
+    fun openDetails(entry: EntryId) {
+        scope.launchIO {
+            val screen = engine.detailsScreen(entry) ?: return@launchIO
+            withUIContext { navigator.push(screen) }
+        }
+    }
+
+    fun clearHistory() {
+        scope.launchIO {
+            // Only announced once it has actually happened: the wipe can fail, and this is the one
+            // message about it the user has no way of checking.
+            if (!engine.clearHistory()) return@launchIO
+            withUIContext {
+                snackbarHostState.showSnackbar(context.stringResource(MR.strings.clear_history_completed))
+            }
+        }
+    }
+
+    suspend fun refresh(): Boolean {
+        val started = engine.refresh()
+        scope.launch {
+            val message = libraryRefreshMessage(started, contentType, category = false)
+            snackbarHostState.showSnackbar(context.stringResource(message))
+        }
+        return started
+    }
+
+    BackHandler(enabled = selection.isNotEmpty(), onBack = engine::clearSelection)
+
+    Scaffold(
+        modifier = modifier,
+        // The Scaffold's pinned scroll behaviour is deliberately dropped rather than passed on. All it
+        // does here is tint the bar once content slides under it, and with the mode strip between the
+        // bar and the list the outer nested scroll never sees the list return to the top, so the tint
+        // stays after scrolling back up. Browse ignores it the same way.
+        topBar = {
+            RecentsToolbar(
+                title = title,
+                query = query,
+                onQueryChange = engine::search,
+                selectionCount = selection.size,
+                onCancelSelection = engine::clearSelection,
+                onSelectAll = { engine.selectAll(orderedRefs) },
+                onInvertSelection = { engine.invertSelection(orderedRefs) },
+                filterActive = filterActive,
+                onFilterClicked = { filterSheetOpen = true },
+                showsCalendar = RecentsTypeCapability.UPCOMING in chipCapabilities && showsUpdated,
+                onCalendarClicked = { navigator.push(UpcomingScreen()) },
+                // Both are the updated lane's: History has never offered either, and a takeover that
+                // added them would be inventing an affordance rather than carrying one across.
+                showsRefresh = showsUpdated,
+                onRefresh = { scope.launch { refresh() } },
+                showsClearHistory = showsRead,
+                onClearHistory = { engine.openDialog(RecentsDialog.ClearHistory) },
+            )
+        },
+        bottomBar = {
+            // Off the drawn rows, not the assembly: a row the surface no longer shows must not answer
+            // for what the bar offers, any more than it stays in the selection.
+            val selectedItems = rows.selectableItems().filter { it.lane.chapterRef in selection }
+            RecentsBottomBar(
+                engine = engine,
+                selected = selectedItems,
+                onAct = { action -> actOnSelection(selectedItems, action) },
+                // By the scope each row was shown in, which decides the copy its download fetches.
+                onDownload = {
+                    scope.launchIO {
+                        val chapters = engine.actingChaptersByScope(selectedItems, mode, membership)
+                        withUIContext { engine.downloadSelection(chapters) }
+                    }
+                },
+                // The dialog carries the resolved chapters, decided when it is raised rather than when
+                // it is confirmed, so the confirm cannot act on a row the list has since dropped.
+                onDeleteDownloads = {
+                    scope.launchIO {
+                        val chapters = engine.actingChaptersByScope(selectedItems, mode, membership)
+                        withUIContext { engine.openDialog(RecentsDialog.DeleteDownloads(chapters)) }
+                    }
+                },
+            )
+        },
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+    ) { contentPadding ->
+        val layoutDirection = LocalLayoutDirection.current
+        Column(modifier = Modifier.padding(top = contentPadding.calculateTopPadding())) {
+            val modes = remember(engine.modes) { RECENTS_MODE_ORDER.filter { it in engine.modes } }
+            // Only where there is a choice to make, so the two single-mode tabs never draw it.
+            if (modes.size > 1) {
+                HeaderTabRow(items = modes, selected = mode, label = RecentsMode::labelRes, onSelect = engine::setMode)
+            }
+            ContentTypeFilterChips(selected = contentType, onSelect = engine::setContentType)
+            HorizontalDivider()
+            val bodyPadding = PaddingValues(
+                start = contentPadding.calculateStartPadding(layoutDirection),
+                end = contentPadding.calculateEndPadding(layoutDirection),
+                bottom = contentPadding.calculateBottomPadding(),
+            )
+            Box(modifier = Modifier.weight(1f)) {
+                when {
+                    rendered == null || rendered?.loading == true -> LoadingScreen(Modifier.padding(bodyPadding))
+                    else -> {
+                        val feed: @Composable () -> Unit = if (rows.isEmpty()) {
+                            {
+                                // Inside the pull-to-refresh like the list, so an empty updated feed still
+                                // says when the library last updated and can still be pulled to update it.
+                                Column(modifier = Modifier.padding(bodyPadding).fillMaxSize()) {
+                                    if (showsUpdated) {
+                                        LastUpdatedHeader(lastUpdated)
+                                    }
+                                    RecentsEmptyState(
+                                        mode = mode,
+                                        query = query,
+                                        filterActive = filterActive,
+                                        onFilterClicked = { filterSheetOpen = true },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+                        } else {
+                            {
+                                val listState = rememberLazyListState()
+                                KeepListAtTop(listState, rows.first().listKey())
+                                FastScrollLazyColumn(state = listState, contentPadding = bodyPadding) {
+                                    if (showsUpdated) {
+                                        lastUpdatedItem(lastUpdated)
+                                    }
+                                    recentsRows(
+                                        rows = rows,
+                                        engine = engine,
+                                        mode = mode,
+                                        membership = membership,
+                                        selection = selection,
+                                        selectionEnabled = selectionEnabled,
+                                        orderedRefs = orderedRefs,
+                                        swipeActions = swipeActions,
+                                        onOpen = ::open,
+                                        onOpenDetails = ::openDetails,
+                                    )
+                                }
+                            }
+                        }
+                        // Pull-to-refresh belongs to the feed a library update actually changes.
+                        if (showsUpdated) {
+                            LibraryUpdatePullRefresh(
+                                updating = refreshing,
+                                onRefresh = { refresh() },
+                                enabled = selection.isEmpty(),
+                                indicatorPadding = bodyPadding,
+                            ) { feed() }
+                        } else {
+                            feed()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (filterSheetOpen) {
+        RecentsFilterSheet(
+            surface = engine.surface,
+            showsScanlatorFilter = RecentsTypeCapability.SCANLATOR_FILTER in chipCapabilities,
+            onDismissRequest = { filterSheetOpen = false },
+        )
+    }
+
+    RecentsDialogs(
+        engine = engine,
+        membership = membership,
+        onOpenDetails = ::openDetails,
+        onClearHistory = ::clearHistory,
+    )
+}
+
+/**
+ * Search and selection cannot share one bar: [SearchToolbar] has no action mode, and [AppBar] hides
+ * its normal actions the moment the counter rises. So the bar swaps rather than growing a branch.
+ */
+@Composable
+private fun RecentsToolbar(
+    title: String,
+    query: String?,
+    onQueryChange: (String?) -> Unit,
+    selectionCount: Int,
+    onCancelSelection: () -> Unit,
+    onSelectAll: () -> Unit,
+    onInvertSelection: () -> Unit,
+    filterActive: Boolean,
+    onFilterClicked: () -> Unit,
+    showsCalendar: Boolean,
+    onCalendarClicked: () -> Unit,
+    showsRefresh: Boolean,
+    onRefresh: () -> Unit,
+    showsClearHistory: Boolean,
+    onClearHistory: () -> Unit,
+) {
+    if (selectionCount > 0) {
+        AppBar(
+            title = title,
+            actionModeCounter = selectionCount,
+            onCancelActionMode = onCancelSelection,
+            actionModeActions = {
+                AppBarActions(
+                    listOf(
+                        AppBar.Action(
+                            title = stringResource(MR.strings.action_select_all),
+                            icon = MaterialSymbols.Rounded.SelectAll,
+                            onClick = onSelectAll,
+                        ),
+                        AppBar.Action(
+                            title = stringResource(MR.strings.action_select_inverse),
+                            icon = MaterialSymbols.Rounded.FlipToBack,
+                            onClick = onInvertSelection,
+                        ),
+                    ),
+                )
+            },
+        )
+        return
+    }
+    SearchToolbar(
+        titleContent = { AppBarTitle(title) },
+        searchQuery = query,
+        onChangeSearchQuery = onQueryChange,
+        actions = {
+            AppBarActions(
+                actions = buildList {
+                    // Every mode has a category filter, so every mode gets the way in; what the sheet
+                    // then draws is the mode's business.
+                    add(
+                        AppBar.Action(
+                            title = stringResource(MR.strings.action_filter),
+                            icon = MaterialSymbols.Rounded.FilterList,
+                            iconTint = if (filterActive) {
+                                MaterialTheme.colorScheme.active
+                            } else {
+                                LocalContentColor.current
+                            },
+                            onClick = onFilterClicked,
+                        ),
+                    )
+                    // Upcoming, update library and clear history live in the overflow at every width.
+                    // Search and Filter are what this screen is driven by, and the mode strip below
+                    // already carries a row of targets; a second row of icons beside them reads as
+                    // clutter on a tablet as much as on a phone.
+                    if (showsCalendar) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.action_view_upcoming),
+                                onClick = onCalendarClicked,
+                            ),
+                        )
+                    }
+                    if (showsRefresh) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.action_update_library),
+                                onClick = onRefresh,
+                            ),
+                        )
+                    }
+                    if (showsClearHistory) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.pref_clear_history),
+                                onClick = onClearHistory,
+                            ),
+                        )
+                    }
+                },
+            )
+        },
+    )
+}
+
+/** Why the feed is empty, which the replaced screens could not always say. */
+@Composable
+private fun RecentsEmptyState(
+    mode: RecentsMode,
+    query: String?,
+    filterActive: Boolean,
+    onFilterClicked: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    EmptyScreen(
+        stringRes = when {
+            !query.isNullOrEmpty() -> MR.strings.no_results_found
+            filterActive -> MR.strings.information_no_recent_filtered
+            else -> mode.emptyRes
+        },
+        modifier = modifier,
+        actions = listOf(
+            EmptyScreenAction(MR.strings.action_filter, MaterialSymbols.Rounded.FilterList, onFilterClicked),
+        )
+            .takeIf { filterActive },
+    )
+}
+
+/**
+ * One row of a feed showing several lanes. The lane decides the subtitle and what the row can offer:
+ * an update downloads, a read row deletes its record and can be added to the library, and a newly
+ * added row offers none of it, having no chapter to download and no read record to remove. Offering
+ * it one anyway is what made the delete on a newly added row do nothing at all.
+ */
+@Composable
+private fun RecentsMixedLaneRow(
+    item: RecentsItem,
+    engine: RecentsEngine,
+    ui: RecentsRowUi,
+    mode: RecentsMode,
+    membership: Map<EntryId, Long>,
+    selected: Boolean,
+    selectionActive: Boolean,
+    swipeActions: ChapterSwipeActions,
+    onPress: (RecentsItem) -> Unit,
+    onLongPress: (RecentsItem) -> Unit,
+    onOpenDetails: (EntryId) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // A row here is about the chapter a tap opens, not the one its record was written from, so its
+    // name, its state and its controls all come from the target once that resolves. Null until then,
+    // and for every row whose record is what a tap would reopen anyway; both fall back to the record,
+    // so the row never blanks.
+    val target = rememberTargetRow(engine, item, mode, membership)
+    val state = target?.state ?: ui.state
+    val download = engine.downloadUi(item, target)
+    // The record keys the selection and the history verbs; the target is what the swipe and the
+    // download control act on, so neither can touch a different chapter than the one the row names.
+    val ref = item.lane.chapterRef
+    val actingRef = target?.ref ?: ref
+    // Swipe stays on the updated lane by ruling rather than by capability: the read lane carries its
+    // own chapter state now, so it could answer one, but giving History swipe is its own decision.
+    val swipeable = item.lane is RecentsLane.Updated
+    val swipe = if (swipeable) swipeActions else ChapterSwipeActions.DISABLED
+    // Only resolved where a gesture or an indicator draws it. The read lane answers this by asking
+    // the queue and the on-disk index, so invoking it per row would put that lookup in every
+    // composition to feed a control that lane does not draw.
+    val downloadState = when {
+        swipeable -> download?.state?.invoke() ?: Download.State.NOT_DOWNLOADED
+        else -> Download.State.NOT_DOWNLOADED
+    }
+
+    RecentsCombinedRow(
+        cover = ui.cover,
+        title = ui.title,
+        chapterLine = mixedLaneChapter(target?.chapter ?: ui.chapter),
+        // A resolved row names a chapter you have never opened, so the record's time cannot claim you
+        // read that one. The timestamp still says when you last read the series, which is also what
+        // orders the feed, so the verb moves off the chapter rather than the line going away. Compared
+        // by chapter id: a merged row's target ref names the sibling that owns it, not this row's entry.
+        timeLine = mixedLaneTime(
+            item,
+            movedOn = target != null && target.ref.chapterId != ref?.chapterId,
+            datesOlderRows = true,
+        ),
+        progressLine = readProgressLabel(state?.progress),
+        // A newly added row has no chapter, so nothing about it is read.
+        read = state?.read == true,
+        bookmark = state?.bookmark == true,
+        selected = selected,
+        onClick = { onPress(item) },
+        onLongClick = { onLongPress(item) },
+        onClickCover = { onOpenDetails(item.entryId) }.takeIf { !selectionActive },
+        // A Download swipe goes with the control on a chapter nothing could fetch.
+        chapterSwipeStartAction = swipe.start.whereDownloadOffered(download?.offered?.invoke() != false),
+        chapterSwipeEndAction = swipe.end.whereDownloadOffered(download?.offered?.invoke() != false),
+        onChapterSwipe = { action ->
+            if (state != null && actingRef != null) {
+                engine.runChapterSwipe(actingRef, item.lane, state, { downloadState }, action)
+            }
+        },
+        downloadState = downloadState,
+        modifier = modifier,
+        trailing = {
+            when (item.lane) {
+                // Always drawn, even where the engine behind it cannot report a state: every update
+                // row carrying the same control is the point, and one row silently missing it is the
+                // raggedness this row shape exists to remove.
+                is RecentsLane.Updated -> RowDownloadIndicator(
+                    download = download,
+                    enabled = actingRef != null && !selectionActive,
+                    onClick = { action -> actingRef?.let { engine.download(setOf(it), action, item.lane) } },
+                )
+                is RecentsLane.Read -> ReadRowTrailing(
+                    item = item,
+                    engine = engine,
+                    isFavorite = ui.isFavorite,
+                    download = download,
+                    downloadRef = actingRef,
+                    selectionActive = selectionActive,
+                )
+                RecentsLane.Added -> Unit
+            }
+        },
+    )
+}
+
+/**
+ * The resolved continue-reading row for [item], resolving it the first time the row is drawn and
+ * whenever the memo has dropped it. Only the rows that can name something other than their record ask,
+ * because both providers load the entry's whole chapter list to answer, one list per member for a
+ * merged entry. Reading the memo through a derived state keeps one row's resolution from recomposing
+ * every other row on screen.
+ */
+@Composable
+private fun rememberTargetRow(
+    engine: RecentsEngine,
+    item: RecentsItem,
+    mode: RecentsMode,
+    membership: Map<EntryId, Long>,
+): RecentsTargetRow? {
+    val resolves = engine.resolvesTarget(item, mode, membership)
+    val recorded = item.lane
+    val targets by engine.targets.collectAsState()
+    val target by remember(recorded, resolves) {
+        derivedStateOf { if (resolves) targets[recorded] else null }
+    }
+    // Keyed on the value as well as the row, so a memo emptied by a chapter write resolves again
+    // instead of leaving the row silently back on its record.
+    LaunchedEffect(recorded, resolves, target) {
+        if (resolves && target == null) engine.targetRow(item)
+    }
+    return target
+}
+
+/**
+ * The chapter a row is about, or null on the newly added lane, which names none. A source that
+ * numbered nothing gives a negative number and is treated the same way: there is no chapter to name.
+ */
+@Composable
+private fun mixedLaneChapter(chapter: RecentsChapterUi?): String? = when (chapter) {
+    is RecentsChapterUi.Named -> chapter.name
+    is RecentsChapterUi.Number ->
+        chapter.value
+            .takeIf(::isRecognizedChapterNumber)
+            ?.let { stringResource(MR.strings.recents_row_chapter, formatChapterNumber(it)) }
+    null -> null
+}
+
+/**
+ * When the activity happened, carrying the verb its lane implies. Feed mixes the three lanes into one
+ * list, so a bare timestamp there cannot say whether a row is something you read or something that
+ * arrived; the section headers answer that in Grouped, and nothing does in Feed.
+ *
+ * @param movedOn weakens the read verb to "Last read", where the row has resolved past its record
+ *   onto a chapter never opened, so the time is about the series rather than the chapter named.
+ * @param datesOlderRows swaps the clock time for the date once a row is not from today, for the two
+ *   modes that draw no day header to carry it. Record: docs/dev/subsystems/recents.md.
+ */
+@Composable
+private fun mixedLaneTime(
+    item: RecentsItem,
+    movedOn: Boolean = false,
+    datesOlderRows: Boolean = false,
+): String {
+    val time = when {
+        datesOlderRows && !item.isFromToday() -> relativeDateText(item.timestamp)
+        else -> remember(item.timestamp) { item.timestamp.toTimestampString() }
+    }
+    val res = when (item.lane) {
+        is RecentsLane.Read -> if (movedOn) MR.strings.recents_row_last_read else MR.strings.recents_row_read
+        is RecentsLane.Updated -> MR.strings.recents_row_updated
+        RecentsLane.Added -> MR.strings.recents_row_added
+    }
+    return stringResource(res, time)
+}
+
+/** Whether the row happened today, in the device's own zone, which is the zone its date header uses. */
+private fun RecentsItem.isFromToday(): Boolean =
+    timestamp.toLocalDate() == Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date
+
+private fun LazyListScope.recentsRows(
+    rows: List<RecentsRow>,
+    engine: RecentsEngine,
+    mode: RecentsMode,
+    membership: Map<EntryId, Long>,
+    selection: Set<ChapterRef>,
+    selectionEnabled: Boolean,
+    orderedRefs: List<ChapterRef>,
+    swipeActions: ChapterSwipeActions,
+    onOpen: (RecentsItem) -> Unit,
+    onOpenDetails: (EntryId) -> Unit,
+) {
+    // A tap selects instead of opening once a selection exists, which is what makes a sweep possible
+    // without a mode switch. A long press starts one, and extends it to the row pressed.
+    fun press(item: RecentsItem) {
+        val ref = item.lane.chapterRef
+        if (selectionEnabled && ref != null && selection.isNotEmpty()) engine.toggleSelection(ref) else onOpen(item)
+    }
+
+    fun longPress(item: RecentsItem) {
+        val ref = item.lane.chapterRef ?: return
+        if (selectionEnabled) engine.toggleRangeSelection(ref, orderedRefs)
+    }
+
+    items(
+        items = rows,
+        contentType = { it.contentTypeKey() },
+        key = { it.listKey() },
+    ) { row ->
+        when (row) {
+            is RecentsRow.DateHeader -> ListGroupHeader(
+                text = relativeDateText(row.date),
+                modifier = Modifier.animateItem(),
+            )
+            is RecentsRow.SectionHeader -> RecentsSectionHeader(
+                section = row.section,
+                modifier = Modifier.animateItem(),
+            )
+            is RecentsRow.SectionFooter -> RecentsSectionFooter(
+                onClick = { engine.setMode(row.section.singleLaneMode()) },
+                modifier = Modifier.animateItem(),
+            )
+            is RecentsRow.Entry -> RecentsEntryRow(
+                item = row.item,
+                engine = engine,
+                mode = mode,
+                membership = membership,
+                selected = row.item.lane.chapterRef in selection,
+                selectionActive = selection.isNotEmpty(),
+                swipeActions = swipeActions,
+                onPress = ::press,
+                onLongPress = ::longPress,
+                onOpenDetails = onOpenDetails,
+                modifier = Modifier.animateItem(),
+            )
+            is RecentsRow.Group -> {
+                val first = row.members.first()
+                val ui = engine.rowUi(first)
+                val refs = row.members.mapNotNull { it.lane.chapterRef }
+                val allSelected = refs.isNotEmpty() && refs.all { it in selection }
+                val toggleAll = { engine.toggleBlockSelection(refs) }
+                RecentsGroupRow(
+                    cover = ui.cover,
+                    title = ui.title,
+                    count = row.members.size,
+                    expanded = row.expanded,
+                    selected = allSelected,
+                    anyUnread = row.members.any { !engine.rowUi(it).isRead() },
+                    onClick = {
+                        if (selectionEnabled &&
+                            selection.isNotEmpty()
+                        ) {
+                            toggleAll()
+                        } else {
+                            engine.toggleGroupExpanded(row.key)
+                        }
+                    },
+                    onLongClick = { if (selectionEnabled) engine.toggleGroupSelection(refs, orderedRefs) },
+                    // Quiet during a sweep, as the flat rows are: navigating away mid-selection takes
+                    // the selection with it.
+                    onClickCover = { onOpenDetails(first.entryId) }.takeIf { selection.isEmpty() },
+                    modifier = Modifier.animateItem(),
+                )
+            }
+            is RecentsRow.Child -> {
+                val childUi = engine.rowUi(row.item)
+                val chapter = childUi.chapter
+                val state = childUi.state
+                if (chapter is RecentsChapterUi.Named && state != null) {
+                    val download = engine.downloadUi(row.item)
+                    val ref = row.item.lane.chapterRef
+                    RecentsGroupChildRow(
+                        chapter = chapter,
+                        state = state,
+                        selected = ref in selection,
+                        download = download,
+                        onClick = { press(row.item) },
+                        onLongClick = { longPress(row.item) },
+                        onDownloadClick = ref
+                            ?.let {
+                                { action: ChapterDownloadAction -> engine.download(setOf(it), action, row.item.lane) }
+                            }
+                            ?.takeIf { selection.isEmpty() },
+                        chapterSwipeStartAction = swipeActions.start,
+                        chapterSwipeEndAction = swipeActions.end,
+                        onChapterSwipe = { action ->
+                            if (ref != null) {
+                                engine.runChapterSwipe(
+                                    ref = ref,
+                                    lane = row.item.lane,
+                                    state = state,
+                                    downloadState = download?.state ?: NOT_DOWNLOADED,
+                                    action = action,
+                                )
+                            }
+                        },
+                        modifier = Modifier.animateItem(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One row of the feed, shaped by what its chapter half turned out to be rather than by which mode is
+ * on screen: an updated row names a chapter, a read row numbers one, and a newly added row has none.
+ * That is what lets the combined modes draw a mixed list without asking any row its content type.
+ */
+@Composable
+private fun RecentsEntryRow(
+    item: RecentsItem,
+    engine: RecentsEngine,
+    mode: RecentsMode,
+    membership: Map<EntryId, Long>,
+    selected: Boolean,
+    selectionActive: Boolean,
+    swipeActions: ChapterSwipeActions,
+    onPress: (RecentsItem) -> Unit,
+    onLongPress: (RecentsItem) -> Unit,
+    onOpenDetails: (EntryId) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val ui = engine.rowUi(item)
+    if (mode.lanes.size > 1) {
+        RecentsMixedLaneRow(
+            item = item,
+            engine = engine,
+            ui = ui,
+            mode = mode,
+            membership = membership,
+            selected = selected,
+            selectionActive = selectionActive,
+            swipeActions = swipeActions,
+            onPress = onPress,
+            onLongPress = onLongPress,
+            onOpenDetails = onOpenDetails,
+            modifier = modifier,
+        )
+        return
+    }
+    val state = ui.state
+    when (val chapter = ui.chapter) {
+        is RecentsChapterUi.Named -> {
+            val download = engine.downloadUi(item)
+            val ref = item.lane.chapterRef
+            EntryUpdatesRow(
+                cover = ui.cover,
+                title = ui.title,
+                chapterName = chapter.name,
+                read = state?.read == true,
+                bookmark = state?.bookmark == true,
+                selected = selected,
+                readProgress = readProgressLabel(state?.progress),
+                onClick = { onPress(item) },
+                onLongClick = { onLongPress(item) },
+                // Both go quiet during a sweep, as the replaced screen and upstream's row do: a cover
+                // tap mid-selection navigates away and takes the selection with it.
+                onClickCover = { onOpenDetails(item.entryId) }.takeIf { !selectionActive },
+                onDownloadChapter = ref
+                    ?.let { { action: ChapterDownloadAction -> engine.download(setOf(it), action, item.lane) } }
+                    ?.takeIf { !selectionActive },
+                downloadStateProvider = download?.state ?: NOT_DOWNLOADED,
+                downloadProgressProvider = download?.progress?.asProvider() ?: NO_PROGRESS,
+                chapterSwipeStartAction = swipeActions.start,
+                chapterSwipeEndAction = swipeActions.end,
+                // Every provider answers these verbs, whichever surface drew the row.
+                onChapterSwipe = { action ->
+                    if (ref != null && state != null) {
+                        engine.runChapterSwipe(
+                            ref = ref,
+                            lane = item.lane,
+                            state = state,
+                            downloadState = download?.state ?: NOT_DOWNLOADED,
+                            action = action,
+                        )
+                    }
+                },
+                modifier = modifier,
+            )
+        }
+        else -> {
+            // History draws the combined modes' row shape, so a record says the same things wherever
+            // you meet it: the chapter, when you read it, and how far in you stopped. What stays
+            // History's own is the semantics, not the shape: the row names the record rather than
+            // resolving a target, and it takes no swipe.
+            val ref = item.lane.chapterRef
+            RecentsCombinedRow(
+                cover = ui.cover,
+                title = ui.title,
+                chapterLine = mixedLaneChapter(chapter),
+                timeLine = mixedLaneTime(item),
+                progressLine = readProgressLabel(state?.progress),
+                read = state?.read == true,
+                bookmark = state?.bookmark == true,
+                selected = selected,
+                onClick = { onPress(item) },
+                onLongClick = { onLongPress(item) },
+                onClickCover = { onOpenDetails(item.entryId) }.takeIf { !selectionActive },
+                chapterSwipeStartAction = ChapterSwipeActions.DISABLED.start,
+                chapterSwipeEndAction = ChapterSwipeActions.DISABLED.end,
+                onChapterSwipe = {},
+                downloadState = Download.State.NOT_DOWNLOADED,
+                modifier = modifier,
+                trailing = {
+                    ReadRowTrailing(
+                        item = item,
+                        engine = engine,
+                        isFavorite = ui.isFavorite,
+                        download = engine.downloadUi(item),
+                        downloadRef = ref,
+                        selectionActive = selectionActive,
+                    )
+                },
+            )
+        }
+    }
+}
+
+/**
+ * A read row's trailing controls, the same in History and in the combined modes. The read lane is not
+ * favorite-gated, so a row may be an entry the library does not hold, and a read row names a real
+ * chapter, so it downloads exactly like an update row. Every control goes quiet during a sweep.
+ */
+@Composable
+private fun ReadRowTrailing(
+    item: RecentsItem,
+    engine: RecentsEngine,
+    isFavorite: Boolean,
+    download: RecentsDownloadUi?,
+    downloadRef: ChapterRef?,
+    selectionActive: Boolean,
+) {
+    if (!isFavorite) {
+        IconButton(
+            onClick = { engine.addToLibrary(item.entryId) },
+            enabled = !selectionActive,
+        ) {
+            Icon(
+                imageVector = MaterialSymbols.Rounded.Favorite,
+                contentDescription = stringResource(MR.strings.add_to_library),
+            )
+        }
+    }
+    RowDownloadIndicator(
+        download = download,
+        enabled = downloadRef != null && !selectionActive,
+        onClick = { action -> downloadRef?.let { engine.download(setOf(it), action, item.lane) } },
+    )
+    IconButton(
+        onClick = { engine.openDialog(RecentsDialog.RemoveHistory(item)) },
+        enabled = !selectionActive,
+    ) {
+        Icon(
+            imageVector = MaterialSymbols.Rounded.Delete,
+            contentDescription = stringResource(MR.strings.action_delete),
+        )
+    }
+}
+
+/**
+ * A row's own download control, drawn even where the engine behind it cannot report a state, and left
+ * out only where nothing could fetch the chapter, rather than drawn doing nothing.
+ */
+@Composable
+private fun RowDownloadIndicator(
+    download: RecentsDownloadUi?,
+    enabled: Boolean,
+    onClick: (ChapterDownloadAction) -> Unit,
+) {
+    if (download?.offered?.invoke() == false) return
+    ChapterDownloadIndicator(
+        enabled = enabled,
+        modifier = Modifier.padding(start = 4.dp),
+        downloadStateProvider = download?.state ?: NOT_DOWNLOADED,
+        downloadProgressProvider = download?.progress?.asProvider() ?: NO_PROGRESS,
+        onClick = onClick,
+    )
+}
+
+/**
+ * The bulk actions, each drawn only where the selection can answer for it. The predicates read the
+ * selected rows' own projections rather than a per-type row object, which is what lets one bar serve
+ * a selection spanning both content types.
+ */
+@Composable
+private fun RecentsBottomBar(
+    engine: RecentsEngine,
+    selected: List<RecentsItem>,
+    onAct: ((Set<ChapterRef>) -> Unit) -> Unit,
+    onDownload: () -> Unit,
+    onDeleteDownloads: () -> Unit,
+) {
+    val targets by engine.targets.collectAsState()
+    // A resolved row answers from its target, falling back to its record until that lands: what that
+    // changes is which buttons appear, never what they do, since the verbs resolve before they dispatch.
+    val perRow = selected.map { item ->
+        val target = targets[item.lane]
+        val state = target?.state ?: engine.rowUi(item).state
+        state to engine.downloadUi(item, target)?.takeIf { it.offered() }?.state?.invoke()
+    }
+    val offers = chapterSelectionOffers(perRow.mapNotNull { it.first }, perRow.map { it.second })
+    MangaBottomActionMenu(
+        visible = selected.isNotEmpty(),
+        modifier = Modifier.fillMaxWidth(),
+        onBookmarkClicked = { onAct { engine.setBookmarkSelection(it, true) } }.takeIf { offers.bookmark },
+        onRemoveBookmarkClicked = { onAct { engine.setBookmarkSelection(it, false) } }
+            .takeIf { offers.removeBookmark },
+        onMarkAsReadClicked = { onAct { engine.markReadSelection(it, true) } }.takeIf { offers.markRead },
+        onMarkAsUnreadClicked = { onAct { engine.markReadSelection(it, false) } }.takeIf { offers.markUnread },
+        onDownloadClicked = onDownload.takeIf { offers.download },
+        onDeleteClicked = onDeleteDownloads.takeIf { offers.delete },
+    )
+}
+
+/** The surface's one dialog slot, drawn wherever the engine raised it. */
+@Composable
+private fun Screen.RecentsDialogs(
+    engine: RecentsEngine,
+    membership: Map<EntryId, Long>,
+    onOpenDetails: (EntryId) -> Unit,
+    onClearHistory: () -> Unit,
+) {
+    val navigator = LocalNavigator.currentOrThrow
+    val dialog by engine.dialog.collectAsState()
+    val onDismiss = engine::dismissDialog
+    when (val open = dialog) {
+        null -> Unit
+        RecentsDialog.ClearHistory -> HistoryDeleteAllDialog(
+            onDismissRequest = onDismiss,
+            onDelete = onClearHistory,
+        )
+        is RecentsDialog.RemoveHistory -> HistoryDeleteDialog(
+            onDismissRequest = onDismiss,
+            onDelete = { all ->
+                if (all) {
+                    engine.removeFromHistory(setOf(open.item.entryId), membership)
+                } else {
+                    engine.removeHistoryRecord(open.item)
+                }
+            },
+        )
+        is RecentsDialog.DeleteDownloads -> UpdatesDeleteConfirmationDialog(
+            onDismissRequest = onDismiss,
+            onConfirm = { engine.deleteDownloads(open.chapters) },
+        )
+        is RecentsDialog.Duplicate -> EntryDuplicateDialog(
+            duplicates = open.duplicates.duplicates,
+            toUi = { it.card },
+            onDismissRequest = onDismiss,
+            onConfirm = { engine.addAnyway(open.entry) },
+            onOpen = { onOpenDetails(it.entry) },
+            onMigrate = { engine.migrateOntoEntry(open.entry, it.entry) },
+            groupIdByEntryId = open.duplicates.groupIdByRawId,
+            onAddToGroup = { picked: List<Long> ->
+                engine.addToGroup(
+                    open.entry,
+                    open.duplicates.duplicates.filter { it.card.id in picked }.map { it.entry },
+                )
+            }.takeIf { open.duplicates.suggestGroup },
+        )
+        is RecentsDialog.ChangeCategory -> ChangeCategoryDialog(
+            initialSelection = open.initialSelection,
+            onDismissRequest = onDismiss,
+            onEditCategories = { navigator.push(CategoryScreen()) },
+            onConfirm = { include, _ -> engine.applyAddCategories(open.entry, include) },
+        )
+        is RecentsDialog.Migrate -> EntryMigrateFor(
+            contentType = open.current.contentType,
+            currentId = open.current.rawId,
+            targetId = open.target.rawId,
+            onDismissRequest = onDismiss,
+        )
+    }
+}
+
+private fun RecentsRowUi.isRead(): Boolean = state?.read ?: true
+
+/** The mode a digest section's footer jumps to. Newly added has none, and draws no footer. */
+private fun RecentsLaneKind.singleLaneMode(): RecentsMode = when (this) {
+    RecentsLaneKind.UPDATED -> RecentsMode.UPDATES
+    RecentsLaneKind.READ -> RecentsMode.HISTORY
+    RecentsLaneKind.ADDED -> error("The newly added lane has no single-lane mode to jump to")
+}
+
+private fun RecentsRow.contentTypeKey(): String = when (this) {
+    is RecentsRow.DateHeader -> "date"
+    is RecentsRow.SectionHeader -> "section"
+    is RecentsRow.SectionFooter -> "footer"
+    is RecentsRow.Entry -> "entry"
+    is RecentsRow.Group -> "group"
+    is RecentsRow.Child -> "child"
+}
+
+/**
+ * A key unique across the whole list. The item half carries the lane and the chapter, because Updates
+ * draws a row per updated chapter, so a key built from the entry's identity alone would repeat.
+ */
+private fun RecentsRow.listKey(): String = when (this) {
+    is RecentsRow.DateHeader -> "date-$date"
+    is RecentsRow.SectionHeader -> "section-$section"
+    is RecentsRow.SectionFooter -> "footer-$section"
+    is RecentsRow.Entry -> "entry-${item.key()}"
+    is RecentsRow.Group -> "group-$key"
+    is RecentsRow.Child -> "child-${item.key()}"
+}
+
+private fun RecentsItem.key(): String =
+    "${entryId.contentType}-${entryId.rawId}-${lane.kind}-${lane.chapterRef?.chapterId ?: 0L}"
+
+private val NOT_DOWNLOADED: () -> Download.State = { Download.State.NOT_DOWNLOADED }

@@ -1,0 +1,125 @@
+package reikai.presentation.migrate.flow
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import cafe.adriel.voyager.core.screen.Screen
+import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.currentOrThrow
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Assisted
+import dev.zacsweers.metro.AssistedFactory
+import dev.zacsweers.metro.AssistedInject
+import dev.zacsweers.metro.ContributesIntoMap
+import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactory
+import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactoryKey
+import dev.zacsweers.metrox.viewmodel.assistedMetroViewModel
+import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
+import reikai.domain.library.ContentType
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.i18n.MR
+
+/**
+ * Migrating from a duplicate: adding an entry already in the library from another source offers to
+ * move the old one onto it, and every surface that can hit that case (details, browse, global search,
+ * history) renders this rather than repeating the dialog. The two entries are already stored, so a
+ * surface raises it from its own ViewModel's dialog state, by id, exactly as manga's `Dialog.Migrate`
+ * does. That state must survive a configuration change: losing it mid-migrate detaches a running
+ * commit from its dialog, which then finishes with no feedback.
+ */
+@Composable
+fun Screen.EntryMigrateFor(
+    contentType: ContentType,
+    currentId: Long,
+    targetId: Long,
+    onDismissRequest: () -> Unit,
+) {
+    val navigator = LocalNavigator.currentOrThrow
+    val context = LocalContext.current
+    val adapter = rememberMigrationAdapter(contentType)
+    // One model per content type; the pair is loaded per appearance rather than being a constructor
+    // argument, so a cached model can neither serve a stale pair nor accumulate one per pair. The
+    // `key` is load-bearing: without it both content types share one instance in this store.
+    val viewModel = assistedMetroViewModel<EntryMigrateHostViewModel, EntryMigrateHostViewModel.Factory>(
+        key = "migrateHost-$contentType",
+    ) {
+        create(adapter = adapter)
+    }
+    val request = remember(currentId, targetId) { EntryMigratePair(currentId, targetId) }
+    LaunchedEffect(request) { viewModel.load(request) }
+    val state by viewModel.state.collectAsState()
+
+    if (!state.loaded || state.request != request) return
+    val entry = state.entry
+    val target = state.target
+    if (entry == null || target == null) {
+        // One of the two vanished between the tap and the load; say so instead of doing nothing.
+        LaunchedEffect(request) {
+            context.toast(MR.strings.internal_error)
+            onDismissRequest()
+        }
+        return
+    }
+    EntryMigrateDialog(
+        contentType = contentType,
+        entry = entry,
+        target = target,
+        onDismissRequest = onDismissRequest,
+        // Show opens the library copy, as upstream does: every caller raises this from the target's
+        // own context. The migration search screen is the opposite case and opens its target.
+        onShowEntry = {
+            onDismissRequest()
+            entry.openDetails(navigator)
+        },
+        onFinished = { _, _ -> onDismissRequest() },
+    )
+}
+
+/** The two entries this host is currently loading, so a cached model cannot serve a stale pair. */
+internal data class EntryMigratePair(val currentId: Long, val targetId: Long)
+
+@AssistedInject
+internal class EntryMigrateHostViewModel(
+    @Assisted private val adapter: MigrationFlowAdapter,
+) : ViewModel() {
+
+    val state: StateFlow<EntryMigrateHostViewModel.State>
+        field = MutableStateFlow<EntryMigrateHostViewModel.State>(State())
+
+    @AssistedFactory
+    @ManualViewModelAssistedFactoryKey
+    @ContributesIntoMap(AppScope::class)
+    interface Factory : ManualViewModelAssistedFactory {
+        fun create(adapter: MigrationFlowAdapter): EntryMigrateHostViewModel
+    }
+
+    fun load(request: EntryMigratePair) {
+        state.update { State(request = request) }
+        viewModelScope.launchIO {
+            // The novel source layer has to be warm before names and covers resolve; this is often
+            // the first migration surface a session touches.
+            adapter.prepare()
+            val entry = adapter.loadEntries(listOf(request.currentId)).firstOrNull()
+            val target = adapter.storedCandidate(request.targetId)
+            state.update {
+                if (it.request != request) return@update it
+                it.copy(loaded = true, entry = entry, target = target)
+            }
+        }
+    }
+
+    data class State(
+        val request: EntryMigratePair? = null,
+        val loaded: Boolean = false,
+        val entry: MigrationEntry? = null,
+        val target: MigrationCandidate? = null,
+    )
+}

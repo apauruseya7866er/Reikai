@@ -1,6 +1,6 @@
 package eu.kanade.tachiyomi.data.track
 
-import android.app.Application
+import android.content.Context
 import androidx.annotation.CallSuper
 import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.domain.track.model.toDomainTrack
@@ -9,18 +9,25 @@ import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.model.TrackMangaMetadata
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import logcat.LogPriority
+import mihon.app.di.appGraph
 import okhttp3.OkHttpClient
+import reikai.data.track.MetadataAccess
 import reikai.domain.track.TrackFieldMutations
-import tachiyomi.core.common.util.lang.withIOContext
+import reikai.domain.track.pushTrackEdit
+import reikai.presentation.track.trackerErrorMessage
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.track.interactor.InsertTrack
+import tachiyomi.domain.track.interactor.UpsertTrack
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import uy.kohesive.injekt.injectLazy
 import tachiyomi.domain.track.model.Track as DomainTrack
 
 abstract class BaseTracker(
@@ -28,10 +35,14 @@ abstract class BaseTracker(
     override val name: String,
 ) : Tracker {
 
-    val trackPreferences: TrackPreferences by injectLazy()
-    val networkService: NetworkHelper by injectLazy()
-    private val addTracks: AddTracks by injectLazy()
-    private val insertTrack: InsertTrack by injectLazy()
+    protected val appGraph get() = Injekt.get<Context>().appGraph
+
+    val trackPreferences: TrackPreferences by lazy { appGraph.trackPreferences }
+    val networkService: NetworkHelper by lazy { appGraph.networkHelper }
+
+    private val context: Context by lazy { appGraph.context }
+    private val addTracks: AddTracks by lazy { appGraph.addTracks }
+    private val upsertTrack: UpsertTrack by lazy { appGraph.upsertTrack }
 
     override val client: OkHttpClient
         get() = networkService.client
@@ -41,8 +52,29 @@ abstract class BaseTracker(
 
     override val supportsPrivateTracking: Boolean = false
 
-    // RK --> novel search capability; overridden true by the novel-capable trackers (Active #8)
+    // RK --> per-type capability. Manga defaults true because every service inherited from upstream
+    // catalogues manga; a light-novel service whose catalogue holds none overrides it false.
     override val supportsNovels: Boolean = false
+
+    override val supportsManga: Boolean = true
+
+    // A tracker is assumed to fetch metadata on its login, which is how every OAuth one does; the few
+    // with a public catalogue override it, so a new tracker cannot fill while signed out by accident.
+    override val metadataAccess: MetadataAccess = MetadataAccess.SignedIn
+    // RK <--
+
+    // RK --> one id: parse for every tracker, which upstream writes out per tracker
+
+    /**
+     * The `id:` search prefix, defined once so a tracker's manga and novel searches cannot answer it
+     * differently. [parse] turns the rest of the query into that service's own id; returning null
+     * falls through to an ordinary title search, which is what an unparseable id does.
+     */
+    protected fun <T : Any> String.trackerSearchId(parse: (String) -> T?): T? =
+        takeIf { it.startsWith(SEARCH_ID_PREFIX) }
+            ?.substringAfter(SEARCH_ID_PREFIX)
+            ?.trim()
+            ?.let(parse)
     // RK <--
 
     // TODO: Store all scores as 10 point in the future maybe?
@@ -57,6 +89,7 @@ abstract class BaseTracker(
     @CallSuper
     override fun logout() {
         trackPreferences.setCredentials(this, "", "")
+        (this as? CookieLoginTracker)?.clearSiteCookies(networkService.cookieJar) // RK
     }
 
     override val isLoggedIn: Boolean
@@ -71,6 +104,29 @@ abstract class BaseTracker(
             username.isNotEmpty() && password.isNotEmpty()
         }
     }
+
+    final override val isRefreshingFlow: StateFlow<Boolean>
+        field: MutableStateFlow<Boolean> = MutableStateFlow(false)
+
+    final override val refreshResultFlow: SharedFlow<RefreshResult>
+        field: MutableSharedFlow<RefreshResult> = MutableSharedFlow(extraBufferCapacity = 1)
+
+    final override suspend fun refreshUser() {
+        isRefreshingFlow.value = true
+        try {
+            updateUserConfig()
+            refreshResultFlow.emit(RefreshResult.Success)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            logcat(LogPriority.ERROR, e) { "Failed to update user config id=$id" }
+            refreshResultFlow.emit(RefreshResult.Error(e.message ?: "Failed with unknown error"))
+        } finally {
+            isRefreshingFlow.value = false
+        }
+    }
+
+    // does the actual remote calls shielded from outside access to guarantee proper refresh flow setting
+    protected abstract suspend fun updateUserConfig()
 
     override fun getUsername() = trackPreferences.trackUsername(this).get()
 
@@ -89,7 +145,9 @@ abstract class BaseTracker(
         try {
             addTracks.bind(this, item, mangaId)
         } catch (e: Throwable) {
-            withUIContext { Injekt.get<Application>().toast(e.message) }
+            // RK --> the tracker-worded message both content types' binds share
+            withUIContext { context.toast(context.trackerErrorMessage(name, e)) }
+            // RK <--
         }
     }
 
@@ -135,15 +193,20 @@ abstract class BaseTracker(
     }
     // RK <--
 
-    private suspend fun updateRemote(track: Track): Unit = withIOContext {
-        try {
-            update(track)
-            track.toDomainTrack(idRequired = false)?.let {
-                insertTrack.await(it)
-            }
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Failed to update remote track data id=$id" }
-            withUIContext { Injekt.get<Application>().toast(e.message) }
+    // RK --> the push both content types' edits share (pushTrackEdit): it keeps a server binding nobody has
+    // started from its 0 and toasts a failure in the tracker's words; this side persists to manga_track
+    private suspend fun updateRemote(track: Track) = pushTrackEdit(context, track) { pushed ->
+        pushed.toDomainTrack(idRequired = false)?.let {
+            upsertTrack.await(it)
         }
     }
+    // RK <--
+}
+
+// RK: the prefix every tracker's id search is spelled with.
+private const val SEARCH_ID_PREFIX = "id:"
+
+sealed interface RefreshResult {
+    data object Success : RefreshResult
+    data class Error(val msg: String) : RefreshResult
 }

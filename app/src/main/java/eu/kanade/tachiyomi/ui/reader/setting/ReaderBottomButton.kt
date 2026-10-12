@@ -1,16 +1,20 @@
 package eu.kanade.tachiyomi.ui.reader.setting
 
 import dev.icerock.moko.resources.StringResource
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import reikai.domain.novel.NovelPreferences
+import tachiyomi.core.common.preference.Preference
 import tachiyomi.i18n.MR
 
 /**
- * Reikai (R-feature): user-selectable reader bottom-bar buttons, shared by the manga and novel readers.
+ * Reikai: user-selectable reader bottom-bar buttons, shared by the manga and novel readers.
  * Ported from Komikku, trimmed to the buttons backed by existing reader actions. The two-page-spread
  * buttons (page layout, shift double page) are deliberately omitted; that feature is not ported.
  *
- * [scope] gates which reader may offer a button: [Scope.Manga]-only, [Scope.Novel]-only, or [Scope.Both].
- * The manga and novel settings pickers each filter to their scope, and the shared action row renders a
- * button only when the caller supplies its callback, so a mis-scoped value is inert either way.
+ * [scope] gates which content type may offer a button: [Scope.Manga]-only, [Scope.Novel]-only, or [Scope.Both].
+ * [arranged] filters to it for the settings pickers and the bar alike, and is the only guard: the action row
+ * draws every button it is handed, so a mis-scoped value reaching it would show.
  */
 enum class ReaderBottomButton(val value: String, val stringRes: StringResource, val scope: Scope) {
     ViewChapters("vc", MR.strings.action_view_chapters, Scope.Both),
@@ -20,20 +24,70 @@ enum class ReaderBottomButton(val value: String, val stringRes: StringResource, 
     ReadingMode("rm", MR.strings.viewer, Scope.Manga),
     Rotation("rot", MR.strings.rotation_type, Scope.Both),
     CropBorders("cb", MR.strings.pref_crop_borders, Scope.Manga),
-    Autoscroll("as", MR.strings.pref_auto_scroll, Scope.Novel),
-    KeepScreenOn("ks", MR.strings.pref_keep_screen_on, Scope.Novel),
+    Autoscroll("as", MR.strings.pref_auto_scroll, Scope.Both),
+    KeepScreenOn("ks", MR.strings.pref_keep_screen_on, Scope.Both),
     BionicReading("bi", MR.strings.pref_bionic_reading, Scope.Novel),
     Theme("th", MR.strings.pref_category_theme, Scope.Novel),
     TextSize("ts", MR.strings.pref_reader_text_size, Scope.Novel),
+    ReadAloud("ra", MR.strings.pref_category_read_aloud, Scope.Novel),
+    ScrollToTop("top", MR.strings.action_scroll_to_top, Scope.Both),
+
+    /**
+     * The sheet's gear, which is placed like any button but never hidden, since it is the way into the
+     * sheet. Declared last, so a stored order that predates it draws it last, where it always was.
+     */
+    Settings("st", MR.strings.action_settings, Scope.Both),
     ;
 
     enum class Scope { Manga, Novel, Both }
 
-    fun isIn(buttons: Collection<String>) = value in buttons
+    /** One reader's selection and order, held with the scope they belong to so no caller can mix readers. */
+    class BarPreferences private constructor(
+        val scope: Scope,
+        val selection: Preference<Set<String>>,
+        val order: Preference<List<String>>,
+    ) {
+        companion object {
+            fun manga(preferences: ReaderPreferences) =
+                BarPreferences(Scope.Manga, preferences.readerBottomButtons, preferences.readerBottomButtonOrder)
+
+            fun novel(preferences: NovelPreferences) =
+                BarPreferences(Scope.Novel, preferences.readerBottomButtons(), preferences.readerBottomButtonOrder())
+
+            fun of(scope: Scope, reader: ReaderPreferences, novel: NovelPreferences) = when (scope) {
+                Scope.Manga -> manga(reader)
+                Scope.Novel -> novel(novel)
+                Scope.Both -> error("No reader draws a bar for $scope")
+            }
+        }
+    }
 
     companion object {
         /** Buttons a given reader is allowed to offer (its own scope plus the shared [Scope.Both]). */
         fun offeredIn(scope: Scope) = entries.filter { it.scope == scope || it.scope == Scope.Both }
+
+        /**
+         * The buttons a reader draws: those [selected] that [scope] offers, in the stored [order]. Order and
+         * selection are separate preferences so the selection's stored set, and the carries that add to
+         * it, stay as they were; a selected button the order does not name follows in declaration order,
+         * which is also the order the bar drew before it could be arranged.
+         */
+        fun ordered(selected: Set<String>, order: List<String>, scope: Scope): List<ReaderBottomButton> =
+            arranged(order, scope).filter { it == Settings || it.value in selected }
+
+        /** Every button [scope] offers, in the stored [order], so a button switched off keeps its place. */
+        fun arranged(order: List<String>, scope: Scope): List<ReaderBottomButton> {
+            val offered = offeredIn(scope)
+            val byValue = offered.associateBy { it.value }
+            val placed = order.distinct().mapNotNull(byValue::get)
+            return placed + (offered - placed.toSet())
+        }
+
+        /** [ordered], kept current as either preference changes. Both readers draw their bar through it. */
+        fun orderedChanges(preferences: BarPreferences): Flow<List<ReaderBottomButton>> =
+            combine(preferences.selection.changes(), preferences.order.changes()) { buttons, arranged ->
+                ordered(buttons, arranged, preferences.scope)
+            }
 
         /** Manga reader defaults. */
         val BUTTONS_DEFAULTS = setOf(
@@ -43,10 +97,16 @@ enum class ReaderBottomButton(val value: String, val stringRes: StringResource, 
             CropBorders,
         ).map { it.value }.toSet()
 
-        /** Novel reader defaults (the Settings gear is always shown, so it is not listed here). */
+        /**
+         * Novel reader defaults (the Settings gear is always drawn, so it is not listed here). Text
+         * size and theme are on because they are the quickest way to change either while reading.
+         */
         val NOVEL_BUTTONS_DEFAULTS = setOf(
             ViewChapters,
             Rotation,
+            TextSize,
+            Theme,
+            ReadAloud,
         ).map { it.value }.toSet()
     }
 }

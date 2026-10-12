@@ -1,0 +1,74 @@
+package reikai.presentation.recents
+
+import androidx.compose.runtime.Immutable
+import reikai.domain.entry.EntryId
+import kotlin.time.Instant
+
+/**
+ * A chapter, identified so it cannot be confused with another content type's. `chapter.id` and
+ * `novel_chapters._id` are rowids in separate tables and overlap exactly the way entry ids do, so a
+ * bare `Long` in a mixed feed cross-wires silently: a set of selected chapter ids would mark a novel
+ * chapter because a manga chapter happened to share its number. Nothing crosses the provider seam
+ * carrying a raw chapter id.
+ */
+@Immutable
+data class ChapterRef(val entryId: EntryId, val chapterId: Long)
+
+/**
+ * Which activity put a row in the feed, and what chapter that activity was about. A lane is a typed
+ * slot rather than an enum beside a nullable chapter id: only two of the three lanes have a chapter
+ * at all, and a nullable id would make the absent case representable everywhere instead of only where
+ * it happens.
+ */
+@Immutable
+sealed interface RecentsLane {
+    /** Read: the chapter the user last opened. Resumes where they were. */
+    data class Read(val chapter: ChapterRef) : RecentsLane
+
+    /** Updated: the newest chapter of the update burst, which is also what a tap opens. */
+    data class Updated(val chapter: ChapterRef) : RecentsLane
+
+    /** Added: the entry entered the library. There is no chapter, which is why this carries none. */
+    data object Added : RecentsLane
+}
+
+/**
+ * Names a lane without naming a row in it. [RecentsLane] cannot serve here because two of its cases
+ * carry a chapter, and an engine has to say which lanes it collects before any row exists.
+ */
+enum class RecentsLaneKind { READ, UPDATED, ADDED }
+
+/** The chapter this activity was about, absent on the added lane, which is why it is not a field. */
+val RecentsLane.chapterRef: ChapterRef?
+    get() = when (this) {
+        is RecentsLane.Read -> chapter
+        is RecentsLane.Updated -> chapter
+        RecentsLane.Added -> null
+    }
+
+val RecentsLane.kind: RecentsLaneKind
+    get() = when (this) {
+        is RecentsLane.Read -> RecentsLaneKind.READ
+        is RecentsLane.Updated -> RecentsLaneKind.UPDATED
+        RecentsLane.Added -> RecentsLaneKind.ADDED
+    }
+
+/**
+ * One row of recent activity, neutral over both content types. [timestamp] is normalised per adapter,
+ * so the shared layer reads one type whichever column it came from. [payload] is the adapter's own row,
+ * carried and never inspected here;
+ * anything the shared layer reasons about is a field or a typed slot, never read back out of it.
+ */
+@Immutable
+data class RecentsItem(
+    val entryId: EntryId,
+    val timestamp: Instant,
+    val lane: RecentsLane,
+    val payload: Any,
+    /** A merged series' other members' covers, stamped at assembly ([withGroupCovers]); empty otherwise. */
+    val coverFallbacks: List<Any> = emptyList(),
+)
+
+/** One library member of a merge group and its cover model, which a merged row falls back to. */
+@Immutable
+data class RecentsMemberCover(val entryId: EntryId, val groupId: Long, val cover: Any)

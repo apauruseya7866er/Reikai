@@ -6,29 +6,29 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import mihon.core.migration.Migrator
+import reikai.domain.download.QueuedChapter
 import reikai.domain.novel.NovelChapterRepository
-import uy.kohesive.injekt.injectLazy
 
 /**
  * Persists the active novel-download queue across process restarts (mirrors the manga
- * [eu.kanade.tachiyomi.data.download.DownloadStore]). Only `{novelId, chapterId, order}` is stored;
- * the chapter url is re-read from the DB on [restore] so an interrupted batch resumes.
+ * [eu.kanade.tachiyomi.data.download.DownloadStore], pinned by SavedQueueRestoreOrderTest). Only
+ * `{novelId, chapterId, order}` is stored; the chapter url is re-read from the DB on [restore] so an
+ * interrupted batch resumes.
  */
-class NovelDownloadStore(context: Context) {
+class NovelDownloadStore(
+    context: Context,
+    private val chapterRepo: NovelChapterRepository,
+) {
 
-    private val preferences = context.getSharedPreferences("active_novel_downloads", Context.MODE_PRIVATE)
-
-    private val chapterRepo: NovelChapterRepository by injectLazy()
+    private val preferences by lazy { context.getSharedPreferences("active_novel_downloads", Context.MODE_PRIVATE) }
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    // Seed from the highest persisted order so a new enqueue after a process restart can't reuse
-    // order values that collide with the restored queue (which would make the resume order arbitrary).
-    private var counter = preferences.all.values
-        .mapNotNull { (it as? String)?.let(::deserialize)?.order }
-        .maxOrNull()?.plus(1) ?: 0
-
-    val isEmpty: Boolean get() = preferences.all.isEmpty()
+    // Seeded from the highest persisted order so a new enqueue after a process restart can't reuse order
+    // values that collide with the restored queue (which would make the resume order arbitrary). Seeded on
+    // the first save rather than at construction, which would read the file wherever the store is built.
+    private var counter: Int? = null
 
     fun addAll(downloads: List<NovelDownload>) {
         preferences.edit {
@@ -46,8 +46,9 @@ class NovelDownloadStore(context: Context) {
         }
     }
 
-    fun remove(chapterId: Long) {
-        preferences.edit { remove(chapterId.toString()) }
+    /** One edit for the batch, as Mihon's DownloadStore.removeAll, since each rewrites the whole file. */
+    fun removeAll(chapterIds: Collection<Long>) {
+        preferences.edit { chapterIds.forEach { remove(it.toString()) } }
     }
 
     fun clear() {
@@ -57,6 +58,9 @@ class NovelDownloadStore(context: Context) {
     /** Rebuild the queue from storage. Each entry's url is re-read from its chapter row; entries whose
      *  chapter no longer exists are dropped. Call off the main thread. */
     suspend fun restore(): List<NovelDownload> {
+        // MergedDuplicateDownloads re-points this queue in a migration, which can still be running as the manager
+        // that calls this is built
+        Migrator.await()
         val objs = preferences.all.values
             .mapNotNull { it as? String }
             .mapNotNull { deserialize(it) }
@@ -69,8 +73,28 @@ class NovelDownloadStore(context: Context) {
         return out
     }
 
-    private fun serialize(d: NovelDownload): String =
-        json.encodeToString(DownloadObject(d.novelId, d.chapterId, counter++))
+    /** The saved rows as they are, for [reikai.data.dedupe.MergedDuplicateDownloads] after the upgrade's dedupe. */
+    fun persisted(): List<QueuedChapter> = preferences.all.values
+        .mapNotNull { (it as? String)?.let(::deserialize) }
+        .map { QueuedChapter(it.novelId, it.chapterId, it.order) }
+
+    fun replacePersisted(removed: List<QueuedChapter>, rows: List<QueuedChapter>) {
+        preferences.edit {
+            removed.forEach { remove(it.chapterId.toString()) }
+            rows.forEach {
+                putString(
+                    it.chapterId.toString(),
+                    json.encodeToString(DownloadObject(it.entryId, it.chapterId, it.order)),
+                )
+            }
+        }
+    }
+
+    private fun serialize(d: NovelDownload): String {
+        val order = counter ?: (persisted().maxOfOrNull { it.order }?.plus(1) ?: 0)
+        counter = order + 1
+        return json.encodeToString(DownloadObject(d.novelId, d.chapterId, order))
+    }
 
     private fun deserialize(string: String): DownloadObject? = try {
         json.decodeFromString<DownloadObject>(string)

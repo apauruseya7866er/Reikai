@@ -1,0 +1,276 @@
+package reikai.data.track
+
+import android.app.PendingIntent
+import android.content.Context
+import android.content.pm.ServiceInfo
+import androidx.core.app.NotificationCompat
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingWorkPolicy
+import androidx.work.ForegroundInfo
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkerParameters
+import dev.zacsweers.metro.Inject
+import eu.kanade.domain.track.interactor.RefreshTracks
+import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.notification.Notifications
+import eu.kanade.tachiyomi.data.track.Tracker
+import eu.kanade.tachiyomi.data.track.TrackerManager
+import eu.kanade.tachiyomi.util.system.cancelNotification
+import eu.kanade.tachiyomi.util.system.isRunning
+import eu.kanade.tachiyomi.util.system.notificationBuilder
+import eu.kanade.tachiyomi.util.system.notify
+import eu.kanade.tachiyomi.util.system.setForegroundSafely
+import eu.kanade.tachiyomi.util.system.workManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import logcat.LogPriority
+import mihon.app.di.AppGraph
+import mihon.core.metro.metroGraph
+import mihon.core.migration.Migrator
+import reikai.domain.library.ContentType
+import reikai.domain.manga.GetTracksInGroup
+import reikai.domain.merge.MergeGroupRepository
+import reikai.domain.novel.NovelRepository
+import reikai.domain.novel.interactor.GetNovelTracks
+import reikai.domain.novel.interactor.RefreshNovelTracks
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.manga.interactor.GetLibraryManga
+import tachiyomi.domain.track.interactor.GetTracksPerManga
+import tachiyomi.i18n.MR
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import mihon.icons.materialsymbols.R as MaterialSymbolsR
+
+/**
+ * Pulls fresh remote state for every tracker bound to a library entry, both content types. Without it a track row
+ * only refreshes when its details screen is opened, so the library's tracker-score sort and tracker filter read
+ * whatever happened to be cached. Manual only, and deliberately NOT folded into the library chapter update: that
+ * runs on a schedule per source, while this is one rate-limited network call per bound tracker per entry, so
+ * attaching it would multiply every update's remote traffic invisibly.
+ */
+class TrackerRefreshWorker(
+    private val context: Context,
+    workerParams: WorkerParameters,
+) : CoroutineWorker(context, workerParams) {
+
+    private val graph: AppGraph = context.metroGraph()
+
+    init {
+        graph.inject(this)
+    }
+
+    @Inject private lateinit var getLibraryManga: GetLibraryManga
+
+    @Inject private lateinit var novelRepository: NovelRepository
+
+    @Inject private lateinit var getTracksPerManga: GetTracksPerManga
+
+    @Inject private lateinit var getNovelTracks: GetNovelTracks
+
+    @Inject private lateinit var getTracksInGroup: GetTracksInGroup
+
+    @Inject private lateinit var refreshTracks: RefreshTracks
+
+    @Inject private lateinit var refreshNovelTracks: RefreshNovelTracks
+
+    @Inject private lateinit var trackerManager: TrackerManager
+
+    @Inject private lateinit var mergeGroupRepository: MergeGroupRepository
+
+    // WorkManager's own cancel intent for this run, so the notification action needs no receiver.
+    private val cancelIntent: PendingIntent by lazy { context.workManager.createCancelPendingIntent(id) }
+
+    private val notifier by lazy { TrackerRefreshNotifier(context, cancelIntent) }
+
+    override suspend fun getForegroundInfo(): ForegroundInfo = ForegroundInfo(
+        Notifications.ID_TRACKER_REFRESH_PROGRESS,
+        notifier.progressBuilder.build(),
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+    )
+
+    override suspend fun doWork(): Result {
+        // A WorkManager start has no MainActivity to wait for the migrations first
+        Migrator.await()
+        return try {
+            // Foreground like every other long worker: without this a backgrounded refresh dies
+            // with the cached process and WorkManager silently reruns it from zero later,
+            // repeating every tracker call.
+            setForegroundSafely()
+            refreshAll()
+            Result.success()
+        } catch (e: Exception) {
+            if (e is CancellationException) {
+                Result.success()
+            } else {
+                logcat(LogPriority.ERROR, e)
+                Result.failure()
+            }
+        } finally {
+            context.cancelNotification(Notifications.ID_TRACKER_REFRESH_PROGRESS)
+        }
+    }
+
+    private suspend fun refreshAll() {
+        // Only trackers you are signed into can answer, so a track row bound to a signed-out service is
+        // not work to do. Filtering here rather than inside the interactors is what keeps the reported
+        // count honest: it counts entries that actually had something to refresh.
+        val loggedIn = trackerManager.loggedInTrackers().mapTo(mutableSetOf()) { it.id }
+        if (loggedIn.isEmpty()) {
+            notifier.showNothingTracked()
+            return
+        }
+
+        // Intersect favorites with the entries carrying a live track: a track row survives removing an
+        // entry from the library, so refreshing straight off the track table would hit entries nobody sees.
+        // One refresh per span the interactors cover: they refresh that span's canonical rows, so two members
+        // inside one span would refresh the same rows twice, while a member outside it would never refresh.
+        val mangaTracks = getTracksPerManga.subscribe().first()
+        val mangaGroups = mergeGroupRepository.getAllMemberships(ContentType.MANGA)
+        val mangaIds = getLibraryManga.await()
+            .map { it.id }
+            .filter { id -> mangaTracks[id]?.any { it.trackerId in loggedIn } == true }
+            .let { refreshTargets(it, mangaGroups, getTracksInGroup::groupIds) }
+
+        val novelTracks = getNovelTracks.subscribeAll().first()
+        val novelGroups = mergeGroupRepository.getAllMemberships(ContentType.NOVELS)
+        val novelIds = novelRepository.getLibraryNovelAsFlow().first()
+            .map { it.novel.id }
+            .filter { id -> novelTracks[id]?.any { it.trackerId in loggedIn } == true }
+            .let { refreshTargets(it, novelGroups, getNovelTracks::groupIds) }
+
+        val total = mangaIds.size + novelIds.size
+        if (total == 0) {
+            notifier.showNothingTracked()
+            return
+        }
+
+        // Lower than the chapter updater's 5: every permit here is a remote tracker call, and the same
+        // few services answer for the whole library rather than the load spreading across many sources.
+        val semaphore = Semaphore(3)
+        val done = AtomicInteger(0)
+        val failed = AtomicInteger(0)
+        // Which services failed, so the result names them instead of leaving a bare count. The per-track
+        // errors are otherwise swallowed by the interactors, which is what made a failure undiagnosable.
+        val failedTrackers = ConcurrentHashMap.newKeySet<String>()
+
+        suspend fun refresh(id: Long, label: String, block: suspend (Long) -> List<Pair<Tracker?, Throwable>>) {
+            semaphore.withPermit {
+                val errors = block(id)
+                if (errors.isNotEmpty()) {
+                    failed.incrementAndGet()
+                    errors.forEach { (tracker, error) ->
+                        tracker?.name?.let(failedTrackers::add)
+                        logcat(LogPriority.WARN) {
+                            "Tracker refresh failed for $label $id on ${tracker?.name ?: "unknown"}: $error"
+                        }
+                    }
+                }
+                notifier.showProgress(done.incrementAndGet(), total)
+            }
+        }
+
+        coroutineScope {
+            mangaIds.forEach { id -> launch { refresh(id, "manga", refreshTracks::await) } }
+            novelIds.forEach { id -> launch { refresh(id, "novel", refreshNovelTracks::await) } }
+        }
+
+        notifier.showResult(
+            refreshed = total - failed.get(),
+            failed = failed.get(),
+            failedTrackers = failedTrackers.sorted(),
+        )
+    }
+
+    companion object {
+        private const val WORK_NAME = "TrackerRefresh"
+
+        suspend fun isRunning(context: Context): Boolean = context.workManager.isRunning(WORK_NAME)
+
+        /** Starts a refresh, or returns false when one is already running. */
+        suspend fun startNow(context: Context): Boolean {
+            if (isRunning(context)) return false
+            val request = OneTimeWorkRequestBuilder<TrackerRefreshWorker>()
+                .addTag(WORK_NAME)
+                .build()
+            context.workManager.enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.KEEP, request)
+            return true
+        }
+    }
+}
+
+/**
+ * The ids to refresh: an id already inside an earlier id's [span] is skipped, since that refresh
+ * reaches its rows. Only a stored group member ([membership]) has a span wider than itself, so an
+ * ungrouped id costs no lookup.
+ */
+internal suspend fun refreshTargets(
+    ids: List<Long>,
+    membership: Map<Long, Long>,
+    span: suspend (Long) -> List<Long>,
+): List<Long> {
+    val covered = HashSet<Long>()
+    return ids.filter { id ->
+        if (id in covered) return@filter false
+        if (id in membership) covered += span(id)
+        true
+    }
+}
+
+/** Progress and result notifications for [TrackerRefreshWorker], on the shared library channels. */
+private class TrackerRefreshNotifier(
+    private val context: Context,
+    cancelIntent: PendingIntent,
+) {
+
+    val progressBuilder = context.notificationBuilder(Notifications.CHANNEL_LIBRARY_PROGRESS) {
+        setContentTitle(context.stringResource(MR.strings.tracker_refresh_progress))
+        setSmallIcon(MaterialSymbolsR.drawable.rounded_refresh)
+        setOngoing(true)
+        setOnlyAlertOnce(true)
+        priority = NotificationCompat.PRIORITY_LOW
+        addAction(
+            MaterialSymbolsR.drawable.rounded_close,
+            context.stringResource(MR.strings.action_cancel),
+            cancelIntent,
+        )
+    }
+
+    fun showProgress(done: Int, total: Int) {
+        context.notify(
+            Notifications.ID_TRACKER_REFRESH_PROGRESS,
+            progressBuilder.setProgress(total, done, false).build(),
+        )
+    }
+
+    fun showNothingTracked() {
+        context.notify(Notifications.ID_TRACKER_REFRESH_RESULT, Notifications.CHANNEL_LIBRARY_PROGRESS) {
+            setContentTitle(context.stringResource(MR.strings.tracker_refresh_none))
+            setSmallIcon(MaterialSymbolsR.drawable.rounded_refresh)
+            setAutoCancel(true)
+        }
+    }
+
+    fun showResult(refreshed: Int, failed: Int, failedTrackers: List<String>) {
+        context.notify(
+            Notifications.ID_TRACKER_REFRESH_RESULT,
+            Notifications.CHANNEL_LIBRARY_PROGRESS,
+        ) {
+            setContentTitle(context.stringResource(MR.strings.tracker_refresh_done, refreshed))
+            if (failed > 0) {
+                // Naming the services turns "7 failed" into something the user can act on, usually
+                // re-signing in to one of them.
+                setContentText(
+                    context.stringResource(MR.strings.tracker_refresh_failed, failed) +
+                        failedTrackers.takeIf { it.isNotEmpty() }?.joinToString(", ", prefix = ": ").orEmpty(),
+                )
+            }
+            setSmallIcon(MaterialSymbolsR.drawable.rounded_refresh)
+            setAutoCancel(true)
+        }
+    }
+}

@@ -1,18 +1,24 @@
 ---
-title: Cloudflare bypass
-titleTemplate: Troubleshooting - Guides
+title: Cloudflare bypass proxy
+titleTemplate: Troubleshooting
 description: Route Cloudflare challenges the in-app WebView cannot solve through a proxy you run yourself.
 ---
 
-# Cloudflare bypass
+# Cloudflare bypass proxy
 
-_Dev record: [flaresolverr-integration.md](dev/plans/flaresolverr-integration.md). Doc map: [README.md](README.md)._
+_Dev record: [cloudflare.md](dev/subsystems/cloudflare.md). Doc map: [README.md](README.md)._
 
 Some sources sit behind Cloudflare protection the in-app WebView cannot get through.
 For those, **Reikai** can hand the request to a bypass proxy running on your own machine, which solves the challenge in a real browser and returns the page.
 
 This is optional and off by default.
-WebView stays the primary solver: most challenges never reach the proxy.
+WebView still tries first on each site, and only a challenge it cannot clear goes to the proxy.
+Once a site has needed the proxy, its later challenges go straight there until the app restarts.
+
+::: tip Try the simpler fixes first
+A proxy is the last of the [Cloudflare steps](/docs/guides/troubleshooting/#cloudflare) in the troubleshooting guide.
+Try the earlier ones first, since they need nothing running outside the app.
+:::
 
 ::: info Light novels too
 Novel sources use the same network client, so a Cloudflare-protected novel site takes the same route.
@@ -24,21 +30,22 @@ Three tools speak the same API on the same port, so switching between them means
 
 ::::tabs
 == Solverr (recommended)
-[Solverr](https://github.com/unseensnick/Solverr) carries both browser engines and picks per challenge, and it keeps sessions.
+[Solverr](https://github.com/unseensnick/Solverr) carries both browser engines, switches to the other when one fails and remembers which works for each site, and it keeps sessions.
 
-That means it clears the newer challenges the others struggle with, while follow-up requests still come back in a second or two.
+It can usually clear newer challenges that FlareSolverr fails on, though no solver gets through every one. Because Reikai keeps a session open with it, follow-up requests skip the challenge instead of paying a full solve each time.
 == Byparr
-[Byparr](https://github.com/ThePhaseless/Byparr) runs Camoufox, an anti-detect Firefox, and does clear the newer challenges.
+[Byparr](https://github.com/ThePhaseless/Byparr) runs Camoufox, an anti-detect Firefox, and can clear the newer challenges.
 
-It is sessionless, so every request pays a full solve of 15 to 20 seconds. There is no fast follow-up path.
+It is sessionless, so every request sent to it pays a full solve, typically about 15 to 20 seconds. There is no fast follow-up path.
 == FlareSolverr
 [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) runs headless Chromium and keeps sessions, so it is the lightest of the three.
 
-It can no longer solve Cloudflare's newer managed and Turnstile challenges.
+It often fails Cloudflare's newer managed and Turnstile challenges.
 ::::
 
 ::: warning FlareSolverr fails quietly on newer challenges
-It returns the unsolved "Just a moment..." page while reporting success, so an affected source shows no results or a parse error rather than an obvious failure.
+It can hand back a challenge page while reporting success: it stops waiting as soon as the challenge page's title and markers disappear, and Cloudflare often issues another round after that.
+An affected source then shows no results or a parse error rather than an obvious failure.
 If you see that, switch to Solverr or Byparr.
 :::
 
@@ -48,9 +55,10 @@ Pick Byparr or FlareSolverr only if you already run one and it works for your so
 
 ::: tip How to set it up
 1. Run one of the proxies on a machine your device can reach, using the commands below.
-1. Check it is reachable: open `http://<host>:8191` in a browser on the same network. Solverr and FlareSolverr answer with a welcome page, Byparr serves its API docs at `/docs`.
+1. Check it is reachable: open `http://<host>:8191` in a browser on the same network. Solverr and FlareSolverr answer with a short JSON reply reading `FlareSolverr is ready!`, and Byparr sends you on to its API docs at `/docs`.
 1. Go to <nav to="advanced"> and, under **Networking**, turn on **Enable FlareSolverr**.
 1. Enter `http://<host>:8191` in **FlareSolverr URL**. That field and the test below it are not on the screen at all until the switch is on, so turn it on first.
+1. Open **FlareSolverr sign-in** and fill it in only if something in front of the server asks for a password. Leave it alone otherwise.
 1. Tap **Test FlareSolverr**. Optional: it fetches a page through the server and tells you whether that worked.
 :::
 
@@ -71,7 +79,7 @@ docker run -d --name=flaresolverr -p 8191:8191 -e LOG_LEVEL=info --restart unles
 FlareSolverr also ships a Windows `.exe` in its [releases](https://github.com/FlareSolverr/FlareSolverr/releases).
 Each project's own docs cover the rest: upstream proxies, captcha solvers and so on.
 
-Both the switch and a non-blank URL are needed for the proxy to run, so turning the switch off disables it without losing the URL.
+Both the switch and a non-blank URL are needed for the proxy to run, so turning the switch off disables it without losing the URL. **Clear FlareSolverr URL** removes the address itself.
 
 ## Reaching it away from home
 
@@ -83,16 +91,49 @@ A mesh VPN such as [Tailscale](https://tailscale.com/), [Headscale](https://gith
 1. Find the machine's VPN address. On Tailscale that is a `100.x.y.z` address or a name like `unraid.tail-scale.ts.net`.
 1. Put `http://<vpn-address>:8191` in **FlareSolverr URL** instead of the LAN address.
 
-Nothing is opened on your router, and the proxy answers only devices signed in to your mesh.
+Nothing is opened on your router, so the proxy is reachable from your home network and your mesh, not from the internet.
+
+A sign-in in front of the server works over plain `http://` here too. Reikai counts addresses from `100.64.0.0` to `100.127.255.255` (the range Tailscale uses, and Headscale by default), Tailscale's `.ts.net` names and NetBird's `.netbird.cloud` and `.netbird.selfhosted` names as your own network. A `.ts.net` name needs a port other than 80, 443, 8443 or 10000: Tailscale Funnel can publish the same name on the internet on 443, 8443 and 10000, and Reikai treats 80 the same way to be safe. For a Headscale name on a domain of your own, or a ZeroTier network, use the device's VPN address.
 == Public domain
 If you already run a reverse proxy (Caddy, nginx, Traefik), point a subdomain at port `8191` and set **FlareSolverr URL** to `https://flaresolverr.example.com`.
 
 Put TLS and authentication in front of it. See the warning below.
+
+Basic auth goes under **FlareSolverr sign-in**, which asks for a username and password. A proxy that checks only a password works too: leave the username empty and the row reads **Password only**. Do not put `user:password@` in the address itself: the app will not accept it there, and an address is not a private setting, so it would travel in your backups in clear text.
+
+Raise the proxy's read timeout to at least 120 seconds. Reikai asks the solver to give up after 60 seconds and waits up to 90 for its answer, so a proxy that cuts off at 60 seconds (nginx's default) turns a slow solve into a gateway error.
 ::::
 
 ::: danger An exposed bypass proxy is an open proxy
 Reaching it over a public domain puts an endpoint on the open internet, and anyone who finds it can use your machine to browse through.
 Lock it down with basic auth, an IP allowlist or mTLS before pointing anything at it.
+
+This is not theoretical. A reader who did this had the hostname appear in Certificate Transparency logs within minutes of issuing the certificate, and bots probing `/.env` and `/.git/HEAD` the same evening. The password in front of it is what turned those away.
+:::
+
+## Keeping the sign-in at your proxy
+
+Reikai sends the sign-in only to the address in **FlareSolverr URL**, on the same scheme, host and port, and only over https or to an address on your own network or mesh VPN. It never follows a redirect from that address, so the sign-in cannot be carried somewhere else.
+
+::: details Advanced: removing the sign-in at your reverse proxy
+Most reverse proxies pass the sign-in on to FlareSolverr after checking it. FlareSolverr ignores it and never sends it to the sites it opens, but nothing past your proxy needs to see it, so remove it there:
+
+| Proxy | Setting |
+|---|---|
+| Nginx Proxy Manager | In the access list, leave **Pass Auth to Host** off. It then removes the sign-in for you. |
+| nginx, SWAG | `proxy_set_header Authorization "";` in the same block as your other `proxy_set_header` lines. A block that sets any header of its own ignores the ones above it, so a server-wide line does nothing inside a `location` that sets `Host`. |
+| Traefik | `removeHeader: true` on the `basicAuth` middleware. It is off by default. |
+| Caddy | `header_up -Authorization` inside `reverse_proxy`. |
+| Apache | `RequestHeader unset Authorization`, without `early`, which would remove it before the password is checked. |
+| HAProxy | `http-request del-header Authorization` after the `http_auth` check. |
+| Authelia or Authentik | Forward auth does not remove it. Add it to your proxy as above, for Traefik a `headers` middleware with `customRequestHeaders` setting `Authorization: ""`. |
+
+:::
+
+Cloudflare Access is not supported: it expects a service token in its own headers, which Reikai cannot send.
+
+::: warning A hosted solver is blocked by some sources
+A solver on a rented server browses from a datacenter address, and some sites refuse those outright while opening normally from a phone. If one source fails through the proxy while the rest work, the address it browses from is the first thing to suspect, not your setup.
 :::
 
 ## What to expect
@@ -100,31 +141,48 @@ Lock it down with basic auth, an IP allowlist or mTLS before pointing anything a
 | Situation | Typical wait |
 |---|---|
 | A source WebView can solve | 5 to 8 seconds, then follow-ups are instant. The proxy never runs. |
-| First request to a hard source after opening the app | About 42 seconds: WebView tries for 30, then the proxy solves in around 12. |
+| First request to a hard source after opening the app | Up to about 42 seconds: WebView tries for up to 30, then the proxy solves in around 12. |
 | Anything after that, same app session | 1 to 3 seconds. The proxy holds the cleared session, and the app stops waiting on WebView for that source. |
 | The proxy restarts | The next request quietly makes a new session, about 12 seconds, then back to 1 to 3. No error. |
-| Reopening the app | Which sources needed the proxy is not remembered across restarts, so the first request pays the 42 seconds again. |
+| Reopening the app | Which sources needed the proxy is not remembered across restarts, so the first request can take up to about 42 seconds again. |
 
 The fast rows need sessions, so they apply to Solverr and FlareSolverr.
-**Byparr is sessionless**, so every request, including paging and tab switches, pays a full 15 to 20 second solve.
+**Byparr is sessionless**, so every request, including paging and tab switches, pays a full solve, typically 15 to 20 seconds.
+These times vary with the source, your network and the machine running the proxy.
 
 ## Troubleshooting
 
-**A connection error, or `FlareSolverr returned HTTP 5xx`.**
-The proxy is unreachable or has crashed.
+**A connection error, or `FlareSolverr returned HTTP 502`, `503` or `504`.**
+The proxy is unreachable, or a reverse proxy in front of it is up while the solver behind it is down.
 Check it is running, the URL is right, and your device can reach it.
+A `500` is different: the solver was reached but could not get through the challenge, so retry or check the solver's own log.
 
-**`FlareSolverr error: Captcha detected.`**
-The proxy hit a CAPTCHA it cannot solve.
-Rare on manga sources, but Cloudflare does escalate.
-There is no automatic fix: open the source in <nav to="webview">, solve it by hand, then come back.
+**The test says the server rejected the username and password.**
+The credentials did not satisfy whatever guards the server. Check them with `curl -su 'user:password' https://your.server/v1` first, so you know whether the app or the server is the problem.
+If the password has characters outside plain ASCII and `curl` works where the app does not, the encoding is the likely cause: the app sends the UTF-8 bytes, which matches a proxy configured through its own web interface, but not a `htpasswd` file created on a system using a legacy encoding. An ASCII password avoids the question.
+
+**The test says the sign-in needs an https address or one on your network.**
+Reikai will not send a password unencrypted across the internet. Use the proxy's `https://` address, or reach the server over your network or a mesh VPN.
+
+**The test says the server sends you to another address.**
+Usually `http://` in front of a proxy that forces https. The dialog that opens when the test fails shows where it points: put that address in **FlareSolverr URL**.
+
+**The test says the proxy answered but the solver behind it is down.**
+The reverse proxy is up and forwarding, and nothing is listening on the other side. A solver that is still starting does this until it has finished starting (typically about twenty seconds), so wait and test again before changing anything.
+
+**You once put the password in the address field.**
+Reikai moves it into the password field on upgrade, so nothing is left to do in the app. Restoring a backup never changes your FlareSolverr setup, so set it up again on a new device. It cannot reach backups you already made: those hold the address as you typed it, password included. Rotate that password if any of them left your machine.
+
+**`FlareSolverr returned HTTP 500` (Byparr answers 408 when it runs out of time).**
+The solver was reached but could not get through the page: it timed out, or the challenge beat it.
+The solver's own log says why.
+Opening the source in <nav to="webview"> and solving it by hand may get you through.
 
 **Every request is slow, follow-ups never get fast.**
 Sessions are not being reused.
-Either the app is being killed between requests, or the proxy is destroying its session each time.
+Either the app is being killed between requests, the proxy is destroying its session each time, or the app could not open a session the first time it reached the proxy (for example while the proxy was still starting) and runs without one until the app restarts or the proxy login changes.
 Expected on Byparr, which has no sessions at all.
 
 **A source returns nothing, but the proxy's log says `Challenge not detected!` with a 200.**
-FlareSolverr loaded the page, failed to recognise a newer managed or Turnstile challenge, and returned the unsolved page as a success.
-There is no fix on its side.
+FlareSolverr recognises a challenge only by a fixed list of page titles and elements, so a challenge missing from that list (often the newer managed and Turnstile pages) passes as no challenge, and it returns the unsolved page as a success.
 Switch to Solverr or Byparr.

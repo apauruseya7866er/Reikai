@@ -1,0 +1,110 @@
+package reikai.presentation.browse.catalogue
+
+import androidx.compose.runtime.Immutable
+import dev.icerock.moko.resources.StringResource
+import tachiyomi.domain.library.model.LibraryDisplayMode
+
+/**
+ * The neutral catalogue state both content types produce, so one screen can render a manga source and
+ * a light-novel source without branching on type. Each adapter maps its own model into [Loaded].
+ */
+sealed interface EntryBrowseScreenState {
+    data object Loading : EntryBrowseScreenState
+
+    /** The source cannot be reached and nothing here will bring it back: an extension that is not
+     *  installed. No retry is offered, because there is nothing to retry. */
+    data class SourceMissing(val label: String) : EntryBrowseScreenState
+
+    /** The source is installed but threw while loading, which a retry can fix when the cause passed.
+     *  Only the novel adapter produces it: a plugin loads in the app, a manga extension as a package. */
+    data class SourceLoadFailed(
+        val label: String,
+        val description: StringResource,
+        /** The root cause in words, where the failure has one. */
+        val message: String?,
+        val retry: SourceLoadRetry,
+    ) : EntryBrowseScreenState
+
+    @Immutable
+    data class Loaded(
+        val sourceName: String,
+        /** What the pager is currently paging. */
+        val listing: EntryBrowseListing,
+        /** The in-toolbar search text, which is not yet committed; null closes the search field. */
+        val query: String?,
+        /** A search the reader typed, so Back clears it before it leaves the screen. */
+        val isUserQuery: Boolean,
+        /** This source can list Latest. False hides the chip rather than showing it disabled. */
+        val supportsLatest: Boolean,
+        /** This source declares filters, so the Filter chip is drawn at all. */
+        val hasFilters: Boolean,
+        /** The Filter chip reads as active: a query is committed, or filters were applied since the
+         *  last listing switch, on both types. `FilterChipConformanceTest` runs both against it. */
+        val filtersActive: Boolean,
+        /** This source has settings of its own, so the Settings action is offered. */
+        val hasSettings: Boolean,
+        /** The source's own page, or null when it has none (a local source, a plugin with no site).
+         *  Non-null offers Open in WebView and is what the assist action reports. */
+        val webUrl: String?,
+        /** How result rows are drawn, which also carries the display mode when there is one. */
+        val rowStyle: EntryBrowseRowStyle,
+        /** Bulk-selection is on. True with an empty [selectedKeys] right after Select is tapped. */
+        val selectionMode: Boolean,
+        /** [EntryBrowseRow.key]s of the selected rows. */
+        val selectedKeys: Set<String>,
+        val capabilities: EntryBrowseCapabilities,
+        val dialog: EntryBrowseDialog? = null,
+    ) : EntryBrowseScreenState
+}
+
+/** Which listing the source is showing. Filters are absent on purpose: they are dispatched through
+ *  the per-type filter sheet, so no neutral state can hold their values. */
+sealed interface EntryBrowseListing {
+    data object Popular : EntryBrowseListing
+    data object Latest : EntryBrowseListing
+    data class Search(val query: String?) : EntryBrowseListing
+}
+
+/**
+ * How the result rows are laid out. [Gallery] is the adult-source layout, which brings its own row
+ * shape and has no display mode to offer, so the display-mode menu is hidden under it rather than
+ * shown doing nothing. Only the manga adapter produces it.
+ */
+sealed interface EntryBrowseRowStyle {
+    data class Standard(val displayMode: LibraryDisplayMode, val columns: BrowseColumns) : EntryBrowseRowStyle
+    data object Gallery : EntryBrowseRowStyle
+}
+
+/**
+ * Per-type slots for the catalogue screen. Each adapter fills only what its type supports, and an
+ * absent slot hides its affordance rather than showing it disabled. Adding one later is additive
+ * rather than a change to the shared spine.
+ */
+@Immutable
+data class EntryBrowseCapabilities(
+    /** Browsing to choose a migration target, filled when the screen was opened with `migrateForId`. */
+    val migrationPick: MigrationPickCapability? = null,
+)
+
+/**
+ * Browsing to choose what [migrateForId] moves to, so a tap reports the pick back and pops instead of
+ * opening the entry. A plain class held once by its adapter, not a data class: it carries an action,
+ * and re-creating it per state emission would break the enclosing state's equality.
+ */
+class MigrationPickCapability(
+    val migrateForId: Long,
+    val pick: (EntryBrowseRow, onPicked: () -> Unit) -> Unit,
+)
+
+/** Loading the source again. Held once by its adapter, as [MigrationPickCapability] is, for the same reason. */
+class SourceLoadRetry(val run: () -> Unit)
+
+/**
+ * The dialogs only the catalogue raises. What a long press asks is the add flow's own
+ * (`EntryBrowseBehavior.addFlow`), shared with every other surface that lists entries.
+ */
+sealed interface EntryBrowseDialog {
+    /** The source's own filter sheet, dispatched per type because the filter shapes have nothing in
+     *  common: a typed `FilterList` on one side, a plugin JSON schema on the other. */
+    data object Filter : EntryBrowseDialog
+}

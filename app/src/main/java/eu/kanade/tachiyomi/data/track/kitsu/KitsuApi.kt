@@ -1,221 +1,223 @@
 package eu.kanade.tachiyomi.data.track.kitsu
 
-import androidx.core.net.toUri
+import com.apollographql.apollo.ApolloClient
+import com.apollographql.apollo.api.Optional
+import com.apollographql.apollo.network.okHttpClient
 import eu.kanade.tachiyomi.data.database.models.Track
-import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuAddMangaResult
-import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuAlgoliaSearchResult
-import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuCurrentUserResult
 import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuLibraryEntry
-import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuLibraryResult
-import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuListSearchResult
-import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuMetadataResult
 import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuOAuth
-import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuSearchResult
 import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuUser
+import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuUserLibraryNode
+import eu.kanade.tachiyomi.data.track.kitsu.dto.KitsuUserLibraryResult
 import eu.kanade.tachiyomi.data.track.model.TrackMangaMetadata
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
-import eu.kanade.tachiyomi.network.DELETE
-import eu.kanade.tachiyomi.network.GET
+import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
+import eu.kanade.tachiyomi.network.dataOrElse
 import eu.kanade.tachiyomi.network.jsonMime
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.coroutines.Dispatchers
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import mihon.graphql.kitsu.KitsuAddLibMangaMutation
+import mihon.graphql.kitsu.KitsuDeleteLibEntryMutation
+import mihon.graphql.kitsu.KitsuFindLibMangaQuery
+import mihon.graphql.kitsu.KitsuGetCurrentAccountQuery
+import mihon.graphql.kitsu.KitsuGetMangaDetailsByIdQuery
+import mihon.graphql.kitsu.KitsuGetMangaDetailsBySlugQuery
+import mihon.graphql.kitsu.KitsuSearchMangaByTitleQuery
+import mihon.graphql.kitsu.KitsuUpdateLibMangaMutation
+import mihon.graphql.kitsu.ReikaiKitsuFindLibraryEntryQuery
+import mihon.graphql.kitsu.ReikaiKitsuGetMangaMetadataQuery
+import mihon.graphql.kitsu.fragment.MangaFragment
+import mihon.graphql.kitsu.type.MangaSubtypeEnum
 import okhttp3.FormBody
-import okhttp3.Headers.Companion.headersOf
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import reikai.data.track.trackerEntryOrThrow
+import reikai.domain.track.KitsuEntryLookup
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.injectLazy
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
+import kotlin.time.Instant
 import tachiyomi.domain.track.model.Track as DomainTrack
 
-class KitsuApi(private val client: OkHttpClient, interceptor: KitsuInterceptor) {
+class KitsuApi(
+    private val trackerId: Long,
+    private val client: OkHttpClient,
+    interceptor: KitsuInterceptor,
+) {
 
     private val json: Json by injectLazy()
 
     private val authClient = client.newBuilder().addInterceptor(interceptor).build()
 
-    suspend fun addLibManga(track: Track, userId: String): Track {
-        return withIOContext {
-            val data = buildJsonObject {
-                putJsonObject("data") {
-                    put("type", "libraryEntries")
-                    putJsonObject("attributes") {
-                        put("status", track.toApiStatus())
-                        put("progress", track.last_chapter_read.toInt())
-                        put("private", track.private)
-                    }
-                    putJsonObject("relationships") {
-                        putJsonObject("user") {
-                            putJsonObject("data") {
-                                put("id", userId)
-                                put("type", "users")
-                            }
-                        }
-                        putJsonObject("media") {
-                            putJsonObject("data") {
-                                put("id", track.remote_id)
-                                put("type", "manga")
-                            }
-                        }
-                    }
+    private val graphQlClient by lazy {
+        ApolloClient.Builder()
+            .serverUrl("https://kitsu.app/api/graphql")
+            .okHttpClient(authClient)
+            .dispatcher(Dispatchers.IO)
+            // required to log the error body in dataOrElse, which also properly closes it
+            .httpExposeErrorBody(true)
+            .build()
+    }
+
+    suspend fun addLibManga(track: Track): Track {
+        return graphQlClient
+            .mutation(
+                KitsuAddLibMangaMutation(
+                    media_id = track.remote_id.toString(),
+                    status = track.toKitsuStatus(),
+                    progress = track.last_chapter_read.toInt(),
+                    private = track.private,
+                    rating = Optional.present(track.score.toInt().takeIf { it > 0 }),
+                ),
+            )
+            .execute()
+            .dataOrElse(
+                errorLog = "Kitsu: Failed to add manga",
+                default = { null },
+            ) {
+                it.libraryEntry.create?.libraryEntry?.id?.let { libraryId ->
+                    track.library_id = libraryId.toLong()
+                    track
                 }
             }
-
-            with(json) {
-                authClient.newCall(
-                    POST(
-                        "${BASE_URL}library-entries",
-                        headers = headersOf("Content-Type", VND_API_JSON),
-                        body = data.toString().toRequestBody(VND_JSON_MEDIA_TYPE),
-                    ),
-                )
-                    .awaitSuccess()
-                    .parseAs<KitsuAddMangaResult>()
-                    .let {
-                        track.library_id = it.data.id
-                        track
-                    }
-            }
-        }
+            ?: throw Exception("Failed to add manga")
     }
 
     suspend fun updateLibManga(track: Track): Track {
-        return withIOContext {
-            val data = buildJsonObject {
-                putJsonObject("data") {
-                    put("type", "libraryEntries")
-                    put("id", track.library_id)
-                    putJsonObject("attributes") {
-                        put("status", track.toApiStatus())
-                        put("progress", track.last_chapter_read.toInt())
-                        put("ratingTwenty", track.toApiScore())
-                        put("startedAt", KitsuDateHelper.convert(track.started_reading_date))
-                        put("finishedAt", KitsuDateHelper.convert(track.finished_reading_date))
-                        put("private", track.private)
-                    }
+        val libraryId = track.library_id
+        requireNotNull(libraryId) { "Kitsu cannot update track with null library_id" }
+
+        return graphQlClient
+            .mutation(
+                KitsuUpdateLibMangaMutation(
+                    library_id = libraryId.toString(),
+                    status = track.toKitsuStatus(),
+                    progress = track.last_chapter_read.toInt(),
+                    private = track.private,
+                    rating = Optional.present(track.score.toInt().takeIf { it > 0 }),
+                    startedAt = Optional.present(
+                        track.started_reading_date
+                            .takeIf { it > 0 }
+                            ?.let { Instant.fromEpochMilliseconds(it) },
+                    ),
+                    finishedAt = Optional.present(
+                        track.finished_reading_date
+                            .takeIf { it > 0 }
+                            ?.let { Instant.fromEpochMilliseconds(it) },
+                    ),
+                ),
+            )
+            .execute()
+            .dataOrElse(
+                errorLog = "Kitsu: Failed to update manga",
+                default = { null },
+            ) {
+                it.libraryEntry.update?.libraryEntry?.id?.let { libraryId ->
+                    logcat { "Kitsu: Updated library entry $libraryId" }
+                    track.library_id = libraryId.toLong()
+                    track
                 }
             }
-
-            authClient.newCall(
-                Request.Builder()
-                    .url("${BASE_URL}library-entries/${track.library_id}")
-                    .headers(
-                        headersOf("Content-Type", VND_API_JSON),
-                    )
-                    .patch(data.toString().toRequestBody(VND_JSON_MEDIA_TYPE))
-                    .build(),
-            )
-                .awaitSuccess()
-
-            track
-        }
+            ?: throw Exception("Failed to update manga")
     }
 
     suspend fun removeLibManga(track: DomainTrack) {
-        withIOContext {
-            authClient.newCall(
-                DELETE(
-                    "${BASE_URL}library-entries/${track.libraryId}",
-                    headers = headersOf("Content-Type", VND_API_JSON),
+        val libraryId = track.libraryId
+        requireNotNull(libraryId) { "Kitsu cannot delete track with null library_id" }
+
+        graphQlClient
+            .mutation(
+                KitsuDeleteLibEntryMutation(
+                    library_id = libraryId.toString(),
                 ),
             )
-                .awaitSuccess()
-        }
-    }
-
-    suspend fun search(query: String, novel: Boolean = false): List<TrackSearch> {
-        return withIOContext {
-            with(json) {
-                authClient.newCall(GET(ALGOLIA_KEY_URL))
-                    .awaitSuccess()
-                    .parseAs<KitsuSearchResult>()
-                    .let {
-                        algoliaSearch(it.media.key, query, novel)
+            .execute()
+            .dataOrElse(
+                errorLog = "Kitsu: Failed to delete manga",
+                default = {},
+                onException = { e ->
+                    val body = e.body?.use { it.readUtf8() }
+                    if (
+                        e.statusCode == 500 &&
+                        body?.contains("Couldn't find LibraryEntry with 'id'=") == true
+                    ) {
+                        // RK: upstream's comment, less the date the comment hook refuses
+                        // Deleting something not in the library returns a 500 with a
+                        // "Couldn't find LibraryEntry" error message at the error.message key --
+                        // but the user gets their wish of "title not in library" so ignore it
+                        return@dataOrElse
+                    } else {
+                        throw HttpException(e.statusCode).apply { stackTrace = e.stackTrace }
                     }
+                },
+            ) {
+                logcat { "Kitsu: Deleted library entry ${it.libraryEntry.delete?.libraryEntry?.id}" }
             }
-        }
     }
 
-    private suspend fun algoliaSearch(key: String, query: String, novel: Boolean = false): List<TrackSearch> {
-        return withIOContext {
-            val jsonObject = buildJsonObject {
-                put("params", "query=${URLEncoder.encode(query, StandardCharsets.UTF_8.name())}$ALGOLIA_FILTER")
+    suspend fun search(search: String, novel: Boolean = false): List<TrackSearch> { // RK: novel subtype split
+        return graphQlClient
+            .query(
+                KitsuSearchMangaByTitleQuery(
+                    query = search,
+                ),
+            )
+            .execute()
+            .dataOrElse(
+                errorLog = "Kitsu: Search failed",
+                default = { emptyList() },
+            ) {
+                it.searchMangaByTitle.nodes
+                    ?.filter { node -> node?.mangaFragment?.isNovel() == novel } // RK
+                    ?.mapNotNull { node -> node?.toTrackSearch(trackerId) }
             }
-
-            with(json) {
-                client.newCall(
-                    POST(
-                        ALGOLIA_URL,
-                        headers = headersOf(
-                            "X-Algolia-Application-Id",
-                            ALGOLIA_APP_ID,
-                            "X-Algolia-API-Key",
-                            key,
-                        ),
-                        body = jsonObject.toString().toRequestBody(jsonMime),
-                    ),
-                )
-                    .awaitSuccess()
-                    .parseAs<KitsuAlgoliaSearchResult>()
-                    .hits
-                    // RK --> Kitsu "manga" kind covers light novels via subtype "novel" (Active #8)
-                    .filter { (it.subtype == "novel") == novel }
-                    // RK <--
-                    .map { it.toTrack() }
-            }
-        }
+            ?: emptyList()
     }
 
-    suspend fun findLibManga(track: Track, userId: String): Track? {
-        return withIOContext {
-            val url = "${BASE_URL}library-entries".toUri().buildUpon()
-                .encodedQuery("filter[manga_id]=${track.remote_id}&filter[user_id]=$userId")
-                .appendQueryParameter("include", "manga")
-                .build()
-            with(json) {
-                authClient.newCall(GET(url.toString()))
-                    .awaitSuccess()
-                    .parseAs<KitsuListSearchResult>()
-                    .let {
-                        if (it.data.isNotEmpty() && it.included.isNotEmpty()) {
-                            it.firstToTrack()
-                        } else {
-                            null
-                        }
-                    }
+    suspend fun findLibManga(track: Track): Track? {
+        return graphQlClient
+            .query(
+                KitsuFindLibMangaQuery(
+                    remote_id = track.remote_id.toString(),
+                ),
+            )
+            .execute()
+            .dataOrElse(
+                errorLog = "Kitsu: Failed to find manga in library",
+                default = { null },
+            ) {
+                it.findMangaById?.toTrackSearch(trackerId)
             }
-        }
     }
 
-    suspend fun getLibManga(track: Track): Track {
-        return withIOContext {
-            val url = "${BASE_URL}library-entries".toUri().buildUpon()
-                .encodedQuery("filter[id]=${track.library_id}")
-                .appendQueryParameter("include", "manga")
-                .build()
-            with(json) {
-                authClient.newCall(GET(url.toString()))
-                    .awaitSuccess()
-                    .parseAs<KitsuListSearchResult>()
-                    .let {
-                        if (it.data.isNotEmpty() && it.included.isNotEmpty()) {
-                            it.firstToTrack()
-                        } else {
-                            throw Exception("Could not find manga")
-                        }
-                    }
+    // RK --> a Yokai-era track's remote id read as a library entry id, with the viewer's own profile id
+    suspend fun findLibraryEntry(entryId: Long): KitsuEntryLookup? {
+        return graphQlClient
+            .query(ReikaiKitsuFindLibraryEntryQuery(id = entryId.toString()))
+            .execute()
+            .dataOrElse(
+                errorLog = "Kitsu: Failed to find library entry",
+                default = { null },
+                // A failed heal attempt leaves the row failing as it did before, not with a new error
+                onException = {},
+            ) { data ->
+                data.findLibraryEntryById?.let { entry ->
+                    KitsuEntryLookup(
+                        ownerId = entry.user.id,
+                        viewerId = data.currentProfile?.id,
+                        mangaId = entry.media.onManga?.id?.toLongOrNull(),
+                    )
+                }
             }
-        }
     }
+    // RK <--
 
     suspend fun login(username: String, password: String): KitsuOAuth {
         return withIOContext {
@@ -235,159 +237,195 @@ class KitsuApi(private val client: OkHttpClient, interceptor: KitsuInterceptor) 
     }
 
     suspend fun getCurrentUser(): KitsuUser {
-        return withIOContext {
-            val url = "${BASE_URL}users".toUri().buildUpon()
-                .encodedQuery("filter[self]=true")
-                .build()
-            with(json) {
-                authClient.newCall(GET(url.toString()))
-                    .awaitSuccess()
-                    .parseAs<KitsuCurrentUserResult>()
-                    .data[0]
+        return graphQlClient
+            .query(
+                KitsuGetCurrentAccountQuery(),
+            )
+            .execute()
+            .dataOrElse(
+                errorLog = "Kitsu: Failed to get current user",
+                default = { null },
+            ) {
+                it.currentAccount?.toKitsuUser()
             }
+            ?: throw Exception("Failed to get Kitsu user data")
+    }
+
+    suspend fun getMangaDetails(search: String, novel: Boolean = false): TrackSearch? { // RK: novel subtype split
+        val isSearchById = search.matches(Regex("\\d+"))
+
+        return if (isSearchById) {
+            getMangaDetailsById(search, novel) // RK
+        } else {
+            getMangaDetailsBySlug(search, novel) // RK
         }
     }
 
-    // RK --> full library pull for the recommendation taste profile. JSON:API `/library-entries`
-    // with categories (tags) + mappings (cross-tracker ids) side-loaded inline, paged via links.next.
-    suspend fun getUserLibrary(userId: String): List<KitsuLibraryEntry> {
+    private suspend fun getMangaDetailsById(id: String, novel: Boolean): TrackSearch? { // RK
+        return graphQlClient
+            .query(
+                KitsuGetMangaDetailsByIdQuery(
+                    id = id,
+                ),
+            )
+            .execute()
+            .dataOrElse(
+                errorLog = "Kitsu: Search by ID failed",
+                default = { null },
+            ) {
+                it.findMangaById?.takeIf { manga -> manga.mangaFragment.isNovel() == novel } // RK
+                    ?.toTrackSearch(trackerId)
+            }
+    }
+
+    private suspend fun getMangaDetailsBySlug(slug: String, novel: Boolean): TrackSearch? { // RK
+        return graphQlClient
+            .query(
+                KitsuGetMangaDetailsBySlugQuery(
+                    slug = slug,
+                ),
+            )
+            .execute()
+            .dataOrElse(
+                errorLog = "Kitsu: Search by Slug failed",
+                default = { null },
+            ) {
+                it.findMangaBySlug?.takeIf { manga -> manga.mangaFragment.isNovel() == novel } // RK
+                    ?.toTrackSearch(trackerId)
+            }
+    }
+
+    // RK --> full library pull for the recommendation taste profile. Upstream selects nothing like
+    // this, so there is no counterpart to sync against. Stays on raw JSON: its DTOs are pinned by the
+    // taste-profile tests.
+    suspend fun getUserLibrary(): List<KitsuLibraryEntry> {
+        val query = $$"""
+            |query Query($cursor: String) {
+              |currentProfile {
+                |library {
+                  |all(mediaType: MANGA, first: 500, after: $cursor) {
+                    |pageInfo {
+                      |hasNextPage
+                      |endCursor
+                    |}
+                    |nodes {
+                      |status
+                      |rating
+                      |media {
+                        |id
+                        |titles {
+                          |preferred
+                        |}
+                        |categories(first: 100) {
+                          |nodes {
+                            |title(locales: ["en"])
+                          |}
+                        |}
+                        |mappings(first: 50) {
+                          |nodes {
+                            |externalSite
+                            |externalId
+                          |}
+                        |}
+                      |}
+                    |}
+                  |}
+                |}
+              |}
+            |}
+        """.trimMargin()
+
         return withIOContext {
             val accumulated = mutableListOf<KitsuLibraryEntry>()
-            var nextUrl: String? = buildInitialLibraryUrl(userId)
-            while (nextUrl != null) {
-                val url = nextUrl
-                val page = with(json) {
-                    authClient.newCall(GET(url)).awaitSuccess().parseAs<KitsuLibraryResult>()
+            var cursor: String? = null
+            while (true) {
+                val payload = buildJsonObject {
+                    put("query", query)
+                    putJsonObject("variables") {
+                        put("cursor", cursor)
+                    }
                 }
-                accumulated += resolveLibraryPage(page)
-                nextUrl = page.links.next
+                val connection = with(json) {
+                    authClient.newCall(
+                        POST(
+                            GRAPHQL_API_URL,
+                            body = payload.toString().toRequestBody(jsonMime),
+                        ),
+                    )
+                        .awaitSuccess()
+                        .parseAs<KitsuUserLibraryResult>()
+                }.data.currentProfile?.library?.all ?: break
+
+                accumulated += connection.nodes.mapNotNull { it.toLibraryEntry() }
+                if (!connection.pageInfo.hasNextPage) break
+                cursor = connection.pageInfo.endCursor ?: break
             }
             accumulated
         }
     }
 
-    private fun buildInitialLibraryUrl(userId: String): String {
-        // No `filter[kind]=manga` (silently zeroes this API revision) and no `fields[...]` sparse
-        // fieldsets (they strip the relationships block we need to link entries to manga). Anime
-        // entries are dropped by the resolver via their null manga relationship instead.
-        return "${BASE_URL}library-entries".toUri().buildUpon()
-            .encodedQuery(
-                "filter[user_id]=$userId" +
-                    "&include=manga,manga.categories,manga.mappings" +
-                    "&page[limit]=500",
-            )
-            .build()
-            .toString()
+    private fun KitsuUserLibraryNode.toLibraryEntry(): KitsuLibraryEntry? {
+        val media = media ?: return null
+        val mangaId = media.id.toLongOrNull() ?: return null
+        val externalIds = media.mappings.nodes.associate { it.externalSite to it.externalId }
+        return KitsuLibraryEntry(
+            mangaId = mangaId,
+            title = media.titles.preferred.orEmpty(),
+            status = status,
+            ratingTwenty = rating,
+            tags = media.categories.nodes.mapNotNull { it.title.localized() },
+            malId = externalIds[MAL_MAPPING_SITE]?.toLongOrNull(),
+            anilistId = externalIds[ANILIST_MAPPING_SITE]?.toLongOrNull(),
+        )
     }
 
-    private fun resolveLibraryPage(page: KitsuLibraryResult): List<KitsuLibraryEntry> {
-        val mangaById = page.included.filter { it.type == "manga" }.associateBy { it.id }
-        val categoryTitleById = page.included
-            .filter { it.type == "categories" }
-            .associate { it.id to it.attributes.title.orEmpty() }
-        val malIdByMappingId = HashMap<Long, Long>()
-        val anilistIdByMappingId = HashMap<Long, Long>()
-        for (mapping in page.included) {
-            if (mapping.type != "mappings") continue
-            val external = mapping.attributes.externalId?.toLongOrNull() ?: continue
-            when (mapping.attributes.externalSite) {
-                MAL_MAPPING_SITE -> malIdByMappingId[mapping.id] = external
-                ANILIST_MAPPING_SITE -> anilistIdByMappingId[mapping.id] = external
-            }
-        }
-
-        return page.data.mapNotNull { row ->
-            val mangaId = row.relationships.manga?.data?.id ?: return@mapNotNull null
-            val manga = mangaById[mangaId] ?: return@mapNotNull null
-            val tags = manga.relationships?.categories?.data
-                ?.mapNotNull { categoryTitleById[it.id] }
-                ?.filter { it.isNotEmpty() }
-                .orEmpty()
-            val mappingRefs = manga.relationships?.mappings?.data.orEmpty()
-            KitsuLibraryEntry(
-                mangaId = mangaId,
-                title = manga.attributes.canonicalTitle.orEmpty(),
-                status = row.attributes.status,
-                ratingTwenty = row.attributes.ratingTwenty,
-                tags = tags,
-                malId = mappingRefs.firstNotNullOfOrNull { malIdByMappingId[it.id] },
-                anilistId = mappingRefs.firstNotNullOfOrNull { anilistIdByMappingId[it.id] },
-            )
-        }
-    }
-
-    // "Fill from tracker" metadata. Bespoke JSON:API REST (not Komikku's gated GraphQL): resolve the
-    // manga's staff (author/artist by role) and genres out of the `included` graph.
+    // "Fill from tracker" metadata. Its own operation rather than upstream's fragment, which caps staff
+    // at five and selects no categories. Kitsu returns its NSFW categories only to an account whose own
+    // SFW filter is off, so on a default account this genre list is short.
     suspend fun getMangaMetadata(track: DomainTrack): TrackMangaMetadata {
-        return withIOContext {
-            val url = "${BASE_URL}manga/${track.remoteId}".toUri().buildUpon()
-                .encodedQuery("include=staff.person,categories")
-                .build()
-                .toString()
-            val result = with(json) {
-                authClient.newCall(GET(url)).awaitSuccess().parseAs<KitsuMetadataResult>()
-            }
-            val manga = result.data
-            val attrs = manga.attributes
+        val manga = graphQlClient
+            .query(ReikaiKitsuGetMangaMetadataQuery(id = track.remoteId.toString()))
+            .execute()
+            .trackerEntryOrThrow("Kitsu") { it.findMangaById }
 
-            val peopleById = result.included
-                .filter { it.type == "people" }
-                .associate { it.id to it.attributes.name.orEmpty() }
-            val staffById = result.included.filter { it.type == "mediaStaff" }.associateBy { it.id }
-            val categoryTitleById = result.included
-                .filter { it.type == "categories" && it.attributes.nsfw != true }
-                .associate { it.id to it.attributes.title.orEmpty() }
+        // Kitsu spells credits as free-form role strings, so the match is a substring, not equality.
+        fun credits(roleMatch: String) = manga.staff.nodes.orEmpty()
+            .filterNotNull()
+            .filter { roleMatch in it.role }
+            .map { it.person.name }
+            .filter { it.isNotBlank() }
+            .joinToString(", ")
+            .ifEmpty { null }
 
-            fun staffNames(roleMatch: String): String? =
-                manga.relationships.staff?.data.orEmpty()
-                    .mapNotNull { staffById[it.id] }
-                    .filter { roleMatch in it.attributes.role.orEmpty() }
-                    .mapNotNull { it.relationships.person?.data?.id?.let(peopleById::get) }
-                    .filter { it.isNotBlank() }
-                    .joinToString(", ")
-                    .ifEmpty { null }
-
-            TrackMangaMetadata(
-                remoteId = manga.id,
-                title = attrs.canonicalTitle,
-                thumbnailUrl = attrs.posterImage?.run { original ?: large ?: medium },
-                description = attrs.synopsis?.ifBlank { null } ?: attrs.description?.ifBlank { null },
-                authors = staffNames("Story"),
-                artists = staffNames("Art"),
-                genres = manga.relationships.categories?.data.orEmpty()
-                    .mapNotNull { categoryTitleById[it.id] }
-                    .filter { it.isNotBlank() }
-                    .takeIf { it.isNotEmpty() },
-            )
-        }
+        return TrackMangaMetadata(
+            remoteId = manga.id.toLongOrNull(),
+            title = manga.titles.preferred,
+            thumbnailUrl = manga.posterImage?.original?.url,
+            description = (manga.description["en"] as? String)?.ifBlank { null },
+            authors = credits("Story"),
+            artists = credits("Art"),
+            genres = manga.categories.nodes.orEmpty()
+                .mapNotNull { node -> node?.title?.localized() }
+                .takeIf { it.isNotEmpty() },
+        )
     }
+
+    /** Prefers English, but takes whatever locale the entry has rather than dropping the tag. */
+    private fun Map<String, Any?>.localized(): String? =
+        ((this["en"] ?: values.firstOrNull()) as? String)?.takeIf { it.isNotBlank() }
     // RK <--
 
     companion object {
         private const val CLIENT_ID = "dd031b32d2f56c990b1425efe6c42ad847e7fe3ab46bf1299f05ecd856bdb7dd"
-
-        // RK: external-site slugs for resolving cross-tracker ids from a manga's mappings.
-        private const val MAL_MAPPING_SITE = "myanimelist/manga"
-        private const val ANILIST_MAPPING_SITE = "anilist/manga"
         private const val CLIENT_SECRET = "54d7307928f63414defd96399fc31ba847961ceaecef3a5fd93144e960c0e151"
 
-        private const val BASE_URL = "https://kitsu.app/api/edge/"
         private const val LOGIN_URL = "https://kitsu.app/api/oauth/token"
-        private const val BASE_MANGA_URL = "https://kitsu.app/manga/"
-        private const val ALGOLIA_KEY_URL = "https://kitsu.app/api/edge/algolia-keys/media/"
 
-        private const val ALGOLIA_APP_ID = "AWQO5J657S"
-        private const val ALGOLIA_URL = "https://$ALGOLIA_APP_ID-dsn.algolia.net/1/indexes/production_media/query/"
-        private const val ALGOLIA_FILTER = "&facetFilters=%5B%22kind%3Amanga%22%5D&attributesToRetrieve=" +
-            "%5B%22synopsis%22%2C%22averageRating%22%2C%22canonicalTitle%22%2C%22chapterCount%22%2C%22" +
-            "posterImage%22%2C%22startDate%22%2C%22subtype%22%2C%22endDate%22%2C%20%22id%22%5D"
-
-        private const val VND_API_JSON = "application/vnd.api+json"
-        private val VND_JSON_MEDIA_TYPE = VND_API_JSON.toMediaType()
-
-        fun mangaUrl(remoteId: Long): String {
-            return BASE_MANGA_URL + remoteId
-        }
+        // RK --> the raw library pull, and the external sites whose ids the taste profile resolves
+        private const val GRAPHQL_API_URL = "https://kitsu.app/api/graphql"
+        private const val MAL_MAPPING_SITE = "MYANIMELIST_MANGA"
+        private const val ANILIST_MAPPING_SITE = "ANILIST_MANGA"
+        // RK <--
 
         fun refreshTokenRequest(token: String) = POST(
             LOGIN_URL,
@@ -400,3 +438,7 @@ class KitsuApi(private val client: OkHttpClient, interceptor: KitsuInterceptor) 
         )
     }
 }
+
+// RK: Kitsu files light novels under its manga type, separated only by subtype, so both search paths
+// answer "is this a novel" here rather than each spelling out the comparison.
+private fun MangaFragment.isNovel(): Boolean = subtype == MangaSubtypeEnum.NOVEL

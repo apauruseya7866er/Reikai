@@ -1,0 +1,194 @@
+package reikai.novel.source.ireader
+
+import eu.kanade.tachiyomi.extension.model.Extension
+import ireader.core.source.CatalogSource
+import ireader.core.source.DeepLinkSource
+import ireader.core.source.HttpSource
+import ireader.core.source.model.ChapterInfo
+import ireader.core.source.model.Command
+import ireader.core.source.model.DeepLink
+import ireader.core.source.model.Listing
+import ireader.core.source.model.MangaInfo
+import ireader.core.source.model.MangasPageInfo
+import reikai.data.coil.extensionIconUrl
+import reikai.data.novel.NovelStatusCode
+import reikai.domain.source.CatalogueEnd
+import reikai.novel.host.ChapterItem
+import reikai.novel.host.NovelItem
+import reikai.novel.host.NovelTextSanitizer
+import reikai.novel.host.SourceNovel
+import reikai.novel.source.AppNovelSource
+import reikai.novel.source.IREADER_NOVEL_SOURCE_PREFIX
+import reikai.novel.source.NovelExtensionFormat
+import reikai.novel.source.NovelFilterState
+import reikai.novel.source.NovelFilters
+import reikai.novel.source.NovelItemsPage
+import reikai.novel.source.NovelLink
+import reikai.novel.source.NovelLinkResolver
+import reikai.novel.source.NovelListing
+import reikai.novel.source.NovelPageFetch
+import reikai.novel.source.NovelPageKind
+import reikai.novel.source.appSourceCall
+import reikai.novel.source.chapterNumberOf
+import reikai.novel.source.chapterOrFailedFetch
+import reikai.novel.source.listingOrFailedFetch
+import reikai.novel.source.novelOrFailedFetch
+import reikai.novel.source.releaseTimeOf
+import reikai.util.runCatchingCancellable
+
+/**
+ * [reikai.novel.source.NovelSource] over the catalogue of an IReader extension. IReader lists chapters
+ * oldest first, as novels keep them, and hands a chapter over as pages, which become HTML here. Its
+ * listings map in order onto Popular and Latest; its search reads the query from a Title filter. Record:
+ * docs/dev/subsystems/browse-and-sources.md.
+ */
+class IReaderNovelSource(
+    val source: CatalogSource,
+    extension: Extension.Loaded,
+) : AppNovelSource {
+
+    override val appSource: Any get() = source
+
+    override val id: String = IREADER_NOVEL_SOURCE_PREFIX + source.id
+    override val name: String = source.name
+    override val version: String = extension.versionName
+    override val site: String = (source as? HttpSource)?.baseUrl.orEmpty()
+    override val lang: String = source.lang
+    override val iconUrl: String = extensionIconUrl(extension.pkgName)
+    override val format = NovelExtensionFormat.IREADER
+    override val extensionName: String = extension.name
+    override val contentWarning = extension.contentWarning
+    override val filters: NovelFilters? = source.getFilters().takeIf { toMihonFilters(it).isNotEmpty() }
+        ?.let { NovelFilters.FilterListSchema { toMihonFilters(source.getFilters()) } }
+    override val supportsLatest: Boolean = source.getListings().size >= 2
+
+    // Only IReader's own link hooks: its search reads a Title filter, and no IReader convention sends a
+    // link there as a query, which is how a tachiyomi extension reads its links without the hooks.
+    override val links: NovelLinkResolver? = (source as? DeepLinkSource)?.let { deepLinks ->
+        NovelLinkResolver { url ->
+            runCatchingCancellable {
+                appSourceCall {
+                    when (val link = deepLinks.handleLink(url)) {
+                        is DeepLink.Manga -> NovelLink.Novel(link.key)
+                        is DeepLink.Chapter -> deepLinks.findMangaKey(link.key)?.let { NovelLink.Chapter(it, link.key) }
+                        null -> null
+                    }
+                }
+            }.getOrNull()
+        }
+    }
+
+    override suspend fun browse(listing: NovelListing, page: Int, filters: NovelFilterState?): NovelItemsPage =
+        appSourceCall {
+            val listings = source.getListings()
+            val chosen: Listing? = when (listing) {
+                NovelListing.Popular -> listings.firstOrNull()
+                NovelListing.Latest -> listings.getOrNull(1)
+            }
+            listingOrFailedFetch { source.getMangaList(chosen, page).toPage() }
+        }
+
+    override suspend fun search(query: String, page: Int, filters: NovelFilterState?): NovelItemsPage =
+        appSourceCall {
+            val picked = (filters as? NovelFilterState.Filters)?.list ?: toMihonFilters(source.getFilters())
+            listingOrFailedFetch { source.getMangaList(toIReaderFilters(picked, query), page).toPage() }
+        }
+
+    override suspend fun parseNovel(novelPath: String): SourceNovel = appSourceCall {
+        novelOrFailedFetch {
+            val novel = source.getMangaDetails(MangaInfo(key = novelPath, title = ""), emptyList())
+            val chapters = source.getChapterList(novel.copy(key = novelPath), emptyList())
+            novel.toSourceNovel(novelPath, chapters.map { it.toChapterItem() })
+        }
+    }
+
+    override suspend fun parseChapter(chapterPath: String): String = appSourceCall {
+        chapterOrFailedFetch { chapterHtml(chapterPath, emptyList()) }
+    }
+
+    // A source takes a page the user loaded through the Fetch commands it declares, the way through
+    // for a site that blocks its requests; the novel keeps its own path rather than the page's address.
+    override val pageFetch: NovelPageFetch? = pageKinds().takeIf { it.isNotEmpty() }?.let { kinds ->
+        object : NovelPageFetch {
+            override val kinds = kinds
+
+            override suspend fun details(novelPath: String, url: String, html: String) = appSourceCall {
+                source.getMangaDetails(MangaInfo(key = novelPath, title = ""), listOf(Command.Detail.Fetch(url, html)))
+                    .toSourceNovel(novelPath, chapters = null)
+            }
+
+            override suspend fun chapters(novelPath: String, url: String, html: String) = appSourceCall {
+                source.getChapterList(MangaInfo(key = novelPath, title = ""), listOf(Command.Chapter.Fetch(url, html)))
+                    .map { it.toChapterItem() }
+            }
+
+            override suspend fun chapterText(chapterPath: String, url: String, html: String) = appSourceCall {
+                chapterHtml(chapterPath, listOf(Command.Content.Fetch(url, html)))
+            }
+        }
+    }
+
+    // A source's own code answers this, so one that throws offers no page fetch rather than failing the load.
+    private fun pageKinds(): Set<NovelPageKind> = runCatching { source.getCommands() }.getOrDefault(emptyList())
+        .mapNotNullTo(HashSet()) {
+            when (it) {
+                is Command.Detail.Fetch -> NovelPageKind.DETAILS
+                is Command.Chapter.Fetch -> NovelPageKind.CHAPTERS
+                is Command.Content.Fetch -> NovelPageKind.CHAPTER_TEXT
+                else -> null
+            }
+        }
+
+    // Strip control characters only, as the other formats do: the text is HTML the reader renders.
+    private suspend fun chapterHtml(chapterPath: String, commands: List<Command<*>>): String {
+        val pages = source.getPageList(ChapterInfo(key = chapterPath, name = ""), commands)
+        val html = pages.toChapterHtml { page ->
+            (source as? HttpSource)?.let { runCatchingCancellable { it.getPage(page) }.getOrNull() }
+        }
+        return NovelTextSanitizer.stripInvalidChars(html)
+    }
+
+    private fun MangaInfo.toSourceNovel(path: String, chapters: List<ChapterItem>?) = SourceNovel(
+        path = path,
+        name = title.ifBlank { null },
+        cover = cover.ifBlank { null },
+        genres = genres.joinToString(", ").ifBlank { null },
+        summary = description.ifBlank { null },
+        author = author.ifBlank { null },
+        artist = artist.ifBlank { null },
+        // IReader numbers its statuses as tachiyomi does.
+        status = NovelStatusCode.toSourceString(status.toInt()),
+        chapters = chapters,
+    )
+
+    // IReader's own rule: a key is used as it is when absolute, and joined to the site otherwise.
+    override suspend fun resolveUrl(path: String, isNovel: Boolean): String = when {
+        path.startsWith("http") -> path
+        path.startsWith("/") -> site + path
+        else -> "$site/$path"
+    }
+
+    // IReader leaves out an entry its source parsed no title for, which would list as a blank row.
+    private fun MangasPageInfo.toPage() = NovelItemsPage(
+        items = mangas.filter {
+            it.title.isNotBlank()
+        }.map {
+            NovelItem(
+                name = NovelTextSanitizer.decodeEntities(it.title),
+                path = it.key,
+                cover = it.cover.ifBlank {
+                    null
+                },
+            )
+        },
+        end = CatalogueEnd.Reported(hasNextPage),
+    )
+
+    private fun ChapterInfo.toChapterItem() = ChapterItem(
+        name = name,
+        path = key,
+        releaseTime = releaseTimeOf(dateUpload),
+        chapterNumber = chapterNumberOf(number),
+        scanlator = scanlator,
+    )
+}

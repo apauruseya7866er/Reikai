@@ -1,0 +1,120 @@
+package reikai.domain.track.autobind
+
+import dev.zacsweers.metro.Inject
+import eu.kanade.tachiyomi.data.track.EnhancedTracker
+import eu.kanade.tachiyomi.data.track.Tracker
+import eu.kanade.tachiyomi.data.track.TrackerManager
+import eu.kanade.tachiyomi.data.track.model.TrackSearch
+import eu.kanade.tachiyomi.source.Source
+import logcat.LogPriority
+import reikai.domain.track.EntryTrackPort
+import reikai.novel.source.NovelSource
+import tachiyomi.core.common.util.system.logcat
+import reikai.domain.novel.model.Novel as NovelEntry
+import tachiyomi.domain.manga.model.Manga as MangaEntry
+
+/** An entry an auto-binding tracker is asked about, with the source it came from. */
+sealed interface AutoBindEntry {
+    val title: String
+
+    data class Manga(val manga: MangaEntry, val source: Source) : AutoBindEntry {
+        override val title: String get() = manga.title
+    }
+
+    data class Novel(val novel: NovelEntry, val source: NovelSource) : AutoBindEntry {
+        override val title: String get() = novel.title
+    }
+}
+
+/**
+ * A tracker that binds an entry from a source it knows on its own, with no search: a manga server's own
+ * tracker, or a site's tracker for the extension reading that site. Reikai's, for both content types,
+ * so Mihon's [EnhancedTracker] stays as upstream has it; [EnhancedAutoBind] carries its trackers over.
+ */
+interface AutoBindTracker {
+    val tracker: Tracker
+
+    /**
+     * Whether the tracker is offered only for entries it [accepts]: a manga server holds nothing else,
+     * while a site's tracker still searches its catalogue for a novel from any source.
+     */
+    val offeredOnlyWhenAccepted: Boolean
+
+    fun accepts(entry: AutoBindEntry): Boolean
+
+    suspend fun match(entry: AutoBindEntry): TrackSearch?
+}
+
+/** A manga server's own tracker, which knows only the manga from its server's source. */
+class EnhancedAutoBind(override val tracker: Tracker, private val enhanced: EnhancedTracker) : AutoBindTracker {
+
+    override val offeredOnlyWhenAccepted = true
+
+    override fun accepts(entry: AutoBindEntry): Boolean = entry is AutoBindEntry.Manga && enhanced.accept(entry.source)
+
+    override suspend fun match(entry: AutoBindEntry): TrackSearch? =
+        (entry as? AutoBindEntry.Manga)?.let { enhanced.match(it.manga) }
+}
+
+/** Each tracker's auto-binding, when it has one. */
+@Inject
+class AutoBindTrackers(private val trackerManager: TrackerManager) {
+
+    fun loggedIn(): List<AutoBindTracker> = trackerManager.loggedInTrackers().mapNotNull(::of)
+
+    fun of(tracker: Tracker): AutoBindTracker? =
+        tracker as? AutoBindTracker ?: (tracker as? EnhancedTracker)?.let { EnhancedAutoBind(tracker, it) }
+}
+
+/** The trackers a tracking dialog offers, and the ids among them a tap binds by match rather than search. */
+data class TrackerOffer(val offered: List<Tracker>, val matchedByTap: Set<Long>)
+
+/**
+ * What the tracking dialog offers for [entry], for both content types. A null [entry] (a novel whose
+ * source is not loaded) keeps every row and matches none, so a tap searches rather than doing nothing.
+ */
+fun offerTrackers(trackers: List<Tracker>, entry: AutoBindEntry?, of: (Tracker) -> AutoBindTracker?): TrackerOffer {
+    val matched = trackers.filter { entry != null && of(it)?.accepts(entry) == true }
+    val offered = trackers.filter { tracker ->
+        val auto = of(tracker)
+        auto == null || !auto.offeredOnlyWhenAccepted || entry == null || tracker in matched
+    }
+    return TrackerOffer(offered, matched.mapTo(HashSet()) { it.id })
+}
+
+/**
+ * What the tracking sheet offers for the entry behind [port], from the logged-in [trackers]: those whose
+ * catalogue holds its type, filtered by the rule above. The entry is resolved only when an auto-binding
+ * tracker asks, since resolving a novel's loads the plugins.
+ */
+suspend fun offerTrackers(port: EntryTrackPort, trackers: List<Tracker>, autoBind: AutoBindTrackers): TrackerOffer {
+    val supported = trackers.filter(port::supports)
+    val entry = if (supported.any { autoBind.of(it) != null }) port.autoBindEntry() else null
+    return offerTrackers(supported, entry, autoBind::of)
+}
+
+/** The details Tracking button: how many bound tracks sit on trackers the sheet offers, and whether it offers any. */
+data class TrackingButtonState(val count: Int, val hasTrackers: Boolean)
+
+fun trackingButtonState(boundTrackerIds: List<Long>, offered: List<Tracker>): TrackingButtonState {
+    val offeredIds = offered.mapTo(HashSet()) { it.id }
+    return TrackingButtonState(count = boundTrackerIds.count { it in offeredIds }, hasTrackers = offered.isNotEmpty())
+}
+
+/**
+ * Binds [entry] to each of [trackers] that accepts it and finds its match, through [bind], the entry
+ * type's own write. One tracker failing is logged and stops none of the others.
+ */
+suspend fun bindOnAdd(
+    entry: AutoBindEntry,
+    trackers: List<AutoBindTracker>,
+    bind: suspend (AutoBindTracker, TrackSearch) -> Unit,
+) {
+    trackers.filter { it.accepts(entry) }.forEach { candidate ->
+        try {
+            candidate.match(entry)?.let { bind(candidate, it) }
+        } catch (e: Exception) {
+            candidate.logcat(LogPriority.WARN, e) { "Could not match ${entry.title} with ${candidate.tracker.name}" }
+        }
+    }
+}

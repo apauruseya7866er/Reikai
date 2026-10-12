@@ -1,27 +1,18 @@
 package reikai.presentation.library
 
-import android.view.ViewConfiguration
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -30,9 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.LocalDensity
@@ -43,27 +32,20 @@ import androidx.compose.ui.util.fastFirstOrNull
 import androidx.compose.ui.util.fastForEach
 import androidx.compose.ui.util.fastMaxBy
 import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.sample
+import tachiyomi.presentation.core.components.FastScrollThumb
+import tachiyomi.presentation.core.components.FastScrollThumbLength
+import tachiyomi.presentation.core.components.rememberFastScrollThumbAlpha
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * A fast-scroll [LazyVerticalGrid] for Reikai's single-list library.
- *
- * Mihon's [tachiyomi.presentation.core.components.FastScrollLazyVerticalGrid] positions its thumb as
- * `rowsBefore * averageRowHeight`, which is unstable when a grid mixes tall cover rows with short
- * full-span category headers: the average wobbles as headers scroll through the viewport and, scaled
- * by the row count, the thumb jitters. Mihon documents this and ships the stable algorithm only for
- * plain lists.
- *
- * This grid borrows that stable approach: the thumb tracks a smooth proportion of rows scrolled past
- * ([LazyGridItemInfo.row] is span-aware), never averaging heights. The one input the proportion
- * approach can't infer through span headers, the total row count, is supplied by the caller
- * ([totalRows]) from the category data, along with [itemIndexForRow] so dragging the thumb can map a
- * target row back to a grid item.
+ * A fast-scroll [LazyVerticalGrid] for Reikai's single-list library. Mihon's
+ * [tachiyomi.presentation.core.components.FastScrollLazyVerticalGrid] positions its thumb as
+ * `rowsBefore * averageRowHeight`, which jitters when a grid mixes tall cover rows with short
+ * full-span headers, so this borrows Mihon's stable list algorithm: the thumb tracks a proportion of
+ * rows scrolled past ([LazyGridItemInfo.row] is span-aware), never averaging heights. The caller
+ * supplies [totalRows] and [itemIndexForRow], which a proportion cannot infer through span headers.
  */
 @Composable
 fun ReikaiFastScrollLazyVerticalGrid(
@@ -128,7 +110,7 @@ fun ReikaiFastScrollLazyVerticalGrid(
                 thumbTopPadding -
                 thumbBottomPadding -
                 layoutInfo.afterContentPadding
-            val thumbHeightPx = with(LocalDensity.current) { ThumbLength.toPx() }
+            val thumbHeightPx = with(LocalDensity.current) { FastScrollThumbLength.toPx() }
             val trackHeightPx = heightPx - thumbHeightPx
             val visibleItems = layoutInfo.visibleItemsInfo
 
@@ -173,24 +155,13 @@ fun ReikaiFastScrollLazyVerticalGrid(
                 if (stableScrollInProgress) scrolled.tryEmit(Unit)
             }
 
-            // Thumb alpha
-            val alpha = remember { Animatable(0f) }
+            val alpha = rememberFastScrollThumbAlpha(scrolled, thumbAllowed)
             val isThumbVisible = alpha.value > 0f
-            LaunchedEffect(scrolled, alpha) {
-                scrolled
-                    .sample(100)
-                    .collectLatest {
-                        if (thumbAllowed()) {
-                            alpha.snapTo(1f)
-                            delay(SCROLL_BAR_VISIBILITY_DURATION_MILLIS)
-                            alpha.animateTo(0f, animationSpec = ImmediateFadeOutAnimationSpec)
-                        } else {
-                            alpha.animateTo(0f, animationSpec = ImmediateFadeOutAnimationSpec)
-                        }
-                    }
-            }
 
-            Box(
+            FastScrollThumb(
+                alpha = alpha.value,
+                color = thumbColor,
+                endContentPadding = endContentPadding,
                 modifier = Modifier
                     .offset { IntOffset(0, thumbOffsetY.roundToInt()) }
                     .then(
@@ -219,21 +190,8 @@ fun ReikaiFastScrollLazyVerticalGrid(
                         } else {
                             Modifier
                         },
-                    )
-                    // Transparent touch target, wider than the visible thumb so it is easy to grab.
-                    .height(ThumbLength)
-                    .padding(end = endContentPadding)
-                    .width(ThumbTouchThickness)
-                    .alpha(alpha.value),
-                contentAlignment = Alignment.CenterEnd,
-            ) {
-                Box(
-                    Modifier
-                        .height(ThumbLength)
-                        .width(ThumbThickness)
-                        .background(color = thumbColor, shape = ThumbShape),
-                )
-            }
+                    ),
+            )
         }.map { it.measure(scrollerConstraints) }
         val scrollerWidth = scrollerPlaceable.fastMaxBy { it.width }?.width ?: 0
 
@@ -249,12 +207,3 @@ fun ReikaiFastScrollLazyVerticalGrid(
 }
 
 private class MutableData<T>(var value: T)
-
-private val ThumbLength = 48.dp
-private val ThumbThickness = 12.dp
-private val ThumbTouchThickness = 32.dp
-private val ThumbShape = RoundedCornerShape(ThumbThickness / 2)
-private const val SCROLL_BAR_VISIBILITY_DURATION_MILLIS = 2000L
-private val ImmediateFadeOutAnimationSpec = tween<Float>(
-    durationMillis = ViewConfiguration.getScrollBarFadeDuration(),
-)

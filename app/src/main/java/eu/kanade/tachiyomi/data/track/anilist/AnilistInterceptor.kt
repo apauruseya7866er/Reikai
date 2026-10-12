@@ -1,49 +1,39 @@
 package eu.kanade.tachiyomi.data.track.anilist
 
-import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.track.anilist.dto.ALOAuth
-import eu.kanade.tachiyomi.data.track.anilist.dto.isExpired
 import okhttp3.Interceptor
 import okhttp3.Response
-import java.io.IOException
+import reikai.data.track.REIKAI_TRACKER_USER_AGENT
+import reikai.data.track.TrackerSignedOutException
 
 class AnilistInterceptor(val anilist: Anilist, private var token: String?) : Interceptor {
 
     /**
      * OAuth object used for authenticated requests.
-     *
-     * Anilist returns the date without milliseconds. We fix that and make the token expire 1 minute
-     * before its original expiration date.
      */
     private var oauth: ALOAuth? = null
-        set(value) {
-            field = value?.copy(expires = value.expires * 1000 - 60 * 1000)
-        }
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
 
+        // RK --> every missing or dead login reads as signed out, see TrackerSignedOutException
         if (token.isNullOrEmpty()) {
-            throw Exception("Not authenticated with Anilist")
+            throw TrackerSignedOutException("Anilist")
         }
         if (oauth == null) {
-            oauth = anilist.loadOAuth()
+            oauth = anilist.loadOAuth() ?: throw TrackerSignedOutException("Anilist")
         }
-        // Refresh access token if null or expired.
         if (oauth!!.isExpired()) {
             anilist.logout()
-            throw IOException("Token expired")
+            throw TrackerSignedOutException("Anilist")
         }
-
-        // Throw on null auth.
-        if (oauth == null) {
-            throw IOException("No authentication token")
-        }
+        // RK <--
 
         // Add the authorization header to the original request.
         val authRequest = originalRequest.newBuilder()
             .addHeader("Authorization", "Bearer ${oauth!!.accessToken}")
-            .header("User-Agent", "Reikai v${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})")
+            // RK: the app's own name in the User-Agent
+            .header("User-Agent", REIKAI_TRACKER_USER_AGENT)
             .build()
 
         return chain.proceed(authRequest)

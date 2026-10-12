@@ -11,8 +11,21 @@ Frequently Asked Questions about the Reader.
 Besides network-related problems, **Reikai** may occasionally fail to recognize certain images.
 To address this, simply exit and re-enter the reader, often resolving the issue.
 
+## A chapter shows broken pages or text. How do I load it again?
+Open the reader's top menu (the three dots) and tap **Reload chapter**, which reads the chapter again where you are, from its downloaded copy if it has one. **Reload chapter from source** skips a downloaded copy and fetches the chapter fresh from the source, including manga pages the app had cached. The downloaded copy itself is left as it is; delete and download the chapter again to replace it.
+
+## Can I see two pages at once?
+Yes, in the two horizontal paged modes with the high quality renderer on. Open a chapter, tap the middle of the screen, press the gear icon, and set **Dual page view**:
+
+* **Never** keeps one page at a time.
+* **Always** pairs pages up, which suits a tablet or an unfolded foldable.
+* **When wide** only pairs them when the screen is wider than it is tall, so turning the device sideways is what switches it on.
+
+The option only appears in **Paged (left to right)** and **Paged (right to left)**. Pairing is side by side, so the vertical and long strip modes do not offer it. It also needs **Use high quality renderer**, in <nav to="advanced">: the standard renderer has no dual page view.
+
 ## What do all the settings do?
-For detailed instructions, please consult the guides section on the website [here on reader settings](/docs/guides/reader-settings).
+See [manga reader settings](/docs/guides/reader-settings) and [novel reader settings](/docs/guides/novel-reader-settings).
+For how to use the novel reader, see the [novel reader guide](/docs/novel-reader).
 
 ## I turned on Auto webtoon mode but a manhwa still opens paged. Why?
 
@@ -27,7 +40,8 @@ Three things cause that:
 - **The genres also say "Manga".** That one is checked before anything else and stops the
   guess dead, which is what keeps a mixed-content source from webtooning its whole
   catalogue. A series tagged both "Manga" and "Manhwa" is treated as manga. A "Comic" tag
-  is weaker: it beats "Manhwa" and "Manhua" but loses to "Webtoon" and "Long strip".
+  is weaker: it beats "Manhwa" and "Manhua" but loses to "Webtoon" and "Long strip". In a
+  merged series each source is checked on its own, and one that reads as long strip is enough.
 - **You already picked a mode for that series.** Your own choice always wins. To check,
   open the reader settings sheet and look at **Reading mode** under **For this series**:
   if anything other than **Default** is selected, that is your pick overriding

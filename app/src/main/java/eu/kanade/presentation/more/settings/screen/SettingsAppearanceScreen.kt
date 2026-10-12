@@ -20,12 +20,15 @@ import eu.kanade.presentation.more.settings.screen.appearance.AppLanguageScreen
 import eu.kanade.presentation.more.settings.widget.AppThemeModePreferenceWidget
 import eu.kanade.presentation.more.settings.widget.AppThemePreferenceWidget
 import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toJavaLocalDateTime
+import kotlinx.datetime.toLocalDateTime
+import mihon.app.di.appGraph
+import reikai.domain.category.seedRecentsSurfaceFromUpdates
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import java.time.LocalDate
+import kotlin.time.Clock
 
 object SettingsAppearanceScreen : SearchableSettings {
 
@@ -35,7 +38,8 @@ object SettingsAppearanceScreen : SearchableSettings {
 
     @Composable
     override fun getPreferences(): List<Preference> {
-        val uiPreferences = remember { Injekt.get<UiPreferences>() }
+        val context = LocalContext.current
+        val uiPreferences = remember { context.appGraph.uiPreferences }
 
         return listOf(
             getThemeGroup(uiPreferences = uiPreferences),
@@ -88,7 +92,7 @@ object SettingsAppearanceScreen : SearchableSettings {
                 Preference.PreferenceItem.SwitchPreference(
                     preference = amoledPref,
                     title = stringResource(MR.strings.pref_dark_theme_pure_black),
-                    enabled = themeMode != ThemeMode.LIGHT,
+                    visible = themeMode != ThemeMode.LIGHT,
                     onValueChanged = {
                         (context as? Activity)?.let { ActivityCompat.recreate(it) }
                         true
@@ -104,7 +108,7 @@ object SettingsAppearanceScreen : SearchableSettings {
                     preference = uiPreferences.themeCoverBasedStyle,
                     entries = PaletteStyle.entries.associateWith { it.name },
                     title = stringResource(MR.strings.pref_theme_cover_based_style),
-                    enabled = themeCoverBased,
+                    visible = themeCoverBased,
                 ),
                 // RK <--
             ),
@@ -118,15 +122,15 @@ object SettingsAppearanceScreen : SearchableSettings {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
 
-        val now = remember { LocalDate.now() }
+        val now = remember { Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).toJavaLocalDateTime() }
 
         val dateFormat by uiPreferences.dateFormat.collectAsState()
         val formattedNow = remember(dateFormat) {
             UiPreferences.dateFormat(dateFormat).format(now)
         }
 
-        // RK: adult-source page-preview rows on the details screen
-        val previewsRowCount by uiPreferences.previewsRowCount.collectAsState()
+        // RK: the combined Recents tab's seed reads and writes this surface's own keys.
+        val sourcePreferences = remember { context.appGraph.reikaiSourcePreferences }
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_category_display),
@@ -167,14 +171,18 @@ object SettingsAppearanceScreen : SearchableSettings {
                     preference = uiPreferences.imagesInDescription,
                     title = stringResource(MR.strings.pref_display_images_description),
                 ),
-                // RK: rows of adult-source page-preview thumbnails on details (0 = off)
-                Preference.PreferenceItem.SliderPreference(
-                    value = previewsRowCount,
-                    valueRange = 0..10,
-                    title = stringResource(MR.strings.pref_previews_row_count),
-                    subtitle = stringResource(MR.strings.pref_previews_row_count_summary),
-                    onValueChanged = { uiPreferences.previewsRowCount.set(it) },
+                // RK --> Updates and History as one Recents tab. Turning it on hands the combined
+                // surface the filter Updates was using, once, so the feed does not quietly widen.
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = uiPreferences.combinedRecentsTab,
+                    title = stringResource(MR.strings.pref_combined_recents_tab),
+                    subtitle = stringResource(MR.strings.pref_combined_recents_tab_summary),
+                    onValueChanged = { enabled ->
+                        if (enabled) sourcePreferences.seedRecentsSurfaceFromUpdates()
+                        true
+                    },
                 ),
+                // RK <--
             ),
         )
     }

@@ -1,0 +1,3 @@
+-- The recents caught-up filter reads every unread chapter with its scanlator on each chapter write, and
+-- the chapter table rewrite in migration 62 dropped the index that answered it, leaving a table scan.
+CREATE INDEX chapter_unread_by_manga_index ON chapter(manga_id, remote_scanlator) WHERE user_read = 0;

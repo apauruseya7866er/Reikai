@@ -3,77 +3,91 @@ package eu.kanade.tachiyomi.data.backup.create
 import android.content.Context
 import android.net.Uri
 import com.hippo.unifile.UniFile
+import dev.zacsweers.metro.Assisted
+import dev.zacsweers.metro.AssistedFactory
+import dev.zacsweers.metro.AssistedInject
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
 import eu.kanade.tachiyomi.data.backup.create.creators.CategoriesBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.ExtensionBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.ExtensionStoresBackupCreator
+import eu.kanade.tachiyomi.data.backup.create.creators.FeedBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.MangaBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.NovelBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.PreferenceBackupCreator
 import eu.kanade.tachiyomi.data.backup.create.creators.SourcesBackupCreator
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
-import eu.kanade.tachiyomi.data.backup.models.BackupCustomMangaInfo
-import eu.kanade.tachiyomi.data.backup.models.BackupCustomNovelInfo
 import eu.kanade.tachiyomi.data.backup.models.BackupExtension
 import eu.kanade.tachiyomi.data.backup.models.BackupExtensionStore
+import eu.kanade.tachiyomi.data.backup.models.BackupFeedRow
+import eu.kanade.tachiyomi.data.backup.models.BackupFields
+import eu.kanade.tachiyomi.data.backup.models.BackupKitsuNativeScale
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.models.BackupMangaMergeGroup
 import eu.kanade.tachiyomi.data.backup.models.BackupMangaSourceRef
+import eu.kanade.tachiyomi.data.backup.models.BackupMergeGroupsStored
 import eu.kanade.tachiyomi.data.backup.models.BackupNovel
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelMergeGroup
+import eu.kanade.tachiyomi.data.backup.models.BackupNovelSource
 import eu.kanade.tachiyomi.data.backup.models.BackupPreference
+import eu.kanade.tachiyomi.data.backup.models.BackupSavedSearch
+import eu.kanade.tachiyomi.data.backup.models.BackupSortOverridesStored
 import eu.kanade.tachiyomi.data.backup.models.BackupSource
 import eu.kanade.tachiyomi.data.backup.models.BackupSourcePreferences
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.yield
 import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.protobuf.ProtoBuf
 import logcat.LogPriority
+import okio.BufferedSink
 import okio.buffer
 import okio.gzip
 import okio.sink
-import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.data.backup.backupEntries
+import reikai.data.backup.mergeGroupRefs
+import reikai.domain.library.ContentType
+import reikai.domain.merge.MergeGroupRepository
+import reikai.util.runCatchingCancellable
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.backup.service.BackupPreferences
-import tachiyomi.domain.manga.interactor.GetFavorites
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.manga.repository.CustomMangaInfoRepository
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.i18n.MR
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.FileOutputStream
 import java.io.OutputStream
 import java.text.SimpleDateFormat
-import java.time.Instant
 import java.util.Date
 import java.util.Locale
+import kotlin.time.Clock
 
+@AssistedInject
 class BackupCreator(
+    @Assisted private val isAutoBackup: Boolean,
     private val context: Context,
-    private val isAutoBackup: Boolean,
-
-    private val parser: ProtoBuf = Injekt.get(),
-    private val getFavorites: GetFavorites = Injekt.get(),
-    private val backupPreferences: BackupPreferences = Injekt.get(),
-    private val mangaRepository: MangaRepository = Injekt.get(),
-    // RK: source of the manga merge/unmerge prefs serialized as {url,source} refs.
-    private val reikaiLibraryPreferences: ReikaiLibraryPreferences = Injekt.get(),
-    // RK: source of the manga custom-info overlay, backed up as {url,source}-keyed entries.
-    private val customMangaInfoRepository: CustomMangaInfoRepository = Injekt.get(),
-
-    private val categoriesBackupCreator: CategoriesBackupCreator = CategoriesBackupCreator(),
-    private val mangaBackupCreator: MangaBackupCreator = MangaBackupCreator(),
-    private val preferenceBackupCreator: PreferenceBackupCreator = PreferenceBackupCreator(),
-    private val extensionStoresBackupCreator: ExtensionStoresBackupCreator = ExtensionStoresBackupCreator(),
-    private val sourcesBackupCreator: SourcesBackupCreator = SourcesBackupCreator(),
+    private val parser: ProtoBuf,
+    // RK: getFavorites dropped, since the manga creator reads its own favorites for the shared driver.
+    private val backupPreferences: BackupPreferences,
+    private val mangaRepository: MangaRepository,
+    // RK: source of the persisted manga merge groups, serialized as {url,source} refs.
+    private val mergeGroupRepository: MergeGroupRepository,
+    private val categoriesBackupCreator: CategoriesBackupCreator,
+    private val mangaBackupCreator: MangaBackupCreator,
+    private val preferenceBackupCreator: PreferenceBackupCreator,
+    private val extensionStoresBackupCreator: ExtensionStoresBackupCreator,
+    private val sourcesBackupCreator: SourcesBackupCreator,
+    private val backupFileValidator: BackupFileValidator,
     // RK -->
-    private val novelBackupCreator: NovelBackupCreator = NovelBackupCreator(),
-    private val extensionBackupCreator: ExtensionBackupCreator = ExtensionBackupCreator(),
+    private val novelBackupCreator: NovelBackupCreator,
+    private val extensionBackupCreator: ExtensionBackupCreator,
+    private val feedBackupCreator: FeedBackupCreator,
     // RK <--
 ) {
+    @AssistedFactory
+    fun interface Factory {
+        fun create(isAutoBackup: Boolean): BackupCreator
+    }
 
     // RK: set once any field is written, so a selection that produces no content (e.g. Library
     // entries on but Manga + Novels + everything else off) is rejected instead of writing a useless
@@ -83,8 +97,8 @@ class BackupCreator(
     // RK: the backup is streamed field by field straight to the gzip sink instead of building the
     // whole Backup object graph and encoding it in one ByteArray. The one-shot encode peaked at
     // (object graph + a ~2x transient copy) and OutOfMemoryError'd on large chapter counts
-    // (Issue #53). A protobuf message is just its length-delimited fields concatenated in any order,
-    // so per-field streaming is wire-identical: old backups still decode, new ones stay in-format.
+    // (unseensnick/Reikai#53). A protobuf message is just its length-delimited fields concatenated in
+    // any order, so per-field streaming is wire-identical: old backups still decode, new ones stay in-format.
     suspend fun backup(uri: Uri, options: BackupOptions): String {
         var file: UniFile? = null
         try {
@@ -109,11 +123,9 @@ class BackupCreator(
                 throw IllegalStateException(context.stringResource(MR.strings.create_backup_file_error))
             }
 
-            // Favorites carry no chapters, so the metadata list is light even for a big library; the
-            // chapters (the OOM driver) are only ever resident one batch at a time via the stream.
+            // RK -->
             val includeManga = options.libraryEntries && options.includeManga
             val includeNovels = options.libraryEntries && options.includeNovels
-            val favorites = if (includeManga) getFavorites.await() else emptyList()
 
             val outputStream = file.openOutputStream()
             // Force overwrite old file
@@ -123,90 +135,112 @@ class BackupCreator(
             try {
                 val out = gzipOut.outputStream()
                 val sourceIds = mutableSetOf<Long>()
+                val novelSourceIds = mutableSetOf<String>() // RK
 
-                // Field 1: manga, streamed. Each is encoded and written on its own, then collected.
+                // Field 1: manga, then field 700 (RK): novels, each streamed through the driver shared
+                // by both types, which decides which series are backed up and what each carries.
                 if (includeManga) {
-                    val nonFavorite = if (options.readEntries) {
-                        mangaRepository.getReadMangaNotInLibrary()
-                    } else {
-                        emptyList()
-                    }
-                    (favorites + nonFavorite).chunked(MANGA_BATCH_SIZE).forEach { batch ->
-                        mangaBackupCreator.backupMangaStream(batch, options).collect { manga ->
-                            sourceIds.add(manga.source)
-                            BackupProtoWriter.writeField(
-                                out,
-                                1,
-                                parser.encodeToByteArray(BackupManga.serializer(), manga),
-                            )
-                            wroteAnything = true
-                        }
-                        // Push the batch's deflated bytes to disk so nothing accumulates across a big backup.
-                        gzipOut.flush()
-                        yield()
+                    writeEntries(
+                        out,
+                        gzipOut,
+                        BackupFields.MANGA,
+                        BackupManga.serializer(),
+                        options.backupEntries(mangaBackupCreator),
+                    ) {
+                        sourceIds.add(it.source)
                     }
                 }
-
-                // Field 700 (RK): novels, streamed the same way.
                 if (includeNovels) {
-                    var written = 0
-                    novelBackupCreator.streamNovels(options).collect { novel ->
-                        BackupProtoWriter.writeField(
-                            out,
-                            700,
-                            parser.encodeToByteArray(BackupNovel.serializer(), novel),
-                        )
-                        wroteAnything = true
-                        if (++written % MANGA_BATCH_SIZE == 0) {
-                            gzipOut.flush()
-                            yield()
-                        }
+                    writeEntries(
+                        out,
+                        gzipOut,
+                        BackupFields.NOVELS,
+                        BackupNovel.serializer(),
+                        options.backupEntries(novelBackupCreator),
+                    ) {
+                        novelSourceIds.add(it.source)
                     }
-                    gzipOut.flush()
                 }
 
                 // Remaining fields are small (no per-entry chapter payload), so they are gathered and
                 // written after the streamed entries. Field order is irrelevant to the decoder.
-                writeEach(out, 2, BackupCategory.serializer(), backupCategories(options))
-                writeEach(out, 101, BackupSource.serializer(), sourcesBackupCreator.forSourceIds(sourceIds))
-                writeEach(out, 104, BackupPreference.serializer(), backupAppPreferences(options))
-                writeEach(out, 105, BackupSourcePreferences.serializer(), backupSourcePreferences(options))
-                writeEach(out, 106, BackupExtensionStore.serializer(), backupExtensionStores(options))
-                // RK -->
-                writeEach(out, 710, BackupExtension.serializer(), backupExtensions(options))
+                writeEach(out, BackupFields.CATEGORIES, BackupCategory.serializer(), backupCategories(options))
+                writeEach(
+                    out,
+                    BackupFields.SOURCES,
+                    BackupSource.serializer(),
+                    sourcesBackupCreator.forSourceIds(sourceIds),
+                )
+                writeEach(out, BackupFields.PREFERENCES, BackupPreference.serializer(), backupAppPreferences(options))
+                writeEach(
+                    out,
+                    BackupFields.SOURCE_PREFERENCES,
+                    BackupSourcePreferences.serializer(),
+                    backupSourcePreferences(options),
+                )
+                writeEach(
+                    out,
+                    BackupFields.EXTENSION_STORES,
+                    BackupExtensionStore.serializer(),
+                    backupExtensionStores(options),
+                )
+                writeEach(out, BackupFields.EXTENSIONS, BackupExtension.serializer(), backupExtensions(options))
+                writeEach(
+                    out,
+                    BackupFields.NOVEL_SOURCES,
+                    BackupNovelSource.serializer(),
+                    novelBackupCreator.sources(novelSourceIds),
+                )
                 if (includeManga) {
-                    val merges = reikaiLibraryPreferences.mangaManualMerges.get()
-                    val unmerges = reikaiLibraryPreferences.mangaManualUnmerges.get()
                     writeEach(
                         out,
-                        711,
+                        BackupFields.MANGA_MERGES,
                         BackupMangaMergeGroup.serializer(),
-                        backupMangaMergeGroups(merges, favorites, options),
+                        backupMangaMergeGroups(options),
                     )
-                    writeEach(
-                        out,
-                        712,
-                        BackupMangaMergeGroup.serializer(),
-                        backupMangaMergeGroups(unmerges, favorites, options),
-                    )
-                    if (options.customInfo) {
-                        writeEach(
-                            out,
-                            713,
-                            BackupCustomMangaInfo.serializer(),
-                            backupCustomMangaInfo(favorites, options),
-                        )
-                    }
                 }
+                // Novel categories ride the Categories option alone, like manga's field 2: a
+                // categories-only backup (Library entries off) must still carry both types' rows,
+                // or restoring it recreates only half the category list.
+                writeEach(
+                    out,
+                    BackupFields.NOVEL_CATEGORIES,
+                    BackupNovelCategory.serializer(),
+                    novelBackupCreator.novelCategories(options),
+                )
                 if (includeNovels) {
-                    writeEach(out, 701, BackupNovelCategory.serializer(), novelBackupCreator.novelCategories(options))
-                    writeEach(out, 702, BackupNovelMergeGroup.serializer(), novelBackupCreator.novelMerges(options))
-                    writeEach(out, 703, BackupNovelMergeGroup.serializer(), novelBackupCreator.novelUnmerges(options))
-                    if (options.customInfo) {
-                        writeEach(out, 714, BackupCustomNovelInfo.serializer(), novelBackupCreator.novelCustomInfo())
-                    }
+                    writeEach(
+                        out,
+                        BackupFields.NOVEL_MERGES,
+                        BackupNovelMergeGroup.serializer(),
+                        novelBackupCreator.novelMerges(options),
+                    )
                 }
-                // RK <--
+                if (options.savedSearches) {
+                    writeEach(
+                        out,
+                        BackupFields.SAVED_SEARCHES,
+                        BackupSavedSearch.serializer(),
+                        feedBackupCreator.savedSearches(),
+                    )
+                    writeEach(out, BackupFields.FEED_ROWS, BackupFeedRow.serializer(), feedBackupCreator.feedRows())
+                }
+                // Not through writeEach: a marker alone is not content, so the empty-backup guard ignores it.
+                BackupProtoWriter.writeField(
+                    out,
+                    BackupFields.MERGE_GROUPS_STORED,
+                    parser.encodeToByteArray(BackupMergeGroupsStored.serializer(), BackupMergeGroupsStored()),
+                )
+                BackupProtoWriter.writeField(
+                    out,
+                    BackupFields.SORT_OVERRIDES_STORED,
+                    parser.encodeToByteArray(BackupSortOverridesStored.serializer(), BackupSortOverridesStored()),
+                )
+                BackupProtoWriter.writeField(
+                    out,
+                    BackupFields.KITSU_NATIVE_SCALE,
+                    parser.encodeToByteArray(BackupKitsuNativeScale.serializer(), BackupKitsuNativeScale()),
+                )
 
                 gzipOut.flush()
             } finally {
@@ -216,28 +250,59 @@ class BackupCreator(
             if (!wroteAnything) {
                 throw IllegalStateException(context.stringResource(MR.strings.empty_backup_error))
             }
+            // RK <--
 
             val fileUri = file.uri
 
-            // Make sure it's a valid backup file (streamed, so it doesn't re-inflate the whole file).
-            BackupFileValidator(context).validate(fileUri)
+            // Make sure it's a valid backup file
+            // RK: checkReadable, not validate: upstream resolves sources here and discards the answer, and
+            // Reikai's novel resolution loads every installed plugin.
+            backupFileValidator.checkReadable(fileUri)
 
             if (isAutoBackup) {
-                backupPreferences.lastAutoBackupTimestamp.set(Instant.now().toEpochMilli())
+                backupPreferences.lastAutoBackupTimestamp.set(Clock.System.now().toEpochMilliseconds())
             }
 
             return fileUri.toString()
+            // RK --> Throwable, not Exception: an OutOfMemoryError is an Error, and catching only Exception
+            // left the blank half-written file behind and swallowed the failure (unseensnick/Reikai#53).
         } catch (e: Throwable) {
-            // Throwable, not Exception: an OutOfMemoryError is an Error, and catching only Exception
-            // left the blank half-written file behind and swallowed the failure (Issue #53).
             logcat(LogPriority.ERROR, e)
             try {
                 file?.delete()
             } catch (deleteError: Exception) {
                 logcat(LogPriority.WARN, deleteError) { "Failed to delete partial backup file" }
             }
+            // RK <--
             throw e
         }
+    }
+
+    // RK -->
+
+    /**
+     * Encode and write each streamed entry on its own, so only one is ever held with its chapters, and push
+     * the deflated bytes to disk every [MANGA_BATCH_SIZE] entries so nothing accumulates across a big backup.
+     */
+    private suspend fun <T> writeEntries(
+        out: OutputStream,
+        gzipOut: BufferedSink,
+        fieldNumber: Int,
+        serializer: SerializationStrategy<T>,
+        entries: Flow<T>,
+        onEntry: (T) -> Unit = {},
+    ) {
+        var written = 0
+        entries.collect { entry ->
+            onEntry(entry)
+            BackupProtoWriter.writeField(out, fieldNumber, parser.encodeToByteArray(serializer, entry))
+            wroteAnything = true
+            if (++written % MANGA_BATCH_SIZE == 0) {
+                gzipOut.flush()
+                yield()
+            }
+        }
+        gzipOut.flush()
     }
 
     /** Encode each item and write it as a repeated length-delimited field. */
@@ -250,6 +315,7 @@ class BackupCreator(
         if (items.isNotEmpty()) wroteAnything = true
         items.forEach { BackupProtoWriter.writeField(out, fieldNumber, parser.encodeToByteArray(serializer, it)) }
     }
+    // RK <--
 
     private suspend fun backupCategories(options: BackupOptions): List<BackupCategory> {
         if (!options.categories) return emptyList()
@@ -263,49 +329,22 @@ class BackupCreator(
         return preferenceBackupCreator.createApp(includePrivatePreferences = options.privateSettings)
     }
 
-    // RK: translate a merge-pref's comma-joined ID groups into stable {url, source} refs (the manga twin
-    // of NovelBackupCreator.serializeGroups). Gated by libraryEntries (merges are meaningless without the
-    // library). A group is dropped if fewer than two members resolve, since a one-member group is no
-    // longer a merge. Merge members are favorites, so the favorites map resolves them all.
-    private fun backupMangaMergeGroups(
-        groups: Set<String>,
-        favorites: List<Manga>,
-        options: BackupOptions,
-    ): List<BackupMangaMergeGroup> {
-        if (!options.libraryEntries || groups.isEmpty()) return emptyList()
-        val byId = favorites.associateBy { it.id }
-        return groups.mapNotNull { group ->
-            val refs = group.split(",")
-                .mapNotNull { it.trim().toLongOrNull() }
-                .mapNotNull { id -> byId[id]?.let { BackupMangaSourceRef(url = it.url, source = it.source) } }
-            refs.takeIf { it.size >= 2 }?.let { BackupMangaMergeGroup(refs = it) }
-        }
+    // RK --> serialize the persisted manga merge groups as stable {url, source} refs, through the kernel
+    // NovelBackupCreator.serializeGroups also calls. Reads the merge_group tables, not the retired prefs;
+    // any member resolves by id (not favorites-only). Gated by libraryEntries (merges are meaningless
+    // without the library).
+    private suspend fun backupMangaMergeGroups(options: BackupOptions): List<BackupMangaMergeGroup> {
+        if (!options.libraryEntries) return emptyList()
+        return mergeGroupRefs(mergeGroupRepository.getAllMemberships(ContentType.MANGA)) { id ->
+            mangaOrNull(id)?.let { BackupMangaSourceRef(url = it.url, source = it.source) }
+        }.map { BackupMangaMergeGroup(refs = it) }
     }
 
-    // RK: back up the manga custom-info overlay as {url, source}-keyed entries (re-keyed to fresh ids on
-    // restore). Favorites-only, so the favorites map resolves each row's manga; a row for a non-favorite
-    // (shouldn't happen) is dropped. Gated by libraryEntries.
-    private suspend fun backupCustomMangaInfo(
-        favorites: List<Manga>,
-        options: BackupOptions,
-    ): List<BackupCustomMangaInfo> {
-        if (!options.libraryEntries) return emptyList()
-        val byId = favorites.associateBy { it.id }
-        return customMangaInfoRepository.getAll().mapNotNull { info ->
-            val manga = byId[info.mangaId] ?: return@mapNotNull null
-            BackupCustomMangaInfo(
-                source = manga.source,
-                url = manga.url,
-                title = info.title,
-                author = info.author,
-                artist = info.artist,
-                description = info.description,
-                genre = info.genre.orEmpty(),
-                status = info.status,
-                thumbnailUrl = info.thumbnailUrl,
-            )
-        }
-    }
+    // getMangaById throws on a missing row rather than returning null, so a stale id would abort the
+    // whole backup instead of dropping the one entry it belongs to.
+    private suspend fun mangaOrNull(id: Long): Manga? =
+        runCatchingCancellable { mangaRepository.getMangaById(id) }.getOrNull()
+    // RK <--
 
     private suspend fun backupExtensionStores(options: BackupOptions): List<BackupExtensionStore> {
         if (!options.extensionStores) return emptyList()
@@ -313,14 +352,14 @@ class BackupCreator(
         return extensionStoresBackupCreator()
     }
 
-    // RK: installed manga extensions, gated by the same toggle as their repos.
-    private fun backupExtensions(options: BackupOptions): List<BackupExtension> {
+    // RK: installed manga and novel extension apps, gated by the same toggle as their repos.
+    private suspend fun backupExtensions(options: BackupOptions): List<BackupExtension> {
         if (!options.extensionStores) return emptyList()
 
         return extensionBackupCreator()
     }
 
-    private fun backupSourcePreferences(options: BackupOptions): List<BackupSourcePreferences> {
+    private suspend fun backupSourcePreferences(options: BackupOptions): List<BackupSourcePreferences> {
         if (!options.sourceSettings) return emptyList()
 
         return preferenceBackupCreator.createSource(includePrivatePreferences = options.privateSettings)

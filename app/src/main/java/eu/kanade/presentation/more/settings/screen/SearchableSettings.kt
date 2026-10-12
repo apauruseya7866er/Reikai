@@ -15,9 +15,11 @@ interface SearchableSettings : Screen {
     @ReadOnlyComposable
     fun getTitleRes(): StringResource
 
-    /** Whether this screen is currently reachable; a hidden screen is filtered out of the main list
-     *  and the settings search index. Defaults to always-on. */
-    fun isEnabled(): Boolean = true
+    // RK: lets a screen hide itself from the search index when its feature is off
+
+    /** Whether this screen is currently reachable; a hidden screen is left out of the settings search
+     *  index. Suspends because a gate may await the extension scan. Defaults to always-on. */
+    suspend fun isEnabled(): Boolean = true
 
     @Composable
     fun getPreferences(): List<Preference>
@@ -39,6 +41,7 @@ interface SearchableSettings : Screen {
 
     companion object {
         // HACK: for the background blipping thingy.
+        // RK --> the key moved from a title to HighlightKey, so the notes below were reworded
         // The target PreferenceItem to scroll to + highlight on the destination screen.
         // Set before showing the destination screen and reset after.
         // See BasePreferenceWidget.highlightBackground
@@ -46,6 +49,7 @@ interface SearchableSettings : Screen {
         // title in different groups (the content-type "· Manga" / "· Novels" sub-groups). A null group
         // matches by title only (used by the onboarding restore-setting jump).
         var highlightKey: HighlightKey? = null
+        // RK <--
     }
 }
 
@@ -53,5 +57,10 @@ interface SearchableSettings : Screen {
 data class HighlightKey(val group: String?, val title: String) {
     /** True when this item position matches the search [key]. A null [key] group matches by title only. */
     fun matches(key: HighlightKey): Boolean = title == key.title && (key.group == null || group == key.group)
+
+    companion object {
+        /** A group's own heading, keyed under itself so a same-titled row in another group cannot match it. */
+        fun heading(title: String) = HighlightKey(group = title, title = title)
+    }
 }
 // RK <--

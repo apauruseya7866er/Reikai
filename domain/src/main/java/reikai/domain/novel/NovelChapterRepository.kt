@@ -1,0 +1,58 @@
+package reikai.domain.novel
+
+import kotlinx.coroutines.flow.Flow
+import reikai.domain.novel.model.NovelChapter
+import tachiyomi.domain.chapter.model.ChapterSummary
+
+interface NovelChapterRepository {
+    suspend fun getByNovelId(novelId: Long): List<NovelChapter>
+
+    /** Reactive [getByNovelId]: emits again only when this novel's chapters change, not on another's write. */
+    fun getByNovelIdAsFlow(novelId: Long): Flow<List<NovelChapter>>
+
+    /**
+     * Chapters on a single page (transport index "1".."N") or volume label of a paged source, emitted again
+     * only when they change: drives the lazy per-page chapter list.
+     */
+    fun getByNovelIdAndPageAsFlow(novelId: Long, page: String): Flow<List<NovelChapter>>
+
+    /** How many chapters [novelId] has and its highest number, without loading them. */
+    suspend fun getChapterSummaryByNovelId(novelId: Long): ChapterSummary
+
+    /** Distinct non-empty page labels, for the page selector of label-grouped sources. */
+    suspend fun getDistinctPages(novelId: Long): List<String>
+
+    /** Novels owning a chapter whose name contains [name], for the library's `chapter:` search term. */
+    suspend fun getNovelIdsWithChapterNameLike(name: String): Set<Long>
+    suspend fun getById(id: Long): NovelChapter?
+    suspend fun getByUrlAndNovelId(url: String, novelId: Long): NovelChapter?
+    suspend fun insert(chapter: NovelChapter): Long?
+    suspend fun update(chapter: NovelChapter): Boolean
+
+    /** All of [chapters] in ONE transaction (all or nothing), the novel twin of the manga chapter
+     *  carry's batched `UpdateChapter.awaitAll`, pinned by BatchUpdateAtomicityConformanceTest. */
+    suspend fun updateAll(chapters: List<NovelChapter>): Boolean
+
+    /**
+     * One source sync in ONE transaction: deletes [removedIds], inserts [added], and writes only the
+     * source-owned fields (name, number, order, upload date, page) of [updated], so read state,
+     * bookmark and progress survive. Returns [added] with their new ids.
+     */
+    suspend fun updateFromRemote(
+        removedIds: List<Long>,
+        added: List<NovelChapter>,
+        updated: List<NovelChapter>,
+    ): List<NovelChapter>
+
+    /** Focused write for the reader's auto-save path; avoids the round-trip a full update needs. */
+    suspend fun setLastTextProgress(id: Long, progress: Long): Boolean
+
+    /** Bookmark many chapters in one transaction, so a group's copies never end up half bookmarked. */
+    suspend fun setBookmarkBulk(ids: List<Long>, bookmark: Boolean): Boolean
+
+    /**
+     * Set read for many chapters in one transaction (marking unread also rewinds text progress).
+     * One commit keeps mark-all on a large novel instant.
+     */
+    suspend fun setReadBulk(ids: List<Long>, read: Boolean): Boolean
+}

@@ -1,0 +1,137 @@
+package reikai.domain.merge
+
+import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.Test
+
+/**
+ * Rendering a merge group's stored stitch, pinned once for both content types: the manga and novel
+ * providers differ only in which rows they hand in, so what the stitch means is tested here.
+ */
+class StoredStitchTest {
+
+    private data class Row(val id: Long, val read: Boolean = false, val bookmark: Boolean = false)
+
+    /** Two sources' copies of two merged chapters, the first source ranked ahead of the second. */
+    private val stitch = listOf(
+        ChapterUnit(chapterId = 10, unit = 0, copyOrder = 0),
+        ChapterUnit(chapterId = 20, unit = 0, copyOrder = 1),
+        ChapterUnit(chapterId = 11, unit = 1, copyOrder = 0),
+        ChapterUnit(chapterId = 21, unit = 1, copyOrder = 1),
+    )
+
+    private fun render(vararg rows: Row) = renderStoredStitch(rows.toList(), stitch) { it.id }
+
+    @Test
+    @DisplayName("one chapter per merged chapter, in the stitch's order")
+    fun oneChapterPerUnit() {
+        val shown = render(Row(20), Row(21), Row(10), Row(11))
+
+        shown.map { it.id } shouldBe listOf(10L, 11L)
+    }
+
+    @Test
+    @DisplayName("a hidden copy falls through to the next source's")
+    fun hiddenCopyFallsThrough() {
+        // What an excluded scanlator or a source removed from the library looks like from here: the
+        // row is simply not handed in, and the merged chapter is still shown.
+        val shown = render(Row(20), Row(11))
+
+        shown.map { it.id } shouldBe listOf(20L, 11L)
+    }
+
+    @Test
+    @DisplayName("a merged chapter with every copy hidden drops out")
+    fun fullyHiddenUnitDropsOut() {
+        val shown = render(Row(10), Row(20))
+
+        shown.map { it.id } shouldBe listOf(10L)
+    }
+
+    @Test
+    @DisplayName("nothing stitched means the list is its own")
+    fun unstitchedListIsItsOwn() {
+        val rows = listOf(Row(3), Row(1), Row(2))
+
+        renderStoredStitch(rows, emptyList()) { it.id } shouldBe rows
+    }
+
+    @Test
+    @DisplayName("a chapter read on another source reads as read")
+    fun readOnSiblingCountsAsRead() {
+        val rows = listOf(Row(10), Row(20, read = true), Row(11))
+
+        flaggedOnAnotherSource(rows, render(*rows.toTypedArray()), stitch, { it.id }, { it.read }) shouldBe setOf(10L)
+    }
+
+    @Test
+    @DisplayName("a chapter nobody has read is not reported")
+    fun unreadEverywhereIsNotReported() {
+        val rows = listOf(Row(10), Row(20), Row(11))
+
+        flaggedOnAnotherSource(rows, render(*rows.toTypedArray()), stitch, { it.id }, { it.read }).isEmpty() shouldBe
+            true
+    }
+
+    @Test
+    @DisplayName("a chapter flagged on its own row is not reported as flagged elsewhere")
+    fun ownFlagIsNotElsewhere() {
+        // The set names rows whose own copy says no, so a caller can OR it with the row's own value
+        // without double counting, and a toggle reads the same answer either way.
+        val rows = listOf(Row(10, read = true), Row(20, read = true), Row(11))
+
+        flaggedOnAnotherSource(rows, render(*rows.toTypedArray()), stitch, { it.id }, { it.read })
+            .isEmpty() shouldBe true
+    }
+
+    @Test
+    @DisplayName("the same rule answers for a flag other than read")
+    fun anyFlagCarriesAcrossSources() {
+        // Bookmark and downloaded run through this too, so the three cannot become three rules.
+        val rows = listOf(Row(10), Row(20, bookmark = true), Row(11))
+
+        flaggedOnAnotherSource(rows, render(*rows.toTypedArray()), stitch, { it.id }, { it.bookmark }) shouldBe
+            setOf(10L)
+    }
+
+    @Test
+    @DisplayName("an ungrouped entry reports nothing read elsewhere")
+    fun ungroupedReportsNothing() {
+        val rows = listOf(Row(10, read = true), Row(11))
+
+        flaggedOnAnotherSource(rows, rows, emptyList(), { it.id }, { it.read }).isEmpty() shouldBe true
+    }
+
+    @Test
+    @DisplayName("acting on a chapter reaches the group's other copies of it")
+    fun expandReachesTheSiblingCopy() {
+        expandToUnits(setOf(10L), stitch) shouldBe setOf(10L, 20L)
+    }
+
+    @Test
+    @DisplayName("acting on a chapter no stitch knows reaches only itself")
+    fun expandLeavesAnUnknownChapterAlone() {
+        expandToUnits(setOf(99L), stitch) shouldBe setOf(99L)
+    }
+
+    /** The first source (10, 11) is gone: its rows fetch the second source's copies. */
+    private val fetchingFromSecond = DownloadTargets.of(
+        MergeScope.Group,
+        listOf(Row(10), Row(20), Row(11), Row(21)),
+        listOf(Row(10), Row(11)),
+        stitch,
+        { it.id },
+    ) { it.id >= 20 }
+
+    @Test
+    @DisplayName("a row shows the queue entry of the copy its download fetches")
+    fun rowFollowsTheFetchedCopyThroughTheQueue() {
+        fetchingFromSecond.queuedFor(10L, mapOf(20L to "queued")::get) shouldBe "queued"
+    }
+
+    @Test
+    @DisplayName("a row's own queue entry comes before the fetched copy's")
+    fun rowsOwnQueueEntryComesFirst() {
+        fetchingFromSecond.queuedFor(10L, mapOf(10L to "own", 20L to "fetched")::get) shouldBe "own"
+    }
+}

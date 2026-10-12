@@ -1,0 +1,79 @@
+package reikai.presentation.library
+
+import eu.kanade.tachiyomi.ui.library.LibraryItem
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import reikai.domain.library.ContentType
+
+/**
+ * One content type's half of the library. A provider owns its own favourites flow and its own action
+ * verbs (read, download, delete, categories) and exposes them through the neutral [LibraryBehavior]
+ * seam. The manga provider is the live Mihon `LibraryViewModel` behind its adapter, so it keeps
+ * syncing with upstream instead of being reimplemented in the shared layer. [LibraryEngine] composes
+ * the providers, so supporting another content type means adding one rather than another branch in
+ * the tab.
+ */
+interface LibraryProvider : LibraryBehavior {
+    val contentType: ContentType
+
+    /**
+     * The part of the settings sheet this content type answers for; [LibraryEngine] adds the library-wide
+     * rest. It sits here rather than on [LibraryBehavior] because it is per-content-type data, not an
+     * action on entries.
+     */
+    val settings: LibraryProviderSettings
+
+    /**
+     * This content type's library rows: filtered, search-matched and merge-collapsed, but unsorted and
+     * unbucketed, with the custom-info overlay deliberately NOT applied (it is applied only at the display
+     * read). Filtering stays per provider (each reads its own repositories and source manager); everything
+     * downstream of these rows (concatenation, the chip predicate, bucketing, per-category sort) is the
+     * shared assembly's job. Null until the first real list, through [loadedRows]. Cold on purpose:
+     * nothing may resolve a scope at construction, and the engine collects it only once assembly lands.
+     */
+    val rows: Flow<List<LibraryItem>?>
+
+    /**
+     * Mean 0-10 tracker score per row of this type, keyed by the row's own raw id (safe: the map never
+     * crosses the provider boundary un-rekeyed), unscored rows absent. On-demand rather than a flow so
+     * only a view actually sorting by tracker score pays the computation; the assembly resolves it
+     * lazily inside the sort. Both types compute it with [libraryTrackerMeans].
+     */
+    fun trackerMeans(): Map<Long, Double>
+
+    /**
+     * Identity of the track data [trackerMeans] and [dynamicGroupingFeed] read. Nothing reads its value:
+     * both are resolved on demand inside the assembly, and a track write leaves the rows equal, so without
+     * this the assembly never re-runs and the tracker-score sort and the tracking-status groups go stale.
+     */
+    val trackKey: Flow<Any?>
+
+    /** Whether this type's library update is running now, a scheduled one as well as a pulled one. */
+    val updating: Flow<Boolean>
+
+    /**
+     * Apply this type's display-only custom title/cover overlay to one of its rows. The assembly emits
+     * raw rows (filter, sort and selection must never see an override), so the display read applies the
+     * overlay through this seam, per category and only for what is actually rendered.
+     */
+    fun overlaid(item: LibraryItem): LibraryItem
+
+    /**
+     * This type's pre-resolved dynamic-grouping inputs for the current rows, EntryId-keyed (see
+     * [DynamicGroupingFeed]). On-demand like [trackerMeans]: only a dynamically grouped view pays the
+     * metadata resolution, and the engine concatenates the active feeds into one kernel call.
+     */
+    suspend fun dynamicGroupingFeed(groupType: Int): DynamicGroupingFeed
+}
+
+/**
+ * A model's rows as [LibraryProvider.rows] hands them over: null while the model is still loading. Its
+ * state flow is seeded, so it answers at once with an empty list that is not data yet, and an assembly
+ * built from that shows a view without this type's entries until the real list lands. Distinct because
+ * the state re-emits for changes the row list is upstream of.
+ */
+internal fun <S> Flow<S>.loadedRows(
+    isLoading: (S) -> Boolean,
+    rows: (S) -> List<LibraryItem>,
+): Flow<List<LibraryItem>?> = map { if (isLoading(it)) null else rows(it) }.distinctUntilChanged()

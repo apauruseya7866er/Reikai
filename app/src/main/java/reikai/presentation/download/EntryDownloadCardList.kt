@@ -11,14 +11,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.DragHandle
-import androidx.compose.material.icons.outlined.KeyboardDoubleArrowDown
-import androidx.compose.material.icons.outlined.KeyboardDoubleArrowUp
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -35,10 +27,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Close
+import mihon.icons.materialsymbols.rounded.DragHandle
+import mihon.icons.materialsymbols.rounded.KeyboardArrowDown
+import mihon.icons.materialsymbols.rounded.KeyboardArrowUp
 import reikai.domain.library.ContentType
+import reikai.presentation.components.CardKicker
+import reikai.presentation.components.ContentTypeBadge
+import reikai.presentation.components.ReikaiListCard
+import reikai.presentation.components.rememberSettledReorder
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 import sh.calvin.reorderable.ReorderableItem
-import sh.calvin.reorderable.rememberReorderableLazyListState
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.plus
@@ -62,98 +62,64 @@ data class EntryDownloadCardUi(
     val downloadedChapters: Int,
     val totalChapters: Int,
     val status: EntryDownloadCardStatus,
+    /** The chapter an active series is on; null while the series waits. */
+    val currentChapterId: Long? = null,
+    val currentChapterName: String? = null,
 ) {
-    val cardKey: String get() = "${contentType.name}-$seriesId"
+    val cardKey: String get() = "${keyPrefix(contentType)}$seriesId"
+
+    companion object {
+        /** What every card key of [type] starts with, which a saved order is told apart by. */
+        fun keyPrefix(type: ContentType): String = "${type.name}-"
+    }
 }
 
 /**
  * The shared download-queue list for both content types: a flat, drag-reorderable list of per-series
- * cards. Each card can be dragged, bumped to the top / bottom, or cancelled. All three reorder paths
- * commit the same way, a new series-id order via [onReorder]; [onCancel] drops a whole series.
- *
- * A committed order (from a drag or a chevron) is held until the manager's queue echoes it back, so a
- * stale progress-driven emission arriving before the echo can't clobber it. Card content (counts,
- * status) always refreshes; only the ordering is guarded.
+ * cards, where a drag and the top / bottom chevrons all commit the same way, a new card-key order via
+ * [onReorder]. A committed order is held until the queue echoes it back, so a stale progress-driven
+ * emission arriving before the echo can't clobber it. Card content (counts, status) always
+ * refreshes; only the ordering is guarded.
  */
 @Composable
 fun EntryDownloadCardList(
     items: List<EntryDownloadCardUi>,
-    onReorder: (contentType: ContentType, seriesIdsInOrder: List<Long>) -> Unit,
-    onCancel: (contentType: ContentType, seriesId: Long) -> Unit,
+    showTypeBadge: Boolean,
+    onReorder: (cardKeysInOrder: List<String>) -> Unit,
+    onCancel: (EntryDownloadCardUi) -> Unit,
+    onOpen: (EntryDownloadCardUi) -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
     val localItems = remember { items.toMutableStateList() }
     val listState = rememberLazyListState()
-    var didDrag by remember { mutableStateOf(false) }
-    var draggedType by remember { mutableStateOf<ContentType?>(null) }
-    // The card-key order last committed here, held until the manager echoes it back (see class KDoc).
+    // The card-key order last committed here, held until the queue echoes it back (see class KDoc).
     var committedOrder by remember { mutableStateOf<List<String>?>(null) }
 
-    val reorderableState = rememberReorderableLazyListState(listState, contentPadding) { from, to ->
-        val fromIndex = localItems.indexOfFirst { it.cardKey == from.key }
-        val toIndex = localItems.indexOfFirst { it.cardKey == to.key }
-        if (fromIndex == -1 || toIndex == -1) return@rememberReorderableLazyListState
-        // Reorder within a content type only: manga and novels are separate queues, so in the All view
-        // the two blocks can't interleave.
-        if (localItems[fromIndex].contentType != localItems[toIndex].contentType) {
-            return@rememberReorderableLazyListState
-        }
-        localItems.add(toIndex, localItems.removeAt(fromIndex))
-        draggedType = localItems[toIndex].contentType
-        didDrag = true
+    val reorderableState = rememberSettledReorder(localItems, listState, { it.cardKey }, contentPadding) { settled ->
+        val keys = settled.map { it.cardKey }
+        committedOrder = keys
+        onReorder(keys)
     }
 
-    // Commit a new order for one content type (from a chevron): reorder that type's cards in place
-    // (other-type cards keep their slots), hold the order until echoed, and route to that type's queue.
-    fun commit(type: ContentType, typeIdsInOrder: List<Long>) {
-        val byId = localItems.filter { it.contentType == type }.associateBy { it.seriesId }
-        val reordered = typeIdsInOrder.mapNotNull { byId[it] }.iterator()
-        val rebuilt = localItems.map {
-            if (it.contentType == type && reordered.hasNext()) reordered.next() else it
-        }
+    fun commit(keysInOrder: List<String>) {
+        val byKey = localItems.associateBy { it.cardKey }
+        val rebuilt = keysInOrder.mapNotNull { byKey[it] }
         localItems.clear()
         localItems.addAll(rebuilt)
-        committedOrder = localItems.map { it.cardKey }
-        onReorder(type, typeIdsInOrder)
+        committedOrder = keysInOrder
+        onReorder(keysInOrder)
     }
 
     LaunchedEffect(items) {
         if (reorderableState.isAnyItemDragging) return@LaunchedEffect
-        val incomingByKey = items.associateBy { it.cardKey }
-        val incomingKeys = items.map { it.cardKey }
-        val localKeys = localItems.map { it.cardKey }
-        val pending = committedOrder
-        // Choose the order to display: adopt the manager's unless a committed order is still unechoed.
-        val order = when {
-            pending == null -> incomingKeys
-            pending.filter { it in incomingByKey } == incomingKeys.filter { it in pending.toHashSet() } -> {
-                committedOrder = null // echo caught up (agrees across shared cards)
-                incomingKeys
-            }
-            incomingKeys.toHashSet() == localKeys.toHashSet() -> localKeys // stale, same membership: keep
-            else -> { // membership and order both changed: a genuine external change, resync
-                committedOrder = null
-                incomingKeys
-            }
-        }
-        // Rebuild in the chosen order with fresh card content; append any card not in the order.
-        val seen = HashSet<String>()
-        val rebuilt = buildList {
-            order.forEach { key -> incomingByKey[key]?.let { if (seen.add(key)) add(it) } }
-            items.forEach { if (seen.add(it.cardKey)) add(it) }
-        }
+        val order = reconcileCardOrder(items.map { it.cardKey }, localItems.map { it.cardKey }, committedOrder)
+        committedOrder = order.pending
+        // Card content (counts, status) always refreshes; only the order is guarded.
+        val rebuilt = items.inOrderOf(order.keys) { it.cardKey }
         if (rebuilt != localItems.toList()) {
             localItems.clear()
             localItems.addAll(rebuilt)
-        }
-    }
-    LaunchedEffect(reorderableState.isAnyItemDragging) {
-        if (!reorderableState.isAnyItemDragging && didDrag) {
-            didDrag = false
-            val type = draggedType ?: return@LaunchedEffect
-            committedOrder = localItems.map { it.cardKey }
-            onReorder(type, localItems.filter { it.contentType == type }.map { it.seriesId })
         }
     }
 
@@ -166,15 +132,14 @@ fun EntryDownloadCardList(
     ) {
         items(localItems, key = { it.cardKey }) { item ->
             ReorderableItem(reorderableState, key = item.cardKey) {
-                val siblingsOfType = {
-                    localItems.filter { it.contentType == item.contentType && it.seriesId != item.seriesId }
-                        .map { it.seriesId }
-                }
+                val others = { localItems.map { it.cardKey } - item.cardKey }
                 EntryDownloadCard(
                     item = item,
-                    onMoveToTop = { commit(item.contentType, listOf(item.seriesId) + siblingsOfType()) },
-                    onMoveToBottom = { commit(item.contentType, siblingsOfType() + item.seriesId) },
-                    onCancel = { onCancel(item.contentType, item.seriesId) },
+                    showTypeBadge = showTypeBadge,
+                    onMoveToTop = { commit(listOf(item.cardKey) + others()) },
+                    onMoveToBottom = { commit(others() + item.cardKey) },
+                    onCancel = { onCancel(item) },
+                    onOpen = { onOpen(item) },
                     modifier = Modifier.animateItem(),
                 )
             }
@@ -185,22 +150,18 @@ fun EntryDownloadCardList(
 @Composable
 private fun ReorderableCollectionItemScope.EntryDownloadCard(
     item: EntryDownloadCardUi,
+    showTypeBadge: Boolean,
     onMoveToTop: () -> Unit,
     onMoveToBottom: () -> Unit,
     onCancel: () -> Unit,
+    onOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        ),
-    ) {
+    ReikaiListCard(onClick = onOpen, modifier = modifier) {
         Column(modifier = Modifier.padding(start = 4.dp, end = 8.dp, top = 12.dp, bottom = 4.dp)) {
             Row(verticalAlignment = Alignment.Top) {
                 Icon(
-                    imageVector = Icons.Outlined.DragHandle,
+                    imageVector = MaterialSymbols.Rounded.DragHandle,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier
@@ -208,13 +169,9 @@ private fun ReorderableCollectionItemScope.EntryDownloadCard(
                         .draggableHandle(),
                 )
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = item.sourceName,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    CardKicker(item.sourceName) {
+                        if (showTypeBadge) ContentTypeBadge(item.contentType)
+                    }
                     Text(
                         text = item.title,
                         style = MaterialTheme.typography.titleSmall,
@@ -236,6 +193,15 @@ private fun ReorderableCollectionItemScope.EntryDownloadCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    item.currentChapterName?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
                 EntryDownloadStatusChip(item.status)
             }
@@ -270,21 +236,21 @@ private fun ReorderableCollectionItemScope.EntryDownloadCard(
             ) {
                 IconButton(onClick = onMoveToTop) {
                     Icon(
-                        imageVector = Icons.Outlined.KeyboardDoubleArrowUp,
+                        imageVector = MaterialSymbols.Rounded.KeyboardArrowUp,
                         contentDescription = stringResource(MR.strings.action_move_to_top),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 IconButton(onClick = onMoveToBottom) {
                     Icon(
-                        imageVector = Icons.Outlined.KeyboardDoubleArrowDown,
+                        imageVector = MaterialSymbols.Rounded.KeyboardArrowDown,
                         contentDescription = stringResource(MR.strings.action_move_to_bottom),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 IconButton(onClick = onCancel) {
                     Icon(
-                        imageVector = Icons.Outlined.Close,
+                        imageVector = MaterialSymbols.Rounded.Close,
                         contentDescription = stringResource(MR.strings.action_cancel),
                         tint = MaterialTheme.colorScheme.error,
                     )

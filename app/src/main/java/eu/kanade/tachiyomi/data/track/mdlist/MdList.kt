@@ -13,6 +13,7 @@ import exh.md.utils.MdUtil
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import reikai.data.track.MetadataAccess
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
@@ -26,7 +27,16 @@ class MdList(id: Long) : BaseTracker(id, "MDList") {
             .toImmutableList()
     }
 
-    private val mdex by lazy { MdUtil.getEnabledMangaDex() }
+    // Filled through the MangaDex source, which needs the source enabled rather than a login.
+    override val metadataAccess = MetadataAccess.Public
+
+    // Resolved on every call rather than cached, so a change of preferred MangaDex source reaches
+    // the tracker at once, as it does login.
+    private suspend fun mdex() = MdUtil.getEnabledMangaDex(
+        appGraph.sourcePreferences,
+        appGraph.reikaiSourcePreferences,
+        appGraph.sourceManager,
+    )
 
     val interceptor = MangaDexAuthInterceptor(trackPreferences, this)
 
@@ -51,9 +61,11 @@ class MdList(id: Long) : BaseTracker(id, "MDList") {
 
     override fun displayScore(track: DomainTrack) = track.score.toInt().toString()
 
+    override suspend fun updateUserConfig() = Unit
+
     override suspend fun update(track: Track, didReadChapter: Boolean): Track {
         return withIOContext {
-            val mdex = mdex ?: throw MangaDexNotFoundException()
+            val mdex = mdex() ?: throw MangaDexNotFoundException()
 
             val remoteTrack = mdex.fetchTrackingInfo(track.tracking_url)
             val followStatus = FollowStatus.fromLong(track.status)
@@ -95,7 +107,7 @@ class MdList(id: Long) : BaseTracker(id, "MDList") {
 
     override suspend fun refresh(track: Track): Track {
         return withIOContext {
-            val mdex = mdex ?: throw MangaDexNotFoundException()
+            val mdex = mdex() ?: throw MangaDexNotFoundException()
             val remoteTrack = mdex.fetchTrackingInfo(track.tracking_url)
             track.copyPersonalFrom(remoteTrack)
             track
@@ -104,15 +116,15 @@ class MdList(id: Long) : BaseTracker(id, "MDList") {
 
     override suspend fun search(query: String): List<TrackSearch> {
         return withIOContext {
-            val mdex = mdex ?: throw MangaDexNotFoundException()
+            val mdex = mdex() ?: throw MangaDexNotFoundException()
             mdex.searchTracker(query)
         }
     }
 
-    // RK --> autofill entry metadata (Fill from tracker); delegates to the MangaDex source parse.
+    // Autofill entry metadata (Fill from tracker); delegates to the MangaDex source parse.
     override suspend fun getMangaMetadata(track: DomainTrack): TrackMangaMetadata {
         return withIOContext {
-            val mdex = mdex ?: throw MangaDexNotFoundException()
+            val mdex = mdex() ?: throw MangaDexNotFoundException()
             val manga = mdex.getMangaMetadata(track.remoteUrl)
             TrackMangaMetadata(
                 remoteId = track.remoteId,
@@ -127,7 +139,6 @@ class MdList(id: Long) : BaseTracker(id, "MDList") {
             )
         }
     }
-    // RK <--
 
     // Seeds an UNFOLLOWED tracker for a library manga so pushFavorites can flip it to READING and
     // create the MDList follow. mdManga supplies the display title/url when it differs from the local row.

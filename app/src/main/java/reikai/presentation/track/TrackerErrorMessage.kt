@@ -1,0 +1,52 @@
+package reikai.presentation.track
+
+import android.content.Context
+import eu.kanade.tachiyomi.data.track.Tracker
+import eu.kanade.tachiyomi.network.HttpException
+import eu.kanade.tachiyomi.util.system.isOnline
+import reikai.data.track.TrackerSignedOutException
+import reikai.util.firstCause
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.i18n.MR
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+
+/** What a failed tracker call tells the user, for both content types' binds and updates. */
+sealed interface TrackerError {
+    data object Offline : TrackerError
+    data object Unreachable : TrackerError
+    data object SignedOut : TrackerError
+    data class Http(val code: Int) : TrackerError
+    data class Other(val message: String?) : TrackerError
+
+    companion object {
+        // Named by the tracker rather than the host: a tracker's API host is often a backend the user
+        // has never seen, and Mihon's source formatter sends HTTP errors to a WebView trackers lack.
+        fun of(error: Throwable, isOnline: Boolean): TrackerError =
+            error.firstCause { kindOf(it, isOnline) } ?: Other(error.message?.takeIf { it.isNotBlank() })
+
+        private fun kindOf(error: Throwable, isOnline: Boolean): TrackerError? = when (error) {
+            is TrackerSignedOutException -> SignedOut
+            is UnknownHostException, is ConnectException, is SocketTimeoutException ->
+                if (isOnline) Unreachable else Offline
+            is HttpException -> if (error.code == 401 || error.code == 403) SignedOut else Http(error.code)
+            else -> null
+        }
+    }
+}
+
+/** [name] is the tracker's, or a source's own account (E-Hentai favourites), whichever the call went to. */
+fun Context.trackerErrorMessage(name: String, error: Throwable): String =
+    when (val kind = TrackerError.of(error, isOnline())) {
+        TrackerError.Offline -> stringResource(MR.strings.exception_offline)
+        TrackerError.Unreachable -> stringResource(MR.strings.exception_unknown_host, name)
+        TrackerError.SignedOut -> stringResource(MR.strings.tracker_error_signed_out, name)
+        is TrackerError.Http -> stringResource(MR.strings.tracker_error_http, name, kind.code)
+        is TrackerError.Other -> kind.message ?: error::class.simpleName.orEmpty()
+    }
+
+/** One toast's text for several failed tracker calls, a line said once however many trackers hit it; null for none. */
+fun Context.trackerFailuresMessage(failed: List<Pair<Tracker, Throwable>>): String? =
+    failed.map { (tracker, error) -> trackerErrorMessage(tracker.name, error) }.distinct()
+        .takeIf { it.isNotEmpty() }?.joinToString("\n")

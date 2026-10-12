@@ -1,0 +1,252 @@
+package reikai.domain.merge
+
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import reikai.data.db.SqlDelightTransactions
+import reikai.data.merge.MergeGroupRepositoryImpl
+import reikai.domain.library.ContentType
+import tachiyomi.data.Database
+import tachiyomi.data.DatabaseBindings
+
+/**
+ * Restoring backed-up merge groups onto a library that already has grouping of its own. Runs against
+ * the real schema, because the defect this covers was an interaction between successive writes.
+ */
+class RestoreMergeGroupsTest {
+
+    private lateinit var driver: JdbcSqliteDriver
+    private lateinit var database: Database
+    private lateinit var repository: MergeGroupRepositoryImpl
+    private lateinit var restore: RestoreMergeGroups
+
+    @BeforeEach
+    fun setUp() {
+        runTest {
+            driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+            Database.Schema.create(driver).await()
+            driver.execute(null, "PRAGMA foreign_keys=ON", 0).await()
+            database = DatabaseBindings.providesDatabase(driver)
+            repository = MergeGroupRepositoryImpl(database)
+            // The real one, not a fake: the whole point of the change is that materializeGroup's own
+            // transaction nests inside this outer one, and only the real driver proves that.
+            restore = RestoreMergeGroups(repository, SqlDelightTransactions(database))
+        }
+    }
+
+    @AfterEach
+    fun tearDown() = driver.close()
+
+    private suspend fun insertManga(id: Long) {
+        driver.execute(
+            null,
+            "INSERT INTO manga(id, source_id, remote_url, remote_title, remote_status, " +
+                "state_initialized, user_reader_flags, user_chapter_flags, " +
+                "state_cover_last_modified, user_favorite_at, remote_update_strategy, " +
+                "state_chapter_fetch_interval, user_notes, remote_memo) VALUES ($id, 1, " +
+                "'m-url-$id', 'title', 0, 0, 0, 0, 0, NULL, 0, 0, '', '{}')",
+            0,
+        ).await()
+    }
+
+    private suspend fun groupOf(id: Long): List<Long> {
+        val groupId = repository.getGroupId(ContentType.MANGA, id) ?: return emptyList()
+        return repository.getMembers(ContentType.MANGA, groupId)
+    }
+
+    @Test
+    fun `two separate backup groups stay separate when a local group bridges them`() = runTest {
+        (1L..4L).forEach { insertManga(it) }
+        // The library has A merged with C, which the backup knows nothing about.
+        repository.createGroup(ContentType.MANGA, listOf(1, 3))
+
+        restore(ContentType.MANGA, listOf(listOf(1, 2), listOf(3, 4)))
+
+        // Restoring one group at a time fed each write the previous one's result, so the second group
+        // absorbed the first through the local bridge and the user got one four-member group whose
+        // card interleaved four sources.
+        groupOf(1) shouldContainExactly listOf(1L, 2L)
+        groupOf(3) shouldContainExactly listOf(3L, 4L)
+    }
+
+    @Test
+    fun `a restore that fails part way leaves the device's own grouping intact`() = runTest {
+        (1L..4L).forEach { insertManga(it) }
+        // Locally A and C are one group, which the backup's plan would break apart.
+        repository.createGroup(ContentType.MANGA, listOf(1, 3))
+
+        // Fails on the second write, once the first has already deleted the local group rows.
+        val failing = object : MergeGroupRepository by repository {
+            private var writes = 0
+
+            override suspend fun materializeGroup(
+                contentType: ContentType,
+                orderedMemberIds: List<Long>,
+                overrideSourceRanking: Boolean,
+            ): Long? {
+                if (++writes == 2) error("restore interrupted")
+                return repository.materializeGroup(contentType, orderedMemberIds, overrideSourceRanking)
+            }
+        }
+
+        shouldThrow<IllegalStateException> {
+            RestoreMergeGroups(failing, SqlDelightTransactions(database))
+                .invoke(ContentType.MANGA, listOf(listOf(1, 2), listOf(3, 4)))
+        }
+
+        // Nothing committed, so the grouping the user had before the restore survives. Applied as N
+        // separate transactions, the first plan's delete stood and A lost C for good.
+        groupOf(1) shouldContainExactly listOf(1L, 3L)
+    }
+
+    @Test
+    fun `the result does not depend on the order the backup lists its groups`() = runTest {
+        (1L..4L).forEach { insertManga(it) }
+        repository.createGroup(ContentType.MANGA, listOf(1, 3))
+
+        restore(ContentType.MANGA, listOf(listOf(3, 4), listOf(1, 2)))
+
+        groupOf(1) shouldContainExactly listOf(1L, 2L)
+        groupOf(3) shouldContainExactly listOf(3L, 4L)
+    }
+
+    @Test
+    fun `local members the backup says nothing about keep their own group and its ranking`() = runTest {
+        (1L..4L).forEach { insertManga(it) }
+        // Locally A, C and D are one hand-ordered group; the backup only describes A.
+        val local = repository.createGroup(ContentType.MANGA, listOf(1, 3, 4))!!
+        repository.setSourceOrder(ContentType.MANGA, local, listOf(4, 3, 1))
+
+        restore(ContentType.MANGA, listOf(listOf(1, 2)))
+
+        groupOf(1) shouldContainExactly listOf(1L, 2L)
+        // C and D are not part of the restore, so their grouping survives it, order and all.
+        groupOf(3) shouldContainExactly listOf(4L, 3L)
+        val remainder = repository.getGroupId(ContentType.MANGA, 3)!!
+        repository.getGroup(remainder)!!.overrideSourceRanking shouldBe true
+    }
+
+    @Test
+    fun `a remainder drops a ranking whose leading source the restore takes away`() = runTest {
+        (1L..4L).forEach { insertManga(it) }
+        // Locally A, B and C are one group with A in front; the backup names A, so the remainder is
+        // left as B and C with the source the user ranked first gone.
+        val local = repository.createGroup(ContentType.MANGA, listOf(1, 2, 3))!!
+        repository.setSourceOrder(ContentType.MANGA, local, listOf(1, 2, 3))
+
+        restore(ContentType.MANGA, listOf(listOf(1, 4)))
+
+        groupOf(2) shouldContainExactly listOf(2L, 3L)
+        // Same rule a restored group follows: B did not become the trunk by anyone's choice.
+        val remainder = repository.getGroupId(ContentType.MANGA, 2)!!
+        repository.getGroup(remainder)!!.overrideSourceRanking shouldBe false
+    }
+
+    @Test
+    fun `a local group left with one member is dissolved rather than kept as a group of one`() = runTest {
+        (1L..3L).forEach { insertManga(it) }
+        repository.createGroup(ContentType.MANGA, listOf(1, 3))
+
+        restore(ContentType.MANGA, listOf(listOf(1, 2)))
+
+        groupOf(1) shouldContainExactly listOf(1L, 2L)
+        repository.getGroupId(ContentType.MANGA, 3).shouldBeNull()
+    }
+
+    @Test
+    fun `an entry named by two backup groups lands in the first`() = runTest {
+        (1L..4L).forEach { insertManga(it) }
+
+        restore(ContentType.MANGA, listOf(listOf(1, 2), listOf(2, 3, 4)))
+
+        groupOf(1) shouldContainExactly listOf(1L, 2L)
+        // The second group keeps the members it can still claim rather than being dropped whole.
+        groupOf(3) shouldContainExactly listOf(3L, 4L)
+    }
+
+    @Test
+    fun `a restored group keeps the hand-set order and ranking it already had locally`() = runTest {
+        (1L..2L).forEach { insertManga(it) }
+        val local = repository.createGroup(ContentType.MANGA, listOf(1, 2))!!
+        repository.setSourceOrder(ContentType.MANGA, local, listOf(2, 1))
+
+        // The backup carries membership only, so restoring one it already describes must not reset
+        // the order the user dragged into place, nor the flag that makes the app read that order.
+        restore(ContentType.MANGA, listOf(listOf(1, 2)))
+
+        groupOf(1) shouldContainExactly listOf(2L, 1L)
+        val restored = repository.getGroupId(ContentType.MANGA, 1)!!
+        repository.getGroup(restored)!!.overrideSourceRanking shouldBe true
+    }
+
+    @Test
+    fun `a member the backup adds to a hand-ordered group goes last`() = runTest {
+        (1L..3L).forEach { insertManga(it) }
+        val local = repository.createGroup(ContentType.MANGA, listOf(1, 2))!!
+        repository.setSourceOrder(ContentType.MANGA, local, listOf(2, 1))
+
+        restore(ContentType.MANGA, listOf(listOf(1, 2, 3)))
+
+        // Same append rule as a merge: an arrival never takes the trunk of a group someone ranked.
+        groupOf(1) shouldContainExactly listOf(2L, 1L, 3L)
+        val restored = repository.getGroupId(ContentType.MANGA, 1)!!
+        repository.getGroup(restored)!!.overrideSourceRanking shouldBe true
+    }
+
+    @Test
+    fun `a restored group drops a ranking whose leading source it does not keep`() = runTest {
+        (1L..4L).forEach { insertManga(it) }
+        // Locally A, B and C are one group and the user put C in front; the backup groups A with D,
+        // so the restored group takes some of that group's members but leaves its trunk behind.
+        val local = repository.createGroup(ContentType.MANGA, listOf(1, 2, 3))!!
+        repository.setSourceOrder(ContentType.MANGA, local, listOf(3, 1, 2))
+
+        restore(ContentType.MANGA, listOf(listOf(1, 4)))
+
+        groupOf(1) shouldContainExactly listOf(1L, 4L)
+        // Carrying the flag here would present an order nobody chose as the user's own, and the
+        // library cover and chapter trunk would follow it.
+        val restored = repository.getGroupId(ContentType.MANGA, 1)!!
+        repository.getGroup(restored)!!.overrideSourceRanking shouldBe false
+    }
+
+    @Test
+    fun `a restored group keeps a ranking when it still leads with the same source`() = runTest {
+        (1L..3L).forEach { insertManga(it) }
+        val local = repository.createGroup(ContentType.MANGA, listOf(1, 2))!!
+        repository.setSourceOrder(ContentType.MANGA, local, listOf(2, 1))
+
+        // The backup adds a member but the trunk stays, so the ranking is still the user's.
+        restore(ContentType.MANGA, listOf(listOf(1, 2, 3)))
+
+        groupOf(1) shouldContainExactly listOf(2L, 1L, 3L)
+        val restored = repository.getGroupId(ContentType.MANGA, 1)!!
+        repository.getGroup(restored)!!.overrideSourceRanking shouldBe true
+    }
+
+    @Test
+    fun `a group the device never had takes the backup order and no ranking`() = runTest {
+        (1L..2L).forEach { insertManga(it) }
+
+        restore(ContentType.MANGA, listOf(listOf(2, 1)))
+
+        groupOf(1) shouldContainExactly listOf(2L, 1L)
+        val restored = repository.getGroupId(ContentType.MANGA, 1)!!
+        repository.getGroup(restored)!!.overrideSourceRanking shouldBe false
+    }
+
+    @Test
+    fun `a group with fewer than two resolvable members is not created`() = runTest {
+        insertManga(1)
+
+        restore(ContentType.MANGA, listOf(listOf(1)))
+
+        repository.getGroupId(ContentType.MANGA, 1).shouldBeNull()
+    }
+}

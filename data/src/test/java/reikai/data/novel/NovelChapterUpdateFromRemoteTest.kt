@@ -1,0 +1,95 @@
+package reikai.data.novel
+
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import io.kotest.assertions.throwables.shouldThrowAny
+import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import reikai.domain.novel.model.NovelChapter
+import tachiyomi.data.Database
+import tachiyomi.data.DatabaseBindings
+import kotlin.time.Instant
+
+/** A source sync's removals, inserts and updates land together or not at all, over the real SQL. */
+class NovelChapterUpdateFromRemoteTest {
+
+    private lateinit var driver: JdbcSqliteDriver
+    private lateinit var repository: NovelChapterRepositoryImpl
+
+    @BeforeEach
+    fun setUp() {
+        runTest {
+            driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+            Database.Schema.create(driver).await()
+            val database = DatabaseBindings.providesDatabase(driver)
+            repository = NovelChapterRepositoryImpl(database)
+            driver.execute(
+                null,
+                "INSERT INTO novels(_id, source, url, title, status, initialized, chapter_flags, " +
+                    "favorite_at) VALUES (1, 'src', 'n-url', 'title', 0, 0, 0, 0)",
+                0,
+            ).await()
+            listOf(1L, 2L).forEach { id ->
+                driver.execute(
+                    null,
+                    "INSERT INTO novel_chapters(_id, novel_id, url, name, read, bookmark, last_text_progress, " +
+                        "chapter_number, source_order, date_fetch, date_upload) " +
+                        "VALUES ($id, 1, 'c-url-$id', 'name', 1, 0, 40, $id, $id, 1000, 1000)",
+                    0,
+                ).await()
+            }
+        }
+    }
+
+    @AfterEach
+    fun tearDown() {
+        driver.close()
+    }
+
+    private fun added(url: String) = NovelChapter(
+        id = -1L, novelId = 1L, url = url, name = "new", read = false, bookmark = false,
+        lastTextProgress = 0L, chapterNumber = 3.0, sourceOrder = 0L, dateFetch = Instant.fromEpochMilliseconds(2000L),
+        dateUpload = Instant.fromEpochMilliseconds(2000L), page = "",
+    )
+
+    @Test
+    fun `a sync removes, adds and renames in one call, keeping the reader's state`() = runTest {
+        // The source's parse carries none of the reader's state, so the update must keep the stored row's.
+        val renamed = repository.getById(
+            2L,
+        )!!.copy(name = "renamed", read = false, bookmark = true, lastTextProgress = 0L)
+
+        repository.updateFromRemote(listOf(1L), listOf(added("c-url-3")), listOf(renamed))
+
+        repository.getByNovelId(1L).map { listOf(it.url, it.name, it.read, it.bookmark, it.lastTextProgress) } shouldBe
+            listOf(
+                listOf("c-url-3", "new", false, false, 0L),
+                listOf("c-url-2", "renamed", true, false, 40L),
+            )
+    }
+
+    @Test
+    fun `a sync stores the group a source now names on a chapter`() = runTest {
+        val regrouped = repository.getById(2L)!!.copy(scanlator = "Group")
+
+        repository.updateFromRemote(emptyList(), emptyList(), listOf(regrouped))
+
+        repository.getById(2L)!!.scanlator shouldBe "Group"
+    }
+
+    @Test
+    fun `a sync whose update fails leaves nothing of the sync behind`() = runTest {
+        driver.execute(
+            null,
+            "CREATE TRIGGER fail_update BEFORE UPDATE ON novel_chapters BEGIN SELECT RAISE(ABORT, 'boom'); END",
+            0,
+        ).await()
+        val renamed = repository.getById(2L)!!.copy(name = "renamed")
+
+        shouldThrowAny { repository.updateFromRemote(listOf(1L), listOf(added("c-url-3")), listOf(renamed)) }
+
+        repository.getByNovelId(1L).map { it.url } shouldBe listOf("c-url-1", "c-url-2")
+    }
+}

@@ -1,31 +1,33 @@
 package reikai.domain.recommendation
 
-import eu.kanade.tachiyomi.BuildConfig
+import eu.kanade.tachiyomi.data.track.Tracker
+import eu.kanade.tachiyomi.data.track.shikimori.ShikimoriApi
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.serialization.json.Json
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import reikai.data.track.REIKAI_TRACKER_USER_AGENT
 import reikai.domain.recommendation.dto.SMMangaDetail
 import reikai.domain.recommendation.dto.SMRecsManga
 
 /**
  * Shikimori similar-manga recommendations (`/api/mangas/{id}/similar`). The endpoint is public, so
  * no OAuth is used (reusing Shikimori's auth interceptor would throw for a logged-out user). But
- * Shikimori IP-bans on a browser User-Agent, so every request here carries the registered app-name
- * UA, which the shared client's default UA interceptor leaves untouched when already set.
+ * Shikimori IP-bans on a browser User-Agent, so every request carries the UA the signed-in calls send,
+ * which the shared client's default UA interceptor leaves untouched when already set.
  *
  * The compact manga object carries no synonyms, so candidates dedup on primary title only.
  */
 class ShikimoriRecommendations(
     private val client: OkHttpClient,
-    override val trackerId: Long,
-) : TrackerRecommendations() {
+    tracker: Tracker,
+    override val json: Json,
+) : TrackerRecommendations(tracker) {
 
-    override val trackerName: String = "Shikimori"
-
-    private val headers = Headers.headersOf("User-Agent", USER_AGENT)
+    private val headers = Headers.headersOf("User-Agent", REIKAI_TRACKER_USER_AGENT)
 
     override suspend fun getRecsById(remoteId: Long): List<RelatedMangaCandidate> {
         val url = "$API_URL/mangas".toHttpUrl().newBuilder()
@@ -48,6 +50,9 @@ class ShikimoriRecommendations(
     override suspend fun getRecsBySearch(title: String): List<RelatedMangaCandidate> {
         val url = "$API_URL/mangas".toHttpUrl().newBuilder()
             .addQueryParameter("search", title)
+            // Light novels sit under /api/ranobe today, so this excludes nothing yet; it pins the manga
+            // kind as the other three providers do, with the exclusion upstream's GraphQL search sends.
+            .addQueryParameter("kind", "!light_novel,!novel")
             .addQueryParameter("limit", "1")
             .build()
 
@@ -64,11 +69,7 @@ class ShikimoriRecommendations(
     )
 
     companion object {
-        private const val BASE_URL = "https://shikimori.io"
+        private const val BASE_URL = ShikimoriApi.BASE_URL
         private const val API_URL = "$BASE_URL/api"
-
-        // Shikimori requires the registered app name as User-Agent (a browser UA risks an IP ban);
-        // matches eu.kanade.tachiyomi.data.track.shikimori.ShikimoriInterceptor.
-        private val USER_AGENT = "Mihon v${BuildConfig.VERSION_NAME} (${BuildConfig.APPLICATION_ID})"
     }
 }

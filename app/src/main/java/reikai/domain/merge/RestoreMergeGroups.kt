@@ -1,0 +1,121 @@
+package reikai.domain.merge
+
+import dev.zacsweers.metro.Inject
+import reikai.domain.db.Transactions
+import reikai.domain.library.ContentType
+
+/**
+ * Materialise backed-up merge groups against the library as it stands, in one pass, resolved against
+ * ONE snapshot of local membership so the result cannot depend on write order.
+ *
+ * The backup is authoritative for the entries it names; local members it does not name keep their own
+ * group while two or more remain. Order and the ranking flag come from the surviving local group,
+ * since the backup format carries neither. Rules: docs/dev/subsystems/merged-series.md.
+ */
+@Inject
+class RestoreMergeGroups(
+    private val repository: MergeGroupRepository,
+    private val transactions: Transactions,
+) {
+
+    /**
+     * Restore a backup's groups from their refs, each resolved to a local id through [resolve]. [prefEra]
+     * is null for a backup that stores every group; a 0.3.x one never wrote its same-title groups, so
+     * they are rebuilt here by the upgrade migration's rule.
+     */
+    suspend fun <R> fromBackup(
+        contentType: ContentType,
+        groups: List<List<R>>,
+        prefEra: PrefEraGrouping<R>?,
+        resolve: suspend (R) -> Long?,
+    ) {
+        val manual = groups.map { refs -> refs.mapNotNull { resolve(it) } }
+        if (prefEra == null) return invoke(contentType, manual)
+        val candidates = prefEra.favorites.mapNotNull { favorite ->
+            resolve(favorite.ref)?.let { MergeGroupReconstruction.Candidate(it, favorite.title, favorite.author) }
+        }
+        val unmerges = prefEra.unmerges.map { refs -> refs.mapNotNull { resolve(it) } }
+        invoke(contentType, MergeGroupReconstruction.reconstruct(candidates, manual, unmerges, prefEra.switches))
+    }
+
+    /**
+     * [groups] is one list of already-resolved local ids per backed-up group, in ref order. Groups
+     * with fewer than two resolvable members are dropped by the caller or here; either way they
+     * cannot form a group.
+     */
+    suspend operator fun invoke(contentType: ContentType, groups: List<List<Long>>) {
+        if (groups.isEmpty()) return
+        val memberships = repository.getAllMemberships(contentType)
+
+        // First backup group to name an entry keeps it: an entry can only be in one group, and
+        // deciding that here rather than letting the writes fight means the result does not depend
+        // on which order they happen to run in.
+        val claimed = HashSet<Long>()
+        val restored = groups.mapNotNull { group ->
+            val ids = group.distinct().filterNot { it in claimed }
+            ids.takeIf { it.size >= 2 }?.also { claimed += it }
+        }
+        if (restored.isEmpty()) return
+
+        // What the local groups losing members will be left with, read BEFORE anything is written:
+        // these members are not part of the restore, so their grouping should survive it.
+        val remainders = memberships
+            .filterKeys { it in claimed }
+            .values.distinct()
+            .mapNotNull { groupId ->
+                val members = repository.getMembers(contentType, groupId)
+                val keep = members.filterNot { it in claimed }
+                keep.takeIf { it.size >= 2 }?.let {
+                    // Same trunk rule the plans below apply, and for the same reason: a remainder
+                    // whose leading source the restore just took away is no longer the order the
+                    // user set, so presenting it as theirs would move the library cover and the
+                    // details trunk onto a source they never put in front.
+                    val keepsTrunk = members.firstOrNull() in it
+                    it to (keepsTrunk && repository.getGroup(groupId)?.overrideSourceRanking == true)
+                }
+            }
+
+        // Resolved BEFORE anything is written, like the remainders above: the first write deletes the
+        // very group rows the rest would read their order and flag from.
+        val plans = restored.map { ids ->
+            val localGroupId = ids.firstNotNullOfOrNull { memberships[it] }
+            val localOrder = localGroupId?.let { repository.getMembers(contentType, it) }.orEmpty()
+            val local = localOrder.toHashSet()
+            val named = ids.toHashSet()
+            val ordered = localOrder.filter { it in named } + ids.filterNot { it in local }
+            // The ranking is carried only while the group it came from still leads with the source the
+            // user put in front. A backup group can span two local groups, taking some members from a
+            // ranked one and leaving its trunk behind; carrying the flag there would present an order
+            // nobody chose as the user's own, and the library cover and chapter trunk would follow it.
+            val keepsTrunk = localOrder.firstOrNull()?.let { it in named } == true
+            val override = keepsTrunk &&
+                localGroupId?.let { repository.getGroup(it)?.overrideSourceRanking } == true
+            ordered to override
+        }
+
+        // One transaction for the whole plan. Each materialize deletes its members' existing groups
+        // before rebuilding, and the remainders that put untouched local members back run last, so a
+        // failure or a cancelled restore part way through used to leave those members ungrouped with
+        // nothing recording what they had been.
+        transactions.run {
+            plans.forEach { (ids, override) ->
+                repository.materializeGroup(contentType, ids, overrideSourceRanking = override)
+            }
+            remainders.forEach { (ids, override) ->
+                repository.materializeGroup(contentType, ids, overrideSourceRanking = override)
+            }
+        }
+    }
+}
+
+/**
+ * What a backup without the stored-groups marker (Reikai 0.3.x, which derived same-title groups live)
+ * says about grouping beyond its manual merges: its favourites, its unmerge pairs and its own switches.
+ */
+class PrefEraGrouping<R>(
+    val favorites: List<Favorite<R>>,
+    val unmerges: List<List<R>>,
+    val switches: MergeGroupReconstruction.TitleSwitches,
+) {
+    class Favorite<R>(val ref: R, val title: String, val author: String?)
+}

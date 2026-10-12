@@ -2,23 +2,31 @@ package eu.kanade.tachiyomi.data.coil
 
 import android.graphics.BitmapFactory
 import androidx.palette.graphics.Palette
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.tachiyomi.data.cache.CoverCache
+import kotlinx.coroutines.CoroutineScope
+import mihon.core.metro.AppCoroutineScope
 import okio.BufferedSource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.manga.model.MangaCover
-import uy.kohesive.injekt.injectLazy
 import java.io.File
 
 /**
- * Reikai (Y11): extracts a vibrant color from a manga cover and caches it on
+ * Reikai: extracts a vibrant color from a manga cover and caches it on
  * [MangaCover.vibrantCoverColorMap], persisting across restarts. The color seeds the reader and
  * manga-details theme when the cover-based theme preference is on. The [getBestColor] heuristic is
  * ported from Komikku (Jays2Kings).
  */
-object MangaCoverMetadata {
-    private val uiPreferences: UiPreferences by injectLazy()
-    private val coverCache: CoverCache by injectLazy()
+@Inject
+@SingleIn(AppScope::class)
+class MangaCoverMetadata(
+    @AppCoroutineScope private val scope: CoroutineScope,
+    private val uiPreferences: UiPreferences,
+    private val coverCache: CoverCache,
+) {
 
     /** Restore the persisted cover colors at app startup. */
     fun load() {
@@ -44,7 +52,7 @@ object MangaCoverMetadata {
     /** Extract the vibrant color in the background, skipping work when the feature is off or already known. */
     fun setVibrantColorAsync(mangaCover: MangaCover, bufferedSource: BufferedSource? = null, ogFile: File? = null) {
         if (!uiPreferences.themeCoverBased.get() || mangaCover.vibrantCoverColor != null) return
-        launchIO { setVibrantColor(mangaCover, bufferedSource, ogFile) }
+        scope.launchIO { setVibrantColor(mangaCover, bufferedSource, ogFile) }
     }
 
     fun setVibrantColor(mangaCover: MangaCover, bufferedSource: BufferedSource? = null, ogFile: File? = null) {
@@ -63,9 +71,9 @@ object MangaCoverMetadata {
 
         Palette.from(bitmap).generate().getBestColor()?.let { mangaCover.vibrantCoverColor = it }
     }
-
-    private const val SUB_SAMPLE = 4
 }
+
+private const val SUB_SAMPLE = 4
 
 /**
  * Picks the most representative color from a cover's [Palette], favoring colorful swatches while

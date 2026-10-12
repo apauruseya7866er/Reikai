@@ -1,0 +1,477 @@
+@file:Suppress("ktlint:standard:max-line-length")
+
+package reikai.novel.content
+
+import logcat.LogPriority
+import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
+import org.intellij.markdown.html.HtmlGenerator
+import org.intellij.markdown.parser.MarkdownParser
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Comment
+import org.jsoup.nodes.DataNode
+import org.jsoup.nodes.Element
+import org.jsoup.nodes.Node
+import org.jsoup.nodes.TextNode
+import org.jsoup.parser.Parser
+import org.jsoup.select.NodeVisitor
+import tachiyomi.core.common.util.system.logcat
+
+object NovelHtmlUtils {
+
+    private enum class ChapterTextKind { HTML, MARKDOWN, PLAIN_TEXT }
+
+    private val frontMatterRegex = Regex("^\\uFEFF?---\\s*\\r?\\n([\\s\\S]*?)\\r?\\n---\\s*(\\r?\\n|$)")
+    private const val CHAPTER_TITLE_SEARCH_LIMIT = 3000
+
+    private val htmlTagRegex = Regex(
+        "<\\s*(html|head|body|div|p|span|br|h[1-6]|img|a|table|ul|ol|li|blockquote|article|section|!doctype)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+    private val closingTagRegex = Regex("</\\s*[a-z][a-z0-9:-]*\\s*>", RegexOption.IGNORE_CASE)
+    private val stripTagsRegex = Regex("<[^>]+>")
+    private val paragraphBreakRegex = Regex("\n{2,}")
+    private val adjacentTagsRegex = Regex(">\\s*<")
+    private val leadingSpaceInParagraph = Regex("<p>(?: |&#160;|&nbsp;)+")
+    private val paragraphTagRegex = Regex("<p[\\s>]", RegexOption.IGNORE_CASE)
+    private val blankLineRegex = Regex("\r?\n\r?\n")
+    private val verbatimBlockRegex = Regex(
+        "<(style|script|pre|textarea)\\b[^>]*>.*?</\\1\\s*>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+    )
+
+    // Raw-text elements: the parser reads what they hold as text, so a heading written inside one is not
+    // a heading. Narrower than the prose passes' verbatim rule, since a pre's tags are real elements.
+    private val rawTextBlockRegex = Regex(
+        "<(style|script|textarea)\\b[^>]*>.*?</\\1\\s*>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+    )
+
+    private val markupSkipRegex = Regex(
+        "<(style|script|textarea)\\b[^>]*>.*?</\\1\\s*>|<[^>]+>",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+    )
+    private val textLineRegex = Regex("[^\\r\\n]*\\S[^\\r\\n]*")
+    private val leadingBreakRegex = Regex("^\\r?\\n")
+
+    private val titlePatterns = listOf(
+        Regex("""<h[1-6][^>]*>.*?</h[1-6]>""", RegexOption.IGNORE_CASE) to true,
+        Regex("""<(strong|[bi]|em)\b[^>]*>.*?</\1>""", RegexOption.IGNORE_CASE) to false,
+        Regex("""<p\b[^>]*>.*?</p>""", RegexOption.IGNORE_CASE) to false,
+        Regex("""<(div|span)[^>]*>.*?</\1>""", RegexOption.IGNORE_CASE) to false,
+    )
+
+    private val chapterNumPatterns = listOf(
+        Regex("""chapter\s*\d+""", RegexOption.IGNORE_CASE),
+        Regex("""ch\.?\s*\d+""", RegexOption.IGNORE_CASE),
+        Regex("""episode\s*\d+""", RegexOption.IGNORE_CASE),
+        Regex("""part\s*\d+""", RegexOption.IGNORE_CASE),
+    )
+
+    private val scriptTagRegex =
+        Regex("<script[^>]*>.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val scriptSelfClosingRegex = Regex("<script[^>]*/>", RegexOption.IGNORE_CASE)
+
+    private val styleTagRegex =
+        Regex("<style[^>]*>.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val styleSelfClosingRegex = Regex("<style[^>]*/>", RegexOption.IGNORE_CASE)
+
+    /** Elements that fetch or run something of their own, none of which a chapter needs. `base`
+     *  rewrites every relative URL in the document. `svg` and `math` are foreign content, which does
+     *  not always survive a serialize-and-reparse unchanged, and that is what a mutation bypass is.
+     *  `noembed` and `noframes` hold raw text no browser shows. */
+    private const val ALWAYS_DROPPED =
+        "noscript, iframe, frame, frameset, object, embed, applet, base, meta, form, svg, math, " +
+            "noembed, noframes"
+
+    /** Raw-text elements a browser shows as literal text. Their content is written out unescaped, so
+     *  any later pass over the markup can turn it into elements, and `plaintext` has no end tag at all:
+     *  it swallows the rest of the page, the reader's engine script included. */
+    private const val SHOWN_AS_RAW_TEXT = "xmp, plaintext"
+
+    private const val MEDIA_ELEMENTS = "img, image, picture, video, audio, source, track"
+
+    /** Attributes a browser resolves as a URL, and so will run as code given a `javascript:` one. */
+    private val URL_ATTRIBUTES = listOf("href", "src", "srcset", "action", "formaction", "data", "poster")
+
+    private val noscriptTagRegex =
+        Regex("<noscript[^>]*>.*?</noscript>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val htmlCommentRegex = Regex("<!--.*?-->", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val encodedCommentRegex = Regex("&lt;!--.*?--&gt;", RegexOption.DOT_MATCHES_ALL)
+
+    /** `rel` is a list of words, and any list holding this one loads a stylesheet. */
+    private val stylesheetRelRegex = Regex("(^|\\s)stylesheet(\\s|$)", RegexOption.IGNORE_CASE)
+
+    private val imgTagRegex = Regex("<img[^>]*>", RegexOption.IGNORE_CASE)
+    private val imageTagRegex = Regex("</?image[^>]*>", RegexOption.IGNORE_CASE)
+
+    private val videoTagRegex =
+        Regex("<video[^>]*>.*?</video>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+
+    private val audioTagRegex =
+        Regex("<audio[^>]*>.*?</audio>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    private val sourceTagRegex = Regex("<source[^>]*>", RegexOption.IGNORE_CASE)
+
+    private val paddingEntityRegex = Regex("(?:&nbsp;\\s*|[\\u200b]\\s*)+(?=</?p[> ])", RegexOption.IGNORE_CASE)
+    private val breakRunRegex = Regex("<br>\\s*<br>\\s*(?:<br>\\s*)+", RegexOption.IGNORE_CASE)
+    private val breakBesideParagraphRegex =
+        Regex("<br>\\s*<br>\\s*(?=</?p[> ])|(?<=</?p>)\\s*<br>\\s*<br>\\s*", RegexOption.IGNORE_CASE)
+    private val loneBreakBesideParagraphRegex =
+        Regex("<br>\\s*(?=</?p[> ])|(?<=</?p>)\\s*<br>\\s*", RegexOption.IGNORE_CASE)
+    val entityRegex = Regex("&#?[A-Za-z0-9]+;")
+    private val tagOrEntityRegex = Regex("<[^>]*>|${entityRegex.pattern}")
+
+    /**
+     * Sources pad chapters with blank paragraphs and stacked line breaks, which read as gaps the
+     * paragraph-spacing setting is then measured on top of. Ported from the vendored `core.js` so it
+     * runs for every rendering mode instead of only the one that ships a JS engine.
+     */
+    fun removeExtraParagraphSpacing(content: String): String = mapOutsideVerbatimBlocks(content) { prose ->
+        prose
+            .replace(paddingEntityRegex, "")
+            .replace(breakRunRegex, "<br><br>")
+            .replace(breakBesideParagraphRegex, "")
+            .replace(loneBreakBesideParagraphRegex, "")
+    }
+
+    /**
+     * Lowercases the text of [markup] and nothing else. Tags carry case-sensitive values (an image
+     * address, an inlined base64 picture), and entity names are case-sensitive too: `&Dagger;` and
+     * `&dagger;` are different characters.
+     */
+    fun lowercaseText(markup: String): String = mapOutsideVerbatimBlocks(markup) { prose ->
+        val out = StringBuilder(prose.length)
+        var from = 0
+        for (kept in tagOrEntityRegex.findAll(prose)) {
+            out.append(prose.substring(from, kept.range.first).lowercase()).append(kept.value)
+            from = kept.range.last + 1
+        }
+        out.append(prose.substring(from).lowercase()).toString()
+    }
+
+    fun isPlainTextChapter(chapterUrl: String?): Boolean {
+        val ext = extensionFor(chapterUrl)
+        return ext == "txt" || ext == "text"
+    }
+
+    private fun extensionFor(chapterUrl: String?): String {
+        return chapterUrl
+            ?.substringBefore('#')
+            ?.substringBefore('?')
+            ?.substringAfterLast('/')
+            ?.substringAfterLast('.', "")
+            ?.lowercase()
+            .orEmpty()
+    }
+
+    fun normalizePlainTextContent(content: String): String {
+        return content
+            .replace("\u0000", "")
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+    }
+
+    fun normalizeContentForHtml(content: String, chapterUrl: String?): String {
+        val normalized = content.replace("\u0000", "")
+        val kind = detectTextKind(chapterUrl, normalized)
+        logcat(LogPriority.DEBUG) { "normalizeContentForHtml: $kind len=${normalized.length}" }
+        return when (kind) {
+            ChapterTextKind.HTML -> normalized
+            ChapterTextKind.MARKDOWN -> markdownToHtml(stripFrontMatter(normalized))
+            ChapterTextKind.PLAIN_TEXT -> plainTextToHtml(normalized)
+        }
+    }
+
+    private fun detectTextKind(chapterUrl: String?, content: String): ChapterTextKind {
+        val ext = extensionFor(chapterUrl)
+
+        return when (ext) {
+            "md", "markdown" -> ChapterTextKind.MARKDOWN
+            "html", "htm", "xhtml", "epub" -> ChapterTextKind.HTML
+            else -> {
+                if (htmlTagRegex.containsMatchIn(content) || closingTagRegex.containsMatchIn(content)) {
+                    ChapterTextKind.HTML
+                } else {
+                    ChapterTextKind.PLAIN_TEXT
+                }
+            }
+        }
+    }
+
+    private fun stripFrontMatter(markdown: String): String =
+        markdown.replaceFirst(frontMatterRegex, "")
+
+    private fun markdownToHtml(markdown: String): String {
+        return try {
+            val flavour = GFMFlavourDescriptor()
+            val parsedTree = MarkdownParser(flavour).buildMarkdownTreeFromString(markdown)
+            val rendered = HtmlGenerator(markdown, parsedTree, flavour).generateHtml()
+            "<div data-reikai-markdown=\"1\">$rendered</div>"
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "Markdown render fell back to plain text" }
+            plainTextToHtml(markdown)
+        }
+    }
+
+    /** Escapes [text] into an HTML block. An HTML sink must call this: the pipeline leaves plain text
+     *  unescaped so a text renderer can take it verbatim.
+     *
+     *  Paragraphs are real `p` elements rather than one `pre`, which would take the browser's monospace
+     *  default and need an inline style the embedded-CSS setting strips. A break inside a paragraph is
+     *  a `br`, not a newline: a newline survives `pre-wrap` in a WebView and collapses to a space in
+     *  the text renderer, laying the same chapter out two ways. */
+    fun plainTextToHtml(text: String): String {
+        val normalized = normalizePlainTextContent(text)
+        // Unescape before re-escaping: a source may hand back content where &lt;D&gt; is already
+        // encoded, and escaping its & again would render the entity as literal text.
+        val decoded = if (normalized.contains('&')) {
+            Parser.unescapeEntities(normalized, false)
+        } else {
+            normalized
+        }
+        val paragraphs = decoded.split(paragraphBreakRegex)
+            .map { it.trim('\n', ' ', '\t') }
+            .filter { it.isNotEmpty() }
+        if (paragraphs.isEmpty()) return "<div data-reikai-plain-text=\"1\"></div>"
+        return paragraphs.joinToString(
+            separator = "",
+            prefix = "<div data-reikai-plain-text=\"1\">",
+            postfix = "</div>",
+        ) { "<p>${escapeHtml(it).replace("\n", "<br>")}</p>" }
+    }
+
+    /** [html] as the markup it is, escaped for an HTML sink, one line per tag that follows another so a
+     *  chapter sent as a single line does not show as one paragraph. Entities stay as written. */
+    fun htmlAsText(html: String): String = html
+        .replace(adjacentTagsRegex, ">\n<")
+        .lines()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .joinToString(separator = "", prefix = "<div data-reikai-plain-text=\"1\">", postfix = "</div>") {
+            "<p>${escapeHtml(it)}</p>"
+        }
+
+    /**
+     * Turns the blank lines of an HTML chapter with no paragraphs of its own into paragraphs, for both
+     * renderers alike: a WebView collapses a blank line to a space, so leaving it to the text renderer
+     * showed one paragraph there and two in the native mode.
+     */
+    fun wrapBareParagraphs(content: String): String {
+        val trimmed = mapOutsideVerbatimBlocks(content) { it.replace(leadingSpaceInParagraph, "<p>") }
+        if (paragraphTagRegex.containsMatchIn(trimmed) || !blankLineRegex.containsMatchIn(trimmed)) return trimmed
+        return "<p>${mapOutsideVerbatimBlocks(trimmed, ::breakParagraphs)}</p>"
+    }
+
+    private fun breakParagraphs(markup: String) = markup.replace("\r\n\r\n", "</p><p>").replace("\n\n", "</p><p>")
+
+    /**
+     * Applies [transform] to each stretch of markup between style, script, pre and textarea blocks and
+     * copies the blocks through untouched: their text is content, not prose. Every pass that reshapes a
+     * chapter's prose goes through here, so none of them decides alone what counts as prose.
+     */
+    fun mapOutsideVerbatimBlocks(markup: String, transform: (String) -> String): String {
+        val out = StringBuilder()
+        var from = 0
+        for (block in verbatimBlockRegex.findAll(markup)) {
+            out.append(transform(markup.substring(from, block.range.first))).append(block.value)
+            from = block.range.last + 1
+        }
+        return out.append(transform(markup.substring(from))).toString()
+    }
+
+    private fun escapeHtml(text: String): String {
+        return text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;")
+    }
+
+    /**
+     * The first `<h1>`..`<h6>` tag is removed unconditionally (the `true` flag in [titlePatterns]).
+     * Sources routinely embed a redundant heading identical to the chapter name already shown in the
+     * reader UI; matching by text would silently keep headings with different casing or punctuation.
+     */
+    fun stripChapterTitle(content: String, chapterName: String): String {
+        val normalizedChapterName = chapterName.trim().lowercase()
+        val searchArea = content.take(CHAPTER_TITLE_SEARCH_LIMIT)
+        val rawText = rawTextBlockRegex.findAll(searchArea).map { it.range }.toList()
+
+        for ((regex, unconditional) in titlePatterns) {
+            val match = regex.findAll(searchArea).firstOrNull { m -> rawText.none { m.range.first in it } }
+            if (match != null) {
+                val matchText = match.value.replace(stripTagsRegex, "").trim().lowercase()
+                if (unconditional || isTitleMatch(matchText, normalizedChapterName)) {
+                    return content.substring(0, match.range.first) +
+                        content.substring(match.range.last + 1)
+                }
+            }
+        }
+
+        val line = firstTextLine(searchArea) ?: return content
+        if (!isTitleMatch(searchArea.substring(line).lowercase(), normalizedChapterName)) return content
+        val before = content.substring(0, line.first)
+        val after = content.substring(line.last + 1)
+        return if (before.isBlank()) {
+            after.trimStart('\n', '\r', ' ')
+        } else {
+            before +
+                after.replaceFirst(leadingBreakRegex, "")
+        }
+    }
+
+    /** Where the first line of text a reader sees sits in [markup], outside tags and raw-text blocks, so
+     *  the title is cut from where it is rather than by removing the markup's first line. */
+    private fun firstTextLine(markup: String): IntRange? {
+        var from = 0
+        for (skip in markupSkipRegex.findAll(markup) + sequenceOf(null)) {
+            val end = skip?.range?.first ?: markup.length
+            textLineRegex.find(markup.substring(from, end))?.let { found ->
+                val text = found.value.trim()
+                val start = from + found.range.first + found.value.indexOf(text)
+                return start until start + text.length
+            }
+            from = skip?.range?.last?.plus(1) ?: break
+        }
+        return null
+    }
+
+    fun isTitleMatch(text: String, chapterName: String): Boolean {
+        if (text.isEmpty() || chapterName.isEmpty()) return false
+        if (text == chapterName) return true
+        if (chapterName.contains(text) && text.length > chapterName.length * 0.8) return true
+        if (text.contains(chapterName)) return true
+        return chapterNumPatterns.any { it.matches(text) && it.containsMatchIn(chapterName) }
+    }
+
+    /**
+     * Drops markup a reader should not render. The two targets need different guarantees, so they
+     * take different paths: the WebView runs scripts with the app's cookie jar and a bridge bound, so
+     * its markup is parsed and pruned as a tree, while `Html.fromHtml` executes nothing and only
+     * needs the tags it would otherwise print stripped out of sight.
+     */
+    fun sanitizeForRender(
+        content: String,
+        target: RenderTarget,
+        keepEmbeddedCss: Boolean,
+        keepEmbeddedJs: Boolean,
+        blockMedia: Boolean,
+    ): String = when (target) {
+        RenderTarget.WEB_VIEW -> sanitizeForWebView(content, keepEmbeddedCss, keepEmbeddedJs, blockMedia)
+        RenderTarget.TEXT_VIEW -> sanitizeForTextView(content, blockMedia)
+    }
+
+    /**
+     * Prunes the parsed tree, because a regex cannot be a boundary here: `</script >`, a comment
+     * spliced through a tag name and every attribute got past the pattern-matching version this
+     * replaces. Nothing may edit the serialised result either, since a pattern spanning into a
+     * raw-text element can delete its start tag. Only when the parser itself throws does the chapter
+     * go out as escaped text, which still beats a blank page.
+     */
+    private fun sanitizeForWebView(
+        content: String,
+        keepEmbeddedCss: Boolean,
+        keepEmbeddedJs: Boolean,
+        blockMedia: Boolean,
+    ): String {
+        val doc = try {
+            Jsoup.parseBodyFragment(content)
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) { "Showing a chapter the parser could not read as text" }
+            return plainTextToHtml(content)
+        }
+        // Pretty-printing reflows the markup, which collapses the line breaks inside a plain-text
+        // paragraph. Pruning the tree must not rewrite what is left of it.
+        doc.outputSettings().prettyPrint(false)
+
+        doc.select(ALWAYS_DROPPED).remove()
+        doc.select(SHOWN_AS_RAW_TEXT).forEach(::retagAsPre)
+        if (!keepEmbeddedJs) {
+            doc.select("script").remove()
+            doc.select("*").forEach(::stripScriptingAttributes)
+        }
+        if (!keepEmbeddedCss) {
+            doc.select("style").remove()
+            doc.select("link[rel]").filter { stylesheetRelRegex.containsMatchIn(it.attr("rel")) }
+                .forEach(Element::remove)
+            doc.select("[style]").removeAttr("style")
+        }
+        if (blockMedia) doc.select(MEDIA_ELEMENTS).remove()
+        dropComments(doc.body())
+
+        return doc.body().html()
+    }
+
+    /** A `pre` shows the same literal text, held as ordinary escaped text rather than raw. */
+    private fun retagAsPre(element: Element) {
+        element.childNodes().filterIsInstance<DataNode>().forEach { it.replaceWith(TextNode(it.wholeData)) }
+        element.tagName("pre")
+    }
+
+    /** Removes the inline scripting an element can carry: an event handler, or a URL that is code. */
+    private fun stripScriptingAttributes(element: Element) {
+        element.attributes()
+            .map { it.key }
+            .filter { it.startsWith("on", ignoreCase = true) }
+            .forEach(element::removeAttr)
+        URL_ATTRIBUTES
+            .filter { element.hasAttr(it) && isScriptUrl(element.attr(it)) }
+            .forEach(element::removeAttr)
+    }
+
+    /** Leading whitespace and control characters are stripped first, since a browser ignores them
+     *  when it resolves the scheme and `javascript:` would otherwise read as a relative path. */
+    private fun isScriptUrl(url: String): Boolean =
+        url.filterNot { it.isWhitespace() || it.code < 0x20 }
+            .startsWith("javascript:", ignoreCase = true)
+
+    /** A comment the source escaped is text to the parser and would show mid-paragraph, so it is cut
+     *  out of the one text node holding it. Never out of a data node: raw-text content is written out
+     *  as it stands, and a cut there can assemble an end tag. */
+    private fun dropComments(root: Element) {
+        val comments = mutableListOf<Comment>()
+        val texts = mutableListOf<TextNode>()
+        root.traverse(
+            object : NodeVisitor {
+                override fun head(node: Node, depth: Int) {
+                    when (node) {
+                        is Comment -> comments.add(node)
+                        is TextNode -> texts.add(node)
+                    }
+                }
+
+                override fun tail(node: Node, depth: Int) = Unit
+            },
+        )
+        comments.forEach(Comment::remove)
+        texts.forEach { it.text(it.wholeText.replace(htmlCommentRegex, "")) }
+    }
+
+    /**
+     * A TextView prints what it cannot render, so scripts and styles always go whatever the user
+     * asked for. Pattern-based, and safe to be: `Html.fromHtml` has no script engine and no CSS, so
+     * what gets past this is text on the page rather than code in a browser.
+     */
+    private fun sanitizeForTextView(content: String, blockMedia: Boolean): String {
+        var result = content
+            .replace(scriptTagRegex, "")
+            .replace(scriptSelfClosingRegex, "")
+            .replace(styleTagRegex, "")
+            .replace(styleSelfClosingRegex, "")
+            .replace(noscriptTagRegex, "")
+            .replace(htmlCommentRegex, "")
+            .replace(encodedCommentRegex, "")
+
+        if (blockMedia) result = stripMediaTags(result)
+        return result
+    }
+
+    fun stripMediaTags(content: String): String {
+        return content
+            .replace(imgTagRegex, "")
+            .replace(imageTagRegex, "")
+            .replace(videoTagRegex, "")
+            .replace(audioTagRegex, "")
+            .replace(sourceTagRegex, "")
+    }
+}

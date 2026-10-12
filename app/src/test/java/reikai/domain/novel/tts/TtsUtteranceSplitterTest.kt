@@ -1,0 +1,141 @@
+package reikai.domain.novel.tts
+
+import io.kotest.matchers.collections.shouldBeEmpty
+import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.ints.shouldBeLessThanOrEqual
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
+import org.junit.jupiter.api.Test
+import java.util.Locale
+
+/**
+ * The rule every case here checks is the same one: no chunk may exceed the cap, because an utterance
+ * past it fails and the paragraph is what stops being read.
+ */
+class TtsUtteranceSplitterTest {
+
+    private val runOnSentence = List(300) { "word" }.joinToString(" ") + "."
+
+    private fun split(text: String, maxLength: Int, locale: Locale = Locale.ENGLISH) =
+        TtsUtteranceSplitter.pieces(text, maxLength, locale, bySentence = false).map { it.text }
+
+    /** Capitalized because a sentence boundary is not one where the next word is lower case, so a
+     *  fixture without it never exercises the sentence pass at all. */
+    private fun sentences(count: Int, wordsEach: Int) =
+        (1..count).joinToString(" ") { "Word " + List(wordsEach - 1) { "word" }.joinToString(" ") + "." }
+
+    @Test
+    fun `a paragraph within the cap is one utterance`() {
+        split("One sentence. And a second.", maxLength = 100) shouldBe listOf("One sentence. And a second.")
+    }
+
+    @Test
+    fun `blank text is nothing to speak`() {
+        split("   \n  ", maxLength = 100).shouldBeEmpty()
+    }
+
+    /**
+     * Fifty-character sentences against a cap of two hundred: three fit and a fourth does not, so every
+     * chunk is three whole sentences and the last holds the two left over. Packing words instead would
+     * fill each chunk to the cap and end it mid-sentence.
+     */
+    @Test
+    fun `a long paragraph is broken at its sentences`() {
+        val chunks = split(sentences(count = 20, wordsEach = 10), maxLength = 200)
+
+        chunks shouldBe List(6) { sentences(count = 3, wordsEach = 10) } + sentences(count = 2, wordsEach = 10)
+    }
+
+    /**
+     * A sentence that fits stays whole, so the voice pauses where the writing does. Four forty-character
+     * sentences against a cap of sixty: two never fit together, so every chunk is one whole sentence
+     * and ends where one ends. Breaking anywhere else would leave a chunk ending mid-sentence.
+     */
+    @Test
+    fun `a sentence that fits is never split`() {
+        val chunks = split(sentences(count = 4, wordsEach = 8), maxLength = 60)
+
+        chunks shouldHaveSize 4
+        chunks.forEach { it.last() shouldBe '.' }
+    }
+
+    /**
+     * One run-on sentence past the cap, which the sentence pass cannot help with. Rejoined at spaces the
+     * chunks give the sentence back, which fails if a piece went missing or a cut split a word.
+     */
+    @Test
+    fun `a single oversized sentence is broken between words`() {
+        val chunks = split(runOnSentence, maxLength = 100)
+
+        chunks.joinToString(" ") shouldBe runOnSentence
+    }
+
+    @Test
+    fun `a single oversized sentence still fits the cap`() {
+        val chunks = split(runOnSentence, maxLength = 100)
+
+        chunks.maxOf { it.length } shouldBeLessThanOrEqual 100
+    }
+
+    /**
+     * The case the ruling is about. One Japanese sentence with no spaces and no terminator, so the
+     * sentence pass cannot place a single break and the line instance has to. A small kana may not
+     * begin a line, so a splitter that counted characters instead would strand one at a chunk start.
+     */
+    @Test
+    fun `a run with no spaces breaks where the language allows, not at the cap`() {
+        val text = "あきょ".repeat(40)
+
+        val chunks = split(text, maxLength = 20, locale = Locale.JAPANESE)
+
+        chunks.forEach { it.length shouldBeLessThanOrEqual 20 }
+        chunks.joinToString("") shouldBe text
+        chunks.forEach { it.first() shouldNotBe 'ょ' }
+    }
+
+    /** No break opportunity anywhere, so the cut is all that is left; it still respects the cap. */
+    @Test
+    fun `an unbreakable run is cut at the cap`() {
+        val chunks = split("x".repeat(250), maxLength = 100)
+
+        chunks shouldHaveSize 3
+        chunks.forEach { it.length shouldBeLessThanOrEqual 100 }
+    }
+
+    /** A cut that lands between the halves of a character speaks as a replacement glyph. */
+    @Test
+    fun `a cut never lands inside a character`() {
+        val chunks = split("𝄞".repeat(60), maxLength = 25)
+
+        chunks.forEach { Character.isHighSurrogate(it.last()) shouldBe false }
+        chunks.joinToString("") shouldBe "𝄞".repeat(60)
+    }
+
+    @Test
+    fun `sentence pieces give every sentence a piece of its own`() {
+        TtsUtteranceSplitter.pieces("First one. Second one.", maxLength = 100, Locale.ENGLISH, bySentence = true)
+            .map { it.text } shouldBe listOf("First one.", "Second one.")
+    }
+
+    @Test
+    fun `a piece's offsets name its text in the paragraph`() {
+        val text = "First one. Second one."
+        val pieces = TtsUtteranceSplitter.pieces(text, maxLength = 100, Locale.ENGLISH, bySentence = true)
+
+        pieces.map { text.substring(it.start, it.end) } shouldBe pieces.map { it.text }
+    }
+
+    @Test
+    fun `packed pieces keep their offsets in the paragraph`() {
+        val text = sentences(count = 5, wordsEach = 10)
+        val pieces = TtsUtteranceSplitter.pieces(text, maxLength = 200, Locale.ENGLISH, bySentence = false)
+
+        pieces.map { text.substring(it.start, it.end) } shouldBe pieces.map { it.text }
+    }
+
+    @Test
+    fun `a sentence past the cap still splits under it when spoken by sentence`() {
+        TtsUtteranceSplitter.pieces(runOnSentence, maxLength = 200, Locale.ENGLISH, bySentence = true)
+            .maxOf { it.text.length } shouldBeLessThanOrEqual 200
+    }
+}

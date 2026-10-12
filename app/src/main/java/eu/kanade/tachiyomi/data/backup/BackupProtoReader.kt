@@ -1,4 +1,4 @@
-// RK: net-new. Streams a backup's top-level protobuf fields one at a time so a large backup is
+// Net-new. Streams a backup's top-level protobuf fields one at a time so a large backup is
 // never fully materialised in memory (the read counterpart to BackupCreator.writeProtoField). Used
 // by BackupFileValidator and BackupRestorer to replace the whole-file decodeFromByteArray, which
 // OOMs on large libraries. Generic proto framing, no content-type coupling.
@@ -8,6 +8,7 @@ import android.content.Context
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import okio.buffer
 import okio.gzip
 import okio.source
@@ -53,7 +54,12 @@ class BackupProtoReader(
                                 throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
                             }
                             val bytes = payloadSource.readByteArray(length)
-                            onField(fieldNumber, bytes)
+                            // The same mapping Mihon's whole-file BackupDecoder made for a bad entry.
+                            try {
+                                onField(fieldNumber, bytes)
+                            } catch (_: SerializationException) {
+                                throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
+                            }
                         }
                         WIRE_TYPE_VARINT -> {
                             readVarint(payloadSource)

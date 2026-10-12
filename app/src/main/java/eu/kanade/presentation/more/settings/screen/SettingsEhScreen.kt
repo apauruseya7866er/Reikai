@@ -1,6 +1,7 @@
 package eu.kanade.presentation.more.settings.screen
 
 import android.app.Activity
+import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -15,8 +16,6 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
@@ -40,12 +39,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import eu.kanade.domain.source.interactor.ToggleIncognito
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import exh.eh.EHentaiUpdateWorker
 import exh.eh.EHentaiUpdaterStats
-import exh.favorites.EhFavoritesBackupJob
+import exh.favorites.EhFavoritesBackupWorker
 import exh.metadata.metadata.EHentaiSearchMetadata
 import exh.source.EH_PACKAGE
 import exh.source.ExhPreferences
@@ -53,13 +51,14 @@ import exh.ui.login.EhLoginActivity
 import exh.util.nullIfBlank
 import kotlinx.serialization.json.Json
 import logcat.LogPriority
+import mihon.app.di.appGraph
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Error
+import reikai.presentation.settings.updateScheduleRows
 import tachiyomi.core.common.i18n.pluralStringResource
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_CHARGING
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_NETWORK_NOT_METERED
-import tachiyomi.domain.library.service.LibraryPreferences.Companion.DEVICE_ONLY_ON_WIFI
 import tachiyomi.domain.manga.interactor.GetExhFavoriteMangaWithMetadata
 import tachiyomi.domain.manga.interactor.GetFlatMetadataById
 import tachiyomi.i18n.MR
@@ -76,7 +75,7 @@ import kotlin.time.Duration.Companion.seconds
 
 /**
  * E-Hentai settings screen. Covers the website account / display options, the server profile upload
- * (uconfig), and the favorited-gallery update checker (Phase 5a). The favorites two-way sync group
+ * (uconfig), and the favorited-gallery update checker. The favorites two-way sync group
  * depends on a later EXH phase and is intentionally omitted for now.
  */
 object SettingsEhScreen : SearchableSettings {
@@ -87,7 +86,9 @@ object SettingsEhScreen : SearchableSettings {
     override fun getTitleRes() = MR.strings.pref_category_eh
 
     // top-level category, hidden until adult sources are enabled (the gate lives in Advanced).
-    override fun isEnabled(): Boolean = Injekt.get<ExhPreferences>().isHentaiEnabled().get()
+    // Not a composable, so there is no LocalContext to read: Injekt survives here purely as a
+    // Context locator, which is the shape upstream kept for the same case.
+    override suspend fun isEnabled(): Boolean = Injekt.get<Context>().appGraph.exhPreferences.isHentaiEnabled().get()
 
     /**
      * Re-uploads the server profile whenever a setting that feeds it changes.
@@ -126,9 +127,10 @@ object SettingsEhScreen : SearchableSettings {
 
     @Composable
     override fun getPreferences(): List<Preference> {
-        val exhPreferences: ExhPreferences = remember { Injekt.get() }
-        val getFlatMetadataById: GetFlatMetadataById = remember { Injekt.get() }
-        val getExhFavoriteMangaWithMetadata: GetExhFavoriteMangaWithMetadata = remember { Injekt.get() }
+        val context = LocalContext.current
+        val exhPreferences = remember { context.appGraph.exhPreferences }
+        val getFlatMetadataById = remember { context.appGraph.getFlatMetadataById }
+        val getExhFavoriteMangaWithMetadata = remember { context.appGraph.getExhFavoriteMangaWithMetadata }
         val exhentaiEnabled by exhPreferences.enableExhentai().collectAsState()
         var runConfigureDialog by remember { mutableStateOf(false) }
         val openWarnConfigureDialogController = { runConfigureDialog = true }
@@ -168,17 +170,18 @@ object SettingsEhScreen : SearchableSettings {
     }
 
     // incognito for the built-in E-Hentai sources. The pref drives the switch state; the actual
-    //     effect lives in the shared incognitoExtensions set (see GetIncognitoState's // RK island).
+    //     effect lives in the shared incognitoExtensions set (see GetIncognitoState's RK island).
     @Composable
     private fun ehIncognitoMode(
         exhPreferences: ExhPreferences,
     ): Preference.PreferenceItem.SwitchPreference {
+        val context = LocalContext.current
         return Preference.PreferenceItem.SwitchPreference(
             preference = exhPreferences.ehIncognitoMode(),
             title = stringResource(MR.strings.pref_incognito_mode),
             subtitle = stringResource(MR.strings.pref_incognito_mode_summary),
             onValueChanged = { newVal ->
-                Injekt.get<ToggleIncognito>().await(EH_PACKAGE, newVal)
+                context.appGraph.toggleIncognito.await(EH_PACKAGE, newVal)
                 true
             },
         )
@@ -198,24 +201,24 @@ object SettingsEhScreen : SearchableSettings {
             title = stringResource(MR.strings.eh_favorites_backup),
             // Every item needs the ExHentai login, and a disabled item is hidden (not greyed), so gate
             // the whole group: this hides the header too, instead of leaving it orphaned when logged out.
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
             preferenceItems = listOf(
                 Preference.PreferenceItem.SwitchPreference(
                     preference = exhPreferences.exhBackupFavoritesToAccount(),
                     title = stringResource(MR.strings.eh_backup_favorites_to_account),
                     subtitle = stringResource(MR.strings.eh_backup_favorites_to_account_summary),
-                    enabled = exhentaiEnabled,
+                    visible = exhentaiEnabled,
                 ),
                 Preference.PreferenceItem.ListPreference(
                     preference = exhPreferences.exhFavoritesBackupSlot(),
                     entries = (0..9).associateWith { stringResource(MR.strings.eh_favorites_slot, it) },
                     title = stringResource(MR.strings.pref_eh_favorites_slot),
-                    enabled = exhentaiEnabled,
+                    visible = exhentaiEnabled,
                 ),
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(MR.strings.eh_back_up_favorites_now),
-                    enabled = exhentaiEnabled,
-                    onClick = { EhFavoritesBackupJob.startNow(context) },
+                    visible = exhentaiEnabled,
+                    onClick = { EhFavoritesBackupWorker.startNow(context) },
                 ),
             ),
         )
@@ -231,40 +234,13 @@ object SettingsEhScreen : SearchableSettings {
         getExhFavoriteMangaWithMetadata: GetExhFavoriteMangaWithMetadata,
         getFlatMetadataById: GetFlatMetadataById,
     ): Preference.PreferenceGroup {
-        val context = LocalContext.current
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.gallery_update_checker),
-            preferenceItems = listOf(
-                Preference.PreferenceItem.ListPreference(
-                    preference = exhPreferences.exhAutoUpdateFrequency(),
-                    entries = mapOf(
-                        0 to stringResource(MR.strings.update_never),
-                        12 to stringResource(MR.strings.update_12hour),
-                        24 to stringResource(MR.strings.update_24hour),
-                        48 to stringResource(MR.strings.update_48hour),
-                        72 to stringResource(MR.strings.update_72hour),
-                        168 to stringResource(MR.strings.update_weekly),
-                    ),
-                    title = stringResource(MR.strings.pref_library_update_interval),
-                    onValueChanged = {
-                        EHentaiUpdateWorker.setupTask(context, it)
-                        true
-                    },
-                ),
-                Preference.PreferenceItem.MultiSelectListPreference(
-                    preference = exhPreferences.exhAutoUpdateRequirements(),
-                    entries = mapOf(
-                        DEVICE_ONLY_ON_WIFI to stringResource(MR.strings.connected_to_wifi),
-                        DEVICE_NETWORK_NOT_METERED to stringResource(MR.strings.network_not_metered),
-                        DEVICE_CHARGING to stringResource(MR.strings.charging),
-                    ),
-                    title = stringResource(MR.strings.pref_library_update_restriction),
-                    subtitle = stringResource(MR.strings.restrictions),
-                    onValueChanged = {
-                        EHentaiUpdateWorker.setupTask(context)
-                        true
-                    },
-                ),
+            preferenceItems = updateScheduleRows(
+                exhPreferences.exhAutoUpdateFrequency(),
+                exhPreferences.exhAutoUpdateRequirements(),
+                EHentaiUpdateWorker::setupTask,
+            ) + listOf(
                 updaterStatistics(exhPreferences, getExhFavoriteMangaWithMetadata, getFlatMetadataById),
             ),
         )
@@ -317,7 +293,7 @@ object SettingsEhScreen : SearchableSettings {
             ),
             title = stringResource(MR.strings.use_hentai_at_home),
             subtitle = stringResource(MR.strings.use_hentai_at_home_summary),
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
         )
     }
 
@@ -335,7 +311,7 @@ object SettingsEhScreen : SearchableSettings {
             } else {
                 stringResource(MR.strings.show_japanese_titles_option_2)
             },
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
         )
     }
 
@@ -353,7 +329,7 @@ object SettingsEhScreen : SearchableSettings {
             } else {
                 stringResource(MR.strings.use_original_images_off)
             },
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
         )
     }
 
@@ -363,7 +339,7 @@ object SettingsEhScreen : SearchableSettings {
         return Preference.PreferenceItem.TextPreference(
             title = stringResource(MR.strings.watched_tags),
             subtitle = stringResource(MR.strings.watched_tags_summary),
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
             onClick = {
                 context.startActivity(
                     WebViewActivity.newIntent(
@@ -421,7 +397,7 @@ object SettingsEhScreen : SearchableSettings {
                         isError = !isValid,
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = if (!isValid) {
-                            { Icon(Icons.Outlined.Error, outsideRangeError) }
+                            { Icon(MaterialSymbols.Rounded.Error, outsideRangeError) }
                         } else {
                             null
                         },
@@ -462,7 +438,7 @@ object SettingsEhScreen : SearchableSettings {
         return Preference.PreferenceItem.TextPreference(
             title = stringResource(MR.strings.tag_filtering_threshold),
             subtitle = stringResource(MR.strings.tag_filtering_threshhold_summary, value),
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
             onClick = {
                 dialogOpen = true
             },
@@ -492,7 +468,7 @@ object SettingsEhScreen : SearchableSettings {
         return Preference.PreferenceItem.TextPreference(
             title = stringResource(MR.strings.tag_watching_threshhold),
             subtitle = stringResource(MR.strings.tag_watching_threshhold_summary, value),
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
             onClick = {
                 dialogOpen = true
             },
@@ -508,7 +484,7 @@ object SettingsEhScreen : SearchableSettings {
             preference = exhPreferences.exhWatchedListDefaultState(),
             title = stringResource(MR.strings.watched_list_default),
             subtitle = stringResource(MR.strings.watched_list_state_summary),
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
         )
     }
 
@@ -528,7 +504,7 @@ object SettingsEhScreen : SearchableSettings {
             ),
             title = stringResource(MR.strings.eh_image_quality),
             subtitle = stringResource(MR.strings.eh_image_quality_summary),
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
         )
     }
 
@@ -718,7 +694,7 @@ object SettingsEhScreen : SearchableSettings {
         return Preference.PreferenceItem.TextPreference(
             title = stringResource(MR.strings.language_filtering),
             subtitle = stringResource(MR.strings.language_filtering_summary),
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
             onClick = { dialogOpen = true },
         )
     }
@@ -809,7 +785,7 @@ object SettingsEhScreen : SearchableSettings {
         return Preference.PreferenceItem.TextPreference(
             title = stringResource(MR.strings.front_page_categories),
             subtitle = stringResource(MR.strings.front_page_categories_summary),
-            enabled = exhentaiEnabled,
+            visible = exhentaiEnabled,
             onClick = { dialogOpen = true },
         )
     }

@@ -1,0 +1,95 @@
+-- Which entries still have something left to read, for the recents surface's "show read" filter.
+-- Declares no view or table, so it needs no .sqm: these are queries over tables and views declared
+-- elsewhere.
+--
+-- The answer has to be the one a tap on the row resolves, or the filter keeps a row whose tap opens
+-- nothing and drops one with chapters left. The tap resolves over the merge group with excluded
+-- scanlators left out, so this does too: a library member of a stitched group answers with its group,
+-- unread while any unit has no read copy, read off the counted copies countsByGroup also reads.
+-- Everything else answers with its own chapters: an entry in no group, a member outside the library
+-- (the group counts read library members only), a group not stitched yet, and every entry while
+-- series merging is off.
+--
+-- Not restricted to favorites. The read lane shows entries that are no longer in the library, and
+-- excluding them here would file them as caught up and hide them.
+--
+-- One query per emission, never one per row: RecentsProvider.targetChapter is deliberately resolved
+-- per rendered row, and filtering the feed cannot pay that per row on every re-emission.
+
+--
+-- It runs again on every chapter write, so neither half may read the whole library: a group is unread
+-- when one of its unread counted copies has no read copy beside it (the readCopies = 0 that
+-- mergedUnitCopiesView would compute), found from the unread chapters by index rather than by
+-- aggregating every unit, and the unmerged half reads the partial unread index.
+getMangaIdsWithUnread:
+WITH
+judged AS (
+    SELECT MGM.manga_id AS mangaId, MGM.group_id AS groupId
+    FROM merge_group_manga MGM
+    JOIN manga M ON M.id = MGM.manga_id
+    WHERE :mergingEnabled AND M.user_favorite_at IS NOT NULL
+    AND EXISTS (SELECT 1 FROM mergedCountedUnitView V WHERE V.groupId = MGM.group_id)
+),
+unreadGroups AS (
+    SELECT DISTINCT V.groupId
+    FROM mergedCountedUnitView V
+    WHERE :mergingEnabled AND V.read = 0
+    AND NOT EXISTS (
+        SELECT 1 FROM mergedCountedUnitView R WHERE R.groupId = V.groupId AND R.unit = V.unit AND R.read = 1
+    )
+)
+SELECT mangaId FROM judged WHERE groupId IN (SELECT groupId FROM unreadGroups)
+UNION
+SELECT C.manga_id
+FROM chapter C
+LEFT JOIN excluded_scanlator ES ON C.manga_id = ES.manga_id AND C.remote_scanlator = ES.scanlator
+WHERE C.user_read = 0
+AND ES.scanlator IS NULL
+AND C.manga_id NOT IN (SELECT mangaId FROM judged);
+
+-- Novel twin. No scanlator join: novels offer no scanlator filter.
+getNovelIdsWithUnread:
+WITH
+judged AS (
+    SELECT MGN.novel_id AS novelId, MGN.group_id AS groupId
+    FROM merge_group_novel MGN
+    JOIN novels N ON N._id = MGN.novel_id
+    WHERE :mergingEnabled AND N.favorite_at IS NOT NULL
+    AND EXISTS (SELECT 1 FROM mergedNovelCountedUnitView V WHERE V.groupId = MGN.group_id)
+),
+unreadGroups AS (
+    SELECT DISTINCT V.groupId
+    FROM mergedNovelCountedUnitView V
+    WHERE :mergingEnabled AND V.read = 0
+    AND NOT EXISTS (
+        SELECT 1 FROM mergedNovelCountedUnitView R WHERE R.groupId = V.groupId AND R.unit = V.unit AND R.read = 1
+    )
+)
+SELECT novelId FROM judged WHERE groupId IN (SELECT groupId FROM unreadGroups)
+UNION
+SELECT C.novel_id
+FROM novel_chapters C
+WHERE C.read = 0
+AND C.novel_id NOT IN (SELECT novelId FROM judged);
+
+-- A write signal per content type, for the recents surface's continue-reading memo: a subscription is
+-- told of every write to the tables a query names, so these two exist for their FROM lists, naming
+-- every table a target is resolved from: the chapter rows, the entry row (its chapter sort), the group
+-- membership and the stitch a merged one is resolved over, and on manga the excluded scanlators. The
+-- caller never runs them, which is why the select is only something valid to name the tables with.
+mangaTargetWrites:
+SELECT chapter.id
+FROM chapter
+JOIN manga ON manga.id = chapter.manga_id
+JOIN merged_chapter_unit ON merged_chapter_unit.chapter_id = chapter.id
+JOIN merge_group_manga ON merge_group_manga.manga_id = manga.id
+JOIN excluded_scanlator ON excluded_scanlator.manga_id = manga.id
+LIMIT 1;
+
+novelTargetWrites:
+SELECT novel_chapters._id
+FROM novel_chapters
+JOIN novels ON novels._id = novel_chapters.novel_id
+JOIN merged_novel_chapter_unit ON merged_novel_chapter_unit.chapter_id = novel_chapters._id
+JOIN merge_group_novel ON merge_group_novel.novel_id = novels._id
+LIMIT 1;

@@ -1,0 +1,97 @@
+package mihon.core.migration.migrations
+
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesIntoSet
+import dev.zacsweers.metro.Inject
+import logcat.LogPriority
+import mihon.core.migration.Migration
+import mihon.core.migration.MigrationContext
+import reikai.domain.category.CategoryContentType
+import reikai.domain.db.Transactions
+import reikai.domain.library.novelCategoryFlagsToMangaLayout
+import reikai.domain.novel.NovelPreferences
+import tachiyomi.core.common.preference.Preference
+import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.category.repository.CategoryRepository
+
+/**
+ * Second half of the category schema unification (companion to migration 33.sqm). The .sqm moved novel
+ * categories into the shared `categories` table with a fixed id offset but left two things for here,
+ * because neither can be done in the SQL migration: the moved rows still carry the novel sort-flag layout,
+ * and the novel category-id preferences still name the pre-move ids.
+ *
+ * Fixes the moved rows' flags to the manga layout (the two content types stored Downloaded and TrackerMean
+ * on swapped bits) using the pinned [novelCategoryFlagsToMangaLayout], and shifts the novel category-id
+ * preferences by the same offset the .sqm applied to the ids.
+ */
+@Inject
+@ContributesIntoSet(AppScope::class)
+class MigrateNovelCategoriesToSharedTableMigration(
+    private val categoryRepository: CategoryRepository,
+    private val transactions: Transactions,
+    private val novelPreferences: NovelPreferences,
+    private val preferenceStore: PreferenceStore,
+) : Migration {
+    // Fires once when the shipped versionCode crosses 187 (the version this unification ships in).
+    override val version: Float = 187f
+
+    override suspend fun invoke(migrationContext: MigrationContext): Boolean = withIOContext {
+        // The migrator stamps its version only once the whole chain resolves, so a kill later in the
+        // chain runs this again. The flag swap cannot tell a translated value from an untranslated one,
+        // so only a marker makes the second run a no-op.
+        val done = preferenceStore.getBoolean(Preference.appStateKey("novel_categories_folded_in"), false)
+        if (done.get()) return@withIOContext true
+
+        runCatching {
+            // 1. Translate the moved novel categories' sort flags from the novel layout to the manga one.
+            val novelCategories = categoryRepository.getUnfiltered()
+                .filter { it.contentType == CategoryContentType.NOVEL }
+            transactions.run {
+                novelCategories.forEach { category ->
+                    val fixed = novelCategoryFlagsToMangaLayout(category.flags)
+                    if (fixed != category.flags) categoryRepository.updateFlags(category.id, fixed)
+                }
+            }
+
+            // 2. Shift the novel category-id preferences by the offset the .sqm applied to the ids.
+            shiftIntPref(novelPreferences.defaultNovelCategory())
+            listOf(
+                novelPreferences.removeExcludeCategories(),
+                novelPreferences.downloadNewChapterCategories(),
+                novelPreferences.downloadNewChapterCategoriesExclude(),
+                novelPreferences.novelUpdateCategories(),
+                novelPreferences.novelUpdateCategoriesExclude(),
+            ).forEach(::shiftStringSetPref)
+            done.set(true)
+        }.onFailure { logcat(LogPriority.ERROR, it) { "Novel category fold-in migration failed" } }
+
+        true
+    }
+
+    // -1 (prompt) and 0 (universal/uncategorized) stay put; only real pre-move ids shift. The ceiling
+    // keeps an id that already carries the offset from shifting twice.
+    private fun shiftIntPref(pref: Preference<Int>) {
+        val value = pref.get()
+        if (isPreMoveId(value.toLong())) pref.set(value + NOVEL_CATEGORY_ID_MIGRATION_OFFSET.toInt())
+    }
+
+    private fun shiftStringSetPref(pref: Preference<Set<String>>) {
+        val ids = pref.get()
+        if (ids.isEmpty()) return
+        pref.set(
+            ids.mapTo(mutableSetOf()) { raw ->
+                val id = raw.toLongOrNull()
+                if (id != null && isPreMoveId(id)) (id + NOVEL_CATEGORY_ID_MIGRATION_OFFSET).toString() else raw
+            },
+        )
+    }
+
+    private fun isPreMoveId(id: Long) = id in 1 until NOVEL_CATEGORY_ID_MIGRATION_OFFSET
+
+    companion object {
+        // Keep in sync with the offset literal in 33.sqm.
+        const val NOVEL_CATEGORY_ID_MIGRATION_OFFSET = 100_000_000L
+    }
+}

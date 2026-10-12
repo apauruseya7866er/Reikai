@@ -17,6 +17,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import eu.kanade.presentation.components.AppBar
@@ -33,17 +34,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import mihon.app.di.appGraph
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 /**
  * Imports a gallery link shared or opened from another app (ACTION_VIEW). Resolves the URL to a
@@ -55,7 +54,7 @@ class InterceptActivity : BaseActivity() {
 
     private val status: MutableStateFlow<InterceptResult> = MutableStateFlow(InterceptResult.Idle)
 
-    private val galleryAdder = GalleryAdder()
+    private val galleryAdder by lazy { appGraph.galleryAdder }
 
     init {
         registerSecureActivity(this)
@@ -126,8 +125,6 @@ class InterceptActivity : BaseActivity() {
         val url = intent.takeIf { it.action == Intent.ACTION_VIEW }?.dataString
         if (url != null) {
             lifecycleScope.launchIO {
-                // wait for sources to load
-                Injekt.get<SourceManager>().isInitialized.first { it }
                 loadGallery(url)
             }
         }
@@ -192,6 +189,7 @@ class InterceptActivity : BaseActivity() {
         if (status.value is InterceptResult.Idle) {
             status.value = InterceptResult.Loading
             val sources = galleryAdder.pickSource(gallery)
+            if (sources.isEmpty() && handOffToExtension(gallery)) return
             if (sources.size > 1) {
                 withUIContext {
                     MaterialAlertDialogBuilder(this@InterceptActivity)
@@ -208,6 +206,21 @@ class InterceptActivity : BaseActivity() {
                 loadGalleryEnd(gallery)
             }
         }
+    }
+
+    // No source here imports the link (delegated sources off, or a site with no built-in support), so
+    // it goes back to the installed extension that also opens it, which hands it to the app as a search.
+    private suspend fun handOffToExtension(link: String): Boolean {
+        val uri = link.toUri()
+        val handoff = appGraph.extensionManager.getLoadedExtensions()
+            .map { Intent(Intent.ACTION_VIEW, uri).setPackage(it.pkgName) }
+            .firstOrNull { it.resolveActivity(packageManager) != null }
+            ?: return false
+        withUIContext {
+            startActivity(handoff)
+            finish()
+        }
+        return true
     }
 
     private suspend fun loadGalleryEnd(gallery: String, source: UrlImportableSource? = null) {

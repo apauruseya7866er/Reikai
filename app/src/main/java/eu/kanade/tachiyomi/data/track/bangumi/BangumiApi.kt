@@ -18,6 +18,8 @@ import eu.kanade.tachiyomi.network.HttpException
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
@@ -35,7 +37,7 @@ import uy.kohesive.injekt.injectLazy
 import tachiyomi.domain.track.model.Track as DomainTrack
 
 class BangumiApi(
-    private val trackId: Long,
+    private val trackerId: Long,
     private val client: OkHttpClient,
     interceptor: BangumiInterceptor,
 ) {
@@ -57,7 +59,7 @@ class BangumiApi(
                 .toRequestBody()
             // Returns with 202 Accepted on success with no body
             authClient.newCall(POST(url, body = body, headers = headersOf("Content-Type", APP_JSON)))
-                .awaitSuccess()
+                .awaitSuccess().close()
             track
         }
     }
@@ -81,7 +83,7 @@ class BangumiApi(
                 .build()
             // Returns with 204 No Content
             authClient.newCall(request)
-                .awaitSuccess()
+                .awaitSuccess().close()
 
             track
         }
@@ -111,7 +113,7 @@ class BangumiApi(
                     .parseAs<BGMSearchResult>()
                     .data
                     .filter { it.platform == null || it.platform == "漫画" }
-                    .map { it.toTrackSearch(trackId) }
+                    .map { it.toTrackSearch(trackerId) }
             }
         }
     }
@@ -145,6 +147,20 @@ class BangumiApi(
             .filterIsInstance<Infobox.SingleValue>()
             .joinToString(", ") { it.value }
     // RK <--
+
+    suspend fun getMangaDetails(id: Int): TrackSearch? {
+        return withIOContext {
+            val url = "$API_URL/v0/subjects/$id"
+
+            with(json) {
+                authClient.newCall(GET(url, headers = headersOf("Content-Type", APP_JSON)))
+                    .awaitSuccess()
+                    .parseAs<BGMSubject>()
+                    .takeIf { it.platform == null || it.platform == "漫画" }
+                    ?.toTrackSearch(trackerId)
+            }
+        }
+    }
 
     suspend fun statusLibManga(track: Track, username: String): Track? {
         return withIOContext {

@@ -1,0 +1,178 @@
+package reikai.presentation.details
+
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
+import reikai.domain.merge.ChapterUnit
+import reikai.domain.merge.DetailsRemoval
+import reikai.domain.merge.EntryMergeManager
+import reikai.domain.merge.GroupChapterFlags
+import reikai.domain.merge.MergeScope
+import reikai.domain.merge.viewedMembers
+import tachiyomi.core.common.util.lang.launchIO
+
+/**
+ * The shared read side of a merged entry's details screen: the group ids, the selected-source chip,
+ * the membership observer keeping them live, and the source-switcher chips. Mirrors the write-side
+ * [EntryMergeActionHost]. Per type: [anchorChanges] emits the anchor id, [onSourceChange] hears of a
+ * chip flip, and [resolveSources] maps the ids to chips, owning the not-merged case so the novel side
+ * can clear its sibling map. [observe] runs from each model's init, since the closures capture its state.
+ */
+class EntryMergeGroupHost(
+    private val mergeManager: EntryMergeManager,
+    initialIds: LongArray,
+    private val anchorChanges: Flow<Long>,
+    private val onSourceChange: (from: Long?, to: Long?) -> Unit,
+    private val resolveSources: suspend (LongArray) -> List<EntryMergeSource>,
+) {
+
+    /**
+     * The group and the chip chosen inside it, as ONE cell: [selected] is only ever an id present in
+     * [ids], which two separate flows could not hold, since a consumer combining them saw the pair
+     * disagree for one emission whenever a member left, crashing the manga chapter pipeline on an
+     * unguarded lookup and rendering a migrated-away source on novels. [ids] compares by IDENTITY
+     * ([LongArray] has no structural equals), which the re-aggregate paths rely on: writing a
+     * `copyOf()` re-emits without changing membership.
+     */
+    data class GroupState(val ids: LongArray, val selected: Long?) {
+        /** A source chip shows one source's rows, so its downloads are that source's copies alone. */
+        val mergeScope: MergeScope get() = MergeScope.of(selected != null)
+
+        /** The flags every row of this view answers by, in [mergeScope]. */
+        fun <T> rowFlags(
+            pooled: List<T>,
+            shown: List<T>,
+            stitch: List<ChapterUnit>,
+            id: (T) -> Long,
+            read: (T) -> Boolean,
+            bookmark: (T) -> Boolean,
+            onDisk: () -> Set<Long>,
+        ) = GroupChapterFlags(mergeScope, pooled, shown, stitch, id, read, bookmark, onDisk)
+
+        /** The entries this view shows, which Clear downloads and the scanlator filter reach. */
+        fun viewedIds(anchorId: Long): List<Long> = viewedMembers(ids.asList(), selected, anchorId)
+    }
+
+    private val _state = MutableStateFlow(GroupState(initialIds, selected = null))
+
+    /** The single truth both details models read; see [GroupState]. */
+    val state: StateFlow<GroupState> = _state.asStateFlow()
+
+    /** Group ids (this entry + grouped siblings); size <= 1 when not merged. */
+    val relatedIds: LongArray get() = _state.value.ids
+
+    /** The grouped source chip in view; null = the unified ("All") list. */
+    val selectedSource: Long? get() = _state.value.selected
+
+    /** [selectedSource] as a stream, for the readers that only track the chip. */
+    val selectedSourceChanges: Flow<Long?> = _state.map { it.selected }.distinctUntilChanged()
+
+    private val _chips = MutableStateFlow<List<EntryMergeSource>>(emptyList())
+
+    /** Source-switcher chips for the current group; empty when not merged. */
+    val chips: StateFlow<List<EntryMergeSource>> = _chips.asStateFlow()
+
+    /**
+     * The chips a list built for [group] shows. [chips] resolves after the group it names, so a rebuild
+     * still in flight for an earlier group would otherwise put the later group's switcher over its own
+     * rows; only chips naming members of [group] count, and one member alone is no group.
+     */
+    fun chipsOf(group: GroupState): List<EntryMergeSource> =
+        _chips.value.filter { it.id in group.ids }.takeIf { it.size > 1 }.orEmpty()
+
+    /**
+     * Start the two collectors: recompute the group when the anchor changes or the manager says the
+     * group could resolve differently, and rebuild [chips] whenever the membership changes.
+     */
+    fun observe(scope: CoroutineScope) {
+        scope.launchIO {
+            combine(anchorChanges, mergeManager.relatedIdsChanges()) { anchor, _ -> anchor }
+                .collectLatest { setRelated(mergeManager.computeRelatedIds(it)) }
+        }
+        scope.launchIO {
+            _state.map { it.ids }.distinctUntilChanged().collectLatest { _chips.value = resolveSources(it) }
+        }
+    }
+
+    /**
+     * The one way membership changes, so the selection invariant holds by construction rather than by
+     * each caller remembering to reset the chip. A selection that survives the change is kept:
+     * splitting one sibling away should not knock the user off the chip they were reading.
+     */
+    fun setRelated(ids: LongArray) {
+        _state.value = GroupState(ids, _state.value.selected?.takeIf { it in ids })
+    }
+
+    /** Show one grouped source's chapters, or pass null for the unified ("All") list. An id that is
+     *  not in the group is refused rather than stored, for the same reason [setRelated] prunes, and a
+     *  re-tap of the chip in view does nothing: neither tells the model of a flip. */
+    fun selectSource(entryId: Long?) {
+        val current = _state.value
+        if (entryId != null && entryId !in current.ids) return
+        if (entryId == current.selected) return
+        // Before the write, so no list is built for the new chip with the old chip's selection or page.
+        onSourceChange(current.selected, entryId)
+        _state.update { it.copy(selected = entryId?.takeIf { id -> id in it.ids }) }
+    }
+
+    /** What Clear downloads names and deletes, from one snapshot so the wording and the delete agree. */
+    fun clearDownloadsTarget(anchorId: Long): ClearDownloadsTarget = _state.value.let { group ->
+        ClearDownloadsTarget(
+            sourceName = group.selected?.let { id -> chipsOf(group).firstOrNull { it.id == id }?.sourceName },
+            ids = group.viewedIds(anchorId),
+        )
+    }
+
+    /** The heart's remove for [openedId] over the group and chip in view, the one call both models make. */
+    fun removal(openedId: Long): DetailsRemoval =
+        _state.value.let { DetailsRemoval(openedId, it.ids.toList(), it.selected) }
+
+    /**
+     * Re-read [anchorId]'s group from storage and publish it: how manga's details seed the group on open,
+     * and the one way a caller that just changed the grouping updates this cell. It reads the same source of
+     * truth [observe] does, so an optimistic update cannot disagree with the membership emission that
+     * follows. Callers used to state the new membership from whatever their operation returned, and a split
+     * returns the SURVIVORS: split the anchor's own source out of a three-member group and the cell became
+     * the two OTHER entries.
+     */
+    suspend fun refresh(anchorId: Long) = setRelated(mergeManager.computeRelatedIds(anchorId))
+
+    /** [chapters] plus every grouped source's copy of them, which read, bookmark and tracking reach in
+     *  every view: whether a chapter was read is the story's, not one source's. [stitch] and [load] are
+     *  only called for a merged entry; [load] returns the given ids' chapters. */
+    suspend fun <T> expandToGroup(
+        chapters: List<T>,
+        id: (T) -> Long,
+        stitch: suspend () -> List<ChapterUnit>,
+        load: suspend (Set<Long>) -> List<T>,
+    ): List<T> = expand(MergeScope.Group, chapters, id, stitch, load)
+
+    /** The copies a delete removes: every source's under All, only the chip's own under a source chip,
+     *  matching what the rows show as downloaded. */
+    suspend fun <T> expandForDelete(
+        chapters: List<T>,
+        id: (T) -> Long,
+        stitch: suspend () -> List<ChapterUnit>,
+        load: suspend (Set<Long>) -> List<T>,
+    ): List<T> = expand(_state.value.mergeScope, chapters, id, stitch, load)
+
+    private suspend fun <T> expand(
+        scope: MergeScope,
+        chapters: List<T>,
+        id: (T) -> Long,
+        stitch: suspend () -> List<ChapterUnit>,
+        load: suspend (Set<Long>) -> List<T>,
+    ): List<T> {
+        if (relatedIds.size <= 1) return chapters
+        val held = chapters.mapTo(HashSet(), id)
+        val wanted = scope.copiesOf(held, stitch()) - held
+        return if (wanted.isEmpty()) chapters else chapters + load(wanted)
+    }
+}

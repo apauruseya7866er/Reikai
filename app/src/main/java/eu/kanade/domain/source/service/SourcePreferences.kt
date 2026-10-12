@@ -1,14 +1,21 @@
 package eu.kanade.domain.source.service
 
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.source.interactor.SetMigrateSorting
 import eu.kanade.tachiyomi.util.system.LocaleHelper
+import mihon.domain.extension.model.ContentWarning
 import mihon.domain.migration.models.MigrationFlag
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
+import tachiyomi.core.common.preference.getEnumSet
 import tachiyomi.core.common.preference.getLongArray
 import tachiyomi.domain.library.model.LibraryDisplayMode
 
+@Inject
+@SingleIn(AppScope::class)
 class SourcePreferences(
     preferenceStore: PreferenceStore,
 ) {
@@ -31,12 +38,17 @@ class SourcePreferences(
 
     val pinnedSources: Preference<Set<String>> = preferenceStore.getStringSet("pinned_catalogues", emptySet())
 
-    val lastUsedSource: Preference<Long> = preferenceStore.getLong(
-        Preference.appStateKey("last_catalogue_source"),
-        -1,
+    // RK: lastUsedSource dropped, since ReikaiSourcePreferences.lastUsedSource keys both content types.
+
+    val enabledContentWarnings: Preference<Set<ContentWarning>> = preferenceStore.getEnumSet(
+        "enabled_content_warnings",
+        setOf(ContentWarning.SAFE, ContentWarning.MIXED, ContentWarning.NSFW),
     )
 
-    val showNsfwSource: Preference<Boolean> = preferenceStore.getBoolean("show_nsfw_source", true)
+    val applyContentWarningsToInstalled: Preference<Boolean> = preferenceStore.getBoolean(
+        "apply_content_warnings_to_installed",
+        true,
+    )
 
     val migrationSortingMode: Preference<SetMigrateSorting.Mode> = preferenceStore.getEnum(
         "pref_migration_sorting",
@@ -49,9 +61,6 @@ class SourcePreferences(
     )
 
     val hideInLibraryItems: Preference<Boolean> = preferenceStore.getBoolean("browse_hide_in_library_items", false)
-
-    // RK: render rich E-Hentai browse rows (rating, category, pages, language, uploader, date) by default
-    val enableEnhancedEhView: Preference<Boolean> = preferenceStore.getBoolean("enable_enhanced_eh_view", true)
 
     val extensionRepos: Preference<Set<String>> = preferenceStore.getStringSet("extension_repos", emptySet())
 

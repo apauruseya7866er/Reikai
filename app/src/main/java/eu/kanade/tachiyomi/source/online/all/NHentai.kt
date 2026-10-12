@@ -19,17 +19,18 @@ import eu.kanade.tachiyomi.source.online.MetadataSource
 import eu.kanade.tachiyomi.source.online.NamespaceSource
 import eu.kanade.tachiyomi.source.online.UrlImportableSource
 import exh.metadata.metadata.NHentaiSearchMetadata
-import exh.metadata.metadata.RaisedSearchMetadata
-import exh.metadata.metadata.base.RaisedTag
 import exh.source.DelegatedHttpSource
-import exh.util.trimOrNull
+import exh.source.NhGallery
+import exh.source.NhServers
+import exh.source.fillFrom
+import exh.source.layeredMangaUpdate
+import exh.source.nhJson
+import exh.source.nhPagePreviews
+import exh.source.nhPreferredTitle
+import exh.util.SourceTagsUtil
 import exh.util.urlImportFetchSearchMangaSuspend
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import okhttp3.CacheControl
 import okhttp3.Response
-import tachiyomi.core.common.util.lang.withIOContext
 
 class NHentai(delegate: HttpSource, val context: Context) :
     DelegatedHttpSource(delegate),
@@ -39,38 +40,23 @@ class NHentai(delegate: HttpSource, val context: Context) :
     PagePreviewSource {
     override val metaClass = NHentaiSearchMetadata::class
     override fun newMetaInstance() = NHentaiSearchMetadata()
+
+    override fun tagSearchQuery(namespace: String, tag: String) = SourceTagsUtil.wrapTagNHentai(namespace, tag)
     override val lang = delegate.lang
 
     private val sourcePreferences: SharedPreferences by lazy {
         context.getSharedPreferences("source_$id", 0x0000)
     }
 
-    private val preferredTitle: Int
-        get() = when (sourcePreferences.getString(TITLE_PREF, "full")) {
-            "full" -> NHentaiSearchMetadata.TITLE_TYPE_ENGLISH
-            else -> NHentaiSearchMetadata.TITLE_TYPE_SHORT
-        }
+    private val servers = NhServers()
 
-    // capture gallery metadata on the details fetch, delegate chapters to the stock source.
-    // URL import (Komikku's fetchSearchManga override) is deferred with GalleryAdder.
     override suspend fun getMangaUpdate(
         manga: SManga,
         chapters: List<SChapter>,
         fetchDetails: Boolean,
         fetchChapters: Boolean,
-    ): SMangaUpdate {
-        val updatedManga = if (fetchDetails) {
-            val response = client.newCall(mangaDetailsRequest(manga)).awaitSuccess()
-            parseToManga(manga, response)
-        } else {
-            manga
-        }
-        val updatedChapters = if (fetchChapters) {
-            delegate.getMangaUpdate(manga, chapters, fetchDetails = false, fetchChapters = true).chapters
-        } else {
-            chapters
-        }
-        return SMangaUpdate(updatedManga, updatedChapters)
+    ): SMangaUpdate = layeredMangaUpdate(manga, chapters, fetchDetails, fetchChapters) { base, response ->
+        parseToManga(base, response)
     }
 
     // resolve a pasted nhentai gallery URL via GalleryAdder; otherwise run a normal search.
@@ -81,101 +67,10 @@ class NHentai(delegate: HttpSource, val context: Context) :
     }
 
     override suspend fun parseIntoMetadata(metadata: NHentaiSearchMetadata, input: Response) {
-        if (nhConfig == null) getNhConfig()
-        val jsonResponse = jsonParser.decodeFromString<JsonResponse>(input.body.string())
-
-        with(metadata) {
-            nhId = jsonResponse.id
-
-            uploadDate = jsonResponse.uploadDate
-
-            favoritesCount = jsonResponse.numFavorites
-
-            mediaId = jsonResponse.mediaId
-
-            jsonResponse.title?.let { title ->
-                japaneseTitle = title.japanese
-                shortTitle = title.pretty
-                englishTitle = title.english
-            }
-
-            preferredTitle = this@NHentai.preferredTitle
-
-            coverImageUrl =
-                jsonResponse.cover?.path?.let { "$thumbServer/$it" }
-                    ?: jsonResponse.thumbnail?.path?.let { "$thumbServer/$it" }
-
-            pageImagePreviewUrls = jsonResponse.pages.mapNotNull { it.thumbnail }
-
-            scanlator = jsonResponse.scanlator?.trimOrNull()
-
-            tags.clear()
-            jsonResponse.tags.filter {
-                it.type != null && it.name != null
-            }.mapTo(tags) {
-                RaisedTag(
-                    it.type!!,
-                    it.name!!,
-                    if (it.type == NHentaiSearchMetadata.NHENTAI_CATEGORIES_NAMESPACE) {
-                        RaisedSearchMetadata.TAG_TYPE_VIRTUAL
-                    } else {
-                        NHentaiSearchMetadata.TAG_TYPE_DEFAULT
-                    },
-                )
-            }
-        }
+        servers.ensure(client, headers)
+        val gallery = nhJson.decodeFromString<NhGallery>(input.body.string())
+        metadata.fillFrom(gallery, servers.thumbServer, nhPreferredTitle(sourcePreferences))
     }
-
-    @Serializable
-    data class JsonConfig(
-        @SerialName("image_servers")
-        val imageServers: List<String> = emptyList(),
-        @SerialName("thumb_servers")
-        val thumbServers: List<String> = emptyList(),
-    )
-
-    @Serializable
-    data class JsonResponse(
-        val id: Long,
-        @SerialName("media_id")
-        val mediaId: String? = null,
-        val title: JsonTitle? = null,
-        val cover: JsonPage? = null,
-        val thumbnail: JsonPage? = null,
-        val scanlator: String? = null,
-        @SerialName("upload_date")
-        val uploadDate: Long? = null,
-        val tags: List<JsonTag> = emptyList(),
-        @SerialName("num_pages")
-        val numPages: Int? = null,
-        @SerialName("num_favorites")
-        val numFavorites: Long? = null,
-        val pages: List<JsonPage> = emptyList(),
-    )
-
-    @Serializable
-    data class JsonTitle(
-        val english: String? = null,
-        val japanese: String? = null,
-        val pretty: String? = null,
-    )
-
-    @Serializable
-    data class JsonPage(
-        val path: String? = null,
-        val width: Long? = null,
-        val height: Long? = null,
-        val thumbnail: String? = null,
-    )
-
-    @Serializable
-    data class JsonTag(
-        val id: Long? = null,
-        val type: String? = null,
-        val name: String? = null,
-        val url: String? = null,
-        val count: Long? = null,
-    )
 
     override val matchingHosts = listOf(
         "nhentai.net",
@@ -190,41 +85,12 @@ class NHentai(delegate: HttpSource, val context: Context) :
     }
 
     override suspend fun getPagePreviewList(manga: SManga, chapters: List<SChapter>, page: Int): PagePreviewPage {
-        if (nhConfig == null) getNhConfig()
+        servers.ensure(client, headers)
         val metadata = fetchOrLoadMetadata(manga.id()) {
             client.newCall(mangaDetailsRequest(manga)).awaitSuccess()
         }
-        return PagePreviewPage(
-            page,
-            metadata.pageImagePreviewUrls.mapIndexed { index, path ->
-                PagePreviewInfo(
-                    index + 1,
-                    imageUrl = "$thumbServer/$path",
-                )
-            },
-            false,
-            1,
-        )
+        return nhPagePreviews(page, metadata.pageImagePreviewUrls, servers.thumbServer)
     }
-
-    var nhConfig: JsonConfig? = null
-    suspend fun getNhConfig() {
-        try {
-            val body = withIOContext {
-                client.newCall(GET("https://nhentai.net/api/v2/config", headers)).awaitSuccess()
-            }
-                .use { it.body.string() }
-            nhConfig = jsonParser.decodeFromString<JsonConfig>(body)
-        } catch (_: Exception) {
-            nhConfig = JsonConfig(
-                (1..4).map { n -> "https://i$n.nhentai.net" },
-                (1..4).map { n -> "https://t$n.nhentai.net" },
-            )
-        }
-    }
-
-    val thumbServer
-        get() = nhConfig?.thumbServers?.randomOrNull() ?: "https://t1.nhentai.net"
 
     override suspend fun fetchPreviewImage(page: PagePreviewInfo, cacheControl: CacheControl?): Response {
         return client.newCachelessCallWithProgress(
@@ -235,12 +101,5 @@ class NHentai(delegate: HttpSource, val context: Context) :
             },
             page,
         ).awaitSuccess()
-    }
-
-    companion object {
-        private val jsonParser = Json {
-            ignoreUnknownKeys = true
-        }
-        private const val TITLE_PREF = "Display manga title as:"
     }
 }

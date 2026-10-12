@@ -1,0 +1,374 @@
+package reikai.presentation.migrate.flow
+
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import eu.kanade.tachiyomi.data.cache.CoverCache
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import reikai.data.novel.refreshNovelFromSource
+import reikai.data.novel.toNovel
+import reikai.data.novel.toSourceChapters
+import reikai.domain.chapter.ChapterNumberOverrideRepository
+import reikai.domain.entry.EntryId
+import reikai.domain.library.ContentType
+import reikai.domain.novel.NovelChapterRepository
+import reikai.domain.novel.NovelMergeManager
+import reikai.domain.novel.NovelPreferences
+import reikai.domain.novel.NovelRepository
+import reikai.domain.novel.interactor.MigrateNovelUseCase
+import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelMigrationFlag
+import reikai.domain.novel.model.asNovelCover
+import reikai.domain.novel.model.hasCustomCover
+import reikai.domain.novel.model.novelResultCover
+import reikai.domain.source.GetEnabledNovelSources
+import reikai.domain.source.ReikaiSourcePreferences
+import reikai.novel.download.NovelDownloadManager
+import reikai.novel.host.ChapterItem
+import reikai.novel.host.NovelItem
+import reikai.novel.install.LnPluginInstaller
+import reikai.novel.source.NovelSource
+import reikai.novel.source.NovelSourceManager
+import reikai.novel.source.SmartNovelSearchEngine
+import reikai.presentation.migrate.PickMember
+import reikai.util.runCatchingCancellable
+import tachiyomi.domain.library.service.LibraryPreferences
+
+/**
+ * The adapter-owned novel candidate: the raw search hit, and the stored row once
+ * [NovelMigrationFlowAdapter.resolve] has materialised it. A hit is only a plugin's search-result
+ * entry until then, which is why novel candidates start unresolved. A stored row says the row
+ * exists, not that its chapters were ever fetched: a browsed pick arrives stored and empty.
+ */
+data class NovelCandidateHandle(
+    val item: NovelItem,
+    val stored: Novel? = null,
+) : MigrationHandle
+
+/** The novel half of the migration seam: the plugin sources, novel repositories and migrate engine. */
+@Inject
+@SingleIn(AppScope::class)
+class NovelMigrationFlowAdapter(
+    private val sourceManager: NovelSourceManager,
+    private val getEnabledNovelSources: GetEnabledNovelSources,
+    private val sourcePreferences: ReikaiSourcePreferences,
+    private val novelPreferences: NovelPreferences,
+    private val novelRepository: NovelRepository,
+    private val chapterRepository: NovelChapterRepository,
+    private val libraryPreferences: LibraryPreferences,
+    private val chapterNumberOverrides: ChapterNumberOverrideRepository,
+    private val coverCache: CoverCache,
+    private val downloadManagerProvider: () -> NovelDownloadManager,
+    private val migrateNovel: MigrateNovelUseCase,
+    private val mergeManager: NovelMergeManager,
+    private val installer: LnPluginInstaller,
+) : MigrationFlowAdapter {
+
+    // Building the manager restores the persisted queue and can start the download worker, which
+    // opening the manga migrate flow must not do: both adapters are built together.
+    private val downloadManager: NovelDownloadManager get() = downloadManagerProvider()
+
+    override val contentType = ContentType.NOVELS
+
+    override suspend fun prepare() {
+        // Best-effort, like every other novel surface: a load failure falls through to empty sources.
+        runCatchingCancellable { installer.ensureLoaded() }
+    }
+
+    override suspend fun enabledSources(): List<MigrationSourceUi> {
+        return getEnabledNovelSources.get()
+            .map { source ->
+                MigrationSourceUi(
+                    key = source.id,
+                    name = source.name,
+                    lang = source.lang,
+                    icon = MigrationSourceIcon.NovelUrl(source.iconUrl),
+                    format = source.format,
+                )
+            }
+            .sortedWith(migrationSourceOrder)
+    }
+
+    override fun savedSelection(): List<String> = sourcePreferences.novelMigrationSources.get()
+
+    override fun persistSelection(keys: List<String>) {
+        sourcePreferences.novelMigrationSources.set(keys)
+    }
+
+    override fun pinnedKeys(): Set<String> = sourcePreferences.pinnedNovelSources.get()
+
+    override suspend fun mergeGroupMembers(ids: List<Long>): List<PickMember> =
+        mergeGroupPickMembers(ids, novelRepository::getById, mergeManager::computeRelatedIds) { novel ->
+            PickMember(
+                id = novel.id,
+                title = novel.title,
+                coverData = novel.asNovelCover(),
+                payload = MigrationPayload.OfNovel(novel),
+                sourceName = sourceDisplayName(novel.source),
+                chapterCount = chapterRepository.getChapterSummaryByNovelId(novel.id).chapterCount.toInt(),
+            )
+        }
+
+    override fun readTuning(): MigrationTuning = MigrationTuning(
+        deepSearch = novelPreferences.novelMigrationDeepSearch().get(),
+        prioritizeByChapters = novelPreferences.novelMigrationPrioritizeByChapters().get(),
+        hideUnmatched = novelPreferences.novelMigrationHideUnmatched().get(),
+        hideWithoutUpdates = novelPreferences.novelMigrationHideWithoutUpdates().get(),
+    )
+
+    override fun persistTuning(tuning: MigrationTuning) {
+        novelPreferences.novelMigrationDeepSearch().set(tuning.deepSearch)
+        novelPreferences.novelMigrationPrioritizeByChapters().set(tuning.prioritizeByChapters)
+        novelPreferences.novelMigrationHideUnmatched().set(tuning.hideUnmatched)
+        novelPreferences.novelMigrationHideWithoutUpdates().set(tuning.hideWithoutUpdates)
+    }
+
+    override suspend fun sourceDisplayName(sourceKey: String): String {
+        return sourceManager.nameOf(sourceKey)
+    }
+
+    override fun favorites(sourceKey: String): Flow<List<MigrationFavorite>> {
+        return novelRepository.getFavoritesBySourceAsFlow(sourceKey).map { list ->
+            list.asSequence()
+                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+                .map { novel ->
+                    MigrationFavorite(
+                        id = EntryId.Novel(novel.id),
+                        title = novel.title,
+                        cover = novel.asNovelCover(),
+                        payload = MigrationPayload.OfNovel(novel),
+                    )
+                }
+                .toList()
+        }
+    }
+
+    override suspend fun loadEntries(ids: List<Long>): List<MigrationEntry> {
+        return ids.mapNotNull { id ->
+            val novel = novelRepository.getById(id) ?: return@mapNotNull null
+            val summary = chapterRepository.getChapterSummaryByNovelId(id)
+            MigrationEntry(
+                id = EntryId.Novel(id),
+                title = novel.title,
+                sourceKey = novel.source,
+                sourceName = sourceDisplayName(novel.source),
+                chapterCount = summary.chapterCount.toInt(),
+                latestChapter = shownLatestChapter(summary.latestChapterNumber),
+                cover = novel.asNovelCover(),
+                payload = MigrationPayload.OfNovel(novel),
+            )
+        }
+    }
+
+    override suspend fun suggest(
+        entry: MigrationEntry,
+        sourceKey: String,
+        tuning: MigrationTuning,
+    ): MigrationCandidate? {
+        val source = sourceManager.get(sourceKey) ?: return null
+        // Score against the title alone and thread the extra query into the search string only,
+        // matching manga: a term the user added to find the entry is not part of the entry's title.
+        // Score the raw hit list, then drop the entry's own listing from the winner, exactly as manga
+        // does. Filtering first would be worse than not filtering: the engine skips title scoring
+        // altogether when a source returns a single candidate, so a plugin repeating one wrong
+        // listing would dedupe down to that one hit and have it accepted unscored. Pinned by
+        // BaseSmartSearchEngine for the extra query and MigrationAdapterConformanceTest for the own listing.
+        val match = SmartNovelSearchEngine(tuning.extraQuery).bestMatch(entry.title, tuning.deepSearch) { query ->
+            source.search(query, 1, filters = null).items
+        } ?: return null
+        if (entry.isOwnListing(sourceKey, match.path)) return null
+        val candidate = match.toCandidate(sourceKey)
+        // Ranking needs every candidate's count, as manga fetches each one's chapter list here. Only
+        // then: otherwise the count peek after the search fills the one suggestion that is kept.
+        if (!tuning.prioritizeByChapters) return candidate
+        // Best-effort, as manga's chapter fetch is: a failed count leaves the hit unranked, not errored.
+        val chapters = runCatchingCancellable { source.allChapters(match.path) }.getOrNull().orEmpty()
+        return candidate.withCounts(match, chapters)
+    }
+
+    /**
+     * Every page of [path]'s chapter list, or a throw. All pages or none, since a partial count reads as
+     * known and hide-without-updates drops a row on it for good.
+     */
+    private suspend fun NovelSource.allChapters(path: String): List<ChapterItem> {
+        val parsed = parseNovel(path)
+        return parsed.chapters.orEmpty() + (2..parsed.totalPages).flatMap { page ->
+            checkNotNull(parsePage(path, page.toString())) { "Page $page answered nothing" }.chapters.orEmpty()
+        }
+    }
+
+    override suspend fun candidates(
+        entry: MigrationEntry,
+        query: String,
+        sourceKey: String,
+    ): List<MigrationCandidate> {
+        val source = sourceManager.get(sourceKey) ?: return emptyList()
+        return source.search(query, 1, filters = null).items
+            .usableHits(entry, sourceKey)
+            .map { it.toCandidate(sourceKey) }
+    }
+
+    /**
+     * The entry's own source stays searchable, but its identical listing is never a target. Dedupe
+     * by path: a plugin can repeat a listing within one page, and the path is the key.
+     */
+    private fun List<NovelItem>.usableHits(entry: MigrationEntry, sourceKey: String): List<NovelItem> {
+        return distinctBy { it.path }.filterNot { entry.isOwnListing(sourceKey, it.path) }
+    }
+
+    /**
+     * A search hit has no stored row, so being in the library is a lookup, not a field. It is read
+     * for the marker and the cover only, and deliberately does NOT populate the handle's `stored`: that field is
+     * what decides whether a commit still owes this candidate a materialising [resolve].
+     */
+    private suspend fun NovelItem.toCandidate(sourceKey: String): MigrationCandidate {
+        val stored = novelRepository.getByUrlAndSource(path, sourceKey)
+        return MigrationCandidate(
+            sourceKey = sourceKey,
+            title = name,
+            chapterCount = null,
+            key = "$sourceKey:$path",
+            cover = novelResultCover(stored, cover, sourceKey),
+            inLibrary = stored?.favorite == true,
+            handle = NovelCandidateHandle(this),
+        )
+    }
+
+    override suspend fun resolve(candidate: MigrationCandidate): ResolvedTarget? {
+        val handle = candidate.handle as? NovelCandidateHandle ?: return null
+        val source = sourceManager.get(candidate.sourceKey) ?: return null
+        // The search hit already carries everything a row needs to exist (title, path, cover), so it
+        // is stored straight from that; the refresh below is the one call that parses the source, and
+        // it fills in the details and chapters. Parsing here as well would double every accept.
+        // A row the handle already holds is reused, never taken as synced: a target picked by
+        // browsing a source is stored with no chapters, so it still owes the fetch below.
+        val stored = handle.stored ?: novelRepository.insertOrGet(handle.item.toNovel(source.id)) ?: return null
+        // Skipped for a row that already has chapters, and best-effort, as manga's fetch is: a
+        // failure still resolves, unsynced, and the engine's own refresh is the second attempt,
+        // which fails the row if the source is still failing.
+        val fetched = chapterRepository.getByNovelId(stored.id).isEmpty()
+        if (fetched) {
+            runCatchingCancellable {
+                refreshNovelFromSource(
+                    stored,
+                    source,
+                    chapterRepository,
+                    novelRepository,
+                    libraryPreferences,
+                    chapterNumberOverrides,
+                    coverCache,
+                    novelDownloadManager = downloadManager,
+                )
+            }
+        }
+        val resolved = novelRepository.getByUrlAndSource(handle.item.path, source.id) ?: return null
+        val chapters = chapterRepository.getByNovelId(resolved.id)
+        return ResolvedTarget(
+            candidate = candidate.copy(
+                title = resolved.title,
+                cover = resolved.asNovelCover(),
+                handle = handle.copy(stored = resolved),
+            ).withChapterCounts(chapters) { it.chapterNumber },
+            // A refresh that stored nothing is not a sync (a soft-error page can parse as an empty
+            // chapter list without throwing); claiming it would make the engine skip its
+            // compensating refresh and migrate onto an empty row.
+            syncedNow = fetched && chapters.isNotEmpty(),
+        )
+    }
+
+    override suspend fun peekCounts(candidate: MigrationCandidate): MigrationCandidate? {
+        val handle = candidate.handle as? NovelCandidateHandle ?: return null
+        // A search hit leaves the handle's stored row unset (see toCandidate), so a hit already in
+        // the database is looked up here: its stored chapters answer without a network parse.
+        val stored = novelRepository.getByUrlAndSource(handle.item.path, candidate.sourceKey)
+            ?.let { chapterRepository.getByNovelId(it.id) }
+            .orEmpty()
+        if (stored.isNotEmpty()) return candidate.withChapterCounts(stored) { it.chapterNumber }
+        val source = sourceManager.get(candidate.sourceKey) ?: return null
+        // Every page, as manga's peek reads the whole list: a first page alone would undercount.
+        val chapters = source.allChapters(handle.item.path)
+        if (chapters.isEmpty()) return null
+        return candidate.withCounts(handle.item, chapters)
+    }
+
+    private fun MigrationCandidate.withCounts(item: NovelItem, chapters: List<ChapterItem>): MigrationCandidate =
+        withChapterCounts(chapters.toSourceChapters(novelId = -1L, novelTitle = item.name)) { it.chapterNumber }
+
+    override suspend fun storedCandidate(id: Long): MigrationCandidate? {
+        val novel = novelRepository.getById(id) ?: return null
+        val chapters = chapterRepository.getByNovelId(id)
+        return MigrationCandidate(
+            sourceKey = novel.source,
+            title = novel.title,
+            chapterCount = null,
+            key = "${novel.source}:${novel.url}",
+            cover = novel.asNovelCover(),
+            inLibrary = novel.favorite,
+            handle = NovelCandidateHandle(
+                item = NovelItem(name = novel.title, path = novel.url, cover = novel.thumbnailUrl),
+                stored = novel,
+            ),
+            // A browsed row may be stored without a chapter sync; the engine refreshes it at migrate.
+        ).withChapterCounts(chapters) { it.chapterNumber }
+    }
+
+    override fun savedFlags(): Set<MigrationDataFlag> {
+        return NovelMigrationFlag.fromBits(novelPreferences.novelMigrationFlags().get())
+            .map { it.toNeutral() }
+            .toSet()
+    }
+
+    override fun persistFlags(flags: Set<MigrationDataFlag>) {
+        novelPreferences.novelMigrationFlags().set(
+            NovelMigrationFlag.toBits(
+                flags.mapTo(HashSet()) {
+                    it.toNovelFlag()
+                },
+            ),
+        )
+    }
+
+    override suspend fun applicableFlags(entries: List<MigrationEntry>): Set<MigrationDataFlag> = applicableFlagsOf(
+        entries.mapNotNull { (it.payload as? MigrationPayload.OfNovel)?.novel },
+        hasCustomCover = { it.hasCustomCover(coverCache) },
+        hasNotes = { it.notes.isNotBlank() },
+        hasDownloads = { downloadManager.getDownloadCount(it) > 0 },
+    )
+
+    override suspend fun migrate(
+        entry: MigrationEntry,
+        target: MigrationCandidate,
+        replace: Boolean,
+        flags: Set<MigrationDataFlag>,
+        targetJustSynced: Boolean,
+    ) {
+        val current = (entry.payload as? MigrationPayload.OfNovel)?.novel ?: error("novel entry payload missing")
+        val handle = target.handle as? NovelCandidateHandle
+        val targetNovel = handle?.stored ?: error("novel target not resolved")
+        migrateNovel(
+            current,
+            targetNovel,
+            flags.mapTo(HashSet()) { it.toNovelFlag() },
+            replace,
+            skipTargetRefresh = targetJustSynced,
+        )
+    }
+
+    // Name-mapped on purpose: the two enums share concepts but not bit layouts.
+    private fun NovelMigrationFlag.toNeutral(): MigrationDataFlag = when (this) {
+        NovelMigrationFlag.CHAPTER -> MigrationDataFlag.CHAPTER
+        NovelMigrationFlag.CATEGORY -> MigrationDataFlag.CATEGORY
+        NovelMigrationFlag.COVER -> MigrationDataFlag.CUSTOM_COVER
+        NovelMigrationFlag.NOTES -> MigrationDataFlag.NOTES
+        NovelMigrationFlag.REMOVE_DOWNLOAD -> MigrationDataFlag.REMOVE_DOWNLOAD
+    }
+
+    private fun MigrationDataFlag.toNovelFlag(): NovelMigrationFlag = when (this) {
+        MigrationDataFlag.CHAPTER -> NovelMigrationFlag.CHAPTER
+        MigrationDataFlag.CATEGORY -> NovelMigrationFlag.CATEGORY
+        MigrationDataFlag.CUSTOM_COVER -> NovelMigrationFlag.COVER
+        MigrationDataFlag.NOTES -> NovelMigrationFlag.NOTES
+        MigrationDataFlag.REMOVE_DOWNLOAD -> NovelMigrationFlag.REMOVE_DOWNLOAD
+    }
+}

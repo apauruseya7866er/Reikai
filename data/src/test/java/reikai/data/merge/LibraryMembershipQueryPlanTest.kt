@@ -1,0 +1,48 @@
+package reikai.data.merge
+
+import app.cash.sqldelight.db.SqlDriver
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import io.kotest.assertions.withClue
+import io.kotest.matchers.string.shouldStartWith
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
+import reikai.data.RecordingDriver
+import reikai.data.queryPlan
+import reikai.domain.library.ContentType
+import tachiyomi.data.Database
+import tachiyomi.data.DatabaseBindings
+
+/**
+ * The library-membership query re-runs on every write to its entry table, since it reads the favorite
+ * flag and SQLite notifies per table, and two collectors keep it live whether or not the library is on
+ * screen. So what each run costs is what has to stay small: it must walk the grouped entries and probe
+ * each one's row, not walk every library favorite looking for the few that are grouped.
+ */
+class LibraryMembershipQueryPlanTest {
+
+    private val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+
+    @AfterEach
+    fun tearDown() {
+        driver.close()
+    }
+
+    @ParameterizedTest
+    @CsvSource("MANGA, SCAN MGM", "NOVELS, SCAN MGN")
+    fun `the library membership query walks the groups, not the library`(type: ContentType, scan: String) = runTest {
+        Database.Schema.create(driver).await()
+        val issued = mutableListOf<String>()
+        MergeGroupRepositoryImpl(database(RecordingDriver(driver, issued))).getLibraryMembershipsAsFlow(type).first()
+
+        val plan = driver.queryPlan(issued.single())
+
+        withClue(plan) {
+            plan.first() shouldStartWith scan
+        }
+    }
+
+    private fun database(driver: SqlDriver) = DatabaseBindings.providesDatabase(driver)
+}

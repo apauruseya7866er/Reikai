@@ -8,20 +8,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
-import cafe.adriel.voyager.core.model.ScreenModel
-import cafe.adriel.voyager.core.model.ScreenModelStore
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.core.screen.ScreenKey
 import cafe.adriel.voyager.core.screen.uniqueScreenKey
 import cafe.adriel.voyager.core.stack.StackEvent
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.transitions.ScreenTransitionContent
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.plus
 import soup.compose.material.motion.animation.materialSharedAxisX
 import soup.compose.material.motion.animation.rememberSlideDistance
 
@@ -38,18 +30,6 @@ abstract class Screen : Screen {
 
     override val key: ScreenKey = uniqueScreenKey
 }
-
-/**
- * A variant of ScreenModel.coroutineScope except with the IO dispatcher instead of the
- * main dispatcher.
- */
-val ScreenModel.ioCoroutineScope: CoroutineScope
-    get() = ScreenModelStore.getOrPutDependency(
-        screenModel = this,
-        name = "ScreenModelIoCoroutineScope",
-        factory = { key -> CoroutineScope(Dispatchers.IO + SupervisorJob()) + CoroutineName(key) },
-        onDispose = { scope -> scope.cancel() },
-    )
 
 interface AssistContentScreen {
     fun onProvideAssistUrl(): String?
@@ -80,16 +60,23 @@ fun ScreenTransition(
     modifier: Modifier = Modifier,
     content: ScreenTransitionContent = { it.Content() },
 ) {
+    // RK --> registered before the content, so a screen's own handlers and a nested navigator keep
+    //        priority even when the whole tree composes at once (rotation, activity restore). From Komikku.
+    BackHandler(enabled = navigator.canPop, onBack = navigator::pop)
+    // RK <--
+
     AnimatedContent(
         targetState = navigator.lastItem,
         transitionSpec = transition,
         modifier = modifier,
         label = "transition",
+        // RK: keyed like saveableState below, so a restored copy of an object screen and the object
+        //     itself are never composed together (a "used multiple times" crash). From Komikku.
+        contentKey = { it.key },
     ) { screen ->
         navigator.saveableState("transition", screen) {
             content(screen)
         }
     }
-
-    BackHandler(enabled = navigator.canPop, onBack = navigator::pop)
+    // RK: the navigator's BackHandler moved above AnimatedContent
 }

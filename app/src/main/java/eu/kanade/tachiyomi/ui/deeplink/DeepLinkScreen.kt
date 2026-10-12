@@ -6,14 +6,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import cafe.adriel.voyager.core.model.rememberScreenModel
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import dev.zacsweers.metrox.viewmodel.assistedMetroViewModel
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.util.Screen
-import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import reikai.presentation.browse.globalsearch.outsideSearchScreen
+import reikai.presentation.novel.details.NovelScreen
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
@@ -28,10 +29,8 @@ class DeepLinkScreen(
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
 
-        val screenModel = rememberScreenModel {
-            DeepLinkScreenModel(query = query)
-        }
-        val state by screenModel.state.collectAsState()
+        val viewModel = assistedMetroViewModel<DeepLinkViewModel, DeepLinkViewModel.Factory> { create(query = query) }
+        val state by viewModel.state.collectAsState()
         Scaffold(
             topBar = { scrollBehavior ->
                 AppBar(
@@ -42,14 +41,16 @@ class DeepLinkScreen(
             },
         ) { contentPadding ->
             when (state) {
-                is DeepLinkScreenModel.State.Loading -> {
+                is DeepLinkViewModel.State.Loading -> {
                     LoadingScreen(Modifier.padding(contentPadding))
                 }
-                is DeepLinkScreenModel.State.NoResults -> {
-                    navigator.replace(GlobalSearchScreen(query))
+                is DeepLinkViewModel.State.NoResults -> {
+                    // RK --> both types' search over every source, as the app's own search intent opens
+                    navigator.replace(outsideSearchScreen(query))
+                    // RK <--
                 }
-                is DeepLinkScreenModel.State.Result -> {
-                    val resultState = state as DeepLinkScreenModel.State.Result
+                is DeepLinkViewModel.State.Result -> {
+                    val resultState = state as DeepLinkViewModel.State.Result
                     if (resultState.chapterId == null) {
                         navigator.replace(
                             MangaScreen(
@@ -66,6 +67,18 @@ class DeepLinkScreen(
                         ).also(context::startActivity)
                     }
                 }
+                // RK -->
+                is DeepLinkViewModel.State.NovelResult -> {
+                    val result = state as DeepLinkViewModel.State.NovelResult
+                    navigator.replace(NovelScreen(result.sourceId, result.url, fromSource = true))
+                }
+                is DeepLinkViewModel.State.NovelChapterResult -> {
+                    val result = state as DeepLinkViewModel.State.NovelChapterResult
+                    navigator.pop()
+                    ReaderActivity.newNovelIntent(context, result.novelId, result.chapterId)
+                        .also(context::startActivity)
+                }
+                // RK <--
             }
         }
     }

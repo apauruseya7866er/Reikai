@@ -4,14 +4,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * One entry from an lnreader plugin registry's `plugins.min.json` (or `plugins.json`).
- *
- * Reference shape:
- * `https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json`
- * (the user pastes a repo URL at runtime; nothing is bundled in the APK).
- *
- * Required fields ([id], [name], [version], [site], [lang], [url]) are present on every plugin in
- * the upstream registry. Optional fields are present only on a subset.
+ * One entry from an lnreader plugin registry's `plugins.min.json` (or `plugins.json`). The user pastes
+ * a repo URL at runtime; nothing is bundled in the APK. Reference shape:
+ * `https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/.dist/plugins.min.json`.
+ * The required fields ([id], [name], [version], [site], [lang], [url]) are present on every plugin in
+ * the upstream registry; the optional ones only on a subset.
  */
 @Serializable
 data class LnRegistryEntry(
@@ -24,9 +21,8 @@ data class LnRegistryEntry(
     /** Compiled `.js` URL for the plugin source. */
     val url: String,
     val iconUrl: String? = null,
-    /** Optional URL to a custom JS file the host should `evaluate` after loading the plugin. */
-    val customJS: String? = null,
-    /** Optional URL to a custom CSS file (only meaningful inside the plugin's WebView contexts). */
+    /** Optional URL to a stylesheet the plugin ships for its chapter markup, which the WebView rendering
+     *  mode applies, as LNReader's reader does. */
     val customCSS: String? = null,
 )
 

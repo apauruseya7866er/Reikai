@@ -1,0 +1,99 @@
+package reikai.data.notification
+
+import android.content.Context
+import androidx.core.app.NotificationCompat
+import eu.kanade.presentation.util.formatChapterNumber
+import eu.kanade.tachiyomi.util.lang.chop
+import reikai.domain.chapter.isRecognizedChapterNumber
+import tachiyomi.core.common.i18n.pluralStringResource
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.i18n.MR
+
+/**
+ * What a "new chapters" notification found, decided before any string is looked up. A typed answer
+ * rather than a formatted one, so the rule can be tested without resources and both content types are
+ * held to it: the novel updater used to have no rule at all and could only report a count.
+ */
+sealed interface NewChapters {
+
+    /** The source numbered none of them, so there is nothing to name. */
+    data class Count(val total: Int) : NewChapters
+
+    data class Single(val number: String, val remaining: Int) : NewChapters
+
+    data class Multiple(val numbers: List<String>, val remaining: Int) : NewChapters
+}
+
+/**
+ * [chapterNumbers] is every new chapter's number, unfiltered: a negative one means the source did not
+ * number it, which is what [NewChapters.Count] exists for. [total] is how many arrived. `remaining`
+ * counts what the notification does not name: the unnumbered chapters plus the numbers past the cap.
+ * A number reported twice (two sources of a merged entry) is one chapter, never one more.
+ */
+fun newChapters(chapterNumbers: List<Double>, total: Int): NewChapters {
+    val named = chapterNumbers
+        .filter(::isRecognizedChapterNumber)
+        .sorted()
+        .map(::formatChapterNumber)
+        .distinct()
+    if (named.isEmpty()) return NewChapters.Count(total)
+
+    val remaining =
+        chapterNumbers.count { !isRecognizedChapterNumber(it) } + (named.size - NOTIF_MAX_CHAPTERS).coerceAtLeast(0)
+    return when (named.size) {
+        1 -> NewChapters.Single(named.first(), remaining)
+        else -> NewChapters.Multiple(named.take(NOTIF_MAX_CHAPTERS), remaining)
+    }
+}
+
+/** What one entry's new-chapters row says; a null [title] is an entry the row must leave unnamed. */
+data class NewChaptersEntry(val title: String?, val chapters: NewChapters)
+
+/** [shownTitle] is null for a hidden entry, whose row names neither the series nor its chapters. */
+fun newChaptersEntry(shownTitle: String?, chapterNumbers: List<Double>, total: Int): NewChaptersEntry =
+    NewChaptersEntry(
+        title = shownTitle?.chop(NOTIF_TITLE_MAX_LEN),
+        chapters = if (shownTitle == null) NewChapters.Count(total) else newChapters(chapterNumbers, total),
+    )
+
+/** Writes [entry] into one entry's new-chapters notification, as Mihon's library updater words it. */
+fun NotificationCompat.Builder.setNewChaptersEntry(context: Context, entry: NewChaptersEntry) {
+    setContentTitle(entry.title ?: context.stringResource(MR.strings.notification_new_chapters))
+    val description = context.newChaptersDescription(entry.chapters)
+    setContentText(description)
+    setStyle(NotificationCompat.BigTextStyle().bigText(description))
+}
+
+/** The same answer written out: "Chapter 3", "Chapters 1, 2, 3 and 10 more", "5 new chapters". */
+private fun Context.newChaptersDescription(found: NewChapters): String =
+    when (found) {
+        is NewChapters.Count ->
+            pluralStringResource(MR.plurals.notification_chapters_generic, found.total, found.total)
+        is NewChapters.Single -> when (found.remaining) {
+            0 -> stringResource(MR.strings.notification_chapters_single, found.number)
+            else -> stringResource(
+                MR.strings.notification_chapters_single_and_more,
+                found.number,
+                found.remaining,
+            )
+        }
+        is NewChapters.Multiple -> when (found.remaining) {
+            0 -> stringResource(MR.strings.notification_chapters_multiple, found.numbers.joinToString(", "))
+            else -> pluralStringResource(
+                MR.plurals.notification_chapters_multiple_and_more,
+                found.remaining,
+                found.numbers.joinToString(", "),
+                found.remaining,
+            )
+        }
+    }
+
+/** How many chapter numbers one notification lists before it says "and N more". */
+private const val NOTIF_MAX_CHAPTERS = 5
+
+/**
+ * How long a series title may be in a notification. A collapsed group draws each child as its title
+ * followed by its text on one line, so an unchopped title pushes the chapters off the end and the row
+ * says nothing useful.
+ */
+const val NOTIF_TITLE_MAX_LEN = 45

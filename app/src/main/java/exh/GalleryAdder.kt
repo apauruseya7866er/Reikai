@@ -2,7 +2,7 @@ package exh
 
 import android.content.Context
 import androidx.core.net.toUri
-import eu.kanade.domain.manga.interactor.UpdateManga
+import dev.zacsweers.metro.Inject
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.online.UrlImportableSource
@@ -10,6 +10,8 @@ import eu.kanade.tachiyomi.source.online.all.EHentai
 import exh.source.getMainSource
 import logcat.LogPriority
 import mihon.domain.source.interactor.UpdateMangaFromRemote
+import reikai.domain.merge.ReconcileMergedChapters
+import reikai.presentation.browse.MangaLibraryAdder
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChapter
@@ -18,8 +20,7 @@ import tachiyomi.domain.manga.interactor.NetworkToLocalManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import kotlin.time.Clock
 
 /**
  * Resolves a gallery URL into a local manga (and its chapters) by routing it to the matching
@@ -29,19 +30,21 @@ import uy.kohesive.injekt.api.get
  * getChapterList collapse into Mihon's [UpdateMangaFromRemote], which persists the title and cover
  * (a bare copyFrom drops the title) and syncs chapters in one call.
  */
+@Inject
 class GalleryAdder(
-    private val updateManga: UpdateManga = Injekt.get(),
-    private val updateMangaFromRemote: UpdateMangaFromRemote = Injekt.get(),
-    private val networkToLocalManga: NetworkToLocalManga = Injekt.get(),
-    private val getChapter: GetChapter = Injekt.get(),
-    private val sourceManager: SourceManager = Injekt.get(),
-    sourcePreferences: SourcePreferences = Injekt.get(),
+    private val libraryAdder: MangaLibraryAdder,
+    private val updateMangaFromRemote: UpdateMangaFromRemote,
+    private val networkToLocalManga: NetworkToLocalManga,
+    private val getChapter: GetChapter,
+    private val sourceManager: SourceManager,
+    private val reconcileMergedChapters: ReconcileMergedChapters,
+    sourcePreferences: SourcePreferences,
 ) {
 
     private val enabledLangs: Set<String> = sourcePreferences.enabledLanguages.get()
     private val disabledSources: Set<String> = sourcePreferences.disabledSources.get()
 
-    fun pickSource(url: String): List<UrlImportableSource> {
+    suspend fun pickSource(url: String): List<UrlImportableSource> {
         val uri = url.toUri()
         val matches = sourceManager.getOnlineSources()
             .mapNotNull { it.getMainSource<UrlImportableSource>() }
@@ -93,13 +96,21 @@ class GalleryAdder(
             var manga = networkToLocalManga(
                 Manga.create().copy(source = httpSource.id, url = cleanedMangaUrl),
             )
-            manga = retry(retry) {
-                updateMangaFromRemote(httpSource, manga, fetchDetails = true, fetchChapters = true).getOrThrow()
-            }.manga
+            // A gallery already grouped with another source has a stored stitch its chapters leave stale.
+            manga = reconcileMergedChapters.afterPass {
+                retry(retry) {
+                    updateMangaFromRemote(manga, fetchDetails = true, fetchChapters = true).getOrThrow()
+                }.manga
+            }
 
             if (fav) {
-                updateManga.awaitUpdateFavorite(manga.id, true)
-                manga = manga.copy(favorite = true)
+                // A refused write is a failure: the batch add counts every success as added
+                libraryAdder.addWithoutAsking(manga.id)
+                    ?: return GalleryAddEvent.Fail.Error(
+                        url,
+                        context.stringResource(MR.strings.gallery_adder_not_added, url),
+                    )
+                manga = manga.copy(favoriteAt = manga.favoriteAt ?: Clock.System.now())
             }
 
             if (cleanedChapterUrl != null) {

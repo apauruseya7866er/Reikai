@@ -1,0 +1,185 @@
+package reikai.presentation.browse.catalogue
+
+import androidx.lifecycle.viewModelScope
+import androidx.paging.PagingData
+import androidx.paging.map
+import eu.kanade.tachiyomi.source.model.FilterList
+import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceViewModel
+import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceViewModel.Listing
+import exh.source.configurableSource
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import reikai.domain.source.filter.MangaSavedSearchFilters
+import reikai.presentation.browse.BulkFavoriteViewModel
+import reikai.presentation.browse.EntryBulkFavoriteViewModel
+import reikai.presentation.browse.manga
+import reikai.presentation.browse.mangaBrowseRow
+import reikai.presentation.browse.mangaRowKey
+import tachiyomi.domain.library.model.LibraryDisplayMode
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.model.StubSource
+
+/**
+ * Adapts the live [BrowseSourceViewModel] plus its bulk-selection model to the neutral
+ * [EntryBrowseBehavior]. Mihon's model stays upstream-tracked and never implements a Reikai
+ * interface, so every shape mismatch reconciles HERE. Symmetric with [NovelBrowseAdapter], so one
+ * shared browse screen drives both catalogues; manga-only affordances go through capability slots
+ * rather than onto the shared spine.
+ */
+class MangaBrowseAdapter(
+    private val model: BrowseSourceViewModel,
+    private val bulk: BulkFavoriteViewModel,
+    migrateForId: Long? = null,
+    /** Report the picked target back, which the screen turns into a handoff and a pop. */
+    onPickTarget: (targetId: Long) -> Unit = {},
+) : EntryBrowseBehavior {
+
+    private val savedSearchFilters = MangaSavedSearchFilters()
+
+    private val capabilities = EntryBrowseCapabilities(
+        migrationPick = migrateForId?.let { id ->
+            // A browsed manga row is already a stored row, so unlike the novel twin there is
+            // nothing to materialize before the pick can name it.
+            MigrationPickCapability(id) { row, onPicked ->
+                onPickTarget(row.manga.id)
+                onPicked()
+            }
+        },
+    )
+
+    override val state: StateFlow<EntryBrowseScreenState> =
+        combine(model.state, bulk.state, ::toNeutral)
+            // WhileSubscribed, not Eagerly: the adapter is rebuilt per composition entry while its
+            // sharing coroutine lives in the model's scope, so an eager start leaves one orphaned
+            // mapper running per re-entry.
+            .stateIn(
+                model.viewModelScope,
+                SharingStarted.WhileSubscribed(),
+                toNeutral(model.state.value, bulk.state.value),
+            )
+
+    override val rows: StateFlow<Flow<PagingData<EntryBrowseRow>>> = model.mangaPagerFlowFlow
+        .map { pagerFlow ->
+            pagerFlow.map { pagingData ->
+                // The model already keeps one flow per entry so a favourite toggle re-renders that
+                // cell alone; the row is a view of it rather than a second collector.
+                pagingData.map(::mangaBrowseRow)
+            }
+        }
+        .stateIn(model.viewModelScope, SharingStarted.WhileSubscribed(), emptyFlow())
+
+    private fun toNeutral(
+        state: BrowseSourceViewModel.State,
+        bulkState: EntryBulkFavoriteViewModel.State<Manga>,
+    ): EntryBrowseScreenState {
+        val source = model.source ?: return EntryBrowseScreenState.Loading
+        if (source is StubSource) return EntryBrowseScreenState.SourceMissing(source.toString())
+        return EntryBrowseScreenState.Loaded(
+            sourceName = source.name,
+            listing = state.listing.toNeutral(),
+            query = state.toolbarQuery,
+            isUserQuery = state.isUserQuery,
+            supportsLatest = source.supportsLatest,
+            hasFilters = state.filters.isNotEmpty(),
+            filtersActive = state.filterChipActive(),
+            hasSettings = source.configurableSource() != null,
+            webUrl = (source as? HttpSource)?.getHomeUrl(),
+            rowStyle = if (model.useEhentaiView) {
+                EntryBrowseRowStyle.Gallery
+            } else {
+                EntryBrowseRowStyle.Standard(state.displayMode, state.columns)
+            },
+            selectionMode = bulkState.selectionMode,
+            selectedKeys = bulkState.selection.mapTo(mutableSetOf(), ::mangaRowKey),
+            capabilities = capabilities,
+            dialog = state.dialog?.toNeutral(),
+        )
+    }
+
+    private fun Listing.toNeutral(): EntryBrowseListing = when (this) {
+        Listing.Popular -> EntryBrowseListing.Popular
+        Listing.Latest -> EntryBrowseListing.Latest
+        is Listing.Search -> EntryBrowseListing.Search(query)
+    }
+
+    private fun BrowseSourceViewModel.Dialog.toNeutral(): EntryBrowseDialog = when (this) {
+        BrowseSourceViewModel.Dialog.Filter -> EntryBrowseDialog.Filter
+    }
+
+    override fun setListing(listing: EntryBrowseListing) {
+        model.resetFilters()
+        model.setListing(
+            when (listing) {
+                EntryBrowseListing.Popular -> Listing.Popular
+                EntryBrowseListing.Latest -> Listing.Latest
+                is EntryBrowseListing.Search -> Listing.valueOf(listing.query)
+            },
+        )
+    }
+
+    override fun setQuery(query: String?) = model.setToolbarQuery(query)
+
+    override fun search(query: String?) {
+        // Clearing means the listing back, per the contract. Upstream's own `search(null)` keeps the
+        // query it already had, which would leave an empty field standing over its results.
+        if (query.isNullOrBlank()) setListing(EntryBrowseListing.Popular) else model.search(query)
+    }
+
+    // The model falls back to a text search itself, and moves the toolbar either way.
+    override fun searchGenre(genre: String) = model.searchGenre(genre)
+
+    override fun setDisplayMode(mode: LibraryDisplayMode) = model.setDisplayMode(mode)
+
+    override fun openFilterSheet() = model.openFilterSheet()
+
+    override fun resetFilters() = model.resetFilters()
+
+    override fun captureSearch(): SavedSearchDraft {
+        val state = model.state.value
+        return SavedSearchDraft(
+            query = (state.listing as? Listing.Search)?.query?.takeIf { it.isNotBlank() },
+            filtersJson = savedSearchFilters.encode(state.filters),
+        )
+    }
+
+    override fun applySearch(query: String?, filtersJson: String?) {
+        val filters = savedSearchFilters.restore(filtersJson) { model.source?.getFilterList() ?: FilterList() }
+        // Empty rather than null for a search that carries none: Mihon's search() reads null as "keep
+        // what is there", so a filters-only search would otherwise run against whatever the reader had
+        // typed and show results the saved search never described. The novel half clears it in applySavedSearch.
+        // search() leaves the sheet's list alone, so it is set too, as searchGenre does, or the sheet's
+        // next Filter tap would replace the saved filters with the ones from before.
+        model.setFilters(filters)
+        model.search(query = query.orEmpty(), filters = filters)
+    }
+
+    override val addFlow = model.addFlow
+
+    override fun onRowLongClick(row: EntryBrowseRow) = addFlow.onLongClick(row.manga)
+
+    override fun setSelectionMode(enabled: Boolean) = bulk.toggleSelectionMode(enabled)
+
+    override fun toggleSelection(row: EntryBrowseRow) = bulk.toggleSelection(row.manga)
+
+    override fun selectAll(rows: List<EntryBrowseRow>) = rows.forEach { bulk.select(it.manga) }
+
+    override fun invertSelection(rows: List<EntryBrowseRow>) =
+        bulk.reverseSelection(rows.map { it.manga })
+
+    override fun addSelectionToLibrary() = bulk.addFavorite()
+
+    override fun dismissDialog() = model.setDialog(null)
+}
+
+/**
+ * Whether the Filter chip reads as active. Upstream's rule: any search-shaped listing, so a
+ * plain text search lights it and so does a reset that was re-applied. The novel twin answers
+ * the same question off its own state; FilterChipConformanceTest runs both.
+ */
+internal fun BrowseSourceViewModel.State.filterChipActive(): Boolean = listing is Listing.Search

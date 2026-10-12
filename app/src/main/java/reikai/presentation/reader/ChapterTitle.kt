@@ -1,0 +1,80 @@
+package reikai.presentation.reader
+
+import android.content.Context
+import dev.icerock.moko.resources.StringResource
+import eu.kanade.presentation.util.formatChapterNumber
+import reikai.domain.chapter.isRecognizedChapterNumber
+import reikai.domain.reader.ChapterTitleFormat
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.i18n.MR
+
+/**
+ * The words the reader puts around a number, the bar's chapter title and the chapter sheet's page
+ * progress, from one place so both readers say the same.
+ */
+interface ChapterTitleWords {
+    fun numbered(number: String): String
+
+    fun numberedWithName(number: String, name: String): String
+
+    /** A line [reikai.presentation.components.pageProgressLabel] chose, in words. */
+    fun pageProgress(resource: StringResource, args: Array<Any>): String
+}
+
+/** [ChapterTitleWords] in the app's language. */
+fun Context.chapterTitleWords(): ChapterTitleWords = object : ChapterTitleWords {
+    override fun numbered(number: String) = stringResource(MR.strings.display_mode_chapter, number)
+
+    override fun numberedWithName(number: String, name: String) =
+        stringResource(MR.strings.chapter_title_numbered, number, name)
+
+    override fun pageProgress(resource: StringResource, args: Array<Any>) = stringResource(resource, *args)
+}
+
+/**
+ * The open chapter's title as the bar shows it in this format. A chapter without a number keeps its name
+ * whatever the format, since a source that numbers nothing stores a negative one.
+ */
+fun ChapterTitleFormat.chapterTitle(name: String, number: Double, words: ChapterTitleWords): String {
+    if (this == ChapterTitleFormat.NAME || !isRecognizedChapterNumber(number)) return name
+    val shown = formatChapterNumber(number)
+    if (this == ChapterTitleFormat.NUMBER) return words.numbered(shown)
+    val rest = name.withoutLeadingNumber(shown)
+    return when {
+        rest.isEmpty() -> words.numbered(shown)
+        // "Vol.1 Ch.3 - The Duel" already reads numbered, and its volume is worth keeping in place.
+        name.hasNumberAfterVolume(shown) -> name
+        else -> words.numberedWithName(shown, rest)
+    }
+}
+
+/**
+ * A chapter list row's title, the details list's and the reader sheet's alike: the number where the
+ * entry shows its chapters by number, else the name.
+ */
+fun chapterRowTitle(name: String, number: Double, numberOnly: Boolean, words: ChapterTitleWords): String =
+    (if (numberOnly) ChapterTitleFormat.NUMBER else ChapterTitleFormat.NAME).chapterTitle(name, number, words)
+
+/**
+ * The name with the chapter number it opens with taken off, so "Chapter 3: The Duel" does not read
+ * "Ch. 3: Chapter 3: The Duel". Sources often repeat the number ("Chapter 3 3: The Duel"), hence twice.
+ * A bare number counts only before a separator or the end, so the title's own 3 in "Chapter 3: 3 Days
+ * Later" stays, and so does the number of an ambiguous "3 The Duel".
+ */
+private fun String.withoutLeadingNumber(number: String): String {
+    val shown = """0*${Regex.escape(number)}(?!\d|\.\d)"""
+    val prefix =
+        Regex(
+            """^\s*(?:(?:ch(?:apter)?\.?\s*#?|#)$shown\s*[:.\-–—]?|$shown\s*(?:[:.\-–—]|$))\s*""",
+            RegexOption.IGNORE_CASE,
+        )
+    return replaceFirst(prefix, "").replaceFirst(prefix, "")
+}
+
+private fun String.hasNumberAfterVolume(number: String): Boolean =
+    Regex(
+        """^\s*vol(?:ume)?\.?\s*\d+(?:\.\d+)?(?!\d|\.\d)[\s:.,\-–—]*(?:ch(?:apter)?\.?\s*)?#?0*${Regex.escape(
+            number,
+        )}(?!\d|\.\d)""",
+        RegexOption.IGNORE_CASE,
+    ).containsMatchIn(this)

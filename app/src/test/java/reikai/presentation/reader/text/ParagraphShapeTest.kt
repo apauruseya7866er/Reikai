@@ -1,0 +1,88 @@
+package reikai.presentation.reader.text
+
+import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.DisplayName
+import org.junit.jupiter.api.Test
+
+class ParagraphShapeTest {
+
+    @Test
+    @DisplayName("an unchanged shape needs no redraw")
+    fun unchangedNeedsNoRedraw() {
+        val shape = ParagraphShape(indent = 1f, spacing = 0.5f, fontSize = 16, bionic = false, sideMargins = 32)
+
+        shape.needsRedrawFor(shape, holdsPictures = false) shouldBe false
+    }
+
+    @Test
+    @DisplayName("a changed indent needs a redraw")
+    fun changedIndentNeedsRedraw() {
+        val before = ParagraphShape(indent = 0f, spacing = 0f, fontSize = 16, bionic = false, sideMargins = 32)
+
+        before.needsRedrawFor(before.copy(indent = 2f), holdsPictures = false) shouldBe true
+    }
+
+    @Test
+    @DisplayName("a changed spacing needs a redraw")
+    fun changedSpacingNeedsRedraw() {
+        val before = ParagraphShape(indent = 0f, spacing = 0f, fontSize = 16, bionic = false, sideMargins = 32)
+
+        before.needsRedrawFor(before.copy(spacing = 1f), holdsPictures = false) shouldBe true
+    }
+
+    @Test
+    @DisplayName("a font size change needs a redraw while indent is set, since indent is a multiple of it")
+    fun fontSizeChangeWithIndentNeedsRedraw() {
+        val before = ParagraphShape(indent = 2f, spacing = 0f, fontSize = 16, bionic = false, sideMargins = 32)
+
+        before.needsRedrawFor(before.copy(fontSize = 24), holdsPictures = false) shouldBe true
+    }
+
+    @Test
+    @DisplayName("a font size change needs a redraw while spacing is set")
+    fun fontSizeChangeWithSpacingNeedsRedraw() {
+        val before = ParagraphShape(indent = 0f, spacing = 1f, fontSize = 16, bionic = false, sideMargins = 32)
+
+        before.needsRedrawFor(before.copy(fontSize = 24), holdsPictures = false) shouldBe true
+    }
+
+    @Test
+    @DisplayName("a font size change alone restyles, so the default reader does not re-parse per slider step")
+    fun fontSizeChangeWithoutSpansRestyles() {
+        val before = ParagraphShape(indent = 0f, spacing = 0f, fontSize = 16, bionic = false, sideMargins = 32)
+
+        before.needsRedrawFor(before.copy(fontSize = 24), holdsPictures = false) shouldBe false
+    }
+
+    @Test
+    @DisplayName("turning bionic reading on needs a redraw, since its emphasis is spans built with the text")
+    fun bionicToggleNeedsRedraw() {
+        val before = ParagraphShape(indent = 0f, spacing = 0f, fontSize = 16, bionic = false, sideMargins = 32)
+
+        before.needsRedrawFor(before.copy(bionic = true), holdsPictures = false) shouldBe true
+    }
+
+    @Test
+    @DisplayName("turning bionic reading off needs the redraw that removes its spans")
+    fun bionicOffNeedsRedraw() {
+        val before = ParagraphShape(indent = 0f, spacing = 0f, fontSize = 16, bionic = true, sideMargins = 32)
+
+        before.needsRedrawFor(before.copy(bionic = false), holdsPictures = false) shouldBe true
+    }
+
+    @Test
+    @DisplayName("a side-margin change needs a redraw, since an image's bounds were fixed to the column")
+    fun sideMarginChangeNeedsRedraw() {
+        val before = ParagraphShape(indent = 0f, spacing = 0f, fontSize = 16, bionic = false, sideMargins = 32)
+
+        before.needsRedrawFor(before.copy(sideMargins = 96), holdsPictures = false) shouldBe true
+    }
+
+    @Test
+    @DisplayName("a font size change needs a redraw while the window holds a picture, whose margins are sized from it")
+    fun fontSizeChangeWithPicturesNeedsRedraw() {
+        val before = ParagraphShape(indent = 0f, spacing = 0f, fontSize = 16, bionic = false, sideMargins = 32)
+
+        before.needsRedrawFor(before.copy(fontSize = 24), holdsPictures = true) shouldBe true
+    }
+}

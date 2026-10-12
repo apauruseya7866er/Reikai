@@ -1,13 +1,22 @@
 package reikai.domain.recommendation.taste
 
+import eu.kanade.tachiyomi.data.track.TrackerManager
 import io.kotest.matchers.doubles.shouldBeGreaterThan
 import io.kotest.matchers.doubles.shouldBeLessThan
 import io.kotest.matchers.shouldBe
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.jupiter.api.Test
 
 class ComputeTasteProfileTest {
 
-    private val compute = ComputeTasteProfile()
+    private val compute = ComputeTasteProfile(
+        mockk<TrackerManager> {
+            every { aniList.id } returns ANILIST
+            every { myAnimeList.id } returns MAL
+            every { kitsu.id } returns KITSU
+        },
+    )
 
     private fun entry(
         score: Double,
@@ -17,6 +26,45 @@ class ComputeTasteProfileTest {
     ) = TrackedEntry(trackerId = 1L, remoteId = id, title = "t$id", score = score, status = status, tags = tags)
 
     private var nextId = 1L
+
+    private fun tracked(
+        trackerId: Long,
+        remoteId: Long,
+        tags: List<String>,
+        status: TrackStatus,
+        score: Double,
+        malId: Long? = null,
+        anilistId: Long? = null,
+    ) = TrackedEntry(trackerId, remoteId, "t$remoteId", score, status, tags, malId, anilistId)
+
+    /** The MAL row comes first and carries more tags, so only the AniList-first priority keeps the AniList row. */
+    @Test
+    fun `a series tracked on AniList and MyAnimeList counts once, as its AniList row`() {
+        val aniRow = tracked(ANILIST, 10L, listOf("action"), TrackStatus.COMPLETED, 1.0, malId = 5L, anilistId = 10L)
+        val malRow = tracked(MAL, 5L, listOf("action", "drama"), TrackStatus.DROPPED, -1.0, malId = 5L)
+        val single = tracked(ANILIST, 11L, listOf("romance"), TrackStatus.COMPLETED, 1.0, malId = 6L, anilistId = 11L)
+
+        compute(listOf(malRow, aniRow, single)) shouldBe compute(listOf(aniRow, single))
+    }
+
+    @Test
+    fun `a series joined only by its AniList id counts once, as its AniList row`() {
+        val aniRow = tracked(ANILIST, 20L, listOf("horror"), TrackStatus.COMPLETED, 1.0, anilistId = 20L)
+        val kitsuRow = tracked(KITSU, 30L, listOf("horror", "mystery"), TrackStatus.DROPPED, -1.0, anilistId = 20L)
+
+        compute(listOf(kitsuRow, aniRow)) shouldBe compute(listOf(aniRow))
+    }
+
+    /** Only the Kitsu row carries both ids, so it alone ties the AniList row to the MAL one. */
+    @Test
+    fun `a series bridged by a row carrying both ids counts once, as its AniList row`() {
+        val aniRow = tracked(ANILIST, 40L, listOf("sports"), TrackStatus.COMPLETED, 1.0, anilistId = 40L)
+        val malRow = tracked(MAL, 41L, listOf("sports", "school"), TrackStatus.DROPPED, -1.0, malId = 41L)
+        val kitsuRow =
+            tracked(KITSU, 42L, listOf("sports", "music"), TrackStatus.READING, 0.2, malId = 41L, anilistId = 40L)
+
+        compute(listOf(malRow, kitsuRow, aniRow)) shouldBe compute(listOf(aniRow))
+    }
 
     @Test
     fun `empty input yields the empty profile`() {
@@ -67,5 +115,12 @@ class ComputeTasteProfileTest {
         )
         // Denominator uses |weight| (1.0 + 1.0), so the result is finite and net positive here.
         profile.tagScores["mecha"]!! shouldBeGreaterThan 0.0
+    }
+
+    private companion object {
+        // Apart from the real ids, so the priority is seen to come from the manager rather than literals.
+        const val ANILIST = 20L
+        const val MAL = 10L
+        const val KITSU = 30L
     }
 }

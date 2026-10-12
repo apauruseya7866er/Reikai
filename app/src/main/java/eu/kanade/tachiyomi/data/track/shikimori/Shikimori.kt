@@ -26,6 +26,7 @@ class Shikimori(id: Long) : BaseTracker(id, "Shikimori"), DeletableTracker {
 
         private val SCORE_LIST = IntRange(0, 10)
             .map(Int::toString)
+        // RK: SEARCH_ID_PREFIX moved to BaseTracker, shared by every tracker's id: search
     }
 
     private val json: Json by injectLazy()
@@ -58,7 +59,7 @@ class Shikimori(id: Long) : BaseTracker(id, "Shikimori"), DeletableTracker {
             }
         }
 
-        return api.updateLibManga(track, getUsername())
+        return api.updateLibManga(track)
     }
 
     override suspend fun delete(track: DomainTrack) {
@@ -86,23 +87,31 @@ class Shikimori(id: Long) : BaseTracker(id, "Shikimori"), DeletableTracker {
     }
 
     override suspend fun search(query: String): List<TrackSearch> {
+        // RK: the shared id: prefix parse in BaseTracker, so manga and novel searches agree
+        query.trackerSearchId(String::toIntOrNull)?.let { id ->
+            return api.getMangaDetails(id)?.let { listOf(it) } ?: emptyList()
+        }
+
         return api.search(query)
     }
 
-    // RK --> novel-aware search (Active #8): same GraphQL search, novel kinds instead of manga
+    // RK --> novel-aware search: same GraphQL search, novel kinds instead of manga
     override val supportsNovels = true
 
     override suspend fun searchNovel(query: String): List<TrackSearch> {
+        query.trackerSearchId(String::toIntOrNull)?.let { id ->
+            return api.getNovelDetails(id)?.let { listOf(it) } ?: emptyList()
+        }
+
         return api.searchNovel(query)
     }
     // RK <--
 
     override suspend fun refresh(track: Track): Track {
-        api.findLibManga(track)?.let { remoteTrack ->
-            track.library_id = remoteTrack.library_id
-            track.copyPersonalFrom(remoteTrack)
-            track.total_chapters = remoteTrack.total_chapters
-        } ?: throw Exception("Could not find manga")
+        val remoteTrack = api.findLibManga(track) ?: throw Exception("Could not find manga")
+        track.library_id = remoteTrack.library_id
+        track.copyPersonalFrom(remoteTrack)
+        track.total_chapters = remoteTrack.total_chapters
         return track
     }
 
@@ -143,9 +152,14 @@ class Shikimori(id: Long) : BaseTracker(id, "Shikimori"), DeletableTracker {
             val user = api.getCurrentUser()
             saveDisplayUsername(user.nickname)
             saveCredentials(user.id, oauth.accessToken)
-        } catch (e: Throwable) {
+        } catch (_: Throwable) {
             logout()
         }
+    }
+
+    override suspend fun updateUserConfig() {
+        val currentUser = api.getCurrentUser()
+        saveDisplayUsername(currentUser.nickname)
     }
 
     fun saveToken(oauth: SMOAuth?) {
@@ -155,7 +169,7 @@ class Shikimori(id: Long) : BaseTracker(id, "Shikimori"), DeletableTracker {
     fun restoreToken(): SMOAuth? {
         return try {
             json.decodeFromString<SMOAuth>(trackPreferences.trackToken(this).get())
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }

@@ -1,16 +1,13 @@
 package reikai.presentation.widget
 
-import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.drawable.toBitmap
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.Image
@@ -41,39 +38,33 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
-import coil3.annotation.ExperimentalCoilApi
-import coil3.asDrawable
-import coil3.executeBlocking
-import coil3.imageLoader
-import coil3.request.CachePolicy
-import coil3.request.ImageRequest
-import coil3.request.transformations
-import coil3.size.Precision
-import coil3.size.Scale
-import coil3.transform.RoundedCornersTransformation
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
 import eu.kanade.tachiyomi.util.system.dpToPx
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.withContext
+import mihon.app.di.appGraph
+import reikai.domain.entry.EntryCustomInfo
+import reikai.domain.entry.EntryId
+import reikai.domain.entry.GetEntryCustomInfo
+import reikai.domain.entry.withCustomInfo
+import reikai.domain.manga.MangaMergeManager
+import reikai.domain.merge.onePerSeries
+import reikai.domain.novel.NovelMergeManager
 import reikai.domain.novel.NovelRepository
-import reikai.domain.novel.interactor.GetCustomNovelInfo
-import reikai.domain.novel.model.CustomNovelInfo
 import reikai.domain.novel.model.NovelUpdateWithRelations
-import tachiyomi.core.common.Constants
+import reikai.presentation.details.mangaDetailsIntent
+import reikai.presentation.details.novelDetailsIntent
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.domain.manga.interactor.GetCustomMangaInfo
-import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.updates.interactor.GetUpdates
-import tachiyomi.domain.updates.model.UpdatesWithRelations
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.widget.BaseUpdatesGridGlanceWidget
 import tachiyomi.presentation.widget.R
 import tachiyomi.presentation.widget.components.LockedWidget
 import tachiyomi.presentation.widget.util.appWidgetBackgroundRadius
 import tachiyomi.presentation.widget.util.appWidgetInnerRadius
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 // Slightly larger than the stock manga widget's 58x87 so the covers fill more of a taller widget.
 private val CoverWidth = 78.dp
@@ -87,21 +78,28 @@ private val CoverHeight = 117.dp
  *
  * Mihon's [BaseUpdatesGridGlanceWidget] stays the manga-only widget; this is added alongside it.
  */
-class UnifiedUpdatesGlanceWidget(
-    private val context: Context = Injekt.get<Application>(),
-    private val getUpdates: GetUpdates = Injekt.get(),
-    private val novelRepository: NovelRepository = Injekt.get(),
-    private val preferences: SecurityPreferences = Injekt.get(),
+class UnifiedUpdatesGlanceWidget : GlanceAppWidget() {
+
+    @Inject private lateinit var getUpdates: GetUpdates
+
+    @Inject private lateinit var novelRepository: NovelRepository
+
+    @Inject private lateinit var preferences: SecurityPreferences
+
     // Per-entry custom cover overrides, overlaid on the widget's cover cells (display-only).
-    private val getCustomMangaInfo: GetCustomMangaInfo = Injekt.get(),
-    private val getCustomNovelInfo: GetCustomNovelInfo = Injekt.get(),
-) : GlanceAppWidget() {
+    @Inject private lateinit var getEntryCustomInfo: GetEntryCustomInfo
+
+    // A merge group is one series, so it gets one cover here as it gets one library row.
+    @Inject private lateinit var mangaMergeManager: MangaMergeManager
+
+    @Inject private lateinit var novelMergeManager: NovelMergeManager
 
     override val sizeMode = SizeMode.Exact
 
     private val foreground = ColorProvider(R.color.appwidget_on_secondary_container)
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
+        context.appGraph.inject(this)
         val locked = preferences.useAuthenticator.get()
         val containerModifier = GlanceModifier
             .fillMaxSize()
@@ -131,14 +129,11 @@ class UnifiedUpdatesGlanceWidget(
             }
 
             val flow = remember {
-                val after = BaseUpdatesGridGlanceWidget.DateLimit.toEpochMilli()
                 combine(
-                    getUpdates.subscribe(read = false, after = after),
-                    novelRepository.getRecentNovelUpdatesAsFlow(after, ROW_LIMIT),
-                    getCustomMangaInfo.subscribeAll(),
-                    getCustomNovelInfo.subscribeAll(),
-                ) { manga, novel, customManga, customNovel ->
-                    prepareSections(manga, novel, customManga, customNovel, rowCount, columnCount)
+                    unifiedWidgetUpdates(getUpdates, novelRepository),
+                    getEntryCustomInfo.subscribeAll(),
+                ) { updates, customInfo ->
+                    prepareSections(context, updates, customInfo, rowCount, columnCount)
                 }
             }
             val data by flow.collectAsState(initial = null)
@@ -159,39 +154,32 @@ class UnifiedUpdatesGlanceWidget(
      * split evenly); a type with no updates renders a skeleton grid instead of collapsing, so the widget
      * stays balanced whatever is new.
      */
-    @OptIn(ExperimentalCoilApi::class)
     private suspend fun prepareSections(
-        manga: List<UpdatesWithRelations>,
-        novel: List<NovelUpdateWithRelations>,
-        customManga: List<CustomMangaInfo>,
-        customNovel: List<CustomNovelInfo>,
+        context: Context,
+        updates: UnifiedWidgetUpdates,
+        customInfo: Map<EntryId, EntryCustomInfo>,
         rowCount: Int,
         columnCount: Int,
     ): SectionData {
-        // Display-only custom-cover overlay (cover url only; the widget shows no titles), keyed by real id.
-        val novelCoverOverlay = customNovel.associateBy { it.novelId }
-        val mangaCoverOverlay = customManga.associateBy { it.mangaId }
-        // The manga query already returns unread only (getUpdates read=false); filter the novel side to
-        // match. Dedupe per series, then give each section half the rows.
-        val novelRows = novel.filter { !it.read }.distinctBy { it.novelId }
-        val mangaRows = manga.distinctBy { it.mangaId }
+        // Dedupe per series, then per merge group so a series grouped across sources draws one cover, then
+        // give each section half the rows.
+        val novelRows = novelMergeManager.onePerSeries(updates.novel) { it.novelId }
+        val mangaRows = mangaMergeManager.onePerSeries(updates.manga) { it.mangaId }
         val perSectionRows = (rowCount / 2).coerceAtLeast(1)
         val cap = perSectionRows * columnCount
 
         val widthPx = CoverWidth.value.toInt().dpToPx
         val heightPx = CoverHeight.value.toInt().dpToPx
-        val roundPx = context.resources.getDimension(R.dimen.appwidget_inner_radius)
 
-        return withIOContext {
+        // Coil loads on its own threads; scaling and converting the covers is CPU work, as upstream's widget does it
+        return withContext(Dispatchers.Default) {
             val novelCovers = novelRows
                 .take(cap)
                 .map { row ->
-                    val cover = row.coverData.copy(
-                        url = novelCoverOverlay[row.novelId]?.thumbnailUrl ?: row.coverData.url,
-                    )
+                    val cover = row.withCustomInfo(customInfo[EntryId.Novel(row.novelId)]).coverData
                     WidgetCover(
-                        bitmap = loadCover(cover, widthPx, heightPx, roundPx),
-                        intent = novelIntent(row),
+                        bitmap = loadWidgetCover(context, cover, widthPx, heightPx),
+                        intent = novelIntent(context, row),
                     )
                 }
             val mangaCovers = mangaRows
@@ -201,64 +189,33 @@ class UnifiedUpdatesGlanceWidget(
                         mangaId = row.mangaId,
                         sourceId = row.sourceId,
                         isMangaFavorite = true,
-                        url = mangaCoverOverlay[row.mangaId]?.thumbnailUrl ?: row.coverData.url,
+                        url = row.withCustomInfo(customInfo[EntryId.Manga(row.mangaId)]).coverData.url,
                         lastModified = row.coverData.lastModified,
                     )
                     WidgetCover(
-                        bitmap = loadCover(cover, widthPx, heightPx, roundPx),
-                        intent = mangaIntent(row.mangaId),
+                        bitmap = loadWidgetCover(context, cover, widthPx, heightPx),
+                        intent = mangaIntent(context, row.mangaId),
                     )
                 }
             SectionData(novel = novelCovers, manga = mangaCovers)
         }
     }
 
-    @OptIn(ExperimentalCoilApi::class)
-    private fun loadCover(model: Any, widthPx: Int, heightPx: Int, roundPx: Float): Bitmap? {
-        val request = ImageRequest.Builder(context)
-            .data(model)
-            .memoryCachePolicy(CachePolicy.DISABLED)
-            .precision(Precision.EXACT)
-            .size(widthPx, heightPx)
-            .scale(Scale.FILL)
-            .let {
-                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                    it.transformations(RoundedCornersTransformation(roundPx))
-                } else {
-                    it
-                }
-            }
-            .build()
-        return context.imageLoader.executeBlocking(request)
-            .image
-            ?.asDrawable(context.resources)
-            ?.toBitmap()
-    }
-
-    private fun mangaIntent(mangaId: Long) =
-        Intent(context, Class.forName(Constants.MAIN_ACTIVITY)).apply {
-            action = Constants.SHORTCUT_MANGA
-            putExtra(Constants.MANGA_EXTRA, mangaId)
+    private fun mangaIntent(context: Context, mangaId: Long) =
+        mangaDetailsIntent(context, mangaId).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             // Distinct PendingIntents per series, https://issuetracker.google.com/issues/238793260
             addCategory("manga:$mangaId")
         }
 
-    private fun novelIntent(row: NovelUpdateWithRelations) =
-        Intent(context, Class.forName(Constants.MAIN_ACTIVITY)).apply {
-            action = Constants.SHORTCUT_NOVEL
-            putExtra(Constants.NOVEL_SOURCE_EXTRA, row.source)
-            putExtra(Constants.NOVEL_URL_EXTRA, row.novelUrl)
+    private fun novelIntent(context: Context, row: NovelUpdateWithRelations) =
+        novelDetailsIntent(context, row.source, row.novelUrl).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             // Distinct PendingIntents, namespaced so a novel id never collides with a manga id.
             addCategory("novel:${row.novelId}")
         }
-
-    companion object {
-        private const val ROW_LIMIT = 500L
-    }
 }
 
 private data class WidgetCover(val bitmap: Bitmap?, val intent: Intent)

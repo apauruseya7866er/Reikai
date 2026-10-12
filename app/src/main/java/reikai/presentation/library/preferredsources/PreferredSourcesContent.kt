@@ -4,16 +4,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -23,8 +19,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Add
+import mihon.icons.materialsymbols.rounded.Close
+import mihon.icons.materialsymbols.rounded.KeyboardArrowDown
+import mihon.icons.materialsymbols.rounded.KeyboardArrowUp
+import reikai.presentation.browse.sourceLanguageName
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 
@@ -51,7 +54,9 @@ fun PreferredSourcesContent(
     onAdd: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyColumn(modifier = modifier.fillMaxWidth(), contentPadding = contentPadding) {
+    // fillMaxSize, not fillMaxWidth: a wrap-height list gets centred by the pager page, which reads as
+    // a broken screen when the ranking is short enough to leave a gap above it.
+    LazyColumn(modifier = modifier.fillMaxSize(), contentPadding = contentPadding) {
         item {
             Text(
                 text = stringResource(MR.strings.pref_preferred_sources_guide),
@@ -73,13 +78,16 @@ fun PreferredSourcesContent(
             itemsIndexed(preferred, key = { _, item -> item.key }) { index, item ->
                 SourceRow(item) {
                     IconButton(onClick = { onMoveUp(item.key) }, enabled = index > 0) {
-                        Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = null)
+                        Icon(MaterialSymbols.Rounded.KeyboardArrowUp, contentDescription = null)
                     }
                     IconButton(onClick = { onMoveDown(item.key) }, enabled = index < preferred.lastIndex) {
-                        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                        Icon(MaterialSymbols.Rounded.KeyboardArrowDown, contentDescription = null)
                     }
                     IconButton(onClick = { onRemove(item.key) }) {
-                        Icon(Icons.Outlined.Close, contentDescription = stringResource(MR.strings.action_remove))
+                        Icon(
+                            MaterialSymbols.Rounded.Close,
+                            contentDescription = stringResource(MR.strings.action_remove),
+                        )
                     }
                 }
             }
@@ -98,7 +106,7 @@ fun PreferredSourcesContent(
             items(available, key = { it.key }) { item ->
                 SourceRow(item, modifier = Modifier.clickable { onAdd(item.key) }) {
                     IconButton(onClick = { onAdd(item.key) }) {
-                        Icon(Icons.Outlined.Add, contentDescription = stringResource(MR.strings.action_add))
+                        Icon(MaterialSymbols.Rounded.Add, contentDescription = stringResource(MR.strings.action_add))
                     }
                 }
             }
@@ -125,11 +133,13 @@ private fun SourceRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = item.lang.uppercase(),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            sourceLanguageName(item.lang, LocalContext.current)?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         trailing()
     }

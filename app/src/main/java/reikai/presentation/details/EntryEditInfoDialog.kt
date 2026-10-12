@@ -39,10 +39,13 @@ import eu.kanade.presentation.track.components.TrackLogoIcon
 import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.model.TrackMangaMetadata
 import eu.kanade.tachiyomi.databinding.EditEntryInfoBinding
+import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.toast
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import reikai.presentation.components.entryStatusRes
+import reikai.presentation.track.trackerErrorMessage
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.track.model.Track
@@ -51,8 +54,8 @@ import tachiyomi.presentation.core.i18n.stringResource
 
 /**
  * Backs the "Fill from tracker" button. [candidates] resolves the entry's bound trackers (manga and
- * novel each supply their own enumerator from the details ScreenModel), [fetch] pulls one tracker's
- * metadata. Null on [EntryEditInfoDialog] keeps the button disabled.
+ * novel each supply their own enumerator from the details ViewModel), [fetch] pulls one tracker's
+ * metadata. An entry with no bound tracker keeps the button, which says so when tapped.
  */
 class TrackerAutofill(
     val candidates: suspend () -> List<Pair<Track, Tracker>>,
@@ -61,8 +64,8 @@ class TrackerAutofill(
 
 /**
  * Neutral edit-info values shared by both content types. The caller seeds [EntryEditInfoDialog] with the
- * current effective values and maps the edited result back to its own storage (manga: the custom-info
- * overlay; novel: the in-row edit path).
+ * current effective values and maps the edited result back to its own custom-info overlay, which leaves
+ * the source row untouched.
  */
 data class EntryEditInfoUi(
     val title: String,
@@ -75,16 +78,12 @@ data class EntryEditInfoUi(
 )
 
 /**
- * The shared manga/novel edit-info editor: a Material dialog (ported from Komikku's EditMangaDialog)
- * whose scrolling content is a native [EditEntryInfoBinding] view hosted in an [AndroidView]. Native
- * EditText keeps the soft keyboard stable across field switches, which the pure-Compose form could not
- * on edge-to-edge Android 15+ (the keyboard blinked and the focused field hid behind it). This native
- * form is the one sanctioned exception to the Compose-native screen rule.
- *
- * The dialog owns Save/Cancel; the native form owns three resets (Reset info: non-tag fields back to
- * [source]; Reset tags: chips back to source.genre; Reset all: [onResetAll] clears every override), the
- * Fill-from-tracker slot ([autofill]), and the cover preview, which loads live from the URL field through
- * [coverModel] (the app's registered cover fetcher, so header-protected hosts work).
+ * The shared manga/novel edit-info editor: a Material dialog ported from Komikku's EditMangaDialog
+ * whose scrolling content is a native [EditEntryInfoBinding] view in an [AndroidView]. Native EditText
+ * keeps the soft keyboard stable across field switches, which the pure-Compose form could not on
+ * edge-to-edge Android 15+, so this is THE ONE SANCTIONED EXCEPTION to the Compose-native screen rule.
+ * The cover preview loads once through [coverModel], the app's registered fetcher, so header-protected
+ * hosts work; a new URL applies on Save.
  */
 @Composable
 fun EntryEditInfoDialog(
@@ -100,8 +99,7 @@ fun EntryEditInfoDialog(
     onSave: (EntryEditInfoUi) -> Unit,
     // "Reset all": clear every override and close (each caller clears its overlay).
     onResetAll: () -> Unit,
-    // Null keeps the Fill-from-tracker button disabled (e.g. an unfavorited entry with no bound trackers).
-    autofill: TrackerAutofill? = null,
+    autofill: TrackerAutofill,
 ) {
     TachiyomiTheme(seedColor = seedColor) {
         var binding by remember { mutableStateOf<EditEntryInfoBinding?>(null) }
@@ -116,31 +114,35 @@ fun EntryEditInfoDialog(
         // scope, which resumes on the main thread so setText/setChips are safe.
         val fillFromTracker: (Track, Tracker) -> Unit = { track, tracker ->
             val b = binding
-            if (b != null && autofill != null) {
+            if (b != null) {
                 scope.launch {
                     val ctx = b.root.context
-                    runCatching { autofill.fetch(track, tracker) }
-                        .onSuccess { b.applyMetadata(it, colorScheme) }
-                        .onFailure { e ->
+                    runTrackerFill(
+                        tracker = tracker,
+                        fetch = { autofill.fetch(track, tracker) },
+                        onFilled = { b.applyMetadata(it, colorScheme) },
+                        onFailed = { e ->
                             logcat(LogPriority.ERROR, e) { "Fill from tracker failed (${tracker.name})" }
-                            ctx.toast(ctx.stringResource(MR.strings.track_error, tracker.name, e.message ?: ""))
-                        }
+                            val message = if (isMissingOnTracker(e)) {
+                                ctx.stringResource(MR.strings.track_autofill_not_found, tracker.name)
+                            } else {
+                                ctx.trackerErrorMessage(tracker.name, e)
+                            }
+                            ctx.toast(message)
+                        },
+                    )
                 }
             }
         }
 
-        val onAutofillClick: (() -> Unit)? = if (autofill == null) {
-            null
-        } else {
-            {
-                scope.launch {
-                    val ctx = binding?.root?.context ?: return@launch
-                    val candidates = autofill.candidates()
-                    when {
-                        candidates.isEmpty() -> ctx.toast(ctx.stringResource(MR.strings.entry_not_tracked))
-                        candidates.size == 1 -> fillFromTracker(candidates[0].first, candidates[0].second)
-                        else -> pickerTracks = candidates
-                    }
+        val onAutofillClick: () -> Unit = {
+            scope.launch {
+                val ctx = binding?.root?.context ?: return@launch
+                val candidates = autofill.candidates()
+                when {
+                    candidates.isEmpty() -> ctx.toast(ctx.stringResource(MR.strings.entry_not_tracked))
+                    candidates.size == 1 -> fillFromTracker(candidates[0].first, candidates[0].second)
+                    else -> pickerTracks = candidates
                 }
             }
         }
@@ -243,16 +245,10 @@ private fun EditEntryInfoBinding.setInfoFields(ui: EntryEditInfoUi) {
     mangaDescription.setText(ui.description)
 }
 
-// SManga and NovelStatusCode share the same 0-6 codes, so one option list and a 1:1 index serve both.
-private fun statusLabels(context: android.content.Context) = listOf(
-    MR.strings.label_default,
-    MR.strings.ongoing,
-    MR.strings.completed,
-    MR.strings.licensed,
-    MR.strings.publishing_finished,
-    MR.strings.cancelled,
-    MR.strings.on_hiatus,
-).map { context.stringResource(it) }
+// The option's index is the stored status code, with Default in the unknown code's slot.
+private fun statusLabels(context: android.content.Context) =
+    (listOf(MR.strings.label_default) + (SManga.ONGOING..SManga.ON_HIATUS).map { entryStatusRes(it.toLong()) })
+        .map { context.stringResource(it) }
 
 private fun EditEntryInfoBinding.setup(
     initial: EntryEditInfoUi,
@@ -260,7 +256,7 @@ private fun EditEntryInfoBinding.setup(
     coverModel: (thumbnailUrl: String) -> Any?,
     onResetAll: () -> Unit,
     colorScheme: ColorScheme,
-    onAutofillClick: (() -> Unit)?,
+    onAutofillClick: () -> Unit,
 ) {
     val context = root.context
 
@@ -290,8 +286,7 @@ private fun EditEntryInfoBinding.setup(
     resetTags.text = context.stringResource(MR.strings.action_reset_tags)
     resetAll.text = context.stringResource(MR.strings.action_reset_all)
     autofillFromTracker.text = context.stringResource(MR.strings.action_fill_from_tracker)
-    autofillFromTracker.isEnabled = onAutofillClick != null
-    onAutofillClick?.let { click -> autofillFromTracker.setOnClickListener { click() } }
+    autofillFromTracker.setOnClickListener { onAutofillClick() }
     // Tint the tonal buttons to the cover-based scheme (the native views don't inherit the Compose theme).
     val buttonBg = ColorStateList.valueOf(colorScheme.secondaryContainer.toArgb())
     val buttonText = colorScheme.onSecondaryContainer.toArgb()
@@ -313,7 +308,7 @@ private fun EditEntryInfoBinding.setup(
 
 /**
  * Fill the fields from a tracker's metadata. Text fields replace only when the tracker has a value;
- * genres merge into the existing chips (append-distinct) so autofill never wipes curated tags. The
+ * genres merge into the existing chips by [mergeTrackerGenres] so autofill never wipes curated tags. The
  * cover preview is not refreshed here (a typed/filled URL takes effect on Save, matching [setup]).
  */
 private fun EditEntryInfoBinding.applyMetadata(meta: TrackMangaMetadata, colorScheme: ColorScheme) {
@@ -323,9 +318,9 @@ private fun EditEntryInfoBinding.applyMetadata(meta: TrackMangaMetadata, colorSc
     thumbnailUrl.setTextIfNotBlank(meta.thumbnailUrl)
     mangaDescription.setTextIfNotBlank(meta.description)
 
-    val genres = meta.genres.orEmpty().filter { it.isNotBlank() }
-    if (genres.isNotEmpty()) {
-        mangaGenresTags.setChips((mangaGenresTags.collectTags() + genres).distinct(), colorScheme)
+    val genres = meta.genres.orEmpty()
+    if (genres.any { it.isNotBlank() }) {
+        mangaGenresTags.setChips(mergeTrackerGenres(mangaGenresTags.collectTags(), genres), colorScheme)
     }
 }
 

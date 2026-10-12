@@ -1,48 +1,38 @@
 package reikai.domain.recommendation
 
+import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.source.model.SManga
 import kotlinx.serialization.json.Json
-import uy.kohesive.injekt.injectLazy
 
 /**
  * Base contract for a tracker-backed recommendation provider: given a manga the user is viewing,
- * return titles that tracker considers similar. Dispatch mirrors the tracker UIs: prefer an
- * id-based lookup when the user already tracks this manga, otherwise resolve the id via one title
- * search (never a fan-out).
- *
- * Concrete providers target a single public "similar / recommendations" endpoint and use the
- * shared rate-limited client from [RecommendationsFetcher]; they do not use the tracker's
- * authenticated client (Shikimori's would throw for a logged-out user, see [ShikimoriRecommendations]).
- *
- * Candidates are tagged [RECOMMENDS_SOURCE] (their URL belongs to no installed extension, so a tap
- * routes through global search) and carry [RecommendationOrigin.Tracker] for the R5 grouping.
+ * return titles that tracker considers similar: by remote id for a manga the user tracks there (the
+ * media context and taste seeds), else through ONE title search, never a fan-out. Providers hit a
+ * public endpoint over the shared client from [RecommendationProviders], never the tracker's
+ * authenticated client, which would throw for a logged-out user. Candidates are tagged
+ * [RECOMMENDS_SOURCE]: their URL fits no installed extension, so a tap routes through global search.
  */
-abstract class TrackerRecommendations {
+abstract class TrackerRecommendations(private val tracker: Tracker) {
 
-    /** Shared JSON for response parsing. `parseAs` is a context function, so call sites wrap it in
-     *  `with(json) { ... }` (mirrors the tracker `*Api` classes). */
-    protected val json: Json by injectLazy()
+    /** `parseAs` is a context function, so call sites wrap it in `with(json) { ... }`. */
+    protected abstract val json: Json
 
-    abstract val trackerName: String
+    /** The tracker's own name, the one Settings shows, so the origin label reads the same. */
+    val trackerName: String get() = tracker.name
 
     /** The tracker's stable id (from `TrackerManager`), stamped onto every candidate for id matching. */
-    abstract val trackerId: Long
+    val trackerId: Long get() = tracker.id
 
     abstract suspend fun getRecsById(remoteId: Long): List<RelatedMangaCandidate>
 
     abstract suspend fun getRecsBySearch(title: String): List<RelatedMangaCandidate>
 
-    suspend fun fetch(remoteId: Long?, title: String): List<RelatedMangaCandidate> =
-        if (remoteId != null) getRecsById(remoteId) else getRecsBySearch(title)
-
     /**
-     * The tracker's view of one media the user already tracks (exact [remoteId]): its recommendations
-     * plus its genres. Used by the taste-driven injection, which needs the tracker's own "similar"
-     * list (cross-rec) and the tracker's clean genres (tag-search). Default fetches recommendations
-     * only; providers that can return genres in the same call override this.
+     * The tracker's view of one media the user already tracks: recommendations plus genres, for the
+     * taste-driven injection, which needs the tracker's own "similar" list (cross-rec) and its clean
+     * genres (tag-search).
      */
-    open suspend fun getMediaContext(remoteId: Long): MediaContext =
-        MediaContext(genres = emptyList(), recommendations = getRecsById(remoteId))
+    abstract suspend fun getMediaContext(remoteId: Long): MediaContext
 
     data class MediaContext(
         val genres: List<String>,
@@ -57,7 +47,6 @@ abstract class TrackerRecommendations {
         altTitles: List<String> = emptyList(),
     ): RelatedMangaCandidate = RelatedMangaCandidate(
         sourceId = RECOMMENDS_SOURCE,
-        trackerName = trackerName,
         manga = SManga.create().apply {
             this.url = url
             this.title = title

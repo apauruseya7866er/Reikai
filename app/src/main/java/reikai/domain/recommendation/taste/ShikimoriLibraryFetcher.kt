@@ -1,8 +1,11 @@
 package reikai.domain.recommendation.taste
 
+import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.shikimori.Shikimori
 import eu.kanade.tachiyomi.data.track.shikimori.dto.SMUserRate
+import eu.kanade.tachiyomi.data.track.shikimori.toShikimoriStatus
 import reikai.domain.recommendation.ReikaiRecommendationPreferences
+import tachiyomi.core.common.preference.Preference
 
 /**
  * Pulls the user's full Shikimori manga library via the GraphQL `userRates` query (genres inline,
@@ -14,13 +17,12 @@ import reikai.domain.recommendation.ReikaiRecommendationPreferences
  */
 class ShikimoriLibraryFetcher(
     private val shikimori: Shikimori,
-    private val preferences: ReikaiRecommendationPreferences,
+    preferences: ReikaiRecommendationPreferences,
 ) : TrackerLibraryFetcher {
 
-    override val trackerId: Long = shikimori.id
+    override val tracker: Tracker get() = shikimori
 
-    override fun isEnabled(): Boolean =
-        preferences.pullLibraryFromShikimori.get() && shikimori.isLoggedIn
+    override val pullPreference: Preference<Boolean> = preferences.pullLibraryFromShikimori
 
     override suspend fun fetchLibrary(): List<TrackedEntry> =
         shikimori.getUserLibrary().mapNotNull { it.toTrackedEntry() }
@@ -33,17 +35,8 @@ class ShikimoriLibraryFetcher(
             remoteId = remoteId,
             title = manga.name,
             score = normalizeTrackerScore(score, 10),
-            status = mapStatus(status),
-            tags = manga.genres.map { it.name.toTagKey() }.filter { it.isNotEmpty() }.distinct(),
+            status = shikimori.trackStatusOfRemote(status) { it.toShikimoriStatus() },
+            tags = manga.genres.map { it.name }.toTagKeys(),
         )
-    }
-
-    private fun mapStatus(raw: String?): TrackStatus = when (raw) {
-        "watching", "rewatching" -> TrackStatus.READING
-        "completed" -> TrackStatus.COMPLETED
-        "on_hold" -> TrackStatus.ON_HOLD
-        "dropped" -> TrackStatus.DROPPED
-        "planned" -> TrackStatus.PLAN_TO_READ
-        else -> TrackStatus.UNKNOWN
     }
 }

@@ -1,30 +1,32 @@
 package reikai.domain.recommendation
 
+import eu.kanade.tachiyomi.data.track.Tracker
+import eu.kanade.tachiyomi.data.track.mangaupdates.MangaUpdatesApi
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
+import eu.kanade.tachiyomi.network.jsonMime
 import eu.kanade.tachiyomi.network.parseAs
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
+import reikai.data.track.isMangaUpdatesManga
 import reikai.domain.recommendation.dto.MUSearchResponse
 import reikai.domain.recommendation.dto.MUSeriesResponse
 
 /**
  * MangaUpdates recommendations via the public v1 API (`series/{id}`): both the community
  * `recommendations` and the `category_recommendations` (similar-titles) buckets. Public, no auth.
- * No alternative titles parsed here, so candidates dedup on primary title only (synonym parsing
- * deferred, see docs/dev/development.md).
+ * No alternative titles parsed here, so candidates dedup on primary title only.
  */
 class MangaUpdatesRecommendations(
     private val client: OkHttpClient,
-    override val trackerId: Long,
-) : TrackerRecommendations() {
-
-    override val trackerName: String = "MangaUpdates"
+    tracker: Tracker,
+    override val json: Json,
+) : TrackerRecommendations(tracker) {
 
     override suspend fun getRecsById(remoteId: Long): List<RelatedMangaCandidate> =
         fetchSeries(remoteId).toCandidates()
@@ -61,17 +63,17 @@ class MangaUpdatesRecommendations(
             put("search", title)
             put("stype", "title")
         }
-        val body = payload.toString().toRequestBody(JSON_MEDIA_TYPE)
+        val body = payload.toString().toRequestBody(jsonMime)
 
         val data = with(json) {
             client.newCall(POST(url.toString(), body = body)).awaitSuccess().parseAs<MUSearchResponse>()
         }
-        val firstSeriesId = data.results.firstOrNull()?.record?.seriesId ?: return emptyList()
+        val firstSeriesId = data.results.firstOrNull { isMangaUpdatesManga(it.record.type) }?.record?.seriesId
+            ?: return emptyList()
         return getRecsById(firstSeriesId)
     }
 
     companion object {
-        private const val ENDPOINT = "https://api.mangaupdates.com/v1/"
-        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private const val ENDPOINT = "${MangaUpdatesApi.BASE_URL}/v1/"
     }
 }

@@ -1,6 +1,8 @@
 package eu.kanade.tachiyomi.source.online.all
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.net.Uri
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackerManager
@@ -16,6 +18,7 @@ import eu.kanade.tachiyomi.source.online.LoginSource
 import eu.kanade.tachiyomi.source.online.MetadataSource
 import eu.kanade.tachiyomi.source.online.NamespaceSource
 import eu.kanade.tachiyomi.source.online.RandomMangaSource
+import eu.kanade.tachiyomi.source.online.UrlImportableSource
 import exh.md.dto.MangaDataDto
 import exh.md.dto.MangaDto
 import exh.md.dto.StatisticsMangaDto
@@ -26,6 +29,7 @@ import exh.md.network.MangaDexLoginHelper
 import exh.md.service.MangaDexAuthService
 import exh.md.service.MangaDexService
 import exh.md.utils.FollowStatus
+import exh.md.utils.MdApi
 import exh.md.utils.MdConstants
 import exh.md.utils.MdLang
 import exh.md.utils.MdUtil
@@ -45,8 +49,8 @@ import kotlin.reflect.KClass
  * MangaDex enhanced source. Wraps the installed MangaDex extension and enriches title details with
  * MangaDex metadata (namespaced tags, cross-tracker ids, rating), plus OAuth login and the MDList
  * tracker (follow-status and rating sync). Chapters, pages, browse and search delegate to the stock
- * extension, the same way [EightMuses] does. Follows-library sync, similar-manga and the external
- * aggregator page handlers arrive in later phases.
+ * extension, the same way [EightMuses] does, and the follows list syncs into the library. Similar-manga
+ * and the external aggregator page handlers were deliberately not ported.
  */
 class MangaDex(delegate: HttpSource, val context: Context) :
     DelegatedHttpSource(delegate),
@@ -54,13 +58,23 @@ class MangaDex(delegate: HttpSource, val context: Context) :
     LoginSource,
     FollowsSource,
     RandomMangaSource,
-    NamespaceSource {
+    NamespaceSource,
+    UrlImportableSource {
 
     override val lang: String = delegate.lang
 
     private val mdLang by lazy {
         MdLang.fromExt(lang) ?: MdLang.ENGLISH
     }
+
+    // The installed extension's own settings, which hold the description switches it exposes.
+    private val sourcePreferences: SharedPreferences by lazy {
+        context.getSharedPreferences("source_$id", 0x0000)
+    }
+
+    // The extension's own defaults, so a switch reads as its settings screen shows it.
+    private fun altTitlesInDesc() = sourcePreferences.getBoolean("altTitlesInDesc_${mdLang.lang}", false)
+    private fun finalChapterInDesc() = sourcePreferences.getBoolean("finalChapterInDesc_${mdLang.lang}", true)
 
     private val trackPreferences: TrackPreferences by injectLazy()
     private val mdList: MdList by lazy { Injekt.get<TrackerManager>().mdList }
@@ -80,13 +94,15 @@ class MangaDex(delegate: HttpSource, val context: Context) :
 
     private val mangadexService by lazy { MangaDexService(client, headers) }
     private val mangadexAuthService by lazy { MangaDexAuthService(authClient, headers) }
-    private val apiMangaParser by lazy { ApiMangaParser(mdLang.lang) }
+    private val apiMangaParser by lazy { ApiMangaParser(mdLang.lang, context) }
     private val mangaHandler by lazy { MangaHandler(mdLang.lang, mangadexService) }
     private val followsHandler by lazy { FollowsHandler(mdLang.lang, mangadexAuthService) }
 
     override val metaClass: KClass<MangaDexSearchMetadata> = MangaDexSearchMetadata::class
 
     override fun newMetaInstance() = MangaDexSearchMetadata()
+
+    override fun tagSearchQuery(namespace: String, tag: String) = tag
 
     override suspend fun parseIntoMetadata(
         metadata: MangaDexSearchMetadata,
@@ -97,10 +113,12 @@ class MangaDex(delegate: HttpSource, val context: Context) :
             input.first,
             input.second,
             input.third,
-            // Per-language prefs (cover quality, title-language preference, data-saver, blocked
-            // groups, ...) get their SharedPreferences plumbing and settings UI in Phase 5. Phase 1
-            // uses the defaults: full-quality cover, prefer the extension-language title.
+            // The other per-language prefs (cover quality, title language, data-saver, blocked
+            // groups, ...) are not read here; this call uses the defaults: full-quality cover,
+            // prefer the extension-language title.
             coverQuality = "",
+            altTitlesInDesc = altTitlesInDesc(),
+            finalChapterInDesc = finalChapterInDesc(),
             preferExtensionLangTitle = true,
         )
     }
@@ -149,6 +167,26 @@ class MangaDex(delegate: HttpSource, val context: Context) :
 
     // RandomMangaSource: a random title id for the Browse "Random" button.
     override suspend fun fetchRandomMangaUrl(): String = mangaHandler.fetchRandomMangaId()
+
+    // UrlImportableSource: a mangadex.org title or chapter link opened in the app (InterceptActivity).
+    override val matchingHosts: List<String> = listOf("mangadex.org", "www.mangadex.org")
+
+    override suspend fun mapUrlToMangaUrl(uri: Uri): String? {
+        val kind = uri.pathSegments.firstOrNull()?.lowercase()
+        if (kind != "title" && kind != "manga") return null
+        return uri.pathSegments.getOrNull(1)?.takeIf { it.isNotBlank() }?.let(MdUtil::buildMangaUrl)
+    }
+
+    override fun mapUrlToChapterUrl(uri: Uri): String? {
+        if (!uri.pathSegments.firstOrNull().equals("chapter", ignoreCase = true)) return null
+        val id = uri.pathSegments.getOrNull(1)?.takeIf { it.isNotBlank() } ?: return null
+        return "${MdApi.chapter}/$id"
+    }
+
+    override suspend fun mapChapterUrlToMangaUrl(uri: Uri): String? {
+        val id = uri.pathSegments.getOrNull(1) ?: return null
+        return mangaHandler.getMangaFromChapterId(id)?.let(MdUtil::buildMangaUrl)
+    }
 
     // MDList tracker round-trip (per-title follow status + rating), called by MdList.
     suspend fun fetchTrackingInfo(url: String): Track = followsHandler.fetchTrackingInfo(url)

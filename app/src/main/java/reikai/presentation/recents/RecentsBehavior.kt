@@ -1,0 +1,141 @@
+package reikai.presentation.recents
+
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
+import reikai.domain.entry.EntryId
+import reikai.domain.merge.ChapterUnit
+import reikai.domain.merge.DownloadTargets
+import reikai.domain.merge.MergeScope
+import reikai.presentation.browse.AddDecision
+import reikai.presentation.browse.AddFavoriteResult
+
+/**
+ * Acting on the chapters a feed shows, on every surface: each mode that declares a selection needs
+ * these, so each type answers them from the graph rather than from a model only some surfaces build.
+ * Every verb moves its own work off the main thread, since the engine dispatches where the tap did.
+ */
+interface RecentsChapterActions {
+    /**
+     * Marks read or unread, routed through this type's read interactor so delete-after-read fires.
+     * Reaches every source of a merge group, as the details list does: a collapsed row stands for the
+     * whole group, so marking it read on one source alone would leave the group part-read. Suspend
+     * because reaching them means reading the group's stored stitch.
+     */
+    suspend fun markRead(chapters: Set<ChapterRef>, read: Boolean)
+
+    /** Bookmarks, group-wide on the same rule as [markRead]. */
+    suspend fun setBookmark(chapters: Set<ChapterRef>, bookmarked: Boolean)
+
+    /**
+     * Queues, expedites, cancels or deletes, per the action the row's own indicator raised. One verb
+     * with the action rather than one per action: the indicator already speaks in these four cases,
+     * and a bulk download is the same call with [ChapterDownloadAction.START]. Fetches one copy per
+     * named chapter, since downloading each grouped copy would fetch it once per source: its own, or in
+     * [scope], the scope the row was shown in, an installed source's in place of one that is gone
+     * ([fetchedCopies]). A delete goes to [deleteDownloads] with [scope].
+     */
+    suspend fun download(chapters: Set<ChapterRef>, action: ChapterDownloadAction, scope: MergeScope)
+
+    /** Deletes the copies [scope] reaches: every source's for a History row, the named copy alone for
+     *  an Updates row, which is what each row shows as downloaded. */
+    suspend fun deleteDownloads(chapters: Set<ChapterRef>, scope: MergeScope)
+}
+
+/** The chapter ids of the refs of content type [T], so a mixed selection never reaches the other type. */
+internal inline fun <reified T : EntryId> Set<ChapterRef>.ownChapterIds(): List<Long> =
+    filter { it.entryId is T }.map { it.chapterId }
+
+/**
+ * [ownChapterIds] widened to every source's copy of the same merged chapters, off each entry's stored
+ * [stitchOf], so a collapsed row's verb reaches the whole group the way the details list's does. One
+ * kernel for both types' actions, pinned by `RecentsChapterActionsConformanceTest`.
+ */
+internal suspend inline fun <reified T : EntryId> Set<ChapterRef>.groupChapterIds(
+    scope: MergeScope,
+    stitchOf: suspend (entryId: Long) -> List<ChapterUnit>,
+): List<Long> =
+    filter { it.entryId is T }
+        .groupBy { it.entryId.rawId }
+        .flatMap { (entryId, refs) -> scope.copiesOf(refs.mapTo(HashSet()) { it.chapterId }, stitchOf(entryId)) }
+        .distinct()
+
+/**
+ * [rows] as the copies their downloads fetch in [scope], the scope each row was shown in, through
+ * [DownloadTargets]: a row whose source is gone fetches an installed source's copy of its merged
+ * chapter, or nothing. One kernel for both types' actions; [chaptersOf] loads chapters by id and
+ * [installedAmong] answers which of the given chapters an installed source holds, by id.
+ */
+internal suspend fun <T> fetchedCopies(
+    rows: List<T>,
+    scope: MergeScope,
+    id: (T) -> Long,
+    ownerOf: (T) -> Long,
+    stitchOf: suspend (entryId: Long) -> List<ChapterUnit>,
+    chaptersOf: suspend (List<Long>) -> List<T>,
+    installedAmong: suspend (List<T>) -> Set<Long>,
+): List<T> = rows.groupBy(ownerOf).flatMap { (owner, owned) ->
+    val stitch = stitchOf(owner)
+    val ownIds = owned.mapTo(HashSet(), id)
+    val pooled = owned + chaptersOf((scope.copiesOf(ownIds, stitch) - ownIds).toList())
+    val installed = installedAmong(pooled)
+    DownloadTargets.of(scope, pooled, owned, stitch, id) { id(it) in installed }.of(owned, pooled, id)
+}.distinctBy(id)
+
+/**
+ * One content type's action verbs on recent activity, keyed neutrally so a mixed selection dispatches
+ * without the caller knowing which engine answers. Every method takes what to act on rather than
+ * reading a selection, because the selection belongs to the engine that can span both types.
+ *
+ * Carries no state, deliberately unlike `LibraryBehavior`, whose state flow the library's engine reads
+ * a search query back out of. Reasoning: docs/dev/subsystems/recents.md.
+ */
+interface RecentsBehavior {
+    val chapterActions: RecentsChapterActions
+
+    /** Drops every read record of these entries. Both types support it; History reaches it. */
+    fun removeFromHistory(entries: Set<EntryId>)
+
+    /**
+     * Drops the one read record [item] stands for, leaving the entry's others. The per-row dialog has
+     * offered both this and the entry-wide sweep above since before the takeover, so a shell that
+     * carried only one of them would quietly narrow what the button does.
+     */
+    fun removeHistoryRecord(item: RecentsItem)
+
+    /**
+     * What adding [entry] should do, before anything is written: already there, a possible duplicate to
+     * ask about, or add outright. Null when the row has gone. Reads only, so the caller can favorite
+     * between this and [applyAddCategories].
+     */
+    suspend fun addDecision(entry: EntryId): AddDecision<RecentsDuplicates>?
+
+    /**
+     * Adds [entry] through the shared add sequence, so a row adds the same way every other surface does.
+     * Answers a category prompt rather than raising one: the engine owns the surface's one dialog slot,
+     * so a provider never asks anything itself. The engine never calls it for an entry already in the
+     * library, whose add would toggle the favorite back off.
+     */
+    suspend fun addToLibrary(entry: EntryId): AddFavoriteResult
+
+    /**
+     * The writes a category picker's confirm owes, in the shared order, once the user has chosen: the
+     * favorite, then filing.
+     */
+    suspend fun applyAddCategories(entry: EntryId, categoryIds: List<Long>)
+
+    /** Adds [entry] and merges it into the group of the [duplicates] the user picked, in the group's categories. */
+    suspend fun addToGroup(entry: EntryId, duplicates: List<EntryId>): AddFavoriteResult
+
+    /**
+     * Drops every read record of this content type, behind the engine's one confirmation, answering
+     * whether the wipe succeeded. The shell says so afterwards, and a surface that announced a clear
+     * it had not managed would be the one message the user cannot check.
+     */
+    suspend fun clearHistory(): Boolean
+
+    /**
+     * Starts this type's library update, answering whether it started rather than was already running.
+     * Goes to the job rather than through a model, so a surface that renders no updated lane can still
+     * offer a refresh; the answer is combined by the engine and the message belongs to the shell.
+     */
+    suspend fun refresh(): Boolean
+}

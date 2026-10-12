@@ -24,7 +24,7 @@ class MyAnimeList(id: Long) : BaseTracker(id, "MyAnimeList"), DeletableTracker {
         const val PLAN_TO_READ = 6L
         const val REREADING = 7L
 
-        private const val SEARCH_ID_PREFIX = "id:"
+        // RK: SEARCH_ID_PREFIX moved into BaseTracker's trackerSearchId, which manga and novel search share
         private const val SEARCH_LIST_PREFIX = "my:"
 
         private val SCORE_LIST = IntRange(0, 10)
@@ -116,10 +116,9 @@ class MyAnimeList(id: Long) : BaseTracker(id, "MyAnimeList"), DeletableTracker {
     }
 
     override suspend fun search(query: String): List<TrackSearch> {
-        if (query.startsWith(SEARCH_ID_PREFIX)) {
-            query.substringAfter(SEARCH_ID_PREFIX).toIntOrNull()?.let { id ->
-                return listOf(api.getMangaDetails(id))
-            }
+        // RK: the id: parse is BaseTracker's trackerSearchId, shared with searchNovel; details can be null
+        query.trackerSearchId(String::toIntOrNull)?.let { id ->
+            return api.getMangaDetails(id)?.let { listOf(it) } ?: emptyList()
         }
 
         if (query.startsWith(SEARCH_LIST_PREFIX)) {
@@ -131,19 +130,17 @@ class MyAnimeList(id: Long) : BaseTracker(id, "MyAnimeList"), DeletableTracker {
         return api.search(query)
     }
 
-    // RK --> novel-aware search (Active #8): same flow, novel-filtered remote search
+    // RK --> novel-aware search: same flow, novel-filtered remote search
     override val supportsNovels = true
 
     override suspend fun searchNovel(query: String): List<TrackSearch> {
-        if (query.startsWith(SEARCH_ID_PREFIX)) {
-            query.substringAfter(SEARCH_ID_PREFIX).toIntOrNull()?.let { id ->
-                return listOf(api.getMangaDetails(id))
-            }
+        query.trackerSearchId(String::toIntOrNull)?.let { id ->
+            return api.getMangaDetails(id, novel = true)?.let { listOf(it) } ?: emptyList()
         }
 
         if (query.startsWith(SEARCH_LIST_PREFIX)) {
             query.substringAfter(SEARCH_LIST_PREFIX).let { title ->
-                return api.findListItems(title)
+                return api.findListItems(title, novel = true)
             }
         }
 
@@ -170,9 +167,14 @@ class MyAnimeList(id: Long) : BaseTracker(id, "MyAnimeList"), DeletableTracker {
             val username = api.getCurrentUser()
             saveDisplayUsername(username)
             saveCredentials(username, oauth.accessToken)
-        } catch (e: Throwable) {
+        } catch (_: Throwable) {
             logout()
         }
+    }
+
+    override suspend fun updateUserConfig() {
+        val username = api.getCurrentUser()
+        saveDisplayUsername(username)
     }
 
     override fun logout() {
@@ -196,7 +198,7 @@ class MyAnimeList(id: Long) : BaseTracker(id, "MyAnimeList"), DeletableTracker {
     fun loadOAuth(): MALOAuth? {
         return try {
             json.decodeFromString<MALOAuth>(trackPreferences.trackToken(this).get())
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }

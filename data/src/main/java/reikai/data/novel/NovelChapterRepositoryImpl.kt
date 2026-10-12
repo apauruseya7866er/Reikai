@@ -1,0 +1,195 @@
+package reikai.data.novel
+
+import app.cash.sqldelight.async.coroutines.awaitAsList
+import app.cash.sqldelight.async.coroutines.awaitAsOne
+import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesBinding
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import logcat.LogPriority
+import reikai.domain.novel.NovelChapterRepository
+import reikai.domain.novel.model.NovelChapter
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.data.Database
+import tachiyomi.data.subscribeToList
+import tachiyomi.domain.chapter.model.ChapterSummary
+
+@Inject
+@SingleIn(AppScope::class)
+@ContributesBinding(AppScope::class)
+class NovelChapterRepositoryImpl(
+    private val database: Database,
+) : NovelChapterRepository {
+
+    override suspend fun getByNovelId(novelId: Long): List<NovelChapter> =
+        database.novel_chaptersQueries.getByNovelId(novelId, ::mapNovelChapter).awaitAsList()
+
+    override fun getByNovelIdAsFlow(novelId: Long): Flow<List<NovelChapter>> =
+        database.novel_chaptersQueries.getByNovelId(novelId, ::mapNovelChapter).subscribeToList()
+            .distinctUntilChanged()
+
+    override fun getByNovelIdAndPageAsFlow(novelId: Long, page: String): Flow<List<NovelChapter>> =
+        database.novel_chaptersQueries.getByNovelIdAndPage(novelId, page, ::mapNovelChapter).subscribeToList()
+            .distinctUntilChanged()
+
+    override suspend fun getChapterSummaryByNovelId(novelId: Long): ChapterSummary =
+        database.novel_chaptersQueries.getChapterSummaryByNovelId(novelId) { total, latestChapterNumber ->
+            ChapterSummary(chapterCount = total, latestChapterNumber = latestChapterNumber)
+        }.awaitAsOne()
+
+    override suspend fun getDistinctPages(novelId: Long): List<String> =
+        database.novel_chaptersQueries.getDistinctPages(novelId).awaitAsList()
+
+    override suspend fun getNovelIdsWithChapterNameLike(name: String): Set<Long> =
+        database.novel_chaptersQueries.getNovelIdsWithChapterNameLike(name).awaitAsList().toSet()
+
+    override suspend fun getById(id: Long): NovelChapter? =
+        database.novel_chaptersQueries.getById(id, ::mapNovelChapter).awaitAsOneOrNull()
+
+    override suspend fun getByUrlAndNovelId(url: String, novelId: Long): NovelChapter? =
+        database.novel_chaptersQueries.getByUrlAndNovelId(url, novelId, ::mapNovelChapter).awaitAsOneOrNull()
+
+    override suspend fun insert(chapter: NovelChapter): Long? = try {
+        database.transactionWithResult { insertRow(chapter) }
+    } catch (e: Exception) {
+        logcat(LogPriority.ERROR, e) { "Failed to insert novel chapter '${chapter.url}' (novelId=${chapter.novelId})" }
+        null
+    }
+
+    override suspend fun update(chapter: NovelChapter): Boolean = try {
+        updateRow(chapter)
+        true
+    } catch (e: Exception) {
+        logcat(LogPriority.ERROR, e) { "Failed to update novel chapter id=${chapter.id}" }
+        false
+    }
+
+    override suspend fun updateAll(chapters: List<NovelChapter>): Boolean = try {
+        database.transaction {
+            chapters.forEach { updateRow(it) }
+        }
+        true
+    } catch (e: Exception) {
+        logcat(LogPriority.ERROR, e) { "Failed to batch-update ${chapters.size} novel chapters" }
+        false
+    }
+
+    override suspend fun updateFromRemote(
+        removedIds: List<Long>,
+        added: List<NovelChapter>,
+        updated: List<NovelChapter>,
+    ): List<NovelChapter> = database.transactionWithResult {
+        removedIds.forEach { database.novel_chaptersQueries.delete(it) }
+        // Read inside the transaction, as the manga sync does, so a sync racing another never adds a
+        // chapter the novel already has.
+        val existing = added.map { it.novelId }
+            .distinct()
+            .flatMap { novelId ->
+                database.novel_chaptersQueries.getByNovelId(novelId, ::mapNovelChapter).awaitAsList()
+                    .map { novelId to it.url }
+            }
+            .toMutableSet()
+        val stored = added.filter { existing.add(it.novelId to it.url) }.map { it.copy(id = insertRow(it)) }
+        updated.forEach { chapter ->
+            database.novel_chaptersQueries.update(
+                novelId = null, url = null, name = chapter.name, read = null, bookmark = null,
+                lastTextProgress = null, chapterNumber = chapter.chapterNumber, sourceOrder = chapter.sourceOrder,
+                dateFetch = null, dateUpload = chapter.dateUpload, page = chapter.page,
+                scanlator = chapter.scanlator, rawChapterNumber = chapter.rawChapterNumber, chapterId = chapter.id,
+            )
+        }
+        stored
+    }
+
+    override suspend fun setLastTextProgress(id: Long, progress: Long): Boolean = try {
+        // Null every column but last_text_progress so coalesce keeps the rest.
+        database.novel_chaptersQueries.update(
+            novelId = null, url = null, name = null, read = null, bookmark = null,
+            lastTextProgress = progress, chapterNumber = null, sourceOrder = null,
+            dateFetch = null, dateUpload = null, page = null, scanlator = null, rawChapterNumber = null, chapterId = id,
+        )
+        true
+    } catch (e: Exception) {
+        logcat(LogPriority.ERROR, e) { "Failed to update novel chapter id=$id" }
+        false
+    }
+
+    override suspend fun setBookmarkBulk(ids: List<Long>, bookmark: Boolean): Boolean = try {
+        database.transaction {
+            ids.forEach { id ->
+                database.novel_chaptersQueries.update(
+                    novelId = null, url = null, name = null, read = null, bookmark = bookmark,
+                    lastTextProgress = null, chapterNumber = null, sourceOrder = null,
+                    dateFetch = null, dateUpload = null, page = null, scanlator = null, rawChapterNumber = null,
+                    chapterId = id,
+                )
+            }
+        }
+        true
+    } catch (e: Exception) {
+        logcat(LogPriority.ERROR, e) { "Failed to bulk set bookmark on ${ids.size} novel chapters" }
+        false
+    }
+
+    override suspend fun setReadBulk(ids: List<Long>, read: Boolean): Boolean = try {
+        // One transaction for the whole batch. Marking unread also rewinds text progress.
+        database.transaction {
+            ids.forEach { id ->
+                database.novel_chaptersQueries.update(
+                    novelId = null, url = null, name = null, read = read, bookmark = null,
+                    lastTextProgress = if (!read) 0L else null,
+                    chapterNumber = null, sourceOrder = null,
+                    dateFetch = null, dateUpload = null, page = null, scanlator = null, rawChapterNumber = null,
+                    chapterId = id,
+                )
+            }
+        }
+        true
+    } catch (e: Exception) {
+        logcat(LogPriority.ERROR, e) { "Failed to bulk set read on ${ids.size} novel chapters" }
+        false
+    }
+
+    /** Returns the new row's id, which `last_insert_rowid()` only gives back inside the caller's transaction. */
+    private suspend fun insertRow(chapter: NovelChapter): Long {
+        database.novel_chaptersQueries.insert(
+            novelId = chapter.novelId,
+            url = chapter.url,
+            name = chapter.name,
+            read = chapter.read,
+            bookmark = chapter.bookmark,
+            lastTextProgress = chapter.lastTextProgress,
+            chapterNumber = chapter.chapterNumber,
+            sourceOrder = chapter.sourceOrder,
+            dateFetch = chapter.dateFetch,
+            dateUpload = chapter.dateUpload,
+            page = chapter.page,
+            scanlator = chapter.scanlator,
+            // A row written without one (a restore) starts from its stored number, as 63.sqm backfilled.
+            rawChapterNumber = chapter.rawChapterNumber ?: chapter.chapterNumber,
+        )
+        return database.novel_chaptersQueries.selectLastInsertedRowId().awaitAsOne()
+    }
+
+    private suspend fun updateRow(chapter: NovelChapter) {
+        database.novel_chaptersQueries.update(
+            novelId = chapter.novelId,
+            url = chapter.url,
+            name = chapter.name,
+            read = chapter.read,
+            bookmark = chapter.bookmark,
+            lastTextProgress = chapter.lastTextProgress,
+            chapterNumber = chapter.chapterNumber,
+            sourceOrder = chapter.sourceOrder,
+            dateFetch = chapter.dateFetch,
+            dateUpload = chapter.dateUpload,
+            page = chapter.page,
+            scanlator = chapter.scanlator,
+            rawChapterNumber = chapter.rawChapterNumber,
+            chapterId = chapter.id,
+        )
+    }
+}

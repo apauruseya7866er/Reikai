@@ -3,12 +3,19 @@ package eu.kanade.tachiyomi.ui.reader.setting
 import android.os.Build
 import androidx.compose.ui.graphics.BlendMode
 import dev.icerock.moko.resources.StringResource
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import reikai.domain.reader.ChapterTitleFormat
+import reikai.util.getStringList
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
 import tachiyomi.core.common.preference.getEnumSet
 import tachiyomi.i18n.MR
 
+@Inject
+@SingleIn(AppScope::class)
 class ReaderPreferences(
     preferenceStore: PreferenceStore,
 ) {
@@ -16,6 +23,11 @@ class ReaderPreferences(
     // region General
 
     val pageTransitions: Preference<Boolean> = preferenceStore.getBoolean("pref_enable_transitions_key", true)
+
+    val loadAheadOnlyOverWifi: Preference<Boolean> = preferenceStore.getBoolean(
+        "pref_reader_load_ahead_only_over_wifi",
+        true,
+    )
 
     val flashOnPageChange: Preference<Boolean> = preferenceStore.getBoolean("pref_reader_flash", false)
 
@@ -28,6 +40,9 @@ class ReaderPreferences(
     val doubleTapAnimSpeed: Preference<Int> = preferenceStore.getInt("pref_double_tap_anim_speed", 500)
 
     val showPageNumber: Preference<Boolean> = preferenceStore.getBoolean("pref_show_page_number_key", true)
+
+    // RK: off hides the progress navigator in every reading mode, moving the chapter buttons into the bar
+    val showNavigator: Preference<Boolean> = preferenceStore.getBoolean("reader_show_navigator", true)
 
     val verticalNavigator: Preference<Set<ReadingMode>> = preferenceStore.getEnumSet(
         "pref_vertical_navigator",
@@ -104,16 +119,31 @@ class ReaderPreferences(
     // RK -->
     val markReadOnSkip: Preference<Boolean> = preferenceStore.getBoolean("mark_read_on_skip", false)
 
-    // Komikku's key verbatim, so the toggle survives a backup restored in either direction. Our
-    // default differs (off, where Komikku ships on); an absent key just lets each app use its own.
-    val autoWebtoonMode: Preference<Boolean> = preferenceStore.getBoolean("eh_use_auto_webtoon", false)
+    // Komikku's key verbatim, so the toggle survives a backup restored in either direction, and both
+    // apps default it on, so an absent key behaves the same on either side.
+    val autoWebtoonMode: Preference<Boolean> = preferenceStore.getBoolean("eh_use_auto_webtoon", true)
 
     val readerBottomButtons: Preference<Set<String>> =
         preferenceStore.getStringSet("reader_bottom_buttons", ReaderBottomButton.BUTTONS_DEFAULTS)
 
+    /** The order of [readerBottomButtons], as codes; empty draws them in declaration order. */
+    val readerBottomButtonOrder: Preference<List<String>> = preferenceStore.getStringList("reader_bottom_button_order")
+
     val preserveReadingPosition: Preference<Boolean> = preferenceStore.getBoolean("preserve_reading_position", false)
 
     val preloadSize: Preference<Int> = preferenceStore.getInt("reader_preload_size", 4)
+
+    val autoScrollOnOpen: Preference<Boolean> = preferenceStore.getBoolean("reader_auto_scroll_on_open", false)
+
+    /** Seconds a page shows before a paged reader turns it. */
+    val autoScrollInterval: Preference<Int> = preferenceStore.getInt("reader_auto_scroll_interval", 5)
+
+    /** A long strip's speed, in the novel reader's unit: CSS pixels a frame at 60Hz. */
+    val autoScrollSpeed: Preference<Float> = preferenceStore.getFloat("reader_auto_scroll_speed", 1.0f)
+
+    /** Its own key rather than the novel reader's, since each reader keeps its own settings. */
+    val chapterTitleFormat: Preference<ChapterTitleFormat> =
+        preferenceStore.getEnum("pref_reader_chapter_title_format", ChapterTitleFormat.NAME)
     // RK <--
 
     val webtoonDisableZoomOut: Preference<Boolean> = preferenceStore.getBoolean("webtoon_disable_zoom_out", false)
@@ -145,6 +175,11 @@ class ReaderPreferences(
     val dualPageRotateToFitInvertWebtoon: Preference<Boolean> = preferenceStore.getBoolean(
         "pref_dual_page_rotate_invert_webtoon",
         false,
+    )
+
+    val dualPageView: Preference<DualPageView> = preferenceStore.getEnum(
+        "pref_dual_page_view",
+        DualPageView.NEVER,
     )
 
     // endregion
@@ -209,6 +244,24 @@ class ReaderPreferences(
 
     // endregion
 
+    // region WebGpu
+
+    val transitionAnimation: Preference<TransitionAnimation> =
+        preferenceStore.getEnum("webgpu_transition_animation", TransitionAnimation.BASIC)
+
+    val transitionAnimationDual: Preference<TransitionAnimation> =
+        preferenceStore.getEnum("webgpu_dual_transition_animation", TransitionAnimation.BASIC)
+
+    val cutoutMode: Preference<CutoutMode> = preferenceStore.getEnum("webgpu_cutout_mode", CutoutMode.AVOID)
+
+    val cutoutModeDual: Preference<CutoutMode> = preferenceStore.getEnum("webgpu_dual_cutout_mode", CutoutMode.IGNORE)
+
+    val continuousMinWidth: Preference<Int> = preferenceStore.getInt("webgpu_continuous_minwidth", 100)
+
+    val continuousGap: Preference<Int> = preferenceStore.getInt("webgpu_continuous_gap", 10)
+
+    // endregion
+
     enum class FlashColor {
         BLACK,
         WHITE,
@@ -221,8 +274,14 @@ class ReaderPreferences(
         val shouldInvertVertical: Boolean = false,
     ) {
         NONE(MR.strings.tapping_inverted_none),
-        HORIZONTAL(MR.strings.tapping_inverted_horizontal, shouldInvertHorizontal = true),
-        VERTICAL(MR.strings.tapping_inverted_vertical, shouldInvertVertical = true),
+        HORIZONTAL(
+            MR.strings.tapping_inverted_horizontal,
+            shouldInvertHorizontal = true,
+        ),
+        VERTICAL(
+            MR.strings.tapping_inverted_vertical,
+            shouldInvertVertical = true,
+        ),
         BOTH(MR.strings.tapping_inverted_both, shouldInvertHorizontal = true, shouldInvertVertical = true),
     }
 
@@ -231,6 +290,43 @@ class ReaderPreferences(
         HIGH(13),
         LOW(31),
         LOWEST(47),
+    }
+
+    enum class TransitionAnimation(val titleRes: StringResource) {
+        BASIC(MR.strings.transition_animation_basic),
+        FLIP(MR.strings.transition_animation_flip),
+        FLIP_LEFT(MR.strings.transition_animation_flip_left),
+        FLIP_RIGHT(
+            MR.strings.transition_animation_flip_right,
+        ),
+        STACK_LEFT(MR.strings.transition_animation_stack_left),
+        STACK_RIGHT(MR.strings.transition_animation_stack_right),
+        STACK_UP(
+            MR.strings.transition_animation_stack_up,
+        ),
+        STACK_DOWN(MR.strings.transition_animation_stack_down),
+        SPHERE(MR.strings.transition_animation_sphere),
+        CUBE_INSIDE(
+            MR.strings.transition_animation_cube_inside,
+        ),
+        CUBE_OUTSIDE(MR.strings.transition_animation_cube_outside),
+        FADE(MR.strings.transition_animation_fade),
+        FADE_WHITE(
+            MR.strings.transition_animation_fade_white,
+        ),
+        NONE(MR.strings.transition_animation_none),
+    }
+
+    enum class CutoutMode(val titleRes: StringResource) {
+        IGNORE(MR.strings.cutout_mode_ignore),
+        AVOID(MR.strings.cutout_mode_avoid),
+        SHIFT(MR.strings.cutout_mode_shift),
+    }
+
+    enum class DualPageView(val titleRes: StringResource) {
+        NEVER(MR.strings.dual_page_view_never),
+        ALWAYS(MR.strings.dual_page_view_always),
+        WIDE(MR.strings.dual_page_view_wide),
     }
 
     companion object {
@@ -255,6 +351,13 @@ class ReaderPreferences(
             MR.strings.scale_type_fit_height,
             MR.strings.scale_type_original_size,
             MR.strings.scale_type_smart_fit,
+        )
+
+        val ImageScaleTypeWebGpuViewer = listOf(
+            MR.strings.scale_type_fit_screen,
+            MR.strings.scale_type_fit_width,
+            MR.strings.scale_type_fit_height,
+            MR.strings.scale_type_original_size,
         )
 
         val ZoomStart = listOf(

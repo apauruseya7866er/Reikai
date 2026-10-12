@@ -1,0 +1,283 @@
+package reikai.presentation.migrate.flow
+
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import kotlinx.coroutines.flow.Flow
+import reikai.domain.entry.EntryId
+import reikai.domain.library.ContentType
+import reikai.domain.novel.model.Novel
+import reikai.novel.source.NovelExtensionFormat
+import reikai.presentation.migrate.PickMember
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.model.Source
+
+/**
+ * Content-type-neutral data flags for the migration confirm dialog. Both per-type enums carry the
+ * same five concepts but on DIFFERENT bit layouts (manga `MigrationFlag`, novel `NovelMigrationFlag`),
+ * so adapters map by name, never by bit. Tracks migrate unconditionally on both types and are
+ * deliberately not a flag.
+ */
+enum class MigrationDataFlag {
+    CHAPTER,
+    CATEGORY,
+    CUSTOM_COVER,
+    NOTES,
+    REMOVE_DOWNLOAD,
+}
+
+/** A migration target source. [key] is the neutral id (manga `Long` stringified, novel plugin id). */
+data class MigrationSourceUi(
+    val key: String,
+    val name: String,
+    val lang: String,
+    val icon: MigrationSourceIcon,
+    /** How a novel source is packaged; null for manga. */
+    val format: NovelExtensionFormat? = null,
+)
+
+/** Upstream's name-then-language source order, so an edit never reshuffles two same-named sources. */
+val migrationSourceOrder: Comparator<MigrationSourceUi> = compareBy({ it.name.lowercase() }, { it.lang })
+
+/** The per-type icon payload: a typed slot, so shared UI renders by case instead of downcasting. */
+sealed interface MigrationSourceIcon {
+    data class MangaSource(val source: Source) : MigrationSourceIcon
+    data class NovelUrl(val iconUrl: String?) : MigrationSourceIcon
+}
+
+/** The per-type domain model behind a row: read by the owning adapter and the details push. */
+sealed interface MigrationPayload {
+    data class OfManga(val manga: Manga) : MigrationPayload
+    data class OfNovel(val novel: Novel) : MigrationPayload
+}
+
+/** Adapter-owned candidate state, one case per adapter, round-tripping through [MigrationFlowAdapter.resolve]. */
+sealed interface MigrationHandle
+
+/** An entry being migrated, loaded once per flow run. */
+data class MigrationEntry(
+    val id: EntryId,
+    val title: String,
+    val sourceKey: String,
+    /** From [MigrationFlowAdapter.sourceDisplayName]. */
+    val sourceName: String,
+    val chapterCount: Int?,
+    /** Highest known chapter number, the upstream comparison basis for prioritize-by-chapters and
+     *  hide-without-updates (sources split/bundle chapters differently, so row count alone lies). */
+    val latestChapter: Double? = null,
+    /** Adapter-built Coil cover model (`MangaCover` / `NovelCover`) for the row thumbnail. */
+    val cover: Any?,
+    val payload: MigrationPayload,
+)
+
+/**
+ * A candidate target found on one source.
+ *
+ * [handle] round-trips through [MigrationFlowAdapter.resolve] into a commit-ready target; the shared
+ * flow reads it only to open a details page, which is why [cover] and [key] are built by the adapter.
+ */
+data class MigrationCandidate(
+    val sourceKey: String,
+    val title: String,
+    val chapterCount: Int?,
+    /** Highest known chapter number; see [MigrationEntry.latestChapter]. */
+    val latestChapter: Double? = null,
+    /** Stable identity within a source (url / path), the lazy-list key. Titles are not unique. */
+    val key: String,
+    /** Adapter-built Coil cover model for the candidate cell. */
+    val cover: Any? = null,
+    /**
+     * This candidate is already a library entry. Adapter-filled, like [cover] and [key], because
+     * favourite-ness lives in the per-type row the UI must not downcast to. Marking only: a target
+     * already in the library is a legitimate pick (that is the replace case), so nothing gates on it.
+     */
+    val inLibrary: Boolean = false,
+    /**
+     * Adapter-owned, and the only place resolved-ness lives: whether a commit still owes this
+     * candidate a materialising [MigrationFlowAdapter.resolve] is a property of the handle, not of
+     * the shared model, since a shared Boolean would mean something different per adapter. The novel handle answers it with its stored row; manga
+     * candidates are stored from search time. Both resolves re-check chapters regardless, since a
+     * stored row may never have been synced.
+     */
+    val handle: MigrationHandle,
+) {
+    /**
+     * This candidate counted from [chapters]: how many, and the highest number. Both null, not 0, for an
+     * empty list: 0 reads as a settled count and blocks the display peek from retrying, while null leaves
+     * the count honestly unknown. Every candidate builder of both adapters counts through here.
+     */
+    fun <T> withChapterCounts(chapters: List<T>, number: (T) -> Double): MigrationCandidate = copy(
+        chapterCount = chapters.size.takeIf { it > 0 },
+        latestChapter = chapters.latestChapterNumber(number),
+    )
+}
+
+/**
+ * What [MigrationFlowAdapter.resolve] produced: the commit-ready [candidate], and whether this call
+ * actually pulled the target's chapters from its source.
+ *
+ * [syncedNow] is returned rather than stored on the candidate on purpose. It is only true of the
+ * call that produced it, so a commit can skip a refresh it just performed, while a candidate that
+ * has been sitting on a row since an earlier resolve carries no claim about freshness at all.
+ */
+data class ResolvedTarget(
+    val candidate: MigrationCandidate,
+    val syncedNow: Boolean,
+)
+
+/** One row of the per-source favorites picker, deliberately lighter than [MigrationEntry] (no
+ *  chapter count, so listing a large source's favorites costs no per-row query). [cover] is the
+ *  adapter-built Coil model. */
+data class MigrationFavorite(
+    val id: EntryId,
+    val title: String,
+    val cover: Any?,
+    val payload: MigrationPayload,
+)
+
+/**
+ * The pre-list search options, settled on the config screen before the list exists and read once
+ * from there, so no search can have its options changed underneath it.
+ *
+ * [extraQuery] is transient per run and never persisted: the config screen hands it to the next
+ * screen as a constructor argument, as Mihon does, the model folds it back in, and each adapter's
+ * suggest() reads it from the tuning it is given. The toggles persist per type.
+ */
+data class MigrationTuning(
+    val extraQuery: String? = null,
+    val deepSearch: Boolean = false,
+    val prioritizeByChapters: Boolean = false,
+    val hideUnmatched: Boolean = false,
+    val hideWithoutUpdates: Boolean = false,
+)
+
+/**
+ * The per-type seam of the unified migration flow: everything above it is shared and written once,
+ * and implementations are the only place it touches a content type. Fetch timing is part of the
+ * contract: [resolve] is the expensive one and the only one a commit depends on, since it alone
+ * guarantees the candidate is materialised and populated. Storing is not the distinction, as
+ * [suggest] and [candidates] insert rows on manga too. Design record:
+ * docs/dev/subsystems/migrate.md.
+ */
+interface MigrationFlowAdapter {
+    val contentType: ContentType
+
+    /** One-time readiness work before sources are read (the novel side loads its plugin host here;
+     *  without it, entering the flow before the host warms up shows empty sources with no error).
+     *  Must not swallow cancellation: use [runCatchingCancellable], never bare `runCatching`. */
+    suspend fun prepare() {}
+
+    /** Enabled sources only, in [migrationSourceOrder]: a disabled source or denied language is never
+     *  offered as a target. */
+    suspend fun enabledSources(): List<MigrationSourceUi>
+
+    fun savedSelection(): List<String>
+
+    /** Persist the ordered target selection. A key the adapter cannot parse is a caller bug, so
+     *  implementations throw rather than silently shrinking the saved set. */
+    fun persistSelection(keys: List<String>)
+
+    /** Pinned source keys, the config screen's selection default when nothing is saved yet. */
+    fun pinnedKeys(): Set<String>
+
+    /** Every entry in [ids] expanded to its full merge group, deduped in encounter order. The pick
+     *  screen skips itself when the members are exactly the input set (nothing merged). */
+    suspend fun mergeGroupMembers(ids: List<Long>): List<PickMember>
+
+    /** The display name for one source key, which still names an uninstalled source by the name it
+     *  was last seen with (its stored rows still migrate). */
+    suspend fun sourceDisplayName(sourceKey: String): String
+
+    /** The library favorites belonging to one source, title-sorted, for the favorites picker. */
+    fun favorites(sourceKey: String): Flow<List<MigrationFavorite>>
+
+    fun readTuning(): MigrationTuning
+
+    fun persistTuning(tuning: MigrationTuning)
+
+    suspend fun loadEntries(ids: List<Long>): List<MigrationEntry>
+
+    /** The best match for [entry] on one source, or null when the source has none. Enriches the
+     *  winning match only: enriching every probed source multiplies requests per row, the
+     *  rate-limit risk the enhanced search options warn about. */
+    suspend fun suggest(entry: MigrationEntry, sourceKey: String, tuning: MigrationTuning): MigrationCandidate?
+
+    /** The override picker's per-source result list for a user-edited [query]. Search-page data
+     *  only: no detail or chapter fetch, so counts stay null until the pick is resolved. */
+    suspend fun candidates(entry: MigrationEntry, query: String, sourceKey: String): List<MigrationCandidate>
+
+    /**
+     * Materialise a picked candidate into a commit-ready target (row inserted, chapters fetched,
+     * count known), returning a [ResolvedTarget] whose handle now carries the stored row. The source
+     * fetch is best-effort on both sides, but a storage error can still throw, so callers must catch
+     * as well as null-check. Idempotent, since the commit path resolves unconditionally.
+     * [ResolvedTarget.syncedNow] reports whether this call fetched, which is what lets the commit
+     * skip a second identical fetch; a failed fetch reports false, so the engine fetches again.
+     */
+    suspend fun resolve(candidate: MigrationCandidate): ResolvedTarget?
+
+    /**
+     * Best-effort chapter counts for a candidate, so the row can show "584 -> 601" instead of
+     * unknown. Display-only: the flow never relies on the result being commit-ready (a side where
+     * that comes free may return one), and null (couldn't fetch, or a count would be a lie, e.g. a
+     * paged novel source's first page) leaves the row reading unknown. Called for found suggestions
+     * and for accepted targets; the caller bounds the concurrency, so one fetch per call is fine.
+     */
+    suspend fun peekCounts(candidate: MigrationCandidate): MigrationCandidate?
+
+    /** Wrap an already-stored entry (a duplicate-dialog migrate target) as a resolved, commit-ready
+     *  candidate, bypassing search. Null when the row is gone. */
+    suspend fun storedCandidate(id: Long): MigrationCandidate?
+
+    fun savedFlags(): Set<MigrationDataFlag>
+
+    /** Persist the chosen flag set, once, when the user confirms. Never called per row: [migrate]
+     *  takes its flags as a value, so a batch cannot rewrite the pref once per row and two
+     *  concurrent commits cannot swap each other's flags. */
+    fun persistFlags(flags: Set<MigrationDataFlag>)
+
+    /** The flags worth offering for these entries: CHAPTER and CATEGORY always; the rest only when
+     *  at least one entry actually has the thing (custom cover, notes, downloads). */
+    suspend fun applicableFlags(entries: List<MigrationEntry>): Set<MigrationDataFlag>
+
+    /**
+     * Commit one entry onto a [resolve]d target with exactly [flags]. Writes no preferences. Throws
+     * on failure; the shared model owns retry surfacing.
+     * Both engines re-fetch the target's chapters before carrying read state, so a migration works
+     * from any add path. [targetJustSynced] says the caller's [resolve] already did that fetch
+     * moments ago, so the engine skips it. It describes this call alone, never a remembered
+     * freshness window.
+     */
+    suspend fun migrate(
+        entry: MigrationEntry,
+        target: MigrationCandidate,
+        replace: Boolean,
+        flags: Set<MigrationDataFlag>,
+        targetJustSynced: Boolean,
+    )
+}
+
+/**
+ * The one place the content type picks an adapter, holding both so a screen can ask for either.
+ *
+ * The choice is runtime data, so the interface itself is deliberately not a graph binding: binding it
+ * would have to pick a content type at build time, which is the one thing this flow cannot do.
+ */
+@Inject
+@SingleIn(AppScope::class)
+class MigrationAdapters(
+    private val manga: MangaMigrationFlowAdapter,
+    private val novel: NovelMigrationFlowAdapter,
+) {
+
+    /**
+     * Exhaustive on purpose. [ContentType.ALL] is a live value on the library and browse chips, and an
+     * `else` branch would quietly hand novel machinery a list of manga ids rather than failing where
+     * the mistake was made. The flow always runs on exactly one content type.
+     */
+    fun forType(contentType: ContentType): MigrationFlowAdapter = when (contentType) {
+        ContentType.MANGA -> manga
+        ContentType.NOVELS -> novel
+        ContentType.ALL -> error("The migration flow runs on one content type; ALL has no adapter")
+    }
+}

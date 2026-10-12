@@ -24,12 +24,14 @@ fun LogoHeader(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
-            painter = painterResource(R.drawable.ic_reikai),
+            painter = painterResource(R.drawable.ic_reikai), // RK: Reikai's own logo
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier
                 .padding(iconPadding)
-                .size(64.dp),
+                // RK: 52 rather than 64, because the glyph now fills the notification keyline
+                //     inside its canvas. This keeps the logo drawing at the size it always has.
+                .size(52.dp),
         )
 
         HorizontalDivider()

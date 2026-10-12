@@ -1,0 +1,125 @@
+package reikai.presentation.category
+
+import dev.zacsweers.metro.Inject
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import logcat.LogPriority
+import reikai.domain.category.CategoryContentType
+import reikai.domain.category.CategoryIdPreferences
+import reikai.domain.category.deleteCategoryAndCleanup
+import reikai.domain.category.flagsWithHidden
+import reikai.domain.category.isHidden
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.category.interactor.RenameCategory
+import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.category.model.NewCategory
+import tachiyomi.domain.category.repository.CategoryRepository
+import tachiyomi.domain.library.service.LibraryPreferences
+
+/**
+ * Category management for the shared edit-categories screen, one list spanning both libraries.
+ *
+ * Rename and hide are type-agnostic and go through Mihon's interactors unchanged. Create, reorder and
+ * delete are owned here because Mihon's own scope themselves to the manga-visible rows, which overlap
+ * the novel-visible rows on universal categories, so letting either library renumber alone made the two
+ * fight over a shared row's order.
+ */
+@Inject
+class CategoryActions(
+    private val categoryRepository: CategoryRepository,
+    private val categoryIdPreferences: CategoryIdPreferences,
+    private val libraryPreferences: LibraryPreferences,
+    private val renameCategory: RenameCategory,
+) {
+
+    fun subscribe(): Flow<List<Category>> = categoryRepository.getUnfilteredAsFlow()
+
+    suspend fun create(name: String, contentType: Long): Boolean = try {
+        categoryRepository.insert(
+            // Seeded with the global sort like Mihon's CreateCategoryWithName. The bits only take effect
+            // once the override marker is set, so this is the same as starting blank until the user sets
+            // a per-category sort. The database places it after every row of either library.
+            NewCategory(name = name, flags = initialFlags(), contentType = contentType),
+        )
+        true
+    } catch (e: Exception) {
+        logcat(LogPriority.ERROR, e) { "Failed to create category" }
+        false
+    }
+
+    suspend fun rename(category: Category, newName: String) =
+        renameCategory.await(category, newName) !is RenameCategory.Result.InternalError
+
+    suspend fun delete(category: Category): Boolean = try {
+        deleteCategoryAndCleanup(
+            categoryRepository = categoryRepository,
+            categoryId = category.id,
+            defaultCategoryPreferences = categoryIdPreferences.defaultsFor(category.contentType),
+            categorySetPreferences = categoryIdPreferences.setsFor(category.contentType),
+            categoryListPreferences = categoryIdPreferences.listsFor(category.contentType),
+        )
+        true
+    } catch (e: Exception) {
+        logcat(LogPriority.ERROR, e) { "Failed to delete category id=${category.id}" }
+        false
+    }
+
+    // Serializes the read-renumber-write like upstream's ReorderCategory: two rapid drags may
+    // otherwise interleave and scramble the order column.
+    private val reorderMutex = Mutex()
+
+    /** Move a category and renumber the whole list, so one ordering serves both libraries. */
+    suspend fun reorder(category: Category, newIndex: Int): Boolean = reorderMutex.withLock {
+        val categories = nonSystemCategories().toMutableList()
+        val from = categories.indexOfFirst { it.id == category.id }
+        if (from < 0) return@withLock true
+        val moved = categories.removeAt(from)
+        categories.add(newIndex.coerceIn(0, categories.size), moved)
+        write { categoryRepository.updateAllOrders(orderedIds = categories.map { it.id }) }
+    }
+
+    suspend fun toggleHidden(category: Category) = write {
+        categoryRepository.updateFlags(
+            categoryId = category.id,
+            flags = category.flagsWithHidden(!category.isHidden),
+        )
+    }
+
+    private suspend fun nonSystemCategories(): List<Category> =
+        categoryRepository.getUnfiltered().filterNot(Category::isSystemCategory)
+
+    private fun initialFlags(): Long {
+        val sort = libraryPreferences.sortingMode.get()
+        return sort.type.flag or sort.direction.flag
+    }
+
+    private suspend fun write(block: suspend () -> Unit): Boolean = try {
+        block()
+        true
+    } catch (e: Exception) {
+        logcat(LogPriority.ERROR, e) { "Failed to update categories" }
+        false
+    }
+}
+
+/** The default-category preferences a row of this content type is referenced by. */
+private fun CategoryIdPreferences.defaultsFor(contentType: Long) = when (contentType) {
+    CategoryContentType.MANGA -> listOf(mangaDefault)
+    CategoryContentType.NOVEL -> listOf(novelDefault)
+    else -> listOf(mangaDefault, novelDefault)
+}
+
+/** The category-id set preferences a row of this content type is referenced by. The shared sets can
+ *  hold ids of either type, so every arm scrubs them. */
+private fun CategoryIdPreferences.setsFor(contentType: Long) = when (contentType) {
+    CategoryContentType.MANGA -> mangaSets + sharedSets
+    CategoryContentType.NOVEL -> novelSets + sharedSets
+    else -> mangaSets + novelSets + sharedSets
+}
+
+/** The lists are the manga Upcoming calendar's, so a novel-only category is never in one. */
+private fun CategoryIdPreferences.listsFor(contentType: Long) = when (contentType) {
+    CategoryContentType.NOVEL -> emptyList()
+    else -> mangaLists
+}

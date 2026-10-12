@@ -5,8 +5,8 @@
 // plugins expect (see refs/lnreader-main/src/plugins/pluginManager.ts) and bridges fetch / storage /
 // log to Kotlin through host functions bound by LnPluginHost.kt:
 //   __lnLog(level, message)            -- sync
-//   __lnGetStorage(pluginId, key)      -- sync, returns string|null
-//   __lnSetStorage(pluginId, key, val) -- sync, val null deletes
+//   __lnGetStorage(pluginId, key)      -- sync, returns string|null (runtime only, see below)
+//   __lnSetStorage(pluginId, key, val) -- sync, val null deletes (runtime only, see below)
 //   __lnFetch(url, optsJson)           -- async, returns a JSON FetchResponse string
 //
 // Plugin source is downloaded by Kotlin (LnPluginLoader) and passed into __lnLoadPlugin. All HTTP
@@ -15,6 +15,15 @@
 
 (function () {
   "use strict";
+
+  // The storage bridge reads whatever plugin id it is handed, and plugin code runs in this global
+  // scope, so a plugin calling it directly could read another plugin's settings and captured site
+  // sign-in. The runtime keeps private references and removes the globals; plugins reach storage only
+  // through their own scoped @libs/storage.
+  var hostGetStorage = globalThis.__lnGetStorage;
+  var hostSetStorage = globalThis.__lnSetStorage;
+  delete globalThis.__lnGetStorage;
+  delete globalThis.__lnSetStorage;
 
   // QuickJS has no browser globals; plugins (and the cheerio/dayjs bundles) expect a handful.
   globalThis.window = globalThis;
@@ -242,21 +251,107 @@
     globalThis.FormData = FD;
   }
 
+  // UTF-8 only, with the browser's (WHATWG Encoding) handling of bad input: a malformed sequence
+  // decodes to U+FFFD and a lone surrogate encodes to U+FFFD, rather than throwing, since every
+  // Response.text() decodes through here. `fatal: true` throws a TypeError, as a browser does.
   if (typeof globalThis.TextEncoder === "undefined") {
     var TE = function () {};
-    TE.prototype.encode = function (s) {
-      var u = unescape(encodeURIComponent(String(s)));
-      var a = new Uint8Array(u.length);
-      for (var i = 0; i < u.length; i++) a[i] = u.charCodeAt(i);
-      return a;
+    TE.prototype.encoding = "utf-8";
+    TE.prototype.encode = function (input) {
+      var s = input === undefined ? "" : String(input);
+      var out = [];
+      for (var i = 0; i < s.length; i++) {
+        var c = s.charCodeAt(i);
+        if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+          var next = s.charCodeAt(i + 1);
+          if (next >= 0xdc00 && next <= 0xdfff) {
+            c = 0x10000 + ((c - 0xd800) << 10) + (next - 0xdc00);
+            i++;
+          } else {
+            c = 0xfffd;
+          }
+        } else if (c >= 0xd800 && c <= 0xdfff) {
+          c = 0xfffd;
+        }
+        if (c < 0x80) out.push(c);
+        else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+        else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+        else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 0x3f), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+      }
+      return new Uint8Array(out);
     };
     globalThis.TextEncoder = TE;
-    var TD = function () {};
-    TD.prototype.decode = function (b) {
-      var a = new Uint8Array(b);
+    var TD = function (label, options) {
+      this.fatal = !!(options && options.fatal);
+      this.ignoreBOM = !!(options && options.ignoreBOM);
+    };
+    TD.prototype.encoding = "utf-8";
+    TD.prototype.decode = function (input) {
+      if (input === undefined) return "";
+      var a = ArrayBuffer.isView(input)
+        ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+        : new Uint8Array(input);
+      var fatal = this.fatal;
+      var units = [];
       var s = "";
-      for (var i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
-      return decodeURIComponent(escape(s));
+      function emit(cp) {
+        if (cp > 0xffff) {
+          cp -= 0x10000;
+          units.push(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+        } else {
+          units.push(cp);
+        }
+        if (units.length >= 8192) {
+          s += String.fromCharCode.apply(null, units);
+          units = [];
+        }
+      }
+      function bad() {
+        if (fatal) throw new TypeError("The encoded data was not valid utf-8");
+        emit(0xfffd);
+      }
+      var i = 0;
+      if (!this.ignoreBOM && a.length >= 3 && a[0] === 0xef && a[1] === 0xbb && a[2] === 0xbf) i = 3;
+      var needed = 0, seen = 0, cp = 0, lower = 0x80, upper = 0xbf;
+      while (i < a.length) {
+        var b = a[i];
+        if (needed === 0) {
+          if (b <= 0x7f) emit(b);
+          else if (b >= 0xc2 && b <= 0xdf) { needed = 1; cp = b & 0x1f; }
+          else if (b >= 0xe0 && b <= 0xef) {
+            if (b === 0xe0) lower = 0xa0;
+            if (b === 0xed) upper = 0x9f;
+            needed = 2;
+            cp = b & 0x0f;
+          } else if (b >= 0xf0 && b <= 0xf4) {
+            if (b === 0xf0) lower = 0x90;
+            if (b === 0xf4) upper = 0x8f;
+            needed = 3;
+            cp = b & 0x07;
+          } else bad();
+          i++;
+          continue;
+        }
+        if (b < lower || b > upper) {
+          // The broken sequence becomes one U+FFFD and this byte is read again as a new start.
+          needed = seen = cp = 0;
+          lower = 0x80;
+          upper = 0xbf;
+          bad();
+          continue;
+        }
+        lower = 0x80;
+        upper = 0xbf;
+        cp = (cp << 6) | (b & 0x3f);
+        seen++;
+        i++;
+        if (seen === needed) {
+          emit(cp);
+          needed = seen = cp = 0;
+        }
+      }
+      if (needed !== 0) bad();
+      return s + String.fromCharCode.apply(null, units);
     };
     globalThis.TextDecoder = TD;
   }
@@ -695,24 +790,22 @@
     var enc = raw.bodyBase64 || "";
     var resp = new Uint8Array(b64.length(enc));
     b64.decode(enc, resp, 0);
+    return decodeGrpcWebBody(root.lookupType(protoInit.responseType), resp);
+  }
+
+  // The decoded message itself, as LNReader's fetchProto returns it (refs/lnreader-main
+  // src/plugins/helpers/fetch.ts): plugins switch on numeric enums, and toObject turned them into names.
+  function decodeGrpcWebBody(RespT, resp) {
     if (resp.length < 5) throw new Error("Empty gRPC-web response");
     var rlen = (resp[1] << 24) | (resp[2] << 16) | (resp[3] << 8) | resp[4];
-    var RespT = root.lookupType(protoInit.responseType);
-    return RespT.toObject(RespT.decode(resp.subarray(5, 5 + rlen)), {
-      longs: String,
-      enums: String,
-      bytes: String,
-      defaults: true,
-      arrays: true,
-      objects: true,
-    });
+    return RespT.decode(resp.subarray(5, 5 + rlen));
   }
 
   // -- @libs/storage shim -----------------------------------------------------
-  // The three scopes (storage/local/session) map to the same Kotlin SharedPreferences, keyed by
-  // prefix. Backed by __lnGetStorage/__lnSetStorage. Values are stored as lnreader's StoredItem
-  // envelope ({created, value, expires}, JSON-encoded) so booleans / arrays / objects round-trip
-  // with their type (refs/lnreader-main/src/plugins/helpers/storage.ts) instead of stringifying.
+  // `storage` maps to the Kotlin preference store under a key prefix, backed by
+  // __lnGetStorage/__lnSetStorage. Values are stored as lnreader's StoredItem envelope
+  // ({created, value, expires}, JSON-encoded) so booleans / arrays / objects round-trip with their
+  // type (refs/lnreader-main/src/plugins/helpers/storage.ts) instead of stringifying.
 
   function makeStorage(pluginId, kind) {
     var prefix = kind + ":";
@@ -723,10 +816,10 @@
           value: value,
           expires: expires instanceof Date ? expires.getTime() : expires,
         };
-        __lnSetStorage(pluginId, prefix + key, JSON.stringify(item));
+        hostSetStorage(pluginId, prefix + key, JSON.stringify(item));
       },
       get: function (key, raw) {
-        var stored = __lnGetStorage(pluginId, prefix + key);
+        var stored = hostGetStorage(pluginId, prefix + key);
         if (stored === null || stored === undefined) return undefined;
         var item;
         try {
@@ -734,9 +827,11 @@
         } catch (e) {
           return stored;
         } // legacy plain value
-        if (item && typeof item === "object" && "value" in item) {
+        // An envelope is known by either key: JSON drops a value of undefined, which LNReader then
+        // returns as undefined (item.value), not as the envelope.
+        if (item && typeof item === "object" && ("value" in item || "created" in item)) {
           if (item.expires && Date.now() > item.expires) {
-            __lnSetStorage(pluginId, prefix + key, null);
+            hostSetStorage(pluginId, prefix + key, null);
             return undefined;
           }
           return raw ? item : item.value;
@@ -744,7 +839,25 @@
         return item;
       },
       delete: function (key) {
-        __lnSetStorage(pluginId, prefix + key, null);
+        hostSetStorage(pluginId, prefix + key, null);
+      },
+    };
+  }
+
+  // LNReader's localStorage / sessionStorage are read-only: get() takes no key and returns the site's
+  // own storage as it stood when its WebView last closed, an object of item strings, or undefined.
+  // Kotlin writes it under this key (LnPluginHost.storeWebStorage, from WEB_STORAGE_KEY_PREFIX in
+  // PluginStorageKeys.kt), so the two spellings must agree.
+  function makeWebStorage(pluginId, kind) {
+    return {
+      get: function () {
+        var stored = hostGetStorage(pluginId, "webview:" + kind);
+        if (stored === null || stored === undefined) return undefined;
+        try {
+          return JSON.parse(stored);
+        } catch (e) {
+          return undefined;
+        }
       },
     };
   }
@@ -759,6 +872,9 @@
     PublishingFinished: "Publishing Finished",
     Cancelled: "Cancelled",
     OnHiatus: "On Hiatus",
+    // A member missing here reaches a plugin as undefined, dropping the status and any filter option naming it.
+    STUB: "STUB",
+    Inactive: "Inactive",
   });
   // Member NAMES must mirror LNReader's FilterTypes enum: compiled plugins look a type up by name
   // (`i.FilterTypes.CheckboxGroup`), so a missing/renamed member resolves to undefined and that filter
@@ -854,8 +970,8 @@
       if (name === "@libs/storage") {
         return {
           storage: makeStorage(pluginId, "storage"),
-          localStorage: makeStorage(pluginId, "local"),
-          sessionStorage: makeStorage(pluginId, "session"),
+          localStorage: makeWebStorage(pluginId, "local"),
+          sessionStorage: makeWebStorage(pluginId, "session"),
         };
       }
       var pkg = packages[name];
@@ -951,6 +1067,10 @@
         // Per-plugin settings schema (login/base-url/toggles). Plugins read the saved values via
         // @libs/storage; the Kotlin side renders this and writes values back into that scope.
         pluginSettings: plugin.pluginSettings || null,
+        // Only the headers: the one plugin that sets a method sets GET, and none sends a body.
+        imageHeaders: (plugin.imageRequestInit && plugin.imageRequestInit.headers) || null,
+        // LNReader's opt-in to the in-app browser's storage; a plugin without it is handed none.
+        webStorageUtilized: plugin.webStorageUtilized === true,
       };
     } catch (e) {
       log("error", "loadPlugin failed: " + (e && e.stack ? e.stack : e));
@@ -992,6 +1112,8 @@
 
   globalThis.__lnLoadPlugin = loadPlugin;
   globalThis.__lnCallMethod = callMethod;
+  // Reached only by HeadlessJsIntegrationTest, which has no gRPC-web server to fetch from.
+  globalThis.__lnDecodeGrpcWebBody = decodeGrpcWebBody;
   log(
     "info",
     "lnhost headless runtime ready; vendor present: cheerio=" +

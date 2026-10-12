@@ -1,0 +1,94 @@
+package reikai.domain.backup
+
+import tachiyomi.domain.manga.model.Manga
+import kotlin.math.max
+import kotlin.time.Instant
+
+/**
+ * Whether a restore takes the backup's source details over the device's: only when the backup fetched
+ * them and the device never did, so a restore cannot roll back details the device refreshed since
+ * (mihon c67a33f3d, which replaced the edit-count comparison).
+ */
+fun backupDetailsWin(deviceInitialized: Boolean, backupInitialized: Boolean): Boolean =
+    backupInitialized && !deviceInitialized
+
+/**
+ * When a restored entry was added to the library: null while neither copy is in it, else the earlier of
+ * the two known dates, [Manga.UNKNOWN_FAVORITE_AT] when neither knows one (mihon 986f46c09).
+ */
+fun restoredFavoriteAt(device: Instant?, backup: Instant?): Instant? = if (device == null && backup == null) {
+    null
+} else {
+    listOfNotNull(device, backup).filter { it > Manga.UNKNOWN_FAVORITE_AT }.minOrNull() ?: Manga.UNKNOWN_FAVORITE_AT
+}
+
+/**
+ * The next update a restore stores: the one the entry came with (the device's, else the backup's) while it
+ * is still ahead of [window], since it was worked out from the chapters that copy came from, else the
+ * [predicted] one (mihon 292381662). An older backup carries none, so it restores the prediction.
+ */
+fun restoredNextUpdate(carried: Instant?, predicted: Instant?, window: ClosedRange<Instant>): Instant? =
+    carried?.takeIf { it >= window.start } ?: predicted
+
+/** A chapter's user state as a restore merges it; [progress] is the type's own resume position. */
+data class RestoredChapterState(val read: Boolean, val bookmark: Boolean, val progress: Long)
+
+/**
+ * Folds a backup chapter onto the device's copy: read and bookmark from either side, and the further
+ * progress, so a restore never rewinds reading the device already has. Mihon lets any non-zero backup
+ * position win instead; both types take this rule, pinned by RestoreMergeConformanceTest.
+ */
+fun RestoredChapterState.foldBackup(backup: RestoredChapterState) = RestoredChapterState(
+    read = read || backup.read,
+    bookmark = bookmark || backup.bookmark,
+    progress = max(progress, backup.progress),
+)
+
+/**
+ * A backup can list one chapter more than once; its copies fold into one by [foldBackup] before meeting
+ * the device's row, so the restore writes the chapter once (mihon 6ee529c5a).
+ */
+fun <T> List<T>.foldChapterCopies(
+    url: (T) -> String,
+    state: (T) -> RestoredChapterState,
+    withState: (T, RestoredChapterState) -> T,
+): List<T> = groupBy(url).map { (_, copies) ->
+    copies.reduce { kept, other -> withState(kept, state(kept).foldBackup(state(other))) }
+}
+
+/**
+ * What a backup track changes on the device's track on the same tracker: only a further chapter read.
+ * The device's row, remote link included, is the one synced with the tracker, and taking the backup's
+ * link would pair one remote entry's id with another's url and title (mihon 4b48a84ec). Null when the
+ * backup is not ahead, so nothing is written.
+ */
+fun backupChapterReadAhead(device: Double, backup: Double): Double? = backup.takeIf { it > device }
+
+/** One chapter's history keyed by its url, as a backup carries it; [readAt] is null for an entry the user removed. */
+data class RestoredChapterHistory(val chapterUrl: String, val readAt: Instant?, val readDuration: Long)
+
+/**
+ * A backup can hold one entry per copy of a duplicated chapter; they are one chapter's history, so they
+ * fold to the latest read and the total time before meeting the device's row (mihon 553762fae).
+ */
+fun List<RestoredChapterHistory>.foldHistoryCopies(): List<RestoredChapterHistory> =
+    groupBy { it.chapterUrl }.map { (chapterUrl, copies) ->
+        val readAt = copies.mapNotNull { it.readAt }.maxOrNull()
+        RestoredChapterHistory(chapterUrl, readAt, copies.sumOf { it.readDuration })
+    }
+
+/**
+ * The (read time, duration to add) that brings a stored history row to the later read and the longer
+ * duration of it and an incoming row; a caller with no stored row passes null and 0. A null read time is
+ * removed history, which a known time on either side replaces. Shaped for the additive `upsert` in
+ * history.sq and novel_history.sq: it adds nothing once the row holds both, so a retry adds no time, and
+ * the longer duration rather than the sum counts a chapter read on both copies once. novel_history.sq
+ * `restoreUpsert` states the same rule in SQL, pinned with this one by RestoreHistoryConformanceTest.
+ */
+fun mergedHistory(
+    readAt: Instant?,
+    readDuration: Long,
+    storedReadAt: Instant?,
+    storedDuration: Long,
+): Pair<Instant?, Long> =
+    listOfNotNull(readAt, storedReadAt).maxOrNull() to max(readDuration, storedDuration) - storedDuration

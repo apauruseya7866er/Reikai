@@ -1,0 +1,82 @@
+package reikai.presentation.recommendation
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.browse.components.InLibraryBadge
+import eu.kanade.presentation.library.components.CommonMangaItemDefaults
+import eu.kanade.presentation.library.components.GRID_SELECTED_COVER_ALPHA
+import eu.kanade.presentation.library.components.GridItemSelectable
+import eu.kanade.presentation.library.components.GridItemTitle
+import eu.kanade.presentation.library.components.MangaGridCover
+import eu.kanade.presentation.manga.components.MangaCover
+import reikai.domain.recommendation.RelatedMangaCandidate
+import tachiyomi.domain.manga.model.MangaCover as MangaCoverData
+
+/**
+ * A recommendation cover cell for the details carousel and the "See all" grid, composed from the library
+ * grid item's own internal pieces so it matches that look.
+ *
+ * The origin sits as an eyebrow between cover and title, not as a caption below it: the title box is a
+ * fixed two lines, so a caption leaves a visible gap under a one-line title, whereas an eyebrow sits
+ * flush under the cover. [showOrigin] is false in the grouped grid view, where a header names it.
+ */
+@Composable
+fun RecommendationGridItem(
+    candidate: RelatedMangaCandidate,
+    inLibrary: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    isSelected: Boolean = false,
+    showOrigin: Boolean = true,
+    titleMaxLines: Int = 2,
+) {
+    val coverAlpha = if (inLibrary) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f
+    GridItemSelectable(
+        modifier = modifier,
+        isSelected = isSelected,
+        onClick = onClick,
+        onLongClick = onLongClick,
+    ) {
+        Column {
+            MangaGridCover(
+                cover = {
+                    MangaCover.Book(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .alpha(if (isSelected) GRID_SELECTED_COVER_ALPHA else coverAlpha),
+                        data = MangaCoverData(
+                            mangaId = 0L,
+                            sourceId = candidate.sourceId,
+                            isMangaFavorite = inLibrary,
+                            url = candidate.manga.thumbnail_url,
+                            lastModified = null,
+                        ),
+                    )
+                },
+                badgesStart = { InLibraryBadge(enabled = inLibrary) },
+            )
+            if (showOrigin) {
+                RecommendationOriginCaption(
+                    origin = candidate.origin,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                )
+            }
+            GridItemTitle(
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                title = candidate.manga.title,
+                style = MaterialTheme.typography.titleSmall,
+                minLines = 2,
+                maxLines = titleMaxLines,
+            )
+        }
+    }
+}

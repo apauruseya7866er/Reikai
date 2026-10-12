@@ -20,9 +20,14 @@ keystore.properties
 # macOS specific files
 .DS_Store
 
+# Patch leftovers from `git apply --reject` or a merge tool, so a hand-merge cannot sweep them in
+*.rej
+*.orig
+
 # Claude tooling (local / globally-installed; not Reikai-specific)
 .agents/
 .claude/launch.json
+.claude/settings.local.json
 .claude/skills/impeccable/
 skills-lock.json
 

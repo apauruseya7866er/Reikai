@@ -1,128 +1,66 @@
 package tachiyomi.domain.manga.interactor
 
+import dev.zacsweers.metro.Inject
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import reikai.domain.library.ChapterDates
+import reikai.domain.library.ReleaseInterval
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
-import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaUpdate
-import java.time.Instant
-import java.time.ZoneId
-import java.time.ZonedDateTime
-import java.time.temporal.ChronoUnit
-import kotlin.math.absoluteValue
+import kotlin.time.Clock
+import kotlin.time.Instant
 
+@Inject
 class FetchInterval(
     private val getChaptersByMangaId: GetChaptersByMangaId,
 ) {
 
-    suspend fun toMangaUpdate(
+    /**
+     * Works out the entry's fetch interval and the next day to check it for new chapters.
+     *
+     * @param foundRelease whether the check that led here found new chapters.
+     */
+    suspend fun withFetchInterval(
         manga: Manga,
-        dateTime: ZonedDateTime,
-        window: Pair<Long, Long>,
+        dateTime: LocalDateTime,
+        timeZone: TimeZone,
+        window: ClosedRange<Instant>?,
+        foundRelease: Boolean = false,
     ): MangaUpdate {
-        val interval = manga.fetchInterval.takeIf { it < 0 } ?: calculateInterval(
-            chapters = getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true),
-            zone = dateTime.zone,
-        )
-        val currentWindow = if (window.first == 0L && window.second == 0L) {
-            getWindow(ZonedDateTime.now())
-        } else {
-            window
+        // RK --> the prediction lives in reikai.domain.library.ReleaseInterval, which novels call too
+        val currentWindow =
+            ReleaseInterval.windowOrToday(window, Clock.System.now().toLocalDateTime(timeZone).date, timeZone)
+        val (interval, nextUpdate) = ReleaseInterval.predict(
+            manga.fetchInterval,
+            manga.nextUpdate,
+            manga.lastUpdate,
+            dateTime,
+            timeZone,
+            currentWindow,
+            foundRelease,
+        ) {
+            getChaptersByMangaId.await(manga.id, applyScanlatorFilter = true)
+                .let { chapters -> ChapterDates(chapters.map { it.dateUpload }, chapters.map { it.dateFetch }) }
         }
-        val nextUpdate = calculateNextUpdate(manga, interval, dateTime, currentWindow)
+        // RK <--
 
-        return MangaUpdate(id = manga.id, nextUpdate = nextUpdate, fetchInterval = interval)
-    }
-
-    fun getWindow(dateTime: ZonedDateTime): Pair<Long, Long> {
-        val today = dateTime.toLocalDate().atStartOfDay(dateTime.zone)
-        val lowerBound = today.minusDays(GRACE_PERIOD)
-        val upperBound = today.plusDays(GRACE_PERIOD)
-        return Pair(lowerBound.toEpochSecond() * 1000, upperBound.toEpochSecond() * 1000 - 1)
-    }
-
-    internal fun calculateInterval(chapters: List<Chapter>, zone: ZoneId): Int {
-        val chapterWindow = if (chapters.size <= 8) 3 else 10
-
-        val uploadDates = chapters.asSequence()
-            .filter { it.dateUpload > 0L }
-            .sortedByDescending { it.dateUpload }
-            .map {
-                ZonedDateTime.ofInstant(Instant.ofEpochMilli(it.dateUpload), zone)
-                    .toLocalDate()
-                    .atStartOfDay()
-            }
-            .distinct()
-            .take(chapterWindow)
-            .toList()
-
-        val fetchDates = chapters.asSequence()
-            .sortedByDescending { it.dateFetch }
-            .map {
-                ZonedDateTime.ofInstant(Instant.ofEpochMilli(it.dateFetch), zone)
-                    .toLocalDate()
-                    .atStartOfDay()
-            }
-            .distinct()
-            .take(chapterWindow)
-            .toList()
-
-        val interval = when {
-            // Enough upload date from source
-            uploadDates.size >= 3 -> {
-                val ranges = uploadDates.windowed(2).map { x -> x[1].until(x[0], ChronoUnit.DAYS) }.sorted()
-                ranges[(ranges.size - 1) / 2].toInt()
-            }
-            // Enough fetch date from client
-            fetchDates.size >= 3 -> {
-                val ranges = fetchDates.windowed(2).map { x -> x[1].until(x[0], ChronoUnit.DAYS) }.sorted()
-                ranges[(ranges.size - 1) / 2].toInt()
-            }
-            // Default to 7 days
-            else -> 7
-        }
-
-        return interval.coerceIn(1, MAX_INTERVAL)
-    }
-
-    private fun calculateNextUpdate(
-        manga: Manga,
-        interval: Int,
-        dateTime: ZonedDateTime,
-        window: Pair<Long, Long>,
-    ): Long {
-        if (manga.nextUpdate in window.first.rangeTo(window.second + 1)) {
-            return manga.nextUpdate
-        }
-
-        val latestDate = ZonedDateTime.ofInstant(
-            if (manga.lastUpdate > 0) Instant.ofEpochMilli(manga.lastUpdate) else Instant.now(),
-            dateTime.zone,
-        )
-            .toLocalDate()
-            .atStartOfDay()
-        val timeSinceLatest = ChronoUnit.DAYS.between(latestDate, dateTime).toInt()
-        val cycle = timeSinceLatest.floorDiv(
-            interval.absoluteValue.takeIf { interval < 0 }
-                ?: increaseInterval(interval, timeSinceLatest, increaseWhenOver = 10),
-        )
-        return latestDate.plusDays((cycle + 1) * interval.absoluteValue.toLong()).toEpochSecond(dateTime.offset) * 1000
-    }
-
-    private fun increaseInterval(delta: Int, timeSinceLatest: Int, increaseWhenOver: Int): Int {
-        if (delta >= MAX_INTERVAL) return MAX_INTERVAL
-
-        // double delta again if missed more than 9 check in new delta
-        val cycle = timeSinceLatest.floorDiv(delta) + 1
-        return if (cycle > increaseWhenOver) {
-            increaseInterval(delta * 2, timeSinceLatest, increaseWhenOver)
-        } else {
-            delta
+        return MangaUpdate(manga.id) {
+            this.nextUpdate = nextUpdate
+            fetchInterval = interval
         }
     }
+
+    // RK --> the date math lives in reikai.domain.library.ReleaseInterval, which novels call too
+    fun getWindow(localDateTime: LocalDate, timeZone: TimeZone): ClosedRange<Instant> =
+        ReleaseInterval.window(localDateTime, timeZone)
+    // RK <--
 
     companion object {
-        const val MAX_INTERVAL = 28
-
-        private const val GRACE_PERIOD = 1L
+        const val MAX_INTERVAL = ReleaseInterval.MAX_INTERVAL // RK
     }
 }
+
+// RK: ReleaseSchedule.kt and ReleasePattern.kt moved to reikai.domain.library, shared with novels

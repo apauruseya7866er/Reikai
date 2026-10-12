@@ -4,44 +4,70 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
 import cafe.adriel.voyager.navigator.LocalNavigator
+import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.currentOrThrow
-import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.presentation.more.settings.Preference
-import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreen
+import eu.kanade.tachiyomi.source.AndroidSourceManager
 import eu.kanade.tachiyomi.util.system.AuthenticatorUtil.authenticate
-import mihon.domain.extension.interactor.GetExtensionStoreCountAsFlow
-import reikai.domain.novel.NovelPreferences
+import mihon.app.di.appGraph
+import mihon.domain.extension.model.ContentWarning
+import reikai.presentation.browse.repos.RepositoriesScreen
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.pluralStringResource
 import tachiyomi.presentation.core.i18n.stringResource
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 object SettingsBrowseScreen : SearchableSettings {
 
     @ReadOnlyComposable
     @Composable
-    override fun getTitleRes() = MR.strings.browse
+    override fun getTitleRes() = MR.strings.pref_category_browse // RK: it now holds the source settings
 
     @Composable
     override fun getPreferences(): List<Preference> {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
 
-        val sourcePreferences = remember { Injekt.get<SourcePreferences>() }
-        val getExtensionStoreCountAsFlow = remember { Injekt.get<GetExtensionStoreCountAsFlow>() }
-        // RK: the Repos screen is unified (manga + light novel), so count both.
-        val novelPreferences = remember { Injekt.get<NovelPreferences>() }
+        val sourcePreferences = remember { context.appGraph.sourcePreferences }
+        // RK: the adult-sources gate, moved here from Advanced so it sits above the settings group it
+        // reveals rather than making one appear on a screen the user is not looking at.
+        val exhPreferences = remember { context.appGraph.exhPreferences }
+        val getExtensionStoreCountAsFlow = remember { context.appGraph.getExtensionStoreCountAsFlow }
+        // RK: the Repos screen holds LN plugin repos too, so its row counts them.
+        val novelPreferences = remember { context.appGraph.novelPreferences }
+        // RK --> the Feed tab's own switches, which the rest of its group hangs off
+        val reikaiSourcePreferences = remember { context.appGraph.reikaiSourcePreferences }
+        val showFeedTab by reikaiSourcePreferences.showFeedTab.changes()
+            .collectAsState(reikaiSourcePreferences.showFeedTab.get())
+        // RK <--
+
+        val adultSourcesEnabled by exhPreferences.isHentaiEnabled().changes()
+            .collectAsState(exhPreferences.isHentaiEnabled().get())
+        // RK --> the delegated-sources switch, which also decides whether MangaDex's settings exist
+        val delegateSourcePreferences = remember { context.appGraph.delegateSourcePreferences }
+        val delegateSources by delegateSourcePreferences.delegateSources().changes()
+            .collectAsState(delegateSourcePreferences.delegateSources().get())
+        // RK <--
+
+        // RK: resolved once per delegated-sources flip, since the gate awaits the extension scan.
+        val mangaDexEnabled by produceState(initialValue = false, delegateSources) {
+            value = SettingsMangaDexScreen.isEnabled()
+        }
+
+        // RK: page previews are a source capability (four sources implement PagePreviewSource), so the
+        // row lives with sources rather than with the app-wide look in Appearance.
+        val uiPreferences = remember { context.appGraph.uiPreferences }
 
         val reposCount by getExtensionStoreCountAsFlow().collectAsState(0)
         val novelRepoUrls by novelPreferences.addedRepoUrls().changes()
             .collectAsState(novelPreferences.addedRepoUrls().get())
 
-        return listOf(
+        return listOfNotNull(
             Preference.PreferenceGroup(
                 title = stringResource(MR.strings.label_sources),
                 preferenceItems = listOf(
@@ -49,36 +75,156 @@ object SettingsBrowseScreen : SearchableSettings {
                         preference = sourcePreferences.hideInLibraryItems,
                         title = stringResource(MR.strings.pref_hide_in_library_items),
                     ),
+                    // RK -->
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = reikaiSourcePreferences.hideSourceLatestButton,
+                        title = stringResource(MR.strings.pref_hide_source_latest_button),
+                        subtitle = stringResource(MR.strings.pref_hide_source_latest_button_summary),
+                    ),
+                    Preference.PreferenceItem.SliderPreference(
+                        preference = uiPreferences.previewsRowCount,
+                        valueRange = 0..10,
+                        title = stringResource(MR.strings.pref_previews_row_count),
+                        subtitle = stringResource(MR.strings.pref_previews_row_count_summary),
+                    ),
+                    // RK <--
+                    // RK --> one Repos screen for extension stores and LN plugin repos, so one count of both
                     Preference.PreferenceItem.TextPreference(
-                        title = stringResource(MR.strings.extensionStores),
-                        // RK: show manga + light-novel repo counts (the Repos screen holds both).
-                        subtitle = stringResource(
-                            MR.strings.extension_repos_subtitle,
-                            reposCount.toInt(),
-                            novelRepoUrls.size,
-                        ),
+                        title = stringResource(MR.strings.repos),
+                        subtitle = (reposCount.toInt() + novelRepoUrls.size).let {
+                            pluralStringResource(MR.plurals.repo_count, it, it)
+                        },
                         onClick = {
-                            navigator.push(ExtensionStoresScreen())
+                            navigator.push(RepositoriesScreen())
                         },
                     ),
+                    // RK <--
                 ),
             ),
+            // RK --> the Feed tab is Reikai's, and every switch here is off by default
             Preference.PreferenceGroup(
-                title = stringResource(MR.strings.pref_category_nsfw_content),
+                title = stringResource(MR.strings.label_feed),
                 preferenceItems = listOf(
                     Preference.PreferenceItem.SwitchPreference(
-                        preference = sourcePreferences.showNsfwSource,
-                        title = stringResource(MR.strings.pref_show_nsfw_source),
-                        subtitle = stringResource(MR.strings.requires_app_restart),
-                        onValueChanged = {
-                            (context as FragmentActivity).authenticate(
-                                title = context.stringResource(MR.strings.pref_category_nsfw_content),
-                            )
-                        },
+                        preference = reikaiSourcePreferences.showFeedTab,
+                        title = stringResource(MR.strings.pref_show_feed_tab),
+                        subtitle = stringResource(MR.strings.pref_show_feed_tab_summary),
                     ),
-                    Preference.PreferenceItem.InfoPreference(stringResource(MR.strings.parental_controls_info)),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = reikaiSourcePreferences.feedTabInFront,
+                        title = stringResource(MR.strings.pref_feed_tab_first),
+                        subtitle = stringResource(MR.strings.pref_feed_tab_first_summary),
+                        visible = showFeedTab,
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = reikaiSourcePreferences.hideInLibraryFeedItems,
+                        title = stringResource(MR.strings.pref_hide_in_library_items),
+                        visible = showFeedTab,
+                    ),
                 ),
             ),
+            // RK <--
+            Preference.PreferenceGroup(
+                title = stringResource(MR.strings.pref_category_extensions),
+                preferenceItems = listOf(
+                    Preference.PreferenceItem.MultiSelectListPreference(
+                        preference = sourcePreferences.enabledContentWarnings,
+                        entries = mapOf(
+                            ContentWarning.SAFE to stringResource(MR.strings.ext_content_warning_safe),
+                            ContentWarning.MIXED to stringResource(MR.strings.ext_content_warning_mixed),
+                            ContentWarning.NSFW to stringResource(MR.strings.ext_content_warning_nsfw),
+                        ),
+                        title = stringResource(MR.strings.pref_allowed_content_warnings),
+                        subtitleProvider = { value, entries ->
+                            remember(value, entries) {
+                                entries.filterKeys { it in value }.values.joinToString()
+                            }
+                                .takeUnless { it.isBlank() }
+                                ?: stringResource(MR.strings.none)
+                        },
+                        onValueChanged = { newValue ->
+                            val added = newValue - sourcePreferences.enabledContentWarnings.get()
+                            if (added.any { it != ContentWarning.SAFE }) {
+                                (context as FragmentActivity).authenticate(
+                                    title = context.stringResource(MR.strings.pref_allowed_content_warnings),
+                                )
+                            } else {
+                                true
+                            }
+                        },
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = sourcePreferences.applyContentWarningsToInstalled,
+                        title = stringResource(MR.strings.pref_apply_content_warnings_to_installed),
+                        subtitle = stringResource(MR.strings.pref_apply_content_warnings_to_installed_summary),
+                        onValueChanged = { newValue ->
+                            if (newValue) {
+                                true
+                            } else {
+                                (context as FragmentActivity).authenticate(
+                                    title = context.stringResource(
+                                        MR.strings.pref_apply_content_warnings_to_installed,
+                                    ),
+                                )
+                            }
+                        },
+                    ),
+                    // RK: the built-in adult sources gate, in the group that decides which extensions load.
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = exhPreferences.isHentaiEnabled(),
+                        title = stringResource(MR.strings.pref_enable_adult_sources),
+                        subtitle = stringResource(MR.strings.pref_enable_adult_sources_summary),
+                    ),
+                    // RK --> Komikku's delegated-sources switch, beside the gate for the same subsystem
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = delegateSourcePreferences.delegateSources(),
+                        title = stringResource(MR.strings.toggle_delegated_sources),
+                        subtitle = stringResource(
+                            MR.strings.toggle_delegated_sources_summary,
+                            stringResource(MR.strings.app_name),
+                            AndroidSourceManager.DELEGATED_SOURCE_NAMES.joinToString(),
+                        ),
+                    ),
+                    // RK <--
+                    Preference.PreferenceItem.InfoPreference(stringResource(MR.strings.content_warnings_info)),
+                ),
+            ),
+            // RK --> settings owned by the app rather than by an installed extension, so they have
+            // nowhere to live on the source itself. Each row appears only while its source is on, and
+            // the group disappears entirely when neither is, which is why it is built conditionally.
+            getSourceSettingsGroup(navigator, adultSourcesEnabled, mangaDexEnabled),
+            // RK <--
         )
+    }
+
+    @Composable
+    private fun getSourceSettingsGroup(
+        navigator: Navigator,
+        adultSourcesEnabled: Boolean,
+        mangaDexEnabled: Boolean,
+    ): Preference.PreferenceGroup? {
+        val rows = listOfNotNull(
+            // Both gates are passed in as observed state: isEnabled() is a one-shot read, so the first
+            // row would not appear until the screen was recreated, even though the switch that reveals
+            // it is right above.
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.pref_category_eh),
+                subtitle = stringResource(MR.strings.pref_ehentai_summary),
+                onClick = { navigator.push(SettingsEhScreen) },
+            ).takeIf { adultSourcesEnabled },
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(MR.strings.pref_category_mangadex),
+                subtitle = stringResource(MR.strings.pref_mangadex_summary),
+                onClick = { navigator.push(SettingsMangaDexScreen) },
+            ).takeIf { mangaDexEnabled },
+        )
+        return if (rows.isEmpty()) {
+            null
+        } else {
+            Preference.PreferenceGroup(
+                title = stringResource(MR.strings.source_settings),
+                preferenceItems = rows,
+            )
+        }
     }
 }

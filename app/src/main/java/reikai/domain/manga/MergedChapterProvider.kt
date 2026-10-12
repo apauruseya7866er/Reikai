@@ -1,33 +1,35 @@
 package reikai.domain.manga
 
-import eu.kanade.tachiyomi.source.online.NamespaceSource
-import exh.source.MANGADEX_IDS
-import exh.source.getMainSource
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import reikai.domain.library.ContentType
 import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.domain.merge.ChapterUnit
+import reikai.domain.merge.GroupChapterFlags
+import reikai.domain.merge.MergeScope
+import reikai.domain.merge.ReconcileMergedChapters
+import reikai.domain.merge.renderMergedReadingOrder
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.interactor.GetMangaWithChapters
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 /**
- * RK: one-shot merge group resolver for the manga reader. Given the manga a chapter was opened from,
- * it resolves the whole merge group and returns the unified cross-source chapter list (reading
- * ordered), plus the group's manga keyed by id so the reader can build a per-source page loader.
- *
- * Reuses the same [MangaMergeManager] group math and [ChapterAggregation] stitcher the manga details
- * screen uses, so the reader's list matches what the user tapped. When the manga is not merged it
- * returns exactly the single-source list (zero behaviour change for the common case).
- *
- * [aggregate] is the shared aggregate + reading-order policy, also called by the details screen's
- * reactive flow so the ordering lives in one place.
+ * One-shot merge group resolver for manga: given an entry, it resolves the whole group and returns the
+ * cross-source chapter list in reading order, plus the group's manga keyed by id so the reader can
+ * build a per-source page loader. The list is read from the STORED stitch, never stitched here, so the
+ * reader, the details screen and the library badge cannot reach different answers. Returns exactly the
+ * single-source list when not merged.
  */
+@Inject
+@SingleIn(AppScope::class)
 class MergedChapterProvider(
-    private val getMangaWithChapters: GetMangaWithChapters = Injekt.get(),
-    private val mergeManager: MangaMergeManager = Injekt.get(),
-    private val sourceManager: SourceManager = Injekt.get(),
-    private val reikaiLibraryPreferences: ReikaiLibraryPreferences = Injekt.get(),
+    private val getMangaWithChapters: GetMangaWithChapters,
+    private val mergeManager: MangaMergeManager,
+    private val sourceManager: SourceManager,
+    private val reikaiLibraryPreferences: ReikaiLibraryPreferences,
+    private val reconcile: ReconcileMergedChapters,
 ) {
 
     /** The resolved group: every member manga keyed by id, the unified reading-ordered chapters, and
@@ -36,12 +38,18 @@ class MergedChapterProvider(
         val mangaById: Map<Long, Manga>,
         val chapters: List<Chapter>,
         val sourceNameByMangaId: Map<Long, String>,
+        /** The stored stitch behind [chapters], so a reader acting on a row can reach the group's
+         *  other copies of it without matching numbers the sources disagree on. */
+        val stitch: List<ChapterUnit> = emptyList(),
+        /** Every member's chapters, which is where the copies [chapters] stands in for live. A caller
+         *  asking a cross-source question (bookmarked anywhere, on disk anywhere) needs them. */
+        val pooledChapters: List<Chapter> = chapters,
     ) {
         val isMerged: Boolean get() = mangaById.size > 1
     }
 
     suspend fun load(anchor: Manga): Group {
-        val ids = mergeManager.computeRelatedMangaIds(anchor.id, anchor.title).ids
+        val ids = mergeManager.computeRelatedIds(anchor.id)
         if (ids.size <= 1) {
             return Group(
                 mangaById = mapOf(anchor.id to anchor),
@@ -51,54 +59,62 @@ class MergedChapterProvider(
         }
         val mangaById = ids.associateWith { getMangaWithChapters.awaitManga(it) }
         val chaptersBySource = ids.associateWith { getMangaWithChapters.awaitChapters(it, applyScanlatorFilter = true) }
-        val sourceIdByManga = mangaById.mapValues { it.value.source }
         val sourceNameByMangaId = mangaById.mapValues { sourceManager.getOrStub(it.value.source).name }
-        return Group(mangaById, aggregate(chaptersBySource, sourceIdByManga), sourceNameByMangaId)
+        val pooled = chaptersBySource.values.flatten()
+        val stitch = stitchOf(anchor.id)
+        val merged = merged(pooled, stitch)
+        return Group(
+            mangaById = mangaById,
+            chapters = merged,
+            sourceNameByMangaId = sourceNameByMangaId,
+            stitch = stitch,
+            pooledChapters = pooled,
+        )
     }
-
-    /** Aggregate + reading order: stitch the sources into one list, then restamp source order so a
-     *  "by source order" sort reads top to bottom instead of interleaving sources. */
-    fun aggregate(chaptersBySource: Map<Long, List<Chapter>>, sourceIdByManga: Map<Long, Long>): List<Chapter> {
-        // True gallery sources (E-Hentai / ExHentai / nhentai / Pururin / 8Muses / HentaiFox / AsmHentai)
-        // treat each chapter as a whole standalone gallery numbered 1, so exempt them from cross-source
-        // number dedup: merging two keeps both instead of collapsing on "1". They all implement
-        // NamespaceSource, but so does the enhanced MangaDex, which has normal sequential chapters that
-        // MUST dedup like any other source (otherwise a MangaDex + other-source merge never dedups). There
-        // is no clean positive id-set for every gallery (installed extensions vary), so gate on
-        // NamespaceSource and exclude MangaDex by its known ids.
-        val gallerySourceMangaIds = sourceIdByManga
-            .filterValues { sourceId ->
-                sourceId !in MANGADEX_IDS && sourceManager.get(sourceId)?.getMainSource<NamespaceSource>() != null
-            }
-            .keys
-        return ChapterAggregation
-            .aggregate(
-                chaptersBySource,
-                sourceIdByManga,
-                reikaiLibraryPreferences.preferredMangaSources.get(),
-                gallerySourceMangaIds,
-            )
-            .let(::restampReadingOrder)
-    }
-
-    private fun restampReadingOrder(chapters: List<Chapter>): List<Chapter> =
-        chapters.sortedByDescending { it.chapterNumber }
-            .mapIndexed { index, chapter -> chapter.copy(sourceOrder = index.toLong()) }
 
     /**
-     * Re-add the [opened] chapter when the cross-source dedup dropped it (opened from history /
-     * updates, or from a non-preferred source's chip).
-     *
-     * Restamped, because the re-added row still carries its own source's `sourceOrder` while the
-     * unified list was renumbered to a single 0..N-1 scale, and the reader sorts on `sourceOrder`
-     * alone. Two scales under one comparator drop it at an arbitrary index, which breaks prev/next
-     * and leaves the reader describing a different chapter than it is showing.
-     *
-     * Returns [unified] untouched when there is nothing to add, so a single-source list never gets
-     * renumbered over its own source's ordering.
+     * The group's stored stitch, rebuilt first when it is stale. Empty when the entry is not in a
+     * group, which [merged] reads as nothing to merge. Reading it rather than stitching here is what
+     * keeps a screen from producing a second answer to the question the library badge asks of the
+     * same rows.
      */
-    fun withOpenedChapter(unified: List<Chapter>, opened: Chapter?): List<Chapter> = when {
-        opened == null || unified.any { it.id == opened.id } -> unified
-        else -> restampReadingOrder(unified + opened)
-    }
+    suspend fun stitchOf(anchorId: Long): List<ChapterUnit> =
+        mergeManager.groupIdOf(anchorId)?.let { reconcile.currentStitch(ContentType.MANGA, it) }.orEmpty()
+
+    /** [chapters] as the merged reading order [stitch] describes. */
+    fun merged(chapters: List<Chapter>, stitch: List<ChapterUnit>): List<Chapter> =
+        renderMergedReadingOrder(chapters, stitch, { it.id }) { chapter, order -> chapter.copy(sourceOrder = order) }
+
+    /** The member manga ids in trunk order (first = trunk), for ordering the manage-sources rows so the
+     *  primary sits on top. Uses the stitch's own ranking; [memberRanking] is the caller's
+     *  already-resolved per-group override (empty = the global ranking wins). */
+    fun rankedMemberIds(
+        chaptersBySource: Map<Long, List<Chapter>>,
+        sourceIdByManga: Map<Long, Long>,
+        memberRanking: List<Long>,
+    ): List<Long> = ChapterAggregation.rankedMemberIds(
+        chaptersBySource,
+        sourceIdByManga,
+        reikaiLibraryPreferences.preferredMangaSources.get(),
+        memberRanking,
+    )
+}
+
+/** [shown]'s flags across the whole group, as the library's resume and download ask them; a null group
+ *  answers each row for itself. Twin of `NovelGroupChapters.groupFlags`, pinned by
+ *  MergedResumeDownloadedConformanceTest. */
+fun MergedChapterProvider.Group?.groupFlags(
+    shown: List<Chapter>,
+    onDisk: (pooled: List<Chapter>) -> Set<Long>,
+): GroupChapterFlags<Chapter> {
+    val pooled = this?.pooledChapters ?: shown
+    return GroupChapterFlags(
+        MergeScope.Group,
+        pooled,
+        shown,
+        this?.stitch.orEmpty(),
+        { it.id },
+        { it.read },
+        { it.bookmark },
+    ) { onDisk(pooled) }
 }

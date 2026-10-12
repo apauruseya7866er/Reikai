@@ -2,12 +2,13 @@ package app.cash.quickjs
 
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
+import reikai.quickjs.createQuickJs
 import java.io.Closeable
 import java.util.concurrent.Executors
 import com.dokar.quickjs.QuickJs as DokarQuickJs
 
 /**
- * RK: compatibility class for the legacy `app.cash.quickjs.QuickJs` API.
+ * Compatibility class for the legacy `app.cash.quickjs.QuickJs` API.
  *
  * Many manga extensions compile against `app.cash.quickjs.QuickJs` and call it directly at
  * runtime (Cash App's original JS engine, which Mihon provides via zhanghai's drop-in fork).
@@ -32,12 +33,12 @@ class QuickJs private constructor() : Closeable {
     private var engine: DokarQuickJs? = null
 
     private fun <R> onJsThread(block: suspend (DokarQuickJs) -> R): R = runBlocking(dispatcher) {
-        val current = engine ?: DokarQuickJs.create(dispatcher).also { engine = it }
+        val current = engine ?: createQuickJs(dispatcher).also { engine = it }
         block(current)
     }
 
-    /** Evaluate JavaScript and return the result as a primitive (String, Int, ...). */
-    fun evaluate(script: String): Any? = onJsThread { it.evaluate<Any?>(script) }
+    /** Evaluate JavaScript and return the result in Cash's shapes: a primitive, or Object[] for an array. */
+    fun evaluate(script: String): Any? = onJsThread { toCashValue(it.evaluate<Any?>(script)) }
 
     /** Cash exposed a file-name overload; the name is only used for stack traces, so ignore it. */
     fun evaluate(script: String, fileName: String): Any? = evaluate(script)
@@ -71,4 +72,14 @@ class QuickJs private constructor() : Closeable {
         @JvmStatic
         fun create(): QuickJs = QuickJs()
     }
+}
+
+/**
+ * dokar returns a JS array as a java.util.List where Cash returned Object[], which extensions test and
+ * cast for (`is Array<*>`, `as Array<*>`). Converted recursively, as Cash nested them. Objects are
+ * left as dokar's Map, since Cash never returned one for an extension to depend on.
+ */
+internal fun toCashValue(value: Any?): Any? = when (value) {
+    is List<*> -> Array(value.size) { toCashValue(value[it]) }
+    else -> value
 }

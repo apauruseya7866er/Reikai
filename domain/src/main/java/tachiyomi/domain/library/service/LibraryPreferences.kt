@@ -1,5 +1,8 @@
 package tachiyomi.domain.library.service
 
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.TriState
@@ -8,6 +11,8 @@ import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.model.LibrarySort
 import tachiyomi.domain.manga.model.Manga
 
+@Inject
+@SingleIn(AppScope::class)
 class LibraryPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
@@ -61,9 +66,12 @@ class LibraryPreferences(
         false,
     )
 
+    // RK: on by default, unlike upstream. Reikai groups several sources of one series into a single
+    // library entry, where the same chapter exists once per source, so leaving this off means reading a
+    // chapter leaves its copies unread and every source-specific count drifts from what you have read.
     val markDuplicateReadChapterAsRead: Preference<Set<String>> = preferenceStore.getStringSet(
         "mark_duplicate_read_chapter_read",
-        emptySet(),
+        setOf(MARK_DUPLICATE_CHAPTER_READ_NEW, MARK_DUPLICATE_CHAPTER_READ_EXISTING),
     )
 
     // region Filter
@@ -212,6 +220,10 @@ class LibraryPreferences(
 
     val disallowNonAsciiFilenames: Preference<Boolean> = preferenceStore.getBoolean(
         "disallow_non_ascii_filenames",
+        false,
+    )
+    val enableChapterNameHash: Preference<Boolean> = preferenceStore.getBoolean(
+        "pref_enable_chapter_name_hash",
         false,
     )
 

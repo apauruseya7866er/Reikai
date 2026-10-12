@@ -1,6 +1,5 @@
 package eu.kanade.presentation.webview
 
-import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.os.Message
 import android.webkit.JsPromptResult
@@ -14,10 +13,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.ArrowForward
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -32,9 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.stack.mutableStateStackOf
 import com.kevinnzou.web.AccompanistWebChromeClient
@@ -47,11 +40,18 @@ import com.kevinnzou.web.WebViewState
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.WarningBanner
-import eu.kanade.tachiyomi.BuildConfig
-import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.util.system.getHtml
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
+import eu.kanade.tachiyomi.util.system.setUserAgent
 import kotlinx.coroutines.launch
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.automirroredrounded.ArrowBack
+import mihon.icons.materialsymbols.automirroredrounded.ArrowForward
+import mihon.icons.materialsymbols.rounded.Close
+import mihon.icons.materialsymbols.rounded.TabClose
+import reikai.presentation.webview.WebPageAction
+import reikai.presentation.webview.pageHtml
+import reikai.util.isDebugInspectorBuild
 import tachiyomi.core.common.Constants
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -73,11 +73,16 @@ fun WebViewScreenContent(
     onNavigateUp: () -> Unit,
     initialTitle: String?,
     url: String,
+    defaultUserAgentProvider: () -> String,
     onShare: (String) -> Unit,
     onOpenInBrowser: (String) -> Unit,
     onClearCookies: (String) -> Unit,
     headers: Map<String, String> = emptyMap(),
     onUrlChange: (String) -> Unit = {},
+    // RK: actions a novel source offers on the page on screen
+    pageActions: List<WebPageAction> = emptyList(),
+    // RK: runs after each page load; a light-novel plugin's page reads the site's storage here
+    onPageFinished: (WebView) -> Unit = {},
 ) {
     val coroutineScope = rememberCoroutineScope()
 
@@ -116,6 +121,7 @@ fun WebViewScreenContent(
 
             override fun onPageFinished(view: WebView, url: String?) {
                 super.onPageFinished(view, url)
+                onPageFinished(view) // RK
                 scope.launch {
                     val html = view.getHtml()
                     showCloudflareHelp = "window._cf_chl_opt" in html || "Ray ID is" in html
@@ -231,13 +237,13 @@ fun WebViewScreenContent(
                         title = currentWindow.state.pageTitle ?: initialTitle,
                         subtitle = currentUrl,
                         navigateUp = onNavigateUp,
-                        navigationIcon = Icons.Outlined.Close,
+                        navigationIcon = MaterialSymbols.Rounded.Close,
                         actions = {
                             AppBarActions(
                                 listOf(
                                     AppBar.Action(
                                         title = stringResource(MR.strings.action_webview_back),
-                                        icon = Icons.AutoMirrored.Outlined.ArrowBack,
+                                        icon = MaterialSymbols.AutoMirroredRounded.ArrowBack,
                                         onClick = {
                                             if (navigator.canGoBack) {
                                                 navigator.navigateBack()
@@ -247,7 +253,7 @@ fun WebViewScreenContent(
                                     ),
                                     AppBar.Action(
                                         title = stringResource(MR.strings.action_webview_forward),
-                                        icon = Icons.AutoMirrored.Outlined.ArrowForward,
+                                        icon = MaterialSymbols.AutoMirroredRounded.ArrowForward,
                                         onClick = {
                                             if (navigator.canGoForward) {
                                                 navigator.navigateForward()
@@ -272,12 +278,27 @@ fun WebViewScreenContent(
                                         onClick = { onClearCookies(currentUrl) },
                                     ),
                                 ).toMutableList().apply {
+                                    // RK -->
+                                    pageActions.forEach { action ->
+                                        add(
+                                            AppBar.OverflowAction(
+                                                title = action.title,
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        currentWindow.webView?.pageHtml()
+                                                            ?.let { action.onPage(currentUrl, it) }
+                                                    }
+                                                },
+                                            ),
+                                        )
+                                    }
+                                    // RK <--
                                     if (windowStack.size > 1) {
                                         add(
                                             0,
                                             AppBar.Action(
                                                 title = stringResource(MR.strings.action_webview_close_tab),
-                                                icon = ImageVector.vectorResource(R.drawable.ic_tab_close_24px),
+                                                icon = MaterialSymbols.Rounded.TabClose,
                                                 onClick = popState,
                                             ),
                                         )
@@ -297,6 +318,7 @@ fun WebViewScreenContent(
                                     .clip(MaterialTheme.shapes.small)
                                     .clickable {
                                         uriHandler.openUri(
+                                            // RK: Reikai's docs
                                             "${Constants.URL_DOCS}/guides/troubleshooting/#cloudflare",
                                         )
                                     },
@@ -335,15 +357,13 @@ fun WebViewScreenContent(
                     webView.setDefaultSettings()
 
                     // Debug mode (chrome://inspect/#devices)
-                    if (BuildConfig.DEBUG &&
-                        0 != webView.context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE
-                    ) {
+                    // RK --> the gate the novel web reader shares, since it can switch the inspector off
+                    if (webView.context.isDebugInspectorBuild()) {
+                        // RK <--
                         WebView.setWebContentsDebuggingEnabled(true)
                     }
 
-                    headers["user-agent"]?.let {
-                        webView.settings.userAgentString = it
-                    }
+                    webView.setUserAgent(headers["user-agent"] ?: defaultUserAgentProvider())
                 },
                 onDispose = { webView ->
                     val window = windowStack.items.find { it.webView == webView }

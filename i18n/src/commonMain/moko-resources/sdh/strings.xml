@@ -72,7 +72,6 @@
     <string name="action_unpin">لابردنی جێگیری</string>
     <string name="action_cancel">هەڵوەشاندنەوە</string>
     <string name="action_cancel_all">هەڵوەشاندنەوەی هەموو</string>
-    <string name="cancel_all_for_series">هەڵوەشاندنەوەی هەموو بۆ ئەم زنجیرەیە</string>
     <string name="action_sort">ڕیزکردن</string>
     <string name="action_move_to_bottom">گواستنەوە بۆ خوارەوە</string>
     <string name="action_install">دامەزراندن</string>
@@ -111,7 +110,6 @@
     <string name="action_oldest">کۆنترین</string>
     <string name="action_asc">بە پلە بەرزبوونەوە</string>
     <string name="app_not_available">بەرنامەکە بەردەست نییە</string>
-    <string name="pref_category_general">گشتی</string>
     <string name="pref_category_appearance">شێوە</string>
     <string name="pref_category_library">کۆکراوەکان</string>
     <string name="pref_category_reader">خوێنەرەوە</string>
@@ -164,8 +162,6 @@
     <string name="secure_screen">شاشە پارێزراو کردن</string>
     <string name="hide_notification_content">شاردنەوەی ناوەرۆکی ئاگانامە</string>
     <string name="secure_screen_summary">سکرین شۆت بلۆکردن و شاردنەوەی ناوەڕۆک، لە کاتی گۆڕین و دەرچوون لە بەرنامە</string>
-    <string name="pref_category_nsfw_content">سەرچاوەی سەروو (18) ساڵ</string>
-    <string name="pref_show_nsfw_source">پیشاندان لە لیستی سەرچاوە و زیادکراوەکان</string>
     <string name="relative_time_today">ئەمڕۆ</string>
     <string name="pref_category_display">شێوازی پیشاندان</string>
     <string name="pref_read_with_tapping_inverted">نەرمە لێدانی پێچەوانە</string>
@@ -189,7 +185,6 @@
     <string name="snack_add_to_library">زیادکردنی مانگا بۆ کۆکراوەکان؟</string>
     <string name="ext_downloading">داونلۆدکردن</string>
     <string name="label_downloaded_only">تەنها داونلۆدکراوەکان</string>
-    <string name="parental_controls_info">ئەمە ڕێگری ناکات لە دەرکەوتنی بابەتی سەروو 18 ی نا فەرمی لە بەرنامەکە.</string>
     <string name="automatic_background">ئۆتۆماتیک</string>
     <string name="l_nav">شێوە L</string>
     <string name="nav_zone_prev">پێشتر</string>

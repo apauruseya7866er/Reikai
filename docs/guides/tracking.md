@@ -1,12 +1,11 @@
 ---
 title: Tracking
-titleTemplate: Guides
 description: Tracking helps track your library with different online services.
 ---
 
 # Tracking
 
-_Dev records: [novel-tracking.md](../dev/plans/novel-tracking.md), [novel-specific-trackers.md](../dev/plans/novel-specific-trackers.md), [tracker-aware-duplicate-detection.md](../dev/tracker-aware-duplicate-detection.md). Doc map: [README.md](../README.md)._
+_Dev records: [tracking.md](../dev/subsystems/tracking.md), [tracker-aware-duplicate-detection.md](../dev/tracker-aware-duplicate-detection.md). Doc map: [README.md](../README.md)._
 
 **Reikai** supports various tracking services to help you automatically update your tracking details such as read chapters, scoring, start & finish dates, etc. Not every service stores all of that, so a tracker only shows the fields it can actually save.
 
@@ -14,26 +13,57 @@ Link supported tracking services in <nav to="tracking">.
 
 ## Services
 
-**Reikai** currently supports tracking with [MyAnimeList](https://myanimelist.net/), [AniList](https://anilist.co/), [Kitsu](https://kitsu.app/), [MangaUpdates](https://www.mangaupdates.com/), [Shikimori](https://shikimori.one/), [MangaBaka](https://mangabaka.org/), [Hikka](https://hikka.io/) and [Bangumi](https://bangumi.tv/). Signing in to MangaDex adds its own **MDList** tracker.
+**Reikai** currently supports tracking with [MyAnimeList](https://myanimelist.net/), [AniList](https://anilist.co/), [Kitsu](https://kitsu.app/), [MangaUpdates](https://www.mangaupdates.com/), [Shikimori](https://shikimori.one/), [MangaBaka](https://mangabaka.org/), [Hikka](https://hikka.io/), [Bangumi](https://bangumi.tv/) and the Comick tracker, plus three services built for light novels: [RanobeDB](https://ranobedb.org/), [NovelList](https://www.novellist.co/) and [NovelUpdates](https://www.novelupdates.com/). Signing in to MangaDex adds its own **MDList** tracker.
 
 * You must add the desired tracker to each series to begin tracking.
 * Track entries privately with supported tracking services (AniList, Kitsu, MangaBaka, Bangumi).
 * You can adjust each field in the tracker entry by tapping on it.
-* Start and finish dates reach MyAnimeList, AniList, Kitsu, Hikka and MangaBaka. The rest store no dates, so those rows are not shown.
+* Start and finish dates reach MyAnimeList, AniList, Kitsu, Hikka, MangaBaka and RanobeDB. The rest store no dates, so those rows are not shown.
 
 ::: warning Each type sees only the trackers that catalogue it
 A tracking sheet lists only the services whose catalogue holds that kind of entry, so a manga and a novel offer different lists.
 
 * **Both**: AniList, Kitsu, MyAnimeList, MangaUpdates, Shikimori, MangaBaka and Hikka.
-* **Manga only**: Bangumi, MDList and the enhanced trackers below.
+* **Manga only**: Bangumi, the Comick tracker, MDList and the enhanced trackers below.
+* **Light novels only**: RanobeDB, NovelList and NovelUpdates. Their catalogues hold no manga, so they never appear on one.
 :::
 
 :::info Tracker behavior in Reikai
 * Tracking is one-way: **Reikai -> Tracker**
 * Status changes automatically when you start & complete a series, and so do the start & finish dates on a service that stores them.
-* After reading the last page of a chapter, or marking a chapter as read, the tracker's progress will update.
+* After reading the last page of a chapter, or marking a chapter as read, the tracker's progress will update. It only moves forward: a chapter at or below what the tracker already has, say because you read further on another device, leaves it where it is.
 * Offline progress syncs when back online.
+* Reikai uses the scoring system you selected on the tracker, if the tracker lets you pick one (AniList, Kitsu, MangaBaka).
 :::
+
+## Light-novel trackers
+
+Three of the services are built for novels rather than manga. They work like every other tracker, with the differences below.
+
+::::tabs
+==RanobeDB
+* **Signing in**: sign in on [RanobeDB](https://ranobedb.org/login), open **Settings**, and generate a personal access token on the **Account** tab, then paste it into Reikai. The browser button in the same dialog signs you in with a session instead, which works the same way but expires; a token does not.
+* Statuses, a 1 to 10 score, and start & finish dates all sync.
+* **Chapter progress is never sent.** RanobeDB counts volumes where a source counts chapters, and nothing converts between them, so progress stays a plain count in Reikai rather than reporting chapter 574 as 574 volumes.
+* **Refresh tracker data** brings back only the title. The site has no way to read your own list entry back, so status and score stay whatever Reikai holds.
+* **Update RanobeDB while you read** in <nav to="tracking"> pushes your status as you read and is on by default. Each push clears that entry's labels, notes and volume count on the site, because there is no way to read them back first. Turn it off to keep them.
+==NovelList
+* **Signing in**: tap the row and sign in through the browser. There is no token to paste.
+* Statuses and a 1 to 10 score sync. There is **no On hold status** and there are **no reading dates**, because the service stores neither.
+* **NovelList server address** in <nav to="tracking"> exists only for the day NovelList moves its server. Leave it alone until then: a wrong address stops tracking. **Reset NovelList server address** puts the built-in address back.
+==NovelUpdates
+* **Signing in**: tap the row and sign in through the browser. The session expires after a while, and Reikai then asks you to log in again.
+* All five statuses sync. There is **no score and there are no reading dates**, because the site stores neither.
+* **Your progress lives in the note on your NovelUpdates list entry**, written as `total chapters read: 12`, because the site keeps no reading position of its own. Reikai rewrites that one line and leaves the rest of your note alone, and if it cannot read the note it writes nothing rather than risk replacing it.
+* **Use my own NovelUpdates lists** in <nav to="tracking"> sends each status to one of your own reading lists instead of the five NovelUpdates starts with. Pick the list for each status under **Match statuses to lists**.
+* **Novels from NovelUpdates' own app or plugin track themselves.** While you are signed in, adding one to your library binds it to its NovelUpdates page with no search. A novel from any other source binds through the tracking dialog like any tracker, and its chapters move your bookmark when their number matches a release.
+* **Never move progress back** is on by default: reading an earlier chapter leaves NovelUpdates where it is, as it does every tracker. Turn it off to let NovelUpdates follow rereads.
+* **Move back on unread** is off by default. Turn it on and marking chapters unread moves NovelUpdates back to the highest chapter you still have read.
+
+These three NovelUpdates rows show in <nav to="tracking"> only while you are signed in to it.
+::::
+
+**Fill from tracker** works with all three, so a novel bound to any of them can pull its cover, description, author and genres from the service.
 
 ## Enhanced trackers
 
@@ -55,17 +85,29 @@ A tracking sheet lists only the services whose catalogue holds that kind of entr
 
 ## Trackers on a merged entry
 
-When an entry is part of a [multi-source group](/docs/multi-source), **Share trackers across merged sources** in <nav to="tracking">, on by default, links a tracker across the group.
+On a [merged series](/docs/multi-source), you do not set tracker links per source. One binding covers the whole group, and the setting that governs this is **Share trackers across merged sources** in <nav to="tracking">, on by default.
 
-**Manga:** adding a tracker to one source, or merging entries where one is already tracked, copies that tracker onto every other source of the group that is in your library. Each source keeps its own copy, so unmerging needs no tracker step. Removing a tracker removes it only from the source you are viewing.
+**Adding** a tracker binds it to the source the page was opened on, whichever source chip is selected, and counts for every source in the group: the chip shows on each one, reading a chapter from any of them advances it (by the number the **Primary** source gives that chapter, so a source that numbers its chapters differently still lands on the right one), and the library's tracker filter, score sort and status grouping all see it. There is one binding while the group is merged, never a copy per source, so the progress shown is always the group's.
 
-**Light novels:** the group shares one tracker while merged, and removing it clears it from every source. Unmerging from the library copies it onto each source first, so both halves keep tracking.
+**Merging** needs no tracker step. The moment entries are one group, a tracker bound on any member counts for all of them. If two members were already tracked with different remote entries on the same service, both bindings stay and the furthest-read one counts.
 
-A tracker whose linked remote entry differs across the group is skipped rather than guessed. Turning the setting off stops new links; existing ones are left alone.
+**Removing** a tracker unbinds it from every source in the group. Leaving a sibling's binding would keep the entry showing as tracked in the library filters even though its chip is gone.
+
+**Splitting the group up** hands each in-library source its own copy of the bindings first, carrying the group's furthest-read progress, so both halves keep tracking on their own. That applies however you break it up: **Split** in the Manage sources sheet, the library's <icon name="unmerge"> action, **Remove from library**, or **Clear all merges** in <nav to="advanced">, which is two separate rows there, one for manga and one for novels. Two cases are skipped rather than guessed: a source that is not in your library, and a tracker whose linked remote entry disagrees across the group.
+
+Turning the setting off gives each source its own tracking again. Existing bindings are left alone either way, so you can switch back.
 
 ::: tip Removing an entry from your library keeps its tracker rows
 They are dropped only when the entry is deleted from the database, by **Clear database** in <nav to="advanced">. Re-adding a removed source brings its tracker back with it.
 :::
+
+## Refreshing every tracker at once
+
+Open the three-dot menu in <nav to="main_library"> and tap **Refresh tracker data**.
+
+Scores, statuses and remote progress are normally pulled when you open an entry, so an entry you have not opened lately can hold stale values, and the library can sort and filter on exactly those values. This pulls fresh data for every tracked entry in one pass, manga and light novels together, whichever library you are looking at.
+
+It visits only entries carrying a tracker you are signed into, so an untracked library finishes immediately, and a merged entry refreshes every tracker bound anywhere in its group. When it finishes you get a count plus the names of any services that failed; the usual cause is a remote list item that no longer exists, which re-binding fixes. It is deliberately separate from the library update, which runs on a schedule, because this is a network call per bound tracker.
 
 ## General questions
 
@@ -73,7 +115,12 @@ They are dropped only when the entry is deleted from the database, by **Clear da
 1. Go to <nav to="tracking">.
 1. Tap the desired tracker to begin login.
 
-Which login you get depends on the service: most open your browser, and a few ask for a username and password in the app.
+Which login you get depends on the service: most open your browser, a few ask for a username and password in the app, and RanobeDB takes a token you paste (or the browser, if you prefer). NovelList and NovelUpdates only sign in through the browser, because neither issues a token.
+
+Each tracker you are signed in to with an account, except MDList, has a refresh button in its row, **Refresh tracker profile**. It reloads your account details, such as a changed nickname or score format, without signing out. It does not touch your tracked entries.
+
+### What does Tell source sites about migrations do?
+Some extensions sync your reading to their own site once their own tracking setting is on. **Tell source sites about migrations** in <nav to="tracking">, on by default, also tells those extensions when you migrate an entry, so the site follows the move. It has no effect on any other source.
 
 ### How do I set up tracking for each series?
 1. Go into the series.
@@ -91,9 +138,9 @@ Search with a different title if there is no match.
 * If your Kitsu account still has its SFW filter on, Kitsu leaves its adult categories out before Reikai ever sees them, so **Fill from tracker** gives a Kitsu-bound entry fewer genres than another tracker would.
 * Nothing in Reikai can bring them back. To get them, turn the SFW filter off in your Kitsu account settings.
 
-### Can't find a series on MyAnimeList?
-* If you cannot find a series by name, you can look it up on MyAnimeList and then search for it in **Reikai** using the following format: `id:<id from series URL>`.
-* You can also search for a series on your MAL profile list by searching in the following format: `my:<series name>`.
+### Can't find a series on a tracker?
+* If you cannot find a series by name, look it up on the tracker's site and search for it in **Reikai** as `id:<id from series URL>`. Every tracker takes this except NovelUpdates, MDList and the enhanced trackers.
+* On MyAnimeList you can also search your own list with `my:<series name>`.
 
 ### Finding tracked/untracked series in your library
 * On your <nav to="main_library"> page, tap the **Filter** button (three-lines icon), then include or exclude **Tracked**.

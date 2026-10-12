@@ -5,7 +5,7 @@ concurrency:
   cancel-in-progress: true
 
 on:
-  # PR-only. Every change reaches main through a PR (gated here), and preview.yml rebuilds and tests
+  # PR-only. Every change reaches main through a PR (gated here), and nightly.yml rebuilds and tests
   # every app-affecting push to main, so a second build/test on the merge itself would be redundant.
   pull_request:
     paths:
@@ -42,17 +42,25 @@ jobs:
 
       - name: Set up the build
         uses: ./.github/actions/setup-build
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
 
       # Fail fast on formatting before the expensive build (matches Mihon's CI).
       - name: Check formatting
         run: ./gradlew spotlessCheck
 
-      # A schema change shipped without its .sqm is invisible until an upgraded install crashes on a
-      # missing table, and this is the only thing that catches it.
+      # DI ownership. Nothing else catches a type that is both graph-owned and Injekt-registered, or
+      # one handed back to Injekt unscoped: both compile and run, and lose state silently.
+      - name: Check DI ownership
+        run: pwsh -NoProfile -File scripts/di-interop-check.ps1
+
+      # A schema change without its .sqm is invisible until an upgraded install crashes on a
+      # missing table, and this is the only thing that catches it. It checks against the 43.db
+      # snapshot; with no snapshot committed it passes having checked nothing.
       - name: Verify SQLDelight migrations
         run: ./gradlew verifySqlDelightMigration
 
-      # Tests before the build: a failing test should not cost a full minified build first.
+      # Tests before the build: a failing test should not cost a full minified release build first.
       - name: Run unit tests
         run: ./gradlew test
 
@@ -65,17 +73,20 @@ jobs:
           report_paths: '**/build/test-results/test*/TEST-*.xml'
 
       # Mihon base has no product flavors; the variant is just `release` (debug-signed for now).
+      # No -Pdist, so this is the local profile: no telemetry and no updater. Upstream builds its
+      # PR check as `ci`, which we cannot, because that applies the Firebase plugins and a pull
+      # request has no google-services.json written for it.
       - name: Build the app
         run: ./gradlew assembleRelease
 
       - name: Upload APK to artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: arm64-v8a-${{ github.sha }}
           path: app/build/outputs/apk/release/app-arm64-v8a-release*.apk
 
       - name: Upload R8 mapping
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mapping-${{ github.sha }}
           path: app/build/outputs/mapping/release

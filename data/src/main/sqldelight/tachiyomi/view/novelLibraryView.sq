@@ -1,15 +1,27 @@
--- RK: novel twin of libraryView (P5 S6). Favorited novels plus per-novel chapter counts (total,
--- read, latest upload, fetch date, bookmarks) and the concatenated category ids. The download count
--- is not here: downloaded state now comes from NovelDownloadCache (disk), filled in the model. No
--- history / excluded_scanlators joins: novels denormalize last_read_at onto the row and have no
--- scanlators.
+-- Novel twin of libraryView, pinned by LibraryViewQueryPlanTest. Favorited novels plus per-novel chapter
+-- counts (total, read, latest upload, fetch date, last read, bookmarks) and the concatenated category ids.
+-- Both subqueries are prefiltered to favourites, as libraryView's are, so they never aggregate the
+-- chapters and categories of a novel outside the library. The download count is not here: downloaded
+-- state now comes from NovelDownloadCache (disk), filled in the model. lastRead is derived from
+-- novel_history exactly as libraryView derives it from history, so clearing a novel's history drops it
+-- in the Last read sort. No excluded_scanlator join: novels offer no scanlator filter.
 CREATE VIEW novelLibraryView AS
 SELECT
     N.*,
     coalesce(C.total, 0) AS totalCount,
     coalesce(C.readCount, 0) AS readCount,
-    coalesce(C.latestUpload, 0) AS latestUpload,
-    coalesce(C.fetchedAt, 0) AS chapterFetchedAt,
+    C.latestUpload AS latestUpload,
+    C.fetchedAt AS chapterFetchedAt,
+    -- Read per novel rather than joined to every chapter, as libraryView does; novel_history has no
+    -- novel id, so the subquery reaches it through the novel's chapters. NULL with no reading history,
+    -- as libraryView's
+    (
+        SELECT max(novel_history.last_read)
+        FROM novel_chapters
+        JOIN novel_history
+        ON novel_history.chapter_id = novel_chapters._id
+        WHERE novel_chapters.novel_id = N._id
+    ) AS lastRead,
     coalesce(C.bookmarkCount, 0) AS bookmarkCount,
     coalesce(NC.categories, '0') AS categories
 FROM novels N
@@ -18,20 +30,22 @@ LEFT JOIN (
         novel_chapters.novel_id,
         count(*) AS total,
         sum(read) AS readCount,
-        coalesce(max(novel_chapters.date_upload), 0) AS latestUpload,
-        coalesce(max(novel_chapters.date_fetch), 0) AS fetchedAt,
+        max(novel_chapters.date_upload) AS latestUpload,
+        max(novel_chapters.date_fetch) AS fetchedAt,
         sum(novel_chapters.bookmark) AS bookmarkCount
     FROM novel_chapters
+    WHERE novel_chapters.novel_id IN (SELECT _id FROM novels WHERE favorite_at IS NOT NULL)
     GROUP BY novel_chapters.novel_id
 ) AS C
 ON N._id = C.novel_id
 LEFT JOIN (
     SELECT novel_id, group_concat(category_id) AS categories
     FROM novels_categories
+    WHERE novel_id IN (SELECT _id FROM novels WHERE favorite_at IS NOT NULL)
     GROUP BY novel_id
 ) AS NC
 ON NC.novel_id = N._id
-WHERE N.favorite = 1;
+WHERE N.favorite_at IS NOT NULL;
 
 novelLibrary:
 SELECT *

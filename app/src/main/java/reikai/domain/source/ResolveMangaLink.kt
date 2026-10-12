@@ -1,0 +1,84 @@
+package reikai.domain.source
+
+import dev.zacsweers.metro.Inject
+import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.online.HttpSource
+import mihon.domain.manga.model.toDomainManga
+import reikai.util.runCatchingCancellable
+import tachiyomi.domain.manga.interactor.GetMangaByUrlAndSourceId
+import tachiyomi.domain.manga.interactor.NetworkToLocalManga
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.source.service.SourceManager
+
+/**
+ * Reads a shared link as a manga series for an extension without the link hooks: its search, then a stored
+ * row, then a checked guess from the address, over the same [SharedLink] rules [ResolveNovelLink] uses.
+ */
+class ResolveMangaLink(
+    private val onlineSources: suspend () -> List<HttpSource>,
+    private val storedManga: suspend (url: String, sourceId: Long) -> Manga?,
+    private val networkToLocalManga: suspend (Manga) -> Manga,
+) {
+
+    @Inject
+    constructor(
+        sourceManager: SourceManager,
+        getMangaByUrlAndSourceId: GetMangaByUrlAndSourceId,
+        networkToLocalManga: NetworkToLocalManga,
+    ) : this(
+        { sourceManager.getOnlineSources() },
+        { url, sourceId -> getMangaByUrlAndSourceId.await(url, sourceId) },
+        { networkToLocalManga(it) },
+    )
+
+    /** The series in the link's site's own search for it, as the keiyoushi UrlActivity asks for it. */
+    suspend fun bySearch(text: String): Manga? {
+        val link = SharedLink.parse(text) ?: return null
+        for (source in onlineSources().filter { link.relativeTo(it.baseUrl) != null }) {
+            val results = runCatchingCancellable {
+                source.getSearchManga(1, text.trim(), source.getFilterList()).mangas
+            }.getOrNull() ?: continue
+            val found = link.soleResult(results) { webUrl(source, it.url) } ?: continue
+            return networkToLocalManga(found.toDomainManga(source.id))
+        }
+        return null
+    }
+
+    suspend fun byStoredRow(text: String): Manga? = single(text)?.stored
+
+    suspend fun byGuess(text: String): Manga? {
+        // A stored match names nothing, so it is never guessed again.
+        val match = single(text) ?: return null
+        val first = match.named.firstOrNull() ?: return null
+        val (series, chapterPaths) = series(match.source, first) ?: return null
+        val path = SharedLink.spelling(match.named, chapterPaths) ?: return null
+        if (SharedLink.isBelowTheSameEntry(path, series.title) { series(match.source, it)?.first?.title }) return null
+        return networkToLocalManga(series.copy(url = path))
+    }
+
+    private suspend fun single(text: String) = SharedLink.parse(text)?.matchOne(
+        onlineSources(),
+        siteOf = { it.baseUrl },
+        storedAt = { source, url -> storedManga(url, source.id) },
+        webUrl = { source, path -> webUrl(source, path) },
+    )
+
+    private fun webUrl(source: HttpSource, path: String) =
+        source.mangaUrlOrNull(SManga.create().apply { url = path }).orEmpty()
+
+    /**
+     * The series at [path] and the chapter paths its page gives, or null when the page is not one: no title
+     * or no chapters.
+     */
+    private suspend fun series(source: HttpSource, path: String): Pair<Manga, List<String>>? = runCatchingCancellable {
+        val update = source.getMangaUpdate(
+            SManga.create().apply { url = path },
+            chapters = emptyList(),
+            fetchDetails = true,
+            fetchChapters = true,
+        )
+        val title = runCatching { update.manga.title }.getOrNull()
+        if (title.isNullOrBlank() || update.chapters.isEmpty()) return@runCatchingCancellable null
+        update.manga.apply { url = path }.toDomainManga(source.id) to update.chapters.map { it.url }
+    }.getOrNull()
+}

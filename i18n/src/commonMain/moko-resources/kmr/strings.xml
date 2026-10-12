@@ -28,7 +28,6 @@
     <string name="label_extensions">Pêvek</string>
     <string name="label_extension_info">Agahiyên pêvekê</string>
     <string name="label_help">Alîkarî</string>
-    <string name="label_support_us">Piştgirîya Me Bike</string>
     <string name="label_default">Herdemî</string>
     <string name="label_warning">Hişyarî</string>
     <string name="label_auto">Xwekar</string>
@@ -116,7 +115,6 @@
     <string name="action_cancel">Betal bike</string>
     <string name="action_ok">Temam</string>
     <string name="action_cancel_all">Hemûyan betal bike</string>
-    <string name="cancel_all_for_series">Hemûyên vê berhemê betal bike</string>
     <string name="action_sort">Rêz bike</string>
     <string name="action_order_by_upload_date">Li gorî dîroka barkirinê</string>
     <string name="action_order_by_chapter_number">Li gorî jimara beşê</string>
@@ -125,9 +123,7 @@
     <string name="action_asc">Zêdebarî</string>
     <string name="action_desc">Kêmbarî</string>
     <string name="action_move_to_top">Bibe serî</string>
-    <string name="action_move_to_top_all_for_series">Berhemê bibe serî</string>
     <string name="action_move_to_bottom">Bibe binî</string>
-    <string name="action_move_to_bottom_all_for_series">Berhemê bibe binî</string>
     <string name="action_notes">Nîşe</string>
     <string name="action_edit_notes">Notan serast bike</string>
     <string name="action_install">Daxîne</string>
@@ -165,7 +161,6 @@
     <string name="onboarding_permission_action_grant">Destûrê bide</string>
     <string name="onboarding_guides_new_user">Di %s de nû yî? Em pêşniyar dikin ku tu li rêbera destpêkê binerî.</string>
     <string name="onboarding_guides_returning_user">Tu dîsa %s\'ê dadixînî?</string>
-    <string name="pref_category_general">Giştî</string>
     <string name="pref_category_appearance">Rûkar</string>
     <string name="pref_category_library">Pirtûkxane</string>
     <string name="pref_category_reader">Xwîner</string>
@@ -238,8 +233,6 @@
     <string name="tapping_inverted_vertical">Stûnî</string>
     <string name="tapping_inverted_both">Herdu</string>
     <string name="theme_strawberrydaiquiri">Daiquiriya Çîlekan</string>
-    <string name="pref_category_nsfw_content">Çavkaniyên NSFW (18+)</string>
-    <string name="pref_show_nsfw_source">Di lîsteyên çavkanî û pêvekan de nîşan bide</string>
     <string name="pref_category_display">Ekran</string>
     <string name="pref_library_columns">Babetên di her rêzê de</string>
     <string name="pref_category_library_update">Nûkirina giştî</string>
@@ -270,6 +263,4 @@
     <string name="pref_chapter_swipe_end">Kişandina beşê ber bi rastê</string>
     <string name="pref_chapter_swipe_start">Kişandina beşê ber bi çepê</string>
     <string name="pref_mark_duplicate_read_chapter_read">Beşên dubare yên xwendî wekî xwendî nîşan bide</string>
-    <string name="ext_info_age_rating">Nirxandina temenî</string>
-    <string name="ext_nsfw_short">18+</string>
 </resources>

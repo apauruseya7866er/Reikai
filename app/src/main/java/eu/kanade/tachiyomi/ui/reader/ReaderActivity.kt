@@ -6,7 +6,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
@@ -17,6 +16,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.View.LAYER_TYPE_HARDWARE
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,32 +44,26 @@ import androidx.core.transition.doOnEnd
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.lifecycleScope
-import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import com.google.android.material.transition.platform.MaterialContainerTransform
-import com.hippo.unifile.UniFile
-import eu.kanade.core.util.ifSourcesLoaded
+import dev.zacsweers.metro.Inject
 import eu.kanade.domain.base.BasePreferences
-import eu.kanade.domain.ui.UiPreferences
-import eu.kanade.presentation.reader.ChapterListDialog
 import eu.kanade.presentation.reader.DisplayRefreshHost
-import eu.kanade.presentation.reader.OrientationSelectDialog
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
 import eu.kanade.presentation.reader.ReaderPageIndicator
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.components.ChapterNavigatorType
-import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.presentation.theme.TachiyomiTheme
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.databinding.ReaderActivityBinding
-import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
-import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.AddToLibraryFirst
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Error
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel.SetAsCoverResult.Success
@@ -77,17 +72,18 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
+import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsViewModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
-import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
-import eu.kanade.tachiyomi.ui.webview.WebViewActivity
-import eu.kanade.tachiyomi.util.system.isNightMode
 import eu.kanade.tachiyomi.util.system.openInBrowser
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.setComposeContent
-import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -96,49 +92,184 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import logcat.LogPriority
-import tachiyomi.core.common.Constants
+import mihon.app.di.AppGraph
+import mihon.app.di.appGraph
+import mihon.core.metro.metroGraph
+import reikai.data.notification.NovelNewChaptersNotice
+import reikai.data.novel.tts.SleepTimer
+import reikai.domain.entry.EntryId
+import reikai.domain.novel.NovelPreferences
+import reikai.domain.novel.tts.TtsPlayback
+import reikai.presentation.reader.MangaReaderProvider
+import reikai.presentation.reader.MangaViewport
+import reikai.presentation.reader.NO_ID
+import reikai.presentation.reader.NovelReaderProvider
+import reikai.presentation.reader.NovelReaderViewModel
+import reikai.presentation.reader.ReaderBottomButtonsDialog
+import reikai.presentation.reader.ReaderChapterListDialog
+import reikai.presentation.reader.ReaderDialog
+import reikai.presentation.reader.ReaderEngine
+import reikai.presentation.reader.ReaderNavigatorShape
+import reikai.presentation.reader.ReaderOrientationDialog
+import reikai.presentation.reader.ReaderSleepTimerDialog
+import reikai.presentation.reader.ReaderTextSizeDialog
+import reikai.presentation.reader.ReaderThemeDialog
+import reikai.presentation.reader.ReaderViewport
+import reikai.presentation.reader.TextViewport
+import reikai.presentation.reader.chapterTitleWords
+import reikai.presentation.reader.isSameLaunch
+import reikai.presentation.reader.putEntryId
+import reikai.presentation.reader.readEntryId
+import reikai.presentation.reader.settings.ReaderSettingsPages
+import reikai.presentation.reader.settings.ReaderSettingsSheet
+import reikai.presentation.reader.text.hasTravelled
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNonCancellable
-import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.manga.model.asMangaCover
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import java.io.ByteArrayOutputStream
+import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.seconds
 import androidx.compose.ui.graphics.Color as ComposeColor
 
 class ReaderActivity : BaseActivity() {
 
     companion object {
-        // RK: optional page param jumps the reader to a specific page (gallery page previews);
-        // the ViewModel reads it from the "page_index" extra. Null keeps Mihon's default behavior.
-        fun newIntent(context: Context, mangaId: Long?, chapterId: Long?, page: Int? = null): Intent {
+        // RK: optional page param jumps the reader to a specific page (gallery page previews); the
+        // ViewModel reads it from "launch_page", which is deliberately not the "page_index" key its
+        // process-death restore uses. Null keeps Mihon's default behavior.
+        // sourceScoped narrows the chapter list to the opened source's own chapters (Updates, a
+        // specific source chip); default false = the whole merge group (group scope).
+        fun newIntent(
+            context: Context,
+            mangaId: Long?,
+            chapterId: Long?,
+            page: Int? = null,
+            sourceScoped: Boolean = false,
+        ): Intent {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
                 putExtra("chapter", chapterId)
-                if (page != null) putExtra("page_index", page)
+                // RK --> the page and source scope newIntent takes, see the note above it
+                if (page != null) putExtra("launch_page", page)
+                if (sourceScoped) putExtra("source_scoped", true)
+                // RK: name the entry by type as well, so the host can tell a novel launch from a
+                // manga one. The "manga" extra above stays for ReaderViewModel's own saved state.
+                if (mangaId != null) putEntryId(EntryId.Manga(mangaId))
+                // RK <--
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }
+
+        // RK -->
+
+        /**
+         * The novel entry into the same host. Deliberately not an overload of [newIntent]: a novel
+         * launch writes no `"manga"` extra, so a caller that confuses the two gets a compile error
+         * rather than a reader that opens the wrong entry.
+         */
+        fun newNovelIntent(
+            context: Context,
+            novelId: Long,
+            chapterId: Long,
+            sourceScoped: Boolean = false,
+        ): Intent {
+            return Intent(context, ReaderActivity::class.java).apply {
+                putExtra("chapter", chapterId)
+                if (sourceScoped) putExtra("source_scoped", true)
+                putEntryId(EntryId.Novel(novelId))
+                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+        }
+        // RK <--
     }
 
-    private val readerPreferences = Injekt.get<ReaderPreferences>()
-    private val preferences = Injekt.get<BasePreferences>()
+    // RK -->
+
+    /**
+     * Which entry this launch names, or null when it names none. Falls back to the bare `"manga"`
+     * extra so an intent built before the tag existed, a pending notification action for instance,
+     * still opens rather than being read as a launch for nothing.
+     */
+    private fun Intent.entryId(): EntryId? =
+        readEntryId() ?: getLongExtra("manga", -1L).takeIf { it != -1L }?.let(EntryId::Manga)
+    // RK <--
+
+    private val graph: AppGraph by lazy { metroGraph() }
+
+    @Inject private lateinit var readerPreferences: ReaderPreferences
+
+    @Inject private lateinit var preferences: BasePreferences
 
     // RK -->
-    private val uiPreferences = Injekt.get<UiPreferences>()
+    @Inject private lateinit var novelPreferences: NovelPreferences
     // RK <--
 
     lateinit var binding: ReaderActivityBinding
 
-    val viewModel by viewModels<ReaderViewModel>()
-    private var assistUrl: String? = null
+    val viewModel by viewModels<ReaderViewModel> { graph.viewModelFactory }
+
+    // RK --> the engine owns dialog dispatch and the viewport, over a provider per content type.
+    // The provider is held here as its own type as well, because building page actions is a manga
+    // question the neutral seam does not carry; it is stateless, so the engine surviving a recreate
+    // with an earlier instance changes nothing.
+    private val mangaProvider by lazy {
+        MangaReaderProvider(viewModel, readerPreferences, graph.downloadManager, applicationContext.chapterTitleWords())
+    }
+
+    // Resolved after viewModel so the provider has a model to wrap. Manual assisted factories are a
+    // plain function rather than a ViewModelProvider.Factory, which is what the initializer wraps.
+
+    /**
+     * The novel model, resolved only for a novel launch. Reading it on a manga launch would build a
+     * model for an entry that does not exist, so everything that touches it goes through
+     * [novelSession], which is null for manga.
+     */
+    private val novelViewModel by viewModels<NovelReaderViewModel> {
+        viewModelFactory {
+            initializer {
+                graph.viewModelFactory
+                    .createManuallyAssistedFactory(NovelReaderViewModel.Factory::class)()
+                    .create(
+                        novelId = intent.entryId()?.rawId ?: -1L,
+                        initialChapterId = intent.getLongExtra("chapter", -1L),
+                        sourceScoped = intent.getBooleanExtra("source_scoped", false),
+                        // The model's own, as ReaderViewModel takes one off the graph's extras: a
+                        // process kill must reopen the chapter being read, not the launch chapter.
+                        savedState = createSavedStateHandle(),
+                        io = Dispatchers.IO,
+                    )
+            }
+        }
+    }
+
+    /** The novel half of the session, or null when this launch is a manga one. */
+    private val novelSession: NovelReaderProvider? by lazy {
+        (intent.entryId() as? EntryId.Novel)?.let {
+            NovelReaderProvider(
+                novelViewModel,
+                novelPreferences,
+                appGraph.novelFontManager,
+                appGraph.novelImageRequests,
+                applicationContext.chapterTitleWords(),
+            )
+        }
+    }
+
+    val engine by viewModels<ReaderEngine> {
+        viewModelFactory {
+            initializer {
+                graph.viewModelFactory
+                    .createManuallyAssistedFactory(ReaderEngine.Factory::class)()
+                    .create(novelSession ?: mangaProvider)
+            }
+        }
+    }
+
+    // RK <--
 
     /**
      * Configuration at reader level, like background color or forced orientation.
@@ -156,10 +287,24 @@ class ReaderActivity : BaseActivity() {
     var isScrollingThroughPages = false
         private set
 
+    /** RK: set when the launch named no entry, so teardown does not build a session that never opened. */
+    private var launchRejected = false
+
+    /**
+     * RK: which viewer implementation is running, for the settings sheet. A manga question, so it
+     * unwraps the adapter rather than widening the contract, and it is shared from here rather than
+     * from inside the composable, where an abandoned composition would leak the collector.
+     */
+    private val mangaViewerState by lazy {
+        engine.viewport.map { (it as? MangaViewport)?.viewer }
+            .stateIn(lifecycleScope, SharingStarted.Eagerly, null)
+    }
+
     /**
      * Called when the activity is created. Initializes the presenter and configuration.
      */
     override fun onCreate(savedInstanceState: Bundle?) {
+        graph.inject(this)
         registerSecureActivity(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(
@@ -182,27 +327,41 @@ class ReaderActivity : BaseActivity() {
 
         binding = ReaderActivityBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // RK --> asked of the intent rather than of the manga model, which is what lets a launch name a
+        // novel, and asked before the overlay is installed, since the overlay renders against a model an
+        // unusable launch never fills.
+        val launchedEntry = intent.entryId()
+        if (launchedEntry == null || intent.getLongExtra("chapter", -1L) == -1L) {
+            launchRejected = true
+            finish()
+            return
+        }
+        // The session wires itself in: a session whose viewport is ready now shows it through
+        // showViewport, and manga's waits for updateViewer below, once its manga is in state.
+        engine.provider.attach(this)
+        // RK <--
+
         binding.setComposeOverlay()
 
-        if (viewModel.needsInit()) {
-            val manga = intent.extras?.getLong("manga", -1) ?: -1L
-            val chapter = intent.extras?.getLong("chapter", -1) ?: -1L
-            if (manga == -1L || chapter == -1L) {
-                finish()
-                return
-            }
-            NotificationReceiver.dismissNotification(this, manga.hashCode(), Notifications.ID_NEW_CHAPTERS)
-
-            lifecycleScope.launchNonCancellable {
-                val initResult = viewModel.init(manga, chapter)
-                if (!initResult.getOrDefault(false)) {
-                    val exception = initResult.exceptionOrNull() ?: IllegalStateException("Unknown err")
-                    withUIContext {
-                        setInitialChapterError(exception)
-                    }
-                }
-            }
+        // RK --> the new-chapters notification of whichever entry opened. Written for manga alone, it
+        // cancelled id 0 on a novel launch, which nothing posts, and left the novel's notice up.
+        // Each updater posts per entry under entryId.hashCode(), novels with their own tag, summarised
+        // by its own group id.
+        when (launchedEntry) {
+            is EntryId.Manga -> NotificationReceiver.dismissNotification(
+                this,
+                launchedEntry.rawId.hashCode(),
+                Notifications.ID_NEW_CHAPTERS,
+            )
+            is EntryId.Novel -> NotificationReceiver.dismissNotification(
+                this,
+                NovelNewChaptersNotice.id(launchedEntry.rawId),
+                NovelNewChaptersNotice.SUMMARY_ID,
+                NovelNewChaptersNotice.TAG,
+            )
         }
+        // RK <--
 
         config = ReaderConfig()
         setMenuVisibility(viewModel.state.value.menuVisible)
@@ -214,11 +373,17 @@ class ReaderActivity : BaseActivity() {
             .launchIn(lifecycleScope)
 
         viewModel.state
-            .map { it.isLoadingAdjacentChapter }
+            .map { it.initError }
             .distinctUntilChanged()
-            .onEach(::setProgressDialog)
+            .filterNotNull()
+            .onEach(::setInitialChapterError)
             .launchIn(lifecycleScope)
 
+        // RK: registration order is load-bearing. This collector is what installs the viewer, and
+        // the viewerChapters one below delivers into it. Registered the other way round, setChapters
+        // drops the loading indicator and then delivers into a null viewer, leaving a black screen
+        // with no spinner and no error. It also rests on init() setting manga before viewerChapters,
+        // which nothing enforces.
         viewModel.state
             .map { it.manga }
             .distinctUntilChanged()
@@ -239,6 +404,17 @@ class ReaderActivity : BaseActivity() {
                     ReaderViewModel.Event.ReloadViewerChapters -> {
                         viewModel.state.value.viewerChapters?.let(::setChapters)
                     }
+                    // RK --> a reload replaced the open chapter's pages, which only a first layout lands
+                    // on by itself, so the viewer is put back on the page the reader was at
+                    ReaderViewModel.Event.ReloadedChapter -> {
+                        viewModel.state.value.viewerChapters?.let { chapters ->
+                            setChapters(chapters)
+                            val pages = chapters.currChapter.pages ?: return@let
+                            val page = pages[chapters.currChapter.requestedPage.coerceIn(0, pages.lastIndex)]
+                            (engine.viewport.value as? MangaViewport)?.viewer?.moveToPage(page)
+                        }
+                    }
+                    // RK <--
                     ReaderViewModel.Event.PageChanged -> {
                         displayRefreshHost.flash()
                     }
@@ -264,26 +440,35 @@ class ReaderActivity : BaseActivity() {
 
     private fun ReaderActivityBinding.setComposeOverlay(): Unit = composeOverlay.setComposeContent {
         val state by viewModel.state.collectAsState()
-        val showPageNumber by readerPreferences.showPageNumber.collectAsState()
-        val settingsScreenModel = remember {
-            ReaderSettingsScreenModel(
+        val engineDialog by engine.dialog.collectAsState()
+        // RK: the session's own answer, so a novel gets its readout and its own setting decides it.
+        val showProgress by engine.showProgress.collectAsState()
+        val navigatorState by engine.navigator.collectAsState()
+        val settingsViewModel = remember {
+            ReaderSettingsViewModel(
                 readerState = viewModel.state,
+                viewerState = mangaViewerState,
                 onChangeReadingMode = viewModel::setMangaReadingMode,
                 onChangeOrientation = viewModel::setMangaOrientationType,
+                preferences = readerPreferences,
+                // RK: resolved, so the quick menu highlights the mode actually in use
+                resolvedReadingMode = viewModel::getMangaReadingMode,
             )
         }
 
         // RK -->
-        val seedColor = state.manga?.asMangaCover()?.vibrantCoverColor
-            ?.takeIf { uiPreferences.themeCoverBased.get() }
-            ?.let { ComposeColor(it) }
+        // Both sessions answer through one kernel, so a novel's chrome tints as a manga's does. Null while
+        // cover-based theming is off, and then the cover is never decoded.
+        val coverSeed by remember { engine.coverSeed(applicationContext) }.collectAsState(null)
+        val seedColor = coverSeed?.let { ComposeColor(it) }
         TachiyomiTheme(seedColor = seedColor) {
             // RK <--
             Box(modifier = Modifier.fillMaxSize()) {
-                if (!state.menuVisible && showPageNumber) {
+                // RK: both from the engine. Read off manga's preference and manga's position, the
+                // readout never appeared in a novel session and its setting did nothing.
+                if (!state.menuVisible && showProgress) {
                     ReaderPageIndicator(
-                        currentPage = state.currentPage,
-                        totalPages = state.totalPages,
+                        progress = navigatorState.progress,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .navigationBarsPadding(),
@@ -295,9 +480,47 @@ class ReaderActivity : BaseActivity() {
                 AppBars(state = state)
             }
 
-            val onDismissRequest = viewModel::closeDialog
-            when (state.dialog) {
-                is ReaderViewModel.Dialog.Loading -> {
+            // RK: the dialogs are the shared engine's ReaderDialog; each case renamed from upstream is marked // RK
+            val onDismissRequest = engine::dismissDialog
+            when (val dialog = engineDialog) {
+                // RK -->
+                is ReaderDialog.LoadFailed -> {
+                    val giveUp = {
+                        onDismissRequest()
+                        if (!dialog.canKeepReading) finish()
+                    }
+                    AlertDialog(
+                        onDismissRequest = giveUp,
+                        title = { Text(stringResource(MR.strings.chapter_load_failed)) },
+                        text = dialog.message?.let { { Text(it) } },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    onDismissRequest()
+                                    engine.retryLoad()
+                                },
+                            ) {
+                                Text(stringResource(MR.strings.action_retry))
+                            }
+                        },
+                        dismissButton = {
+                            // Kept open behind the browser: a page saved there reopens the chapter,
+                            // and backing out without one leaves Retry where it was.
+                            val webUrl = dialog.webUrl
+                            val chapterId = dialog.chapterId
+                            if (webUrl != null && chapterId != null) {
+                                TextButton(onClick = { openChapterInWebView(webUrl, chapterId) }) {
+                                    Text(stringResource(MR.strings.action_open_in_web_view))
+                                }
+                            }
+                            TextButton(onClick = giveUp) {
+                                Text(stringResource(MR.strings.action_cancel))
+                            }
+                        },
+                    )
+                }
+                // RK <--
+                is ReaderDialog.Loading -> {
                     AlertDialog(
                         onDismissRequest = {},
                         confirmButton = {},
@@ -312,18 +535,38 @@ class ReaderActivity : BaseActivity() {
                         },
                     )
                 }
-                is ReaderViewModel.Dialog.Settings -> {
-                    ReaderSettingsDialog(
+                is ReaderDialog.Settings -> { // RK
+                    // RK: one sheet for both readers; a session with text settings is a novel one.
+                    val filters = engine.provider.displayFilters
+                    val pages = engine.textSettings?.let { text ->
+                        ReaderSettingsPages.Novel(
+                            novelPreferences,
+                            text,
+                            filters,
+                            engine.orientation,
+                            engine::setOrientation,
+                        ) {
+                            appGraph.novelFontManager.installed()
+                        }
+                    } ?: ReaderSettingsPages.Manga(settingsViewModel, filters)
+                    // RK --> the sheet's auto-scroll rows, whose rate is whichever the viewport showing runs on
+                    val autoScrollRunning by engine.autoScrollRunning.collectAsState()
+                    val viewport by engine.viewport.collectAsState()
+                    ReaderSettingsSheet(
+                        pages = pages,
+                        autoScrollRunning = autoScrollRunning,
+                        onToggleAutoScroll = engine::toggleAutoScroll,
+                        autoScroll = viewport?.autoScroll,
+                        // RK <--
                         onDismissRequest = onDismissRequest,
                         onShowMenus = { setMenuVisibility(true) },
                         onHideMenus = { setMenuVisibility(false) },
-                        screenModel = settingsScreenModel,
                     )
                 }
-                is ReaderViewModel.Dialog.ReadingModeSelect -> {
+                is ReaderDialog.ReadingModeSelect -> { // RK
                     ReadingModeSelectDialog(
                         onDismissRequest = onDismissRequest,
-                        screenModel = settingsScreenModel,
+                        viewModel = settingsViewModel, // RK: upstream's settingsviewModel
                         onChange = { stringRes ->
                             menuToggleToast?.cancel()
                             if (!readerPreferences.showReadingMode.get()) {
@@ -332,37 +575,87 @@ class ReaderActivity : BaseActivity() {
                         },
                     )
                 }
-                is ReaderViewModel.Dialog.OrientationModeSelect -> {
-                    OrientationSelectDialog(
-                        onDismissRequest = onDismissRequest,
-                        screenModel = settingsScreenModel,
-                        onChange = { stringRes ->
+                // RK: over the engine, so the flag written belongs to whichever entry is open.
+                is ReaderDialog.OrientationSelect -> {
+                    ReaderOrientationDialog(
+                        currentOrientation = engine.orientation.collectAsState().value,
+                        resolvedOrientation = engine.resolvedOrientation.collectAsState().value,
+                        onChange = {
+                            engine.setOrientation(it)
                             menuToggleToast?.cancel()
-                            menuToggleToast = toast(stringRes)
+                            menuToggleToast = toast(ReaderOrientation.fromPreference(it).stringRes)
                         },
+                        onDismiss = onDismissRequest,
                     )
                 }
-                is ReaderViewModel.Dialog.PageActions -> {
+                is ReaderDialog.PageActions -> {
                     ReaderPageActionsDialog(
                         onDismissRequest = onDismissRequest,
-                        onSetAsCover = viewModel::setAsCover,
-                        onShare = viewModel::shareImage,
-                        onSave = viewModel::saveImage,
+                        onSetAsCover = dialog.actions::setAsCover,
+                        onShare = dialog.actions::share,
+                        onSave = dialog.actions::save,
                     )
                 }
                 // RK -->
-                is ReaderViewModel.Dialog.ChapterListSelect -> {
-                    val chapters = remember { viewModel.getChapters().toImmutableList() }
-                    ChapterListDialog(
+                is ReaderDialog.TextSize -> {
+                    val text by dialog.settings.state.collectAsState(null)
+                    text?.let {
+                        ReaderTextSizeDialog(
+                            fontSize = it.fontSize,
+                            onFontSize = dialog.settings::setFontSize,
+                            onDismiss = onDismissRequest,
+                        )
+                    }
+                }
+                is ReaderDialog.ThemeSelect -> {
+                    val text by dialog.settings.state.collectAsState(null)
+                    text?.let {
+                        ReaderThemeDialog(
+                            followSystemTheme = it.followSystemTheme,
+                            backgroundColor = it.backgroundColor,
+                            textColor = it.textColor,
+                            onFollowSystem = dialog.settings::followSystemTheme,
+                            onPreset = { preset ->
+                                dialog.settings.setThemeColors(preset.background, preset.textColor)
+                            },
+                            onDismiss = onDismissRequest,
+                        )
+                    }
+                }
+                is ReaderDialog.SleepTimerSelect -> {
+                    val readAloud by dialog.readAloud.state.collectAsState(null)
+                    readAloud?.let {
+                        ReaderSleepTimerDialog(
+                            timer = it.sleepTimer,
+                            minutesLeft = dialog.readAloud::minutesLeft,
+                            onOff = dialog.readAloud::clearSleepTimer,
+                            onMinutes = dialog.readAloud::setSleepTimer,
+                            onEndOfChapter = dialog.readAloud::setSleepTimerEndOfChapter,
+                            onDismiss = onDismissRequest,
+                        )
+                    }
+                }
+                is ReaderDialog.BottomButtons -> ReaderBottomButtonsDialog(dialog.scope, onDismissRequest)
+                // RK: over the session's own chapter list, so a novel gets its chapters here too.
+                is ReaderDialog.ChapterList -> {
+                    val chapterList = engine.chapterList
+                    val rows by chapterList.rows.collectAsState(emptyList())
+                    val current by chapterList.currentChapterId.collectAsState(-1L)
+                    ReaderChapterListDialog(
                         onDismissRequest = onDismissRequest,
-                        chapters = chapters,
+                        rows = rows,
+                        currentChapterId = current,
+                        undatedChapterDate = chapterList.undatedChapterDate,
+                        chapterSwipeStartAction = viewModel.chapterSwipeStartAction,
+                        chapterSwipeEndAction = viewModel.chapterSwipeEndAction,
+                        // Closed first: the engine raises the pick's loading dialog only over an empty slot.
                         onClickChapter = {
-                            viewModel.loadNewChapterFromDialog(it)
                             onDismissRequest()
+                            chapterList.open(it)
                         },
-                        onBookmark = { viewModel.toggleBookmark(it.id, !it.bookmark) },
-                        onDownloadAction = viewModel::handleChapterDownload,
-                        dateRelativeTime = uiPreferences.relativeTime.get(),
+                        onMarkRead = chapterList::setRead,
+                        onBookmark = chapterList::setBookmark,
+                        onDownloadAction = chapterList::download,
                     )
                 }
                 // RK <--
@@ -376,18 +669,99 @@ class ReaderActivity : BaseActivity() {
      */
     override fun onDestroy() {
         super.onDestroy()
-        viewModel.state.value.viewer?.destroy()
+        // RK: a rejected launch never built the engine, and reading it here would build one (and a model
+        // under it) against a store that is already cleared, for a session that never opened.
+        // RK -->
+        if (!launchRejected) {
+            // The session lets go of the viewport first, since it can outlive this Activity.
+            engine.destroyViewport()
+        }
+        // RK <--
         config = null
         menuToggleToast?.cancel()
         readingModeToast?.cancel()
     }
 
+    // RK --> the host side of a session that installs its own viewport: showing it under the window's
+    // insets, the cutout inset and what the chrome covers of the text.
+
+    /**
+     * Shows a viewport the session built in `ReaderProvider.attach`, under the session's own insets. The
+     * window stays the host's; manga's viewport goes through updateViewer instead.
+     */
+    internal fun showViewport(viewport: ReaderViewport) {
+        engine.installViewport(viewport)
+        updateViewerInset(engine.provider.fullscreen.get(), engine.provider.drawUnderCutout.get())
+        binding.viewerContainer.addView(viewport.view)
+    }
+
+    /**
+     * The cutout inset in dp, so the first line clears a punch-hole in immersive mode. Both novel
+     * viewports add it at the top of the page. The WebView one is initial-scale=1, so its CSS pixels
+     * are dp.
+     */
+    internal fun displayCutoutTopDp(): Int {
+        // RK: applyInsetsPadding already keeps the container clear of the cutout unless the reader
+        // draws under it; a page adding the inset on top of that padding cleared the cutout twice.
+        if (!engine.provider.fullscreen.get() || !engine.provider.drawUnderCutout.get()) return 0
+        val insets = ViewCompat.getRootWindowInsets(binding.root)
+            ?.getInsets(WindowInsetsCompat.Type.displayCutout())
+        return ((insets?.top ?: 0) / resources.displayMetrics.density).roundToInt()
+    }
+
+    /**
+     * Turns the chrome's edges in the window into how far it reaches over the viewport from each of its
+     * edges, which the container's inset padding makes differ. Only a text renderer hears it, since only
+     * it reads aloud; an image viewer has no paragraph to choose or keep in view.
+     */
+    private fun coverText(topBarBottom: Float?, bottomChromeTop: Float?) {
+        val viewport = engine.viewport.value ?: return
+        if (viewport !is TextViewport) return
+        val view = viewport.view
+        val viewTop = IntArray(2).also(view::getLocationInWindow)[1]
+        val top = topBarBottom?.let { (it - viewTop).roundToInt().coerceAtLeast(0) } ?: 0
+        val bottom = bottomChromeTop?.let { (viewTop + view.height - it).roundToInt().coerceAtLeast(0) } ?: 0
+        viewport.setObscured(top, bottom)
+    }
+    // RK <--
+
+    // RK --> the activity is singleTask, so a launch while it is already alive is delivered here
+    // instead of building a new instance. Without this the new intent was dropped and the reader
+    // stayed on whatever it was already showing, which a second content type makes far likelier to
+    // hit. Restarting is the honest answer: the entry a session is for is read once, at construction.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val requested = intent.entryId() ?: return
+        // A restart already under way: singleTask can deliver it here again while this one is dying.
+        if (isFinishing) return
+        val requestedChapter = intent.getLongExtra("chapter", NO_ID)
+        if (isSameLaunch(requested, requestedChapter, this.intent.entryId(), engine.currentChapterId.value)) return
+        setIntent(intent)
+        finish()
+        startActivity(intent)
+    }
+    // RK <--
+
     override fun onPause() {
-        lifecycleScope.launchNonCancellable {
-            viewModel.updateHistory()
-        }
+        // RK: a session that defers its position writes flushes them here, or being backgrounded and
+        // killed loses the pending one.
+        engine.provider.flushPosition()
+        // RK: the session writes its own history row; the manga model was never given a novel entry.
+        engine.provider.saveHistory()
         super.onPause()
     }
+
+    // RK --> whether the reader is on screen, which pauses auto-scroll behind another app.
+    override fun onStart() {
+        super.onStart()
+        engine.setOnScreen(true)
+    }
+
+    override fun onStop() {
+        engine.setOnScreen(false)
+        super.onStop()
+    }
+    // RK <--
 
     /**
      * Set menu visibility again on activity resume to apply immersive mode again if needed.
@@ -395,7 +769,8 @@ class ReaderActivity : BaseActivity() {
      */
     override fun onResume() {
         super.onResume()
-        viewModel.restartReadTimer()
+        // RK: the session restarts its own clock, as onPause stamps its own history.
+        engine.provider.restartReadTimer()
         setMenuVisibility(viewModel.state.value.menuVisible)
     }
 
@@ -412,7 +787,8 @@ class ReaderActivity : BaseActivity() {
 
     override fun onProvideAssistContent(outContent: AssistContent) {
         super.onProvideAssistContent(outContent)
-        assistUrl?.let { outContent.webUri = it.toUri() }
+        // RK: the session's URL, which a novel answers too; upstream's was set from manga's chapter only.
+        engine.webUrl.value?.let { outContent.webUri = it.toUri() }
     }
 
     /**
@@ -420,7 +796,8 @@ class ReaderActivity : BaseActivity() {
      * delegated to the presenter.
      */
     override fun finish() {
-        viewModel.onActivityFinish()
+        // RK: the session runs its own deferred deletions; a rejected launch built no session to ask.
+        if (!launchRejected) engine.provider.onActivityFinish()
         super.finish()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(
@@ -436,10 +813,10 @@ class ReaderActivity : BaseActivity() {
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_N) {
-            loadNextChapter()
+            engine.nextChapter() // RK: through the engine
             return true
         } else if (keyCode == KeyEvent.KEYCODE_P) {
-            loadPreviousChapter()
+            engine.previousChapter() // RK: through the engine
             return true
         }
         return super.onKeyUp(keyCode, event)
@@ -449,16 +826,42 @@ class ReaderActivity : BaseActivity() {
      * Dispatches a key event. If the viewer doesn't handle it, call the default implementation.
      */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val handled = viewModel.state.value.viewer?.handleKeyEvent(event) ?: false
+        val handled = engine.viewport.value?.handleKeyEvent(event) ?: false
+        // RK: a key the page takes scrolls it, which is the reader moving it.
+        if (handled) engine.provider.onReaderMoved()
         return handled || super.dispatchKeyEvent(event)
     }
+
+    // RK --> the session hears when the reader moves the page, and every drag in the reader, the
+    // rail's included, passes through here before any view sees it.
+    private var touchDownX = 0f
+    private var touchDownY = 0f
+    private val touchSlop by lazy { ViewConfiguration.get(this).scaledTouchSlop }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                engine.setTouching(true)
+                touchDownX = ev.x
+                touchDownY = ev.y
+            }
+            // Past the slop only: a tap that opens the menu moves nothing.
+            MotionEvent.ACTION_MOVE -> if (hasTravelled(ev.x - touchDownX, ev.y - touchDownY, touchSlop)) {
+                engine.provider.onReaderMoved()
+            }
+            // A finger on the screen pauses auto-scroll, released only by the last finger up.
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> engine.setTouching(false)
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+    // RK <--
 
     /**
      * Dispatches a generic motion event. If the viewer doesn't handle it, call the default
      * implementation.
      */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        val handled = viewModel.state.value.viewer?.handleGenericMotionEvent(event) ?: false
+        val handled = engine.viewport.value?.handleGenericMotionEvent(event) ?: false // RK: the engine's viewport
         return handled || super.dispatchGenericMotionEvent(event)
     }
 
@@ -466,9 +869,11 @@ class ReaderActivity : BaseActivity() {
     private fun ContentOverlay(state: ReaderViewModel.State) {
         val flashOnPageChange by readerPreferences.flashOnPageChange.collectAsState()
 
-        val colorOverlayEnabled by readerPreferences.colorFilter.collectAsState()
-        val colorOverlay by readerPreferences.colorFilterValue.collectAsState()
-        val colorOverlayMode by readerPreferences.colorFilterMode.collectAsState()
+        // RK: the open session's own filter, so a novel and a manga keep separate values.
+        val filters = engine.provider.displayFilters
+        val colorOverlayEnabled by filters.colorFilter.collectAsState()
+        val colorOverlay by filters.colorFilterValue.collectAsState()
+        val colorOverlayMode by filters.colorFilterMode.collectAsState()
         val colorOverlayBlendMode = remember(colorOverlayMode) {
             ReaderPreferences.ColorFilterMode.getOrNull(colorOverlayMode)?.second
         }
@@ -486,87 +891,117 @@ class ReaderActivity : BaseActivity() {
 
     @Composable
     fun AppBars(state: ReaderViewModel.State) {
-        if (!ifSourcesLoaded()) {
-            return
-        }
-
-        val isHttpSource = viewModel.getSource() is HttpSource
+        // RK: the viewport and the chrome come from the engine, which serves both content types
+        val viewport by engine.viewport.collectAsState()
+        val chrome by engine.chrome.collectAsState()
 
         val cropBorderPaged by readerPreferences.cropBorders.collectAsState()
         val cropBorderWebtoon by readerPreferences.cropBordersWebtoon.collectAsState()
         val isPagerType = ReadingMode.isPagerType(viewModel.getMangaReadingMode())
         val cropEnabled = if (isPagerType) cropBorderPaged else cropBorderWebtoon
 
-        val verticalNavigatorModes by readerPreferences.verticalNavigator.collectAsState()
-        val verticalNavigator = verticalNavigatorModes.contains(
-            ReadingMode.fromPreference(viewModel.getMangaReadingMode()),
-        )
-        val verticalNavigatorOnLeft by readerPreferences.verticalNavigatorOnLeft.collectAsState()
-        val verticalNavigatorHeight by readerPreferences.verticalNavigatorHeight.collectAsState()
-
-        // RK -->
-        val bottomButtons by readerPreferences.readerBottomButtons.collectAsState()
-        // RK <--
+        // RK: from the engine, so a novel session offers its own actions rather than manga's.
+        val bottomButtons by engine.bottomButtons.collectAsState()
+        val bookmarked by engine.bookmarked.collectAsState()
+        val webUrl by engine.webUrl.collectAsState()
+        val navigator by engine.navigator.collectAsState()
+        val orientation by engine.orientation.collectAsState()
+        val keepScreenOn by engine.keepScreenOn.collectAsState()
+        val autoScrollActive by engine.autoScrollRunning.collectAsState()
+        val bionicActive by engine.bionicReadingEnabled.collectAsState()
+        val readAloudState by engine.readAloudState.collectAsState()
+        val readAloud = engine.readAloud
 
         ReaderAppBars(
             visible = state.menuVisible,
 
-            mangaTitle = state.manga?.title,
-            chapterTitle = state.currentChapter?.chapter?.name,
+            // RK: from the engine, so the bar names the entry whichever content type is open.
+            mangaTitle = chrome.entryTitle,
+            chapterTitle = chrome.chapterTitle,
             navigateUp = onBackPressedDispatcher::onBackPressed,
-            onClickTopAppBar = ::openMangaScreen,
-            bookmarked = state.bookmarked,
-            onToggleBookmarked = viewModel::toggleChapterBookmark,
-            onOpenInWebView = ::openChapterInWebView.takeIf { isHttpSource },
-            onOpenInBrowser = ::openChapterInBrowser.takeIf { isHttpSource },
-            onShare = ::shareChapter.takeIf { isHttpSource },
+            // RK: the entry that is open, not manga's model. A novel launch never fills that model,
+            // so the whole title row rippled and did nothing.
+            onClickTopAppBar = ::openEntryScreen,
+            // RK: from the engine, so the control reflects the chapter this session has open. Reading
+            // manga's model left it permanently empty and its tap a no-op for a novel.
+            bookmarked = bookmarked,
+            onToggleBookmarked = engine::toggleBookmark,
+            onOpenInWebView = { openChapterInWebView(webUrl, engine.currentChapterId.value) }.takeIf { webUrl != null },
+            onOpenInBrowser = { openChapterInBrowser(webUrl) }.takeIf { webUrl != null },
+            onShare = { shareChapter(webUrl) }.takeIf { webUrl != null },
 
-            chapterNavigatorType = if (!verticalNavigator) {
-                if (state.viewer is R2LPagerViewer) {
+            // RK --> the navigator, seek and dialog actions run on the engine, so a novel session gets its own.
+            // The shape is the session's answer, and the direction is asked of the viewer
+            // contract, so the host neither reads manga's preference nor instance-checks a viewer.
+            chapterNavigatorType = when (navigator.shape) {
+                ReaderNavigatorShape.Slider -> if (viewport?.isRtl == true) {
                     ChapterNavigatorType.HORIZONTAL_RTL
                 } else {
                     ChapterNavigatorType.HORIZONTAL_LTR
                 }
-            } else {
-                if (verticalNavigatorOnLeft) {
+                ReaderNavigatorShape.Rail -> if (navigator.railOnLeft) {
                     ChapterNavigatorType.VERTICAL_LEFT
                 } else {
                     ChapterNavigatorType.VERTICAL_RIGHT
                 }
+                ReaderNavigatorShape.None -> ChapterNavigatorType.NONE
             },
-            verticalNavigatorHeight = verticalNavigatorHeight / 100f,
-            onNextChapter = ::loadNextChapter,
-            enabledNext = state.viewerChapters?.nextChapter != null,
-            onPreviousChapter = ::loadPreviousChapter,
-            enabledPrevious = state.viewerChapters?.prevChapter != null,
-            currentPage = state.currentPage,
-            totalPages = state.totalPages,
-            onPageIndexChange = {
+            readingRtl = viewport?.isRtl == true,
+            verticalNavigatorHeight = navigator.railHeightPercent / 100f,
+            onNextChapter = engine::nextChapter,
+            enabledNext = navigator.hasNext,
+            onPreviousChapter = engine::previousChapter,
+            enabledPrevious = navigator.hasPrevious,
+            progress = navigator.progress,
+            onSeek = {
                 isScrollingThroughPages = true
-                moveToPageIndex(it)
+                engine.seek(it)
             },
-            onPageIndexChangeFinished = {
+            onSeekFinished = {
                 isScrollingThroughPages = false
             },
 
             readingMode = ReadingMode.fromPreference(
                 viewModel.getMangaReadingMode(resolveDefault = false),
             ),
-            onClickReadingMode = viewModel::openReadingModeSelectDialog,
-            orientation = ReaderOrientation.fromPreference(
-                viewModel.getMangaOrientation(resolveDefault = false),
-            ),
-            onClickOrientation = viewModel::openOrientationModeSelectDialog,
+            onClickReadingMode = { engine.openDialog(ReaderDialog.ReadingModeSelect) },
+            orientation = ReaderOrientation.fromPreference(orientation),
+            onClickOrientation = { engine.openDialog(ReaderDialog.OrientationSelect) },
             cropEnabled = cropEnabled,
             onClickCropBorder = {
                 val enabled = viewModel.toggleCropBorders()
                 menuToggleToast?.cancel()
                 menuToggleToast = toast(if (enabled) MR.strings.on else MR.strings.off)
             },
-            onClickSettings = viewModel::openSettingsDialog,
-            // RK -->
+            onClickSettings = { engine.openDialog(ReaderDialog.Settings) },
             bottomButtons = bottomButtons,
-            onClickChapterList = viewModel::openChapterListSelectDialog,
+            onClickChapterList = { engine.openDialog(ReaderDialog.ChapterList) },
+            keepScreenOn = keepScreenOn,
+            onClickKeepScreenOn = { engine.setKeepScreenOn(!keepScreenOn) },
+            // Null where the session renders images, which is what leaves the two typography buttons
+            // off the bar for manga rather than opening a picker over nothing.
+            onClickTextSize = engine.textSettings?.let { { engine.openDialog(ReaderDialog.TextSize(it)) } },
+            onClickTheme = engine.textSettings?.let { { engine.openDialog(ReaderDialog.ThemeSelect(it)) } },
+            onClickScrollToTop = engine::seekToStart,
+            onEditBottomButtons = { engine.openDialog(ReaderDialog.BottomButtons(engine.provider.bottomButtonScope)) },
+            onReloadChapter = engine::reloadChapter,
+            autoScrollActive = autoScrollActive,
+            onClickAutoScroll = engine::toggleAutoScroll,
+            bionicActive = bionicActive,
+            onClickBionic = engine.bionicReading?.let { bionic -> { bionic.toggle() } },
+            onClickReadAloud = readAloud?.let { { it.toggleControls() } },
+            onLongClickReadAloud = { readAloud?.stop() },
+            readAloudControlsVisible = readAloudState.controlsVisible,
+            readAloudPlaying = readAloudState.playback == TtsPlayback.Playing,
+            sleepTimerActive = readAloudState.sleepTimer != SleepTimer.Off,
+            onReadFromHere = { readAloud?.readFromHere() },
+            onPreviousParagraph = { readAloud?.previousParagraph() },
+            onPlayPause = {
+                if (readAloudState.playback == TtsPlayback.Playing) readAloud?.pause() else readAloud?.play()
+            },
+            onNextParagraph = { readAloud?.nextParagraph() },
+            onClickSleepTimer = { readAloud?.let { engine.openDialog(ReaderDialog.SleepTimerSelect(it)) } },
+            onCoverChanged = ::coverText,
             // RK <--
         )
     }
@@ -576,9 +1011,11 @@ class ReaderActivity : BaseActivity() {
      */
     private fun setMenuVisibility(visible: Boolean) {
         viewModel.showMenus(visible)
+        engine.setMenuVisible(visible) // RK: auto-scroll pauses under the chrome
+        // RK: fullscreen is the open session's own setting, as the inset pair below is.
         if (visible) {
             windowInsetsController.show(WindowInsetsCompat.Type.systemBars())
-        } else if (readerPreferences.fullscreen.get()) {
+        } else if (engine.provider.fullscreen.get()) {
             windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
         }
     }
@@ -587,8 +1024,11 @@ class ReaderActivity : BaseActivity() {
      * Called from the presenter when a manga is ready. Used to instantiate the appropriate viewer.
      */
     private fun updateViewer() {
-        val prevViewer = viewModel.state.value.viewer
-        val newViewer = ReadingMode.toViewer(viewModel.getMangaReadingMode(), this)
+        val hadViewer = engine.viewport.value != null
+        // RK: built through the provider, so this line stays the same once a second content type has
+        // one; the engine owns the swap, including destroying the outgoing viewport.
+        val newViewport = engine.provider.createViewport(this)
+        engine.installViewport(newViewport)
 
         if (window.sharedElementEnterTransition is MaterialContainerTransform) {
             // Wait until transition is complete to avoid crash on API 26
@@ -599,19 +1039,20 @@ class ReaderActivity : BaseActivity() {
             setOrientation(viewModel.getMangaOrientation())
         }
 
-        // Destroy previous viewer if there was one
-        if (prevViewer != null) {
-            prevViewer.destroy()
+        if (hadViewer) { // RK: the engine already destroyed the outgoing viewport
             binding.viewerContainer.removeAllViews()
         }
-        viewModel.onViewerLoaded(newViewer)
-        updateViewerInset(readerPreferences.fullscreen.get(), readerPreferences.drawUnderCutout.get())
-        binding.viewerContainer.addView(newViewer.getView())
+        // RK: the session's own fullscreen and cutout pair.
+        updateViewerInset(engine.provider.fullscreen.get(), engine.provider.drawUnderCutout.get())
+        binding.viewerContainer.addView(newViewport.view)
 
         // RK --> auto-webtoon overrode the default, so say why. Deliberately not gated on
         // showReadingMode: muting the routine "here's your mode" readout shouldn't also mute the
-        // one notice that explains an override the user didn't ask for.
-        if (viewModel.autoWebtoonMode() != null) {
+        // one notice that explains an override the user didn't ask for. Only when it actually
+        // changed something: for a reader whose default is already webtoon it overrides nothing,
+        // and announcing one would be a lie on every long-strip series they open.
+        val autoWebtoonMode = viewModel.autoWebtoonMode()
+        if (autoWebtoonMode != null && autoWebtoonMode != readerPreferences.defaultReadingMode.get()) {
             readingModeToast?.cancel()
             readingModeToast = toast(MR.strings.auto_webtoon_snack)
         } else if (readerPreferences.showReadingMode.get()) {
@@ -619,46 +1060,38 @@ class ReaderActivity : BaseActivity() {
             showReadingModeToast(viewModel.getMangaReadingMode())
         }
 
-        // RK: tint the initial loading spinner from the cover color (Y11)
-        loadingIndicator = ReaderProgressIndicator(this, seedColor = viewModel.manga?.asMangaCover()?.vibrantCoverColor)
+        // RK: tint the initial loading spinner from the cover color
+        loadingIndicator = ReaderProgressIndicator(this, seedColor = viewModel.coverSeedColor)
         binding.readerContainer.addView(loadingIndicator)
 
         startPostponedEnterTransition()
     }
 
-    private fun openMangaScreen() {
-        viewModel.manga?.id?.let { id ->
-            startActivity(
-                Intent(this, MainActivity::class.java).apply {
-                    action = Constants.SHORTCUT_MANGA
-                    putExtra(Constants.MANGA_EXTRA, id)
-                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                },
-            )
+    // RK --> the app bar's title opens the entry's own details page, which the session addresses.
+    // Upstream's openMangaScreen moved into MangaReaderProvider.detailsIntent.
+    private fun openEntryScreen() {
+        engine.provider.detailsIntent(this)?.let(::startActivity)
+    }
+    // RK <--
+
+    // RK --> the URL and the browser are the session's answers, so a novel opens its own chapter page, where
+    // a source that takes pages can save the chapter's text.
+    private fun openChapterInWebView(url: String?, chapterId: Long) {
+        val target = url ?: return
+        val title = engine.chrome.value.entryTitle
+        lifecycleScope.launch {
+            startActivity(engine.provider.chapterWebViewIntent(this@ReaderActivity, target, title, chapterId))
         }
     }
 
-    private fun openChapterInWebView() {
-        val manga = viewModel.manga ?: return
-        val source = viewModel.getSource() ?: return
-        assistUrl?.let {
-            val intent = WebViewActivity.newIntent(this@ReaderActivity, it, source.id, manga.title)
-            startActivity(intent)
-        }
+    private fun openChapterInBrowser(url: String?) {
+        url?.let { openInBrowser(it.toUri(), forceDefaultBrowser = false) }
     }
 
-    private fun openChapterInBrowser() {
-        assistUrl?.let {
-            openInBrowser(it.toUri(), forceDefaultBrowser = false)
-        }
+    private fun shareChapter(url: String?) {
+        url?.let { startActivity(it.toUri().toShareIntent(this, type = "text/plain")) }
     }
-
-    private fun shareChapter() {
-        assistUrl?.let {
-            val intent = it.toUri().toShareIntent(this, type = "text/plain")
-            startActivity(intent)
-        }
-    }
+    // RK <--
 
     private fun showReadingModeToast(mode: Int) {
         try {
@@ -676,14 +1109,11 @@ class ReaderActivity : BaseActivity() {
      */
     @SuppressLint("RestrictedApi")
     private fun setChapters(viewerChapters: ViewerChapters) {
+        // RK: the indicator goes whether or not a viewport exists to receive the chapters, so this is
+        // safe only under the collector ordering noted where the two are registered. Chapter delivery
+        // is unwrapped rather than on the neutral contract, because ViewerChapters is manga-shaped.
         binding.readerContainer.removeView(loadingIndicator)
-        viewModel.state.value.viewer?.setChapters(viewerChapters)
-
-        lifecycleScope.launchIO {
-            viewModel.getChapterUrl()?.let { url ->
-                assistUrl = url
-            }
-        }
+        (engine.viewport.value as? MangaViewport)?.viewer?.setChapters(viewerChapters)
     }
 
     /**
@@ -692,55 +1122,8 @@ class ReaderActivity : BaseActivity() {
      */
     private fun setInitialChapterError(error: Throwable) {
         logcat(LogPriority.ERROR, error)
-        finish()
-        toast(error.message)
-    }
-
-    /**
-     * Called from the presenter whenever it's loading the next or previous chapter. It shows or
-     * dismisses a non-cancellable dialog to prevent user interaction according to the value of
-     * [show]. This is only used when the next/previous buttons on the toolbar are clicked; the
-     * other cases are handled with chapter transitions on the viewers and chapter preloading.
-     */
-    private fun setProgressDialog(show: Boolean) {
-        if (show) {
-            viewModel.showLoadingDialog()
-        } else {
-            viewModel.closeDialog()
-        }
-    }
-
-    /**
-     * Moves the viewer to the given page [index]. It does nothing if the viewer is null or the
-     * page is not found.
-     */
-    private fun moveToPageIndex(index: Int) {
-        val viewer = viewModel.state.value.viewer ?: return
-        val currentChapter = viewModel.state.value.currentChapter ?: return
-        val page = currentChapter.pages?.getOrNull(index) ?: return
-        viewer.moveToPage(page)
-    }
-
-    /**
-     * Tells the presenter to load the next chapter and mark it as active. The progress dialog
-     * should be automatically shown.
-     */
-    private fun loadNextChapter() {
-        lifecycleScope.launch {
-            viewModel.loadNextChapter()
-            moveToPageIndex(0)
-        }
-    }
-
-    /**
-     * Tells the presenter to load the previous chapter and mark it as active. The progress dialog
-     * should be automatically shown.
-     */
-    private fun loadPreviousChapter() {
-        lifecycleScope.launch {
-            viewModel.loadPreviousChapter()
-            moveToPageIndex(0)
-        }
+        // RK: reported through the engine's failure dialog, which offers Retry and the chapter's page;
+        // its Cancel closes the reader, as this finish did.
     }
 
     /**
@@ -756,15 +1139,16 @@ class ReaderActivity : BaseActivity() {
      * actions to perform is shown.
      */
     fun onPageLongTap(page: ReaderPage) {
-        viewModel.openPageDialog(page)
+        // RK: the engine's dialog, over the actions the manga provider answers for this page
+        engine.openDialog(ReaderDialog.PageActions(mangaProvider.pageActions(page)))
     }
 
     /**
      * Called from the viewer when the given [chapter] should be preloaded. It should be called when
      * the viewer is reaching the beginning or end of a chapter or the transition page is active.
      */
-    fun requestPreloadChapter(chapter: ReaderChapter) {
-        lifecycleScope.launchIO { viewModel.preload(chapter) }
+    fun requestPreloadChapter(chapter: ReaderChapter, userAsked: Boolean = false) { // RK: true from a Retry tap
+        lifecycleScope.launchIO { viewModel.preload(chapter, userAsked) } // RK
     }
 
     /**
@@ -774,6 +1158,11 @@ class ReaderActivity : BaseActivity() {
     fun toggleMenu() {
         setMenuVisibility(!viewModel.state.value.menuVisible)
     }
+
+    // RK: for a novel viewport, which yields the volume keys to the system while the menu is up, as
+    // PagerViewer and WebtoonViewer do by reading this model directly.
+    val isMenuVisible: Boolean
+        get() = viewModel.state.value.menuVisible
 
     /**
      * Called from the viewer to show the menu.
@@ -846,7 +1235,8 @@ class ReaderActivity : BaseActivity() {
     /**
      * Forces the user preferred [orientation] on the activity.
      */
-    private fun setOrientation(orientation: Int) {
+    // RK: internal, so a session that installs its own viewport applies the orientation it resolves.
+    internal fun setOrientation(orientation: Int) {
         val newOrientation = ReaderOrientation.fromPreference(orientation)
         if (newOrientation.flag != requestedOrientation) {
             requestedOrientation = newOrientation.flag
@@ -911,84 +1301,45 @@ class ReaderActivity : BaseActivity() {
             }
         }
 
-        private val grayBackgroundColor = Color.rgb(0x20, 0x21, 0x25)
-
         /*
          * Initializes the reader subscriptions.
          */
         init {
-            readerPreferences.readerTheme.changes()
-                .onEach { theme ->
-                    binding.readerContainer.setBackgroundColor(
-                        when (theme) {
-                            0 -> Color.WHITE
-                            2 -> grayBackgroundColor
-                            3 -> automaticBackgroundColor()
-                            else -> Color.BLACK
-                        },
-                    )
-                }
+            // RK: the session's own page colour, since a novel's theme is not manga's reader theme.
+            engine.provider.pageBackground(this@ReaderActivity)
+                .onEach(binding.readerContainer::setBackgroundColor)
                 .launchIn(lifecycleScope)
 
-            preferences.displayProfile.changes()
-                .onEach { setDisplayProfile(it) }
-                .launchIn(lifecycleScope)
-
-            readerPreferences.keepScreenOn.changes()
+            // RK: off the engine, since each content type keeps its own flag and either can flip it
+            // from the bar.
+            engine.keepScreenOn
                 .onEach(::setKeepScreenOn)
                 .launchIn(lifecycleScope)
 
-            readerPreferences.customBrightness.changes()
+            // RK --> brightness, grayscale and invert are the open session's own values, as the overlay is.
+            engine.provider.displayFilters.customBrightness.changes()
                 .onEach(::setCustomBrightness)
                 .launchIn(lifecycleScope)
 
             combine(
-                readerPreferences.grayscale.changes(),
-                readerPreferences.invertedColors.changes(),
+                engine.provider.displayFilters.grayscale.changes(),
+                engine.provider.displayFilters.invertedColors.changes(),
             ) { grayscale, invertedColors -> grayscale to invertedColors }
                 .onEach { (grayscale, invertedColors) ->
                     setLayerPaint(grayscale, invertedColors)
                 }
                 .launchIn(lifecycleScope)
+            // RK <--
 
+            // RK: the session's own fullscreen and cutout pair.
             combine(
-                readerPreferences.fullscreen.changes(),
-                readerPreferences.drawUnderCutout.changes(),
+                engine.provider.fullscreen.changes(),
+                engine.provider.drawUnderCutout.changes(),
             ) { fullscreen, drawUnderCutout -> fullscreen to drawUnderCutout }
                 .onEach { (fullscreen, drawUnderCutout) ->
                     updateViewerInset(fullscreen, drawUnderCutout)
                 }
                 .launchIn(lifecycleScope)
-        }
-
-        /**
-         * Picks background color for [ReaderActivity] based on light/dark theme preference
-         */
-        private fun automaticBackgroundColor(): Int {
-            return if (baseContext.isNightMode()) {
-                grayBackgroundColor
-            } else {
-                Color.WHITE
-            }
-        }
-
-        /**
-         * Sets the display profile to [path].
-         */
-        private fun setDisplayProfile(path: String) {
-            val file = UniFile.fromUri(baseContext, path.toUri())
-            if (file != null && file.exists()) {
-                val inputStream = file.openInputStream()
-                val outputStream = ByteArrayOutputStream()
-                inputStream.use { input ->
-                    outputStream.use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                val data = outputStream.toByteArray()
-                SubsamplingScaleImageView.setDisplayProfile(data)
-                TachiyomiImageDecoder.displayProfile = data
-            }
         }
 
         /**
@@ -1007,7 +1358,7 @@ class ReaderActivity : BaseActivity() {
          */
         private fun setCustomBrightness(enabled: Boolean) {
             if (enabled) {
-                readerPreferences.customBrightnessValue.changes()
+                engine.provider.displayFilters.customBrightnessValue.changes() // RK: the session's own
                     .sample(0.1.seconds)
                     .onEach(::setCustomBrightnessValue)
                     .launchIn(lifecycleScope)

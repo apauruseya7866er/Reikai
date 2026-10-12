@@ -38,6 +38,8 @@ jobs:
 
       - name: Set up the build
         uses: ./.github/actions/setup-build
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
 
       - name: Resolve version tag
         run: |
@@ -56,23 +58,31 @@ jobs:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: bash scripts/ci/write-firebase-config.sh
 
+      # The build script reads a keystore path, never the base64 secret: writing that file from
+      # Gradle's configuration phase is a side effect the configuration cache refuses to replay.
+      - name: Decode the signing keystore
+        run: echo "$SIGNING_KEY" | base64 -d > "${{ runner.temp }}/reikai.keystore"
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+
       - name: Build signed release APKs
-        run: ./gradlew assembleRelease -Pinclude-telemetry -Penable-updater
+        run: ./gradlew assembleRelease -Pdist=github
         env:
           REIKAI_GITHUB_RELEASE: "true"
-          storeFileBase64: ${{ secrets.SIGNING_KEY }}
+          storeFile: ${{ runner.temp }}/reikai.keystore
           storePassword: ${{ secrets.KEY_STORE_PASSWORD }}
           keyAlias: ${{ secrets.ALIAS }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
 
-      # The FOSS build is the Firebase-free alternative, so it is a second Gradle run WITHOUT
-      # -Pinclude-telemetry (telemetry inclusion is a whole-build property, not a per-variant one).
+      # The FOSS build is the Firebase-free alternative, so it is a second Gradle run under a
+      # distribution that excludes telemetry, which is a whole-build property rather than a
+      # per-variant one.
       # Universal only, and the name must keep "-foss" for the in-app updater to match it.
       - name: Build signed FOSS APK
-        run: ./gradlew assembleFoss -Penable-updater
+        run: ./gradlew assembleFoss -Pdist=foss
         env:
           REIKAI_GITHUB_RELEASE: "true"
-          storeFileBase64: ${{ secrets.SIGNING_KEY }}
+          storeFile: ${{ runner.temp }}/reikai.keystore
           storePassword: ${{ secrets.KEY_STORE_PASSWORD }}
           keyAlias: ${{ secrets.ALIAS }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
@@ -80,7 +90,7 @@ jobs:
       # Stable builds ship to users, so keep their R8 mapping to deobfuscate crash stacks. FOSS
       # sends no crash reports at all, so its mapping is the only way to read a pasted stack.
       - name: Upload R8 mapping
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mapping-${{ env.VERSION_TAG }}
           path: |
@@ -89,6 +99,10 @@ jobs:
 
       - name: Install parse-changelog
         uses: taiki-e/install-action@parse-changelog
+
+      # A notes rule that stops holding only shows up as a messy published release, so check it first.
+      - name: Check the release-body rules
+        run: bash scripts/ci/release-notes-test.sh
 
       - name: Prepare release body
         env:
@@ -101,7 +115,7 @@ jobs:
         run: bash scripts/ci/package-apks.sh release "${VERSION_TAG}"
 
       - name: Create draft release
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ env.VERSION_TAG }}
           name: Reikai ${{ env.VERSION_TAG }}

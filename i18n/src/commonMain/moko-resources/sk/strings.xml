@@ -66,7 +66,6 @@
     <string name="action_restore">Obnoviť</string>
     <string name="loading">Načítava sa…</string>
     <string name="app_not_available">Aplikácia nedostupná</string>
-    <string name="pref_category_general">Všeobecné</string>
     <string name="pref_category_reader">Prehliadač</string>
     <string name="pref_category_downloads">Sťahovanie</string>
     <string name="pref_category_tracking">Sledovanie</string>
@@ -99,11 +98,7 @@
     <string name="ext_untrusted">Odobrať dôveru</string>
     <string name="ext_uninstall">Odinštalovať</string>
     <string name="untrusted_extension">Nedôveryhodné rozšírenie</string>
-    <string name="untrusted_extension_message">Toto rozšírenie bolo podpísané nedôveryhodným certifikátom a nebolo aktivované.
-\n
-\nŠkodlivé rozšírenie môže čítať všetky prihlasovacie údaje uložené v Mihon alebo spúšťať ľubovoľný kód.
-\n
-\nDôverovaním tohto certifikátu akceptujete tieto riziká.</string>
+    <string name="untrusted_extension_message">Toto rozšírenie bolo podpísané nedôveryhodným certifikátom a nebolo aktivované. \n \nŠkodlivé rozšírenie môže čítať všetky prihlasovacie údaje uložené v Reikai alebo spúšťať ľubovoľný kód. \n \nDôverovaním tohto certifikátu akceptujete tieto riziká.</string>
     <string name="pref_fullscreen">Na celú obrazovku</string>
     <string name="pref_page_transitions">Animácia prechodov strán</string>
     <string name="pref_double_tap_anim_speed">Rýchlosť animácie pre dvojité ťuknutie</string>
@@ -213,8 +208,7 @@
     <string name="manga_added_library">Pridané do knižnice</string>
     <string name="manga_removed_library">Odstránené z knižnice</string>
     <string name="delete_downloads_for_manga">Odstrániť stiahnuté kapitoly?</string>
-    <string name="copied_to_clipboard">Skopírované do schránky:
-\n%1$s</string>
+    <string name="copied_to_clipboard">Skopírované do schránky: \n%1$s</string>
     <string name="source_not_installed">Zdroj nie je nainštalovaný: %1$s</string>
     <string name="display_mode_chapter">Kapitola %1$s</string>
     <string name="chapter_downloading_progress">Sťahovanie (%1$d/%2$d)</string>
@@ -245,7 +239,6 @@
     <string name="dialog_with_checkbox_reset">Resetovať všetky kapitoly mangy</string>
     <string name="snack_add_to_library">Pridať mangu do knižnice?</string>
     <string name="picture_saved">Obrázok bol uložený</string>
-    <string name="custom_filter">Vlastný filter</string>
     <string name="set_as_cover">Nastaviť ako obal</string>
     <string name="cover_updated">Obal bol aktualizovaný</string>
     <string name="chapter_progress">Strana: %1$d</string>
@@ -271,9 +264,6 @@
     <string name="file_select_backup">Vyberte záložný súbor</string>
     <string name="update_check_confirm">Stiahnuť</string>
     <string name="update_check_no_new_updates">Žiadné nové aktualizácie</string>
-    <string name="update_check_notification_download_in_progress">Prebiehá stahovanie…</string>
-    <string name="update_check_notification_download_complete">Klepnutím nainštalujte</string>
-    <string name="update_check_notification_download_error">Chyba sťahovania</string>
     <string name="update_check_notification_update_available">Dostupná nová aktualizácia!</string>
     <string name="information_no_downloads">Žiadne sťahovanie</string>
     <string name="information_no_recent">Žiadne nedávne aktualizácie</string>
@@ -331,7 +321,6 @@
     <string name="action_display_local_badge">Lokálny zdroj</string>
     <string name="action_display_language_badge">Jazyk</string>
     <string name="action_pin">Pripnúť</string>
-    <string name="cancel_all_for_series">Zrušiť všetko pre túto sériu</string>
     <string name="action_order_by_chapter_number">Podľa čísla kapitoly</string>
     <string name="action_start_downloading_now">Začať sťahovať teraz</string>
     <string name="secure_screen_summary">Skryť obsah aplikácie pri prepínaní aplikácie a blokovať tvorbu snímkov obrazovky</string>
@@ -360,14 +349,11 @@
     <string name="lock_when_idle">Uzamknúť pri nečinnosti</string>
     <string name="lock_always">Vždy</string>
     <string name="lock_never">Nikdy</string>
-    <string name="pref_show_nsfw_source">Zobraziť v zoznamoch zdrojov a rozšírení</string>
-    <string name="pref_category_nsfw_content">NSFW (18+) zdroje</string>
     <string name="relative_time_today">Dnes</string>
     <string name="connected_to_wifi">Iba na Wi-Fi</string>
     <string name="restrictions">Obmedzenia: %s</string>
     <string name="pref_update_only_completely_read">S neprečítanými kapitolami</string>
     <string name="pref_update_only_started">Ktoré sa ešte nezačali</string>
-    <string name="parental_controls_info">Toto nastavenie avšak nebráni tomu, aby sa v aplikácii objavil neoficiálny alebo potenciálne nesprávne označený obsah NSFW (18+).</string>
     <string name="pref_category_library_update">Globálna aktualizácia</string>
     <string name="pref_library_update_refresh_metadata">Automatický obnoviť metadata</string>
     <string name="pref_library_update_refresh_metadata_summary">Pri aktualizácii knižnice skontrolujte nový obal a podrobnosti</string>
@@ -423,9 +409,7 @@
     <string name="page_list_empty_error">Nenašli sa žiadne stránky</string>
     <string name="pref_always_show_chapter_transition">Vždy zobraziť prechod medzi kapitolami</string>
     <string name="pref_low">Nízke</string>
-    <string name="backup_restore_content_full">Údaje zo záložného súboru sa obnovia.
-\n
-\nBudete musieť nainštalovať všetky chýbajúce rozšírenia a potom sa prihlásiť do sledovacích služieb, aby ste ich mohli používať.</string>
+    <string name="backup_restore_content_full">Údaje zo záložného súboru sa obnovia. \n \nBudete musieť nainštalovať všetky chýbajúce rozšírenia a potom sa prihlásiť do sledovacích služieb, aby ste ich mohli používať.</string>
     <string name="pref_reset_viewer_flags_error">Nepodarilo sa obnoviť nastavenia čítačky</string>
     <string name="pref_tablet_ui_mode">Používateľské rozhranie tabletu</string>
     <string name="manga_from_library">Manga z knižnice</string>
@@ -439,7 +423,6 @@
     <string name="add_tracking">Pridať sledovanie</string>
     <string name="unfinished_list">Nedokončený zoznam</string>
     <string name="information_empty_category_dialog">Zatiaľ nemáte žiadne kategórie.</string>
-    <string name="ext_info_age_rating">Vekové hodnotenie</string>
     <string name="date">Dátum</string>
     <string name="tapping_inverted_both">Obe</string>
     <string name="nav_zone_prev">Predchádzajúci</string>
@@ -555,8 +538,6 @@
     <string name="action_sort_last_manga_update">Posledná aktualizácia</string>
     <string name="action_remove_everything">Odstrániť všetko</string>
     <string name="internal_error">InternalError: Skontrolujte záznmy pre ďalšie informácie</string>
-    <string name="ext_nsfw_short">18+</string>
-    <string name="ext_nsfw_warning">Zdroje z tohto rozšírenia môžu obsahovať obsah pre dospleých (18+)</string>
     <string name="pref_dual_page_invert_summary">Ak umiestnenie rozdelenia na dve strany nezodpovedá smeru čítania</string>
     <string name="pref_show_reading_mode">Zobraziť režim čítania</string>
     <string name="invalid_backup_file_missing_manga">Záloha neobsahuje žiadnu mangu.</string>
@@ -582,7 +563,6 @@
     <string name="about_dont_kill_my_app">Niektorí výrobcovia majú ďalšie obmedzenia aplikácií, ktoré vypínajú služby na pozadí. Na tejto webovej stránke nájdete viac informácií o tom, ako to opraviť.</string>
     <string name="viewer">Režim čítania</string>
     <string name="error_saving_picture">Chyba pri ukladaní obrázka</string>
-    <string name="channel_app_updates">Aktualizácie aplikácie</string>
     <string name="appwidget_unavailable_locked">Widget nie je k dispozícii, keď je povolený zámok aplikácie</string>
     <string name="local_filter_order_by">Zoradiť podľa</string>
     <string name="local_invalid_format">Neplatný formát kapitoly</string>
@@ -606,7 +586,6 @@
     <string name="website">Webová stránka</string>
     <string name="pref_reader_actions">Akcie</string>
     <string name="custom_cover">Vlastný obal</string>
-    <string name="action_move_to_top_all_for_series">Presunúť sériu na začiatok</string>
     <string name="privacy_policy">Zásady ochrany osobných údajov</string>
     <string name="are_you_sure">Ste si istí?</string>
     <string name="rotation_portrait">Na výšku</string>
@@ -635,7 +614,6 @@
     <string name="action_update_category">Aktualizovať kategóriu</string>
     <string name="action_copy_to_clipboard">Kopírovať do schránky</string>
     <string name="action_ok">OK</string>
-    <string name="action_move_to_bottom_all_for_series">Presunúť sériu na spodok</string>
     <string name="onboarding_action_next">Ďalej</string>
     <string name="onboarding_action_skip">Preskočiť</string>
     <string name="onboarding_permission_install_apps">Povolenie na inštalovanie ľubovoľných aplikácii</string>
@@ -692,7 +670,6 @@
     <string name="track_activity_name">Prihlásenie do sledovača</string>
     <string name="private_settings">Zahrnúť citlivé nastavenia (napr. prihlasovacie údaje do sledovačov)</string>
     <string name="confirm_tracker_update">Aktualizovať postup na sledovačoch po kapitolu %d?</string>
-    <string name="trackers_updated_summary">Sledovače aktualizované na kapitolu %d</string>
     <string name="label_tracker_section">Sledovače</string>
     <string name="pref_library_summary">Kategórie, globálna aktualizácia, prechádzanie kapitolami</string>
     <string name="pref_reader_summary">Režim čítania, displej, navigácia</string>
@@ -734,8 +711,4 @@
     <string name="pref_flash_style_black">Čiernou</string>
     <string name="pref_flash_style_white">Bielou</string>
     <string name="pref_flash_style_white_black">Čiernou aj Bielou</string>
-    <string name="pref_hardware_bitmap_threshold">Vlastný prah pre hardvérové bitmapy</string>
-    <string name="pref_hardware_bitmap_threshold_default">Predvolený (%d)</string>
-    <string name="pref_hardware_bitmap_threshold_summary">Ak čítacie rozhranie načítava prázdne obrázky, postupne znížte prah.\nVybrané: %s</string>
-    <string name="pref_always_decode_long_strip_with_ssiv_2">Použiť starší dekodér pre čítacie rozhranie \"dlhé pásy\"</string>
 </resources>

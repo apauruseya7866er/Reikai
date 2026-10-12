@@ -1,0 +1,314 @@
+package eu.kanade.tachiyomi.ui.updates
+
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.util.fastFilter
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Assisted
+import dev.zacsweers.metro.AssistedFactory
+import dev.zacsweers.metro.AssistedInject
+import dev.zacsweers.metro.ContributesIntoMap
+import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactory
+import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactoryKey
+import eu.kanade.tachiyomi.data.download.DownloadCache
+import eu.kanade.tachiyomi.data.download.DownloadManager
+import eu.kanade.tachiyomi.data.download.model.Download
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
+import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.minus
+import logcat.LogPriority
+import reikai.domain.category.RecentsSurface
+import reikai.domain.category.recentsCategoryFilterFlow
+import reikai.domain.entry.overlayCustomInfo
+import reikai.domain.entry.withCustomInfo
+import reikai.domain.source.ReikaiSourcePreferences
+import tachiyomi.core.common.preference.TriState
+import tachiyomi.core.common.util.lang.SubscriberGate
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.pausedWhileUnsubscribed
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.manga.interactor.GetCustomMangaInfo
+import tachiyomi.domain.manga.model.applyFilter
+import tachiyomi.domain.updates.interactor.GetUpdates
+import tachiyomi.domain.updates.model.UpdatesWithRelations
+import tachiyomi.domain.updates.service.UpdatesPreferences
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.seconds
+
+// RK --> assisted, so the tab building this feed says whose category selection it reads.
+@AssistedInject
+class UpdatesViewModel(
+    @Assisted private val surface: RecentsSurface,
+    // RK <--
+    // RK: no chapter verbs and none of their interactors. They moved to MangaRecentsChapterActions,
+    //     which every recents surface builds, History included.
+    private val downloadManager: DownloadManager,
+    private val downloadCache: DownloadCache,
+    private val getUpdates: GetUpdates,
+    // RK: per-entry custom title/cover overrides, overlaid on the displayed rows (display-only)
+    private val getCustomMangaInfo: GetCustomMangaInfo,
+    private val libraryPreferences: LibraryPreferences,
+    private val updatesPreferences: UpdatesPreferences,
+    // RK: the building surface's category filter, one selection covering both content types, in SQL.
+    private val reikaiSourcePreferences: ReikaiSourcePreferences,
+) : ViewModel() {
+
+    private val subscriberGate = SubscriberGate()
+
+    // RK --> the factory the assisted surface needs, so a bare metroViewModel() cannot build this.
+    @AssistedFactory
+    @ManualViewModelAssistedFactoryKey
+    @ContributesIntoMap(AppScope::class)
+    interface Factory : ManualViewModelAssistedFactory {
+        fun create(surface: RecentsSurface): UpdatesViewModel
+    }
+    // RK <--
+
+    /**
+     * Live download states, held beside the feed rather than patched into it. The feed is derived
+     * now, so a status tick has nowhere to write; keeping it separate also drops an override once the
+     * download reaches a terminal state, instead of letting it outlive the row it described.
+     */
+    private val downloadStates = MutableStateFlow(emptyMap</* Chapter */ Long, Download.State>())
+
+    // Progress ticks often, so only the download indicators that read it recompose instead of every tick rebuilding
+    // the list
+    private val downloadProgress = mutableStateMapOf<Long, Int>()
+
+    // A finished chapter leaves the queue, and its last status change can be lost with it, so its state is left to
+    // the queried item once it's no longer queued
+    private val queuedDownloadStates = combine(downloadStates, downloadManager.queueState) { states, queue ->
+        val queuedChapterIds = queue.mapTo(HashSet()) { it.chapter.id }
+        states.filterKeys { it in queuedChapterIds }
+    }
+
+    private val updateItems: StateFlow<List<UpdatesItem>?> = combine(
+        // needed for SQL filters (unread, started, bookmarked, etc)
+        // RK: the category selection is a query parameter, so it rides the same flow the
+        //     subscription re-runs on. Re-categorizing a series now reflects without reopening.
+        combine(
+            getUpdatesItemPreferenceFlow(),
+            reikaiSourcePreferences.recentsCategoryFilterFlow(surface),
+            ::Pair,
+        )
+            .distinctUntilChanged()
+            .flatMapLatest { (prefs, categories) ->
+                getUpdates.subscribe(
+                    // Recomputed per subscription, so a long-running process keeps a three month
+                    // window from now rather than from whenever the model was built.
+                    Clock.System.now().minus(3, DateTimeUnit.MONTH, TimeZone.currentSystemDefault()),
+                    unread = prefs.filterUnread.toBooleanOrNull(),
+                    started = prefs.filterStarted.toBooleanOrNull(),
+                    bookmarked = prefs.filterBookmarked.toBooleanOrNull(),
+                    hideExcludedScanlators = prefs.filterExcludedScanlators,
+                    includedCategories = categories.include,
+                    excludedCategories = categories.exclude,
+                ).distinctUntilChanged()
+            },
+        downloadCache.changes.pausedWhileUnsubscribed(),
+        downloadManager.queueState.pausedWhileUnsubscribed(),
+        // needed for Kotlin filters (downloaded)
+        getUpdatesItemPreferenceFlow().distinctUntilChanged { old, new ->
+            old.filterDownloaded == new.filterDownloaded
+        },
+        // RK: display-only custom-info overlay, applied last and keyed by the real manga id.
+        //     Filters and download detection ran on the raw title; only the displayed
+        //     title/cover carry the user's overrides.
+        getCustomMangaInfo.subscribeAll(),
+    ) { updates, _, _, itemPreferences, customInfo ->
+        updates
+            .toUpdateItems()
+            .applyFilters(itemPreferences)
+            // RK: display-only custom title and cover
+            .overlayCustomInfo(customInfo.associateBy { it.mangaId }, { it.update.mangaId }) {
+                copy(update = update.withCustomInfo(it))
+            }
+    }
+        .flowOn(Dispatchers.Default)
+        // RK: seeded null for the same reason the history feeds are, and read the same way: the
+        //     recents updated lane turns it into `loaded`, so an empty seed would announce an empty
+        //     Updates tab a tick before the query answers.
+        .stateIn(viewModelScope + subscriberGate, SharingStarted.Eagerly, null)
+
+    val state: StateFlow<State> = combine(updateItems, queuedDownloadStates.pausedWhileUnsubscribed()) {
+            items,
+            downloads,
+        ->
+        State(
+            isLoading = items == null,
+            items = items.orEmpty().applyDownloadOverrides(downloads),
+        )
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
+
+    // RK: init and updateDownloadState sit below the feed here, upstream has them above it
+    init {
+        viewModelScope.launch {
+            downloadManager.statusFlow()
+                .catch { logcat(LogPriority.ERROR, it) }
+                .collect(this@UpdatesViewModel::updateDownloadState)
+        }
+        viewModelScope.launch {
+            downloadManager.progressFlow()
+                .catch { logcat(LogPriority.ERROR, it) }
+                .collect { downloadProgress[it.chapter.id] = it.progress }
+        }
+    }
+
+    private fun List<UpdatesItem>.applyFilters(
+        preferences: ItemPreferences,
+    ): List<UpdatesItem> {
+        val filterDownloaded = preferences.filterDownloaded
+
+        val filterFnDownloaded: (UpdatesItem) -> Boolean = {
+            applyFilter(filterDownloaded) {
+                it.downloadStateProvider() == Download.State.DOWNLOADED
+            }
+        }
+
+        return fastFilter {
+            filterFnDownloaded(it)
+        }
+    }
+
+    // RK --> overlay live queue states onto the queried rows, which only know what the disk index
+    // said. Upstream merges this inline in its state combine, where it also stamps each row's
+    // `selected`; selection lives on the recents engine here, so the merge is the whole job and reads
+    // better beside the other row overlay.
+    private fun List<UpdatesItem>.applyDownloadOverrides(
+        downloads: Map<Long, Download.State>,
+    ): List<UpdatesItem> {
+        if (downloads.isEmpty()) return this
+        return map { item ->
+            val downloadState = downloads[item.update.chapterId] ?: return@map item
+            item.copy(downloadStateProvider = { downloadState })
+        }
+    }
+    // RK <--
+
+    private fun List<UpdatesWithRelations>.toUpdateItems(): List<UpdatesItem> {
+        val queuedDownloads = downloadManager.getQueuedDownloadsByChapterId()
+        return this
+            .map { update ->
+                val activeDownload = queuedDownloads[update.chapterId]
+                val downloaded = downloadManager.isChapterDownloaded(
+                    update.chapterName,
+                    update.scanlator,
+                    update.chapterUrl,
+                    update.mangaTitle,
+                    update.sourceId,
+                )
+                val downloadState = when {
+                    activeDownload != null -> activeDownload.status
+                    downloaded -> Download.State.DOWNLOADED
+                    else -> Download.State.NOT_DOWNLOADED
+                }
+                UpdatesItem(
+                    update = update,
+                    downloadStateProvider = { downloadState },
+                    downloadProgressProvider = { downloadProgress[update.chapterId] ?: 0 },
+                )
+            }
+    }
+
+    // RK --> moved below the feed along with init
+
+    /**
+     * Update status of chapters.
+     *
+     * @param download download object containing progress.
+     */
+    private fun updateDownloadState(download: Download) {
+        val chapterId = download.chapter.id
+        downloadStates.update {
+            // A terminal state is what the queried row already answers, so drop the override rather
+            // than let it outlive reality, e.g. showing a since deleted chapter as downloaded.
+            if (download.status == Download.State.NOT_DOWNLOADED || download.status == Download.State.DOWNLOADED) {
+                it - chapterId
+            } else {
+                it + (chapterId to download.status)
+            }
+        }
+        if (download.status == Download.State.DOWNLOADING) {
+            downloadProgress[chapterId] = download.progress
+        } else {
+            downloadProgress.remove(chapterId)
+        }
+    }
+    // RK <--
+
+    fun resetNewUpdatesCount() {
+        libraryPreferences.newUpdatesCount.set(0)
+    }
+
+    // RK --> no category prefs, the surface's category selection comes from ReikaiSourcePreferences
+    private fun getUpdatesItemPreferenceFlow(): Flow<ItemPreferences> {
+        return combine(
+            updatesPreferences.filterDownloaded.changes(),
+            updatesPreferences.filterUnread.changes(),
+            updatesPreferences.filterStarted.changes(),
+            updatesPreferences.filterBookmarked.changes(),
+            updatesPreferences.filterExcludedScanlators.changes(),
+        ) { downloaded, unread, started, bookmarked, excludedScanlators ->
+            ItemPreferences(
+                filterDownloaded = downloaded,
+                filterUnread = unread,
+                filterStarted = started,
+                filterBookmarked = bookmarked,
+                filterExcludedScanlators = excludedScanlators,
+            )
+        }
+    }
+    // RK <--
+
+    @Immutable
+    private data class ItemPreferences(
+        val filterDownloaded: TriState,
+        val filterUnread: TriState,
+        val filterStarted: TriState,
+        val filterBookmarked: TriState,
+        val filterExcludedScanlators: Boolean,
+    )
+
+    // RK: the state is down to the feed itself. Selection, the dialogs, the active-filter flag and the
+    // last-updated line moved to the recents engine, which owns them for both content types; upstream's
+    // getUiModel() went with the Mihon screen it fed.
+    @Immutable
+    data class State(
+        val isLoading: Boolean = true,
+        val items: List<UpdatesItem> = listOf(),
+    )
+}
+
+internal fun TriState.toBooleanOrNull(): Boolean? { // RK: shared with NovelUpdatesViewModel
+    return when (this) {
+        TriState.DISABLED -> null
+        TriState.ENABLED_IS -> true
+        TriState.ENABLED_NOT -> false
+    }
+}
+
+@Immutable
+data class UpdatesItem(
+    val update: UpdatesWithRelations,
+    val downloadStateProvider: () -> Download.State,
+    val downloadProgressProvider: () -> Int,
+)

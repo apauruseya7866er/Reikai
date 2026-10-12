@@ -2,6 +2,9 @@ package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
 import com.hippo.unifile.UniFile
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.domain.manga.model.getComicInfo
 import eu.kanade.tachiyomi.data.cache.ChapterCache
@@ -18,34 +21,42 @@ import eu.kanade.tachiyomi.util.storage.saveTo
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flatMapMerge
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import mihon.core.archive.ZipWriter
+import mihon.core.metro.AppCoroutineScope
 import nl.adaptivity.xmlutil.serialization.XML
 import okhttp3.Response
+import reikai.domain.download.DownloadRetry
+import reikai.domain.download.SeriesCompletions
+import reikai.domain.download.hasRoomToDownload // RK
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchNow
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
@@ -58,33 +69,31 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.i18n.MR
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.File
 import java.util.Locale
-import kotlin.time.Duration.Companion.seconds
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * This class is the one in charge of downloading chapters.
  *
  * Its queue contains the list of chapters to download.
  */
+@Inject
+@SingleIn(AppScope::class)
 class Downloader(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val provider: DownloadProvider,
     private val cache: DownloadCache,
-    private val sourceManager: SourceManager = Injekt.get(),
-    private val chapterCache: ChapterCache = Injekt.get(),
-    private val downloadPreferences: DownloadPreferences = Injekt.get(),
-    private val xml: XML = Injekt.get(),
-    private val getCategories: GetCategories = Injekt.get(),
-    private val getTracks: GetTracks = Injekt.get(),
+    private val sourceManager: SourceManager,
+    private val chapterCache: ChapterCache,
+    private val downloadPreferences: DownloadPreferences,
+    private val xml: XML,
+    private val getCategories: GetCategories,
+    private val getTracks: GetTracks,
+    private val store: DownloadStore,
+    private val notifier: DownloadNotifier,
 ) {
-
-    /**
-     * Store for persisting downloads across restarts.
-     */
-    private val store = DownloadStore(context)
 
     /**
      * Queue where active downloads are kept.
@@ -92,12 +101,12 @@ class Downloader(
     private val _queueState = MutableStateFlow<List<Download>>(emptyList())
     val queueState = _queueState.asStateFlow()
 
-    /**
-     * Notifier for the downloader state and progress.
-     */
-    private val notifier by lazy { DownloadNotifier(context) }
+    // Held by every start, stop and queue edit, which come from the main thread, the download worker and the
+    // deletion jobs, so a check of isRunning can't interleave with another caller's start or stop
+    private val lock = Mutex()
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Kept when canceled, so the next job can wait for it to finish
+    @Volatile
     private var downloaderJob: Job? = null
 
     /**
@@ -118,18 +127,23 @@ class Downloader(
     private val queueRestored = CompletableDeferred<Unit>()
 
     init {
-        launchNow {
+        scope.launch(Dispatchers.Main, CoroutineStart.UNDISPATCHED) {
             try {
-                val chapters = async { store.restore() }
-                addAllToQueue(chapters.await())
+                addAllToQueue(withIOContext { store.restore() })
             } finally {
                 queueRestored.complete(Unit)
             }
         }
     }
 
+    // RK: chapters finished per manga while it stayed queued, read by the download queue's cards.
+    val completions = SeriesCompletions()
+
     // RK: suspends until the startup queue restore has finished.
     suspend fun awaitQueueRestored() = queueRestored.await()
+
+    // RK: true only once the restored queue is in queueState, which is updated before this completes
+    val isQueueRestored: Boolean get() = queueRestored.isCompleted
 
     /**
      * Starts the downloader. It doesn't do anything if it's already running or there isn't anything
@@ -137,13 +151,50 @@ class Downloader(
      *
      * @return true if the downloader is started, false otherwise.
      */
-    fun start(): Boolean {
+    suspend fun start(): Boolean = lock.withLock { startLocked() }
+
+    /**
+     * Stops the downloader.
+     */
+    suspend fun stop(reason: String? = null) = lock.withLock { stopLocked(reason) }
+
+    // Download jobs check these under the lock: by the time they get it, chapters may have been queued or the
+    // downloader stopped and started again, and that newer run must not be stopped
+    private suspend fun stopIfFinished(owner: Job) = lock.withLock {
+        if (downloaderJob === owner && owner.isActive && areAllDownloadsFinished()) stopLocked()
+    }
+
+    private suspend fun stopIfCurrent(owner: Job) = lock.withLock {
+        if (downloaderJob === owner && owner.isActive) stopLocked()
+    }
+
+    /**
+     * Pauses and stops the downloader, keeping the queue for a later start
+     */
+    suspend fun pause() = lock.withLock {
+        pauseLocked()
+        stopLocked()
+    }
+
+    /**
+     * Removes everything from the queue.
+     */
+    suspend fun clearQueue() = lock.withLock {
+        cancelDownloaderJob()
+
+        internalClearQueue()
+        completions.clear() // RK
+        notifier.dismissProgress()
+    }
+
+    private fun startLocked(): Boolean {
         if (isRunning || queueState.value.isEmpty()) {
             return false
         }
 
         val pending = queueState.value.filter { it.status != Download.State.DOWNLOADED }
         pending.forEach { if (it.status != Download.State.QUEUE) it.status = Download.State.QUEUE }
+        pending.forEach { it.failure = null } // RK: a retry does not keep the last attempt's reason
 
         isPaused = false
 
@@ -152,23 +203,20 @@ class Downloader(
         return pending.isNotEmpty()
     }
 
-    /**
-     * Stops the downloader.
-     */
-    fun stop(reason: String? = null) {
+    private fun stopLocked(reason: String? = null) {
         cancelDownloaderJob()
 
         // RK -->
         // A transient failure (no network, or wifi-only while on mobile data) shouldn't error the
         // in-flight chapter and strand the progress notification. Re-queue it and show the
-        // resumable Paused notification instead of a dead-end warning, matching Yokai's graceful
-        // pause. DownloadJob keeps its network monitor alive and resumes when connectivity returns.
+        // resumable Paused notification instead of a dead-end warning. DownloadWorker keeps its
+        // network monitor alive and resumes when connectivity returns.
         if (reason != null) {
             queueState.value
                 .filter { it.status == Download.State.DOWNLOADING }
                 .forEach { it.status = Download.State.QUEUE }
             isPaused = true
-            notifier.onPaused()
+            notifier.onNetworkPause(reason)
             return
         }
         // RK <--
@@ -184,14 +232,9 @@ class Downloader(
         }
 
         isPaused = false
-
-        DownloadJob.stop(context)
     }
 
-    /**
-     * Pauses the downloader
-     */
-    fun pause() {
+    private fun pauseLocked() {
         cancelDownloaderJob()
         queueState.value
             .filter { it.status == Download.State.DOWNLOADING }
@@ -200,22 +243,18 @@ class Downloader(
     }
 
     /**
-     * Removes everything from the queue.
-     */
-    fun clearQueue() {
-        cancelDownloaderJob()
-
-        internalClearQueue()
-        notifier.dismissProgress()
-    }
-
-    /**
      * Prepares the subscriptions to start downloading.
      */
     private fun launchDownloaderJob() {
         if (isRunning) return
 
+        val previousJob = downloaderJob
         downloaderJob = scope.launch {
+            // Page writes block, so a canceled job can still be writing the pages this one would start on. Not
+            // cancelable, so a job canceled while waiting still finishes after the one before it.
+            withContext(NonCancellable) { previousJob?.join() }
+            val owner = coroutineContext.job
+
             val activeDownloadsFlow = combine(
                 queueState,
                 downloadPreferences.parallelSourceLimit.changes(),
@@ -243,40 +282,94 @@ class Downloader(
 
             // Use supervisorScope to cancel child jobs when the downloader job is cancelled
             supervisorScope {
-                val downloadJobs = mutableMapOf<Download, Job>()
+                val sourceJobs = mutableMapOf<HttpSource, Job>()
+                val downloadJobs = ConcurrentHashMap<Download, Job>()
+
+                // A source runs several of its chapters at once, so a removed one is stopped by itself
+                launch {
+                    queueState.collect { queue ->
+                        downloadJobs.keys.filter { it !in queue }.forEach { downloadJobs.remove(it)?.cancel() }
+                    }
+                }
 
                 activeDownloadsFlow.collectLatest { activeDownloads ->
-                    val downloadJobsToStop = downloadJobs.filter { it.key !in activeDownloads }
-                    downloadJobsToStop.forEach { (download, job) ->
+                    val activeSources = activeDownloads.map { it.source }
+                    val sourceJobsToStop = sourceJobs.filter { it.key !in activeSources }
+                    sourceJobsToStop.forEach { (source, job) ->
                         job.cancel()
-                        downloadJobs.remove(download)
+                        sourceJobs.remove(source)
                     }
 
-                    val downloadsToStart = activeDownloads.filter { it !in downloadJobs }
-                    downloadsToStart.forEach { download ->
-                        downloadJobs[download] = launchDownloadJob(download)
+                    val sourcesToStart = activeSources.filter { it !in sourceJobs }
+                    sourcesToStart.forEach { source ->
+                        sourceJobs[source] = launchSourceJob(source, downloadJobs, owner)
                     }
                 }
             }
         }
     }
 
-    private fun CoroutineScope.launchDownloadJob(download: Download) = launchIO {
+    /**
+     * Downloads the queued chapters of [source] in queue order. They share the source's page slots, and the next
+     * chapter starts once every page of the current one has a slot, so slots don't sit idle while a chapter's last
+     * pages finish and it's archived.
+     */
+    private fun CoroutineScope.launchSourceJob(
+        source: HttpSource,
+        downloadJobs: MutableMap<Download, Job>,
+        owner: Job,
+    ) = launchIO {
+        val slots = Semaphore(downloadPreferences.parallelPageLimit.get())
+        while (true) {
+            // A canceled job can mark a chapter as downloading after it's been reset, so that counts as waiting too
+            val download = queueState
+                .map { queue ->
+                    queue.firstOrNull {
+                        it.source == source &&
+                            (it.status == Download.State.QUEUE || it.status == Download.State.DOWNLOADING) &&
+                            it !in downloadJobs
+                    }
+                }
+                .filterNotNull()
+                .first()
+            val pagesStarted = CompletableDeferred<Unit>()
+            val job = launchDownloadJob(download, slots, pagesStarted, owner)
+            downloadJobs[download] = job
+            job.invokeOnCompletion {
+                downloadJobs.remove(download, job)
+                // A job canceled before it starts never reaches its finally block
+                pagesStarted.complete(Unit)
+            }
+            pagesStarted.await()
+        }
+    }
+
+    private fun CoroutineScope.launchDownloadJob(
+        download: Download,
+        slots: Semaphore,
+        pagesStarted: CompletableDeferred<Unit>,
+        owner: Job,
+    ) = launchIO {
         try {
-            downloadChapter(download)
+            // Removed from the queue between being picked and starting
+            if (download !in queueState.value) return@launchIO
+
+            downloadChapter(download, slots, pagesStarted)
 
             // Remove successful download from queue
             if (download.status == Download.State.DOWNLOADED) {
+                completions.record(download.manga.id) // RK
                 removeFromQueue(download)
             }
-            if (areAllDownloadsFinished()) {
-                stop()
-            }
+            stopIfFinished(owner)
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
             logcat(LogPriority.ERROR, e)
             notifier.onError(e.message)
-            stop()
+            stopIfCurrent(owner)
+        } finally {
+            // Also when the chapter fails before its pages, so the source moves on to the next one
+            pagesStarted.complete(Unit)
         }
     }
 
@@ -285,7 +378,6 @@ class Downloader(
      */
     private fun cancelDownloaderJob() {
         downloaderJob?.cancel()
-        downloaderJob = null
     }
 
     /**
@@ -294,22 +386,43 @@ class Downloader(
      * @param manga the manga of the chapters to download.
      * @param chapters the list of chapters to download.
      * @param autoStart whether to start the downloader after enqueing the chapters.
+     * @return true if the downloader should be started.
      */
-    fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean) {
-        if (chapters.isEmpty()) return
+    suspend fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean): Boolean {
+        if (chapters.isEmpty()) return false
 
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return false
         val wasEmpty = queueState.value.isEmpty()
-        val chaptersToQueue = chapters.asSequence()
-            // Filter out those already downloaded.
-            .filter { provider.findChapterDir(it.name, it.scanlator, it.url, manga.title, source) == null }
-            // Add chapters to queue from the start.
-            .sortedByDescending { it.sourceOrder }
-            // Filter out those already enqueued.
-            .filter { chapter -> queueState.value.none { it.chapter.id == chapter.id } }
-            // Create a download for each one.
-            .map { Download(source, manga, it) }
-            .toList()
+        val chaptersToQueue = withIOContext {
+            val downloadedChapterIds = provider.findDownloadedChapterIds(chapters, manga, source)
+            val queuedChapterIds = queueState.value.mapTo(HashSet()) { it.chapter.id }
+            chapters
+                // Filter out those already downloaded.
+                .filter { it.id !in downloadedChapterIds }
+                .asSequence()
+                // Add chapters to queue from the start.
+                .sortedByDescending { it.sourceOrder }
+                // Filter out those already enqueued.
+                .filter { it.id !in queuedChapterIds }
+                // Create a download for each one.
+                .map { Download(source, manga, it) }
+                .toList()
+        }
+
+        // RK -->
+        // A failed chapter asked for again goes back to waiting, as a novel's does. Upstream retries
+        // failures only when the downloader starts, which a busy one never does, so that one is
+        // restarted the way a queue edit restarts it.
+        val askedChapterIds = chapters.mapTo(HashSet()) { it.id }
+        val retried = queueState.value.filter { download ->
+            download.status == Download.State.ERROR && download.chapter.id in askedChapterIds
+        }
+        retried.forEach {
+            it.status = Download.State.QUEUE
+            it.failure = null
+        }
+        if (autoStart && retried.isNotEmpty()) editQueue {}
+        // RK <--
 
         if (chaptersToQueue.isNotEmpty()) {
             addAllToQueue(chaptersToQueue)
@@ -336,36 +449,29 @@ class Downloader(
                     )
                 }
             }
-            // RK: (re)start whenever the downloader isn't already running, not only on a fresh
-            // (previously-empty) queue, so a leftover errored or paused download at the head of
-            // the queue no longer leaves newly-added chapters stuck until a manual resume.
-            if (autoStart && !isRunning) {
-                DownloadJob.start(context)
-            }
         }
+        // RK: (re)start whenever the downloader isn't already running, not only on an empty queue,
+        // so a leftover errored or paused download at the head of the queue cannot leave newly added
+        // chapters stuck until a manual resume. A chapter queued again after failing starts it the same way.
+        return autoStart && !isRunning && (chaptersToQueue.isNotEmpty() || retried.isNotEmpty())
     }
 
     /**
      * Downloads a chapter.
      *
      * @param download the chapter to be downloaded.
+     * @param slots the page download slots of the chapter's source.
+     * @param pagesStarted completed once every page has a slot.
      */
-    private suspend fun downloadChapter(download: Download) {
+    private suspend fun downloadChapter(download: Download, slots: Semaphore, pagesStarted: CompletableDeferred<Unit>) {
         val mangaDir = provider.getMangaDir(download.manga.title, download.source).getOrElse { e ->
-            download.status = Download.State.ERROR
-            notifier.onError(e.message, download.chapter.name, download.manga.title, download.manga.id)
+            fail(download, e.message) // RK
             return
         }
 
         val availSpace = DiskUtil.getAvailableStorageSpace(mangaDir)
-        if (availSpace != -1L && availSpace < MIN_DISK_SPACE) {
-            download.status = Download.State.ERROR
-            notifier.onError(
-                context.stringResource(MR.strings.download_insufficient_space),
-                download.chapter.name,
-                download.manga.title,
-                download.manga.id,
-            )
+        if (!hasRoomToDownload(availSpace)) { // RK: the floor novels share
+            fail(download, context.stringResource(MR.strings.download_insufficient_space)) // RK
             return
         }
 
@@ -374,6 +480,16 @@ class Downloader(
             download.chapter.scanlator,
             download.chapter.url,
         )
+
+        // Being stopped after the download is moved into place but before it's indexed leaves a finished download
+        // on disk that is still queued, and downloading it again would save a second copy next to it
+        if (mangaDir.findFile("$chapterDirname.cbz") != null || mangaDir.findFile(chapterDirname) != null) {
+            mangaDir.findFile(chapterDirname + TMP_DIR_SUFFIX)?.delete()
+            cache.addChapter(chapterDirname, mangaDir, download.manga)
+            download.status = Download.State.DOWNLOADED
+            return
+        }
+
         val tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
 
         try {
@@ -394,31 +510,33 @@ class Downloader(
             download.status = Download.State.DOWNLOADING
 
             // Start downloading images, consider we can have downloaded images already
-            pageList.asFlow().flatMapMerge(concurrency = downloadPreferences.parallelPageLimit.get()) { page ->
-                flow {
-                    // Fetch image URL if necessary
-                    if (page.imageUrl.isNullOrEmpty()) {
-                        page.status = Page.State.LoadPage
-                        try {
-                            page.imageUrl = download.source.getImageUrl(page)
-                        } catch (e: Throwable) {
-                            page.status = Page.State.Error(e)
+            coroutineScope {
+                pageList.forEach { page ->
+                    slots.acquire()
+                    // Released on completion, since a page canceled before it starts never runs its body
+                    launch(Dispatchers.IO) {
+                        // Fetch image URL if necessary
+                        if (page.imageUrl.isNullOrEmpty()) {
+                            page.status = Page.State.LoadPage
+                            try {
+                                page.imageUrl = download.source.getImageUrl(page)
+                            } catch (e: Throwable) {
+                                page.status = Page.State.Error(e)
+                            }
                         }
-                    }
 
-                    withIOContext { getOrDownloadImage(page, download, tmpDir) }
-                    emit(page)
+                        getOrDownloadImage(page, download, tmpDir)
+                        notifier.onProgressChange(download)
+                    }.invokeOnCompletion { slots.release() }
                 }
-                    .flowOn(Dispatchers.IO)
+                pagesStarted.complete(Unit)
             }
-                .collect {
-                    // Do when page is downloaded.
-                    notifier.onProgressChange(download)
-                }
 
             // Do after download completes
 
             if (!isDownloadSuccessful(download, tmpDir)) {
+                // RK: the first failed page's reason stands for the chapter
+                download.failure = pageList.firstNotNullOfOrNull { (it.status as? Page.State.Error)?.error?.message }
                 download.status = Download.State.ERROR
                 return
             }
@@ -445,10 +563,24 @@ class Downloader(
             if (error is CancellationException) throw error
             // If the page list threw, it will resume here
             logcat(LogPriority.ERROR, error)
-            download.status = Download.State.ERROR
-            notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
+            fail(download, error.message) // RK
         }
     }
+
+    // RK -->
+
+    /**
+     * Fails [download] and tells the user. The status goes last: it is what makes the downloader job
+     * cancel this download, and the notice suspends for the adult verdict. Set first, the download is
+     * cancelled inside the notice and never reaches the check that stops a downloader with nothing
+     * left to run, so every later start is refused as already running.
+     */
+    private suspend fun fail(download: Download, reason: String?) {
+        download.failure = reason
+        notifier.onError(reason, download.chapter.name, download.manga)
+        download.status = Download.State.ERROR
+    }
+    // RK <--
 
     /**
      * Gets the image from the filesystem if it exists or downloads it otherwise.
@@ -466,7 +598,7 @@ class Downloader(
         val digitCount = (download.pages?.size ?: 0).toString().length.coerceAtLeast(3)
         val filename = "%0${digitCount}d".format(Locale.ENGLISH, page.number)
 
-        // Try to find the image already downloaded for this page.
+        // RK: find this page's finished image; the helper takes the nullable name itself
         val imageFile = tmpDir.listFiles()?.firstOrNull { isDownloadedPageImage(it.name, filename) }
 
         try {
@@ -490,16 +622,16 @@ class Downloader(
             // Mark this page as error and allow to download the remaining
             page.progress = 0
             page.status = Page.State.Error(e)
-            notifier.onError(e.message, download.chapter.name, download.manga.title, download.manga.id)
+            notifier.onError(e.message, download.chapter.name, download.manga) // RK
         }
     }
 
     // RK: match a finished page image by the page's expected prefix ("001"), never the candidate
     // file's own name. Upstream reused `filename` here, so the check read name.startsWith(name + "."),
     // never matched, and every resume re-downloaded finished pages, producing "001 (1).webp"
-    // duplicates that broke the completion count. Upstream mihonapp/mihon#3504 later extracted the same
-    // helper but with `!tmp || match`, which is true for any non-tmp file (wrong page); the guard must
-    // stay `!tmp && match`.
+    // duplicates that broke the completion count. Upstream mihonapp/mihon#3504 later extracted the
+    // same helper and has since converged on this shape; ours keeps a nullable name and drops the
+    // trailing dot after __001, so a split page whose suffix runs straight on still matches.
     private fun isDownloadedPageImage(fileName: String?, pagePrefix: String): Boolean {
         if (fileName == null || fileName.endsWith(".tmp")) return false
         return fileName.startsWith("$pagePrefix.") || fileName.startsWith("${pagePrefix}__001")
@@ -541,8 +673,9 @@ class Downloader(
         }
             // Retry 3 times, waiting 2, 4 and 8 seconds between attempts.
             .retryWhen { _, attempt ->
-                if (attempt < 3) {
-                    delay((2L shl attempt.toInt()).seconds)
+                // RK: the schedule the novel downloader runs too
+                if (attempt < DownloadRetry.MAX_RETRIES) {
+                    delay(DownloadRetry.delayBefore(attempt.toInt()))
                     true
                 } else {
                     false
@@ -634,6 +767,8 @@ class Downloader(
         return downloadedImagesCount == downloadPageCount
     }
 
+    // RK: isDownloadedPageImage moved up beside getOrDownloadImage, with the fixed prefix match
+
     /**
      * Archive the chapter pages as a CBZ.
      */
@@ -693,12 +828,15 @@ class Downloader(
     }
 
     private fun addAllToQueue(downloads: List<Download>) {
-        _queueState.update {
-            downloads.forEach { download ->
+        _queueState.update { queue ->
+            // Callers filter off the queue's thread, so a chapter may have been queued in the meantime
+            val queuedChapterIds = queue.mapTo(HashSet()) { it.chapter.id }
+            val toAdd = downloads.filter { it.chapter.id !in queuedChapterIds }
+            toAdd.forEach { download ->
                 download.status = Download.State.QUEUE
             }
-            store.addAll(downloads)
-            it + downloads
+            store.addAll(toAdd)
+            queue + toAdd
         }
     }
 
@@ -710,6 +848,7 @@ class Downloader(
             }
             it - download
         }
+        completions.retainOnly(queueState.value.mapTo(HashSet()) { it.manga.id }) // RK
     }
 
     private inline fun removeFromQueueIf(predicate: (Download) -> Boolean) {
@@ -723,15 +862,12 @@ class Downloader(
             }
             queue - downloads
         }
+        completions.retainOnly(queueState.value.mapTo(HashSet()) { it.manga.id }) // RK
     }
 
-    fun removeFromQueue(chapters: List<Chapter>) {
+    private fun removeFromQueue(chapters: List<Chapter>) {
         val chapterIds = chapters.map { it.id }
         removeFromQueueIf { it.chapter.id in chapterIds }
-    }
-
-    fun removeFromQueue(manga: Manga) {
-        removeFromQueueIf { it.manga.id == manga.id }
     }
 
     private fun internalClearQueue() {
@@ -746,21 +882,44 @@ class Downloader(
         }
     }
 
-    fun updateQueue(downloads: List<Download>) {
-        val wasRunning = isRunning
-
-        if (downloads.isEmpty()) {
-            clearQueue()
-            stop()
-            return
+    /**
+     * Replaces the queue with [transform] applied to the current queue. It runs under the lock, so downloads
+     * queued or removed meanwhile aren't lost to a stale copy of the queue.
+     */
+    suspend fun updateQueue(transform: (List<Download>) -> List<Download>) = editQueue {
+        // One update, since chapters are queued without the lock
+        _queueState.update { queue ->
+            val downloads = transform(queue).distinctBy { it.chapter.id }
+            val kept = downloads.mapTo(HashSet()) { it.chapter.id }
+            queue.forEach { download ->
+                if (download.chapter.id !in kept &&
+                    (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE)
+                ) {
+                    download.status = Download.State.NOT_DOWNLOADED
+                }
+            }
+            downloads.forEach { it.status = Download.State.QUEUE }
+            store.clear()
+            store.addAll(downloads)
+            downloads
         }
+    }
 
-        pause()
-        internalClearQueue()
-        addAllToQueue(downloads)
+    /**
+     * Removes [chapters] from the queue, keeping the state of the downloads that stay.
+     */
+    suspend fun dequeue(chapters: List<Chapter>) = editQueue {
+        removeFromQueue(chapters)
+    }
+
+    private suspend inline fun editQueue(edit: () -> Unit) = lock.withLock {
+        val wasRunning = isRunning
+        if (wasRunning) pauseLocked()
+
+        edit()
 
         if (wasRunning) {
-            start()
+            if (queueState.value.isEmpty()) stopLocked() else startLocked()
         }
     }
 
@@ -772,5 +931,4 @@ class Downloader(
     }
 }
 
-// Arbitrary minimum required space to start a download: 200 MB
-private const val MIN_DISK_SPACE = 200L * 1024 * 1024
+// RK: MIN_DISK_SPACE lives in reikai.domain.download.hasRoomToDownload, shared with novels

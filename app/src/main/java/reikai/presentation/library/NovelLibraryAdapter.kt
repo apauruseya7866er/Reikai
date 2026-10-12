@@ -1,0 +1,192 @@
+package reikai.presentation.library
+
+import android.content.Context
+import androidx.lifecycle.viewModelScope
+import dev.zacsweers.metro.Assisted
+import dev.zacsweers.metro.AssistedFactory
+import dev.zacsweers.metro.AssistedInject
+import eu.kanade.presentation.manga.DownloadAction
+import eu.kanade.tachiyomi.data.track.TrackerManager
+import eu.kanade.tachiyomi.ui.library.LibraryItem
+import eu.kanade.tachiyomi.util.system.workManager
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.WhileSubscribed
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import reikai.data.novel.update.NovelUpdateWorker
+import reikai.domain.category.GetNovelCategories
+import reikai.domain.entry.EntryId
+import reikai.domain.library.ContentType
+import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.domain.merge.groupedSourceIdsOf
+import reikai.domain.novel.NovelPreferences
+import reikai.novel.source.NovelSourceManager
+import reikai.presentation.library.novels.NovelLibraryViewModel
+import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.library.service.LibraryPreferences
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * Adapts the Reikai [NovelLibraryViewModel] to the neutral [LibraryBehavior], the novel twin of
+ * [MangaLibraryAdapter], pinned by [LibraryProvider]. Maps the novel state into [LibraryScreenState] and
+ * reconciles the per-type action shapes here (a neutral [EntryId] set narrows to the novel model's raw
+ * ids), never in the model.
+ */
+@AssistedInject
+class NovelLibraryAdapter(
+    // Assisted: the model belongs to the tab that is composing, so only the call site has it.
+    @Assisted private val model: NovelLibraryViewModel,
+    private val getNovelCategories: GetNovelCategories,
+    private val context: Context,
+    private val libraryPreferences: LibraryPreferences,
+    private val reikaiLibraryPreferences: ReikaiLibraryPreferences,
+    private val trackerManager: TrackerManager,
+    private val novelSourceManager: NovelSourceManager,
+    private val novelPreferences: NovelPreferences,
+) : LibraryProvider {
+
+    @AssistedFactory
+    fun interface Factory {
+        fun create(model: NovelLibraryViewModel): NovelLibraryAdapter
+    }
+
+    override val contentType = ContentType.NOVELS
+
+    override val settings: LibraryProviderSettings =
+        LibraryProviderSettings(
+            // The custom-interval axis follows the novel smart-update restrictions, as manga's follows its own.
+            filterAxes = novelPreferences.novelUpdateRestrictions().changes()
+                .map { libraryFilterAxes(libraryPreferences, reikaiLibraryPreferences, it) }
+                .stateIn(
+                    model.viewModelScope,
+                    SharingStarted.Eagerly,
+                    libraryFilterAxes(
+                        libraryPreferences,
+                        reikaiLibraryPreferences,
+                        novelPreferences.novelUpdateRestrictions().get(),
+                    ),
+                ),
+            categories = model.filterPickerCategories,
+            // Novels have no local sources, so nothing is ever local and the badge would never light up.
+            showLocalBadge = false,
+        )
+
+    // Shared while subscribed, not eagerly: an eager share here is a permanent subscriber on the model,
+    // which would hold its subscriber gate open for the model's whole life, so its database updates would
+    // never pause while the tab is hidden. The tab collects both adapters at once, so the inactive content
+    // type still stays warm for an instant chip swap.
+    override val state: StateFlow<LibraryScreenState> =
+        model.state
+            .map { it.toNeutral() }
+            .stateIn(
+                model.viewModelScope,
+                SharingStarted.WhileSubscribed(5.seconds),
+                model.state.value.toNeutral(),
+            )
+
+    // The split point: filtered but pre-grouping, pre-sort (State.favorites).
+    override val rows: Flow<List<LibraryItem>?> =
+        model.state.loadedRows({ it.isLoading }) { it.favorites }
+
+    override val trackKey: Flow<Any?> =
+        model.state.map { it.trackerMeans to it.tracksByRep }.distinctUntilChanged()
+
+    override val updating: Flow<Boolean> = NovelUpdateWorker.isRunningFlow(context)
+
+    override fun trackerMeans(): Map<Long, Double> = model.state.value.trackerMeans
+
+    override fun overlaid(item: LibraryItem): LibraryItem = model.state.value.withOverlay(item)
+
+    override suspend fun dynamicGroupingFeed(groupType: Int): DynamicGroupingFeed {
+        val state = model.state.value
+        // Resolved once per source: a library holds far more novels than sources.
+        val names = HashMap<String, String>()
+        return libraryDynamicGroupingFeed(
+            rows = state.favorites,
+            groupType = groupType,
+            // The slug is the encoded disambiguator; the name is the label.
+            sourceOf = { row ->
+                state.novelById[row.id]?.novel?.source?.let {
+                    names.getOrPut(it) { novelSourceManager.nameOf(it) } to it
+                }
+            },
+            groupTracks = { row -> state.tracksByRep[row.id].orEmpty() },
+            loggedInTrackerIds = trackerManager.loggedInTrackers().mapTo(mutableSetOf()) { it.id },
+            trackerManager = trackerManager,
+            context = context,
+        )
+    }
+
+    private fun NovelLibraryViewModel.State.toNeutral() = LibraryScreenState(
+        isLoading = isLoading,
+        isLibraryEmpty = isLibraryEmpty,
+        searchQuery = searchQuery,
+        hasActiveFilters = hasActiveFilters,
+        overlayKey = overlayKey,
+        showContinueButton = showContinueButton,
+    )
+
+    override fun search(query: String?) {
+        model.search(query)
+    }
+
+    override suspend fun refresh(category: Category?) = NovelUpdateWorker.startNow(context.workManager, category)
+
+    // Each verb takes the neutral selection and hands the model only the raw ids of its own content
+    // type, so a mixed selection never reaches a provider that cannot act on it.
+    private fun Set<EntryId>.ownIds() = filterIsInstance<EntryId.Novel>().map { it.rawId }
+
+    override fun markReadSelection(entries: Set<EntryId>, read: Boolean) {
+        model.markReadSelection(entries.ownIds(), read)
+    }
+    override fun performDownloadAction(entries: Set<EntryId>, action: DownloadAction) {
+        model.performDownloadAction(entries.ownIds(), action)
+    }
+    override fun mergeSelection(entries: Set<EntryId>) {
+        model.mergeSelection(entries.ownIds())
+    }
+    override fun unmergeSelection(entries: Set<EntryId>) {
+        model.unmergeSelection(entries.ownIds())
+    }
+
+    // The model expands merge groups itself for categories; delete expands only on request.
+    override fun setCategories(
+        entries: Set<EntryId>,
+        addCategories: List<Long>,
+        removeCategories: List<Long>,
+    ) {
+        model.setNovelCategories(entries.ownIds(), addCategories, removeCategories)
+    }
+
+    override fun deleteEntries(
+        entries: Set<EntryId>,
+        deleteFromLibrary: Boolean,
+        deleteDownloads: Boolean,
+        removeGroupedSources: Boolean,
+    ) {
+        model.removeNovels(entries.ownIds(), deleteFromLibrary, deleteDownloads, removeGroupedSources)
+    }
+
+    override fun containsMerged(entries: Set<EntryId>) =
+        model.state.value.containsMerged(entries.ownIds())
+
+    /** Novels have no local-source concept, so Download applies whenever any are selected. The
+     *  non-empty check matters under All: the engine shows Download if ANY provider can act. */
+    override fun canDownload(entries: Set<EntryId>) = entries.ownIds().isNotEmpty()
+    override fun containsLocal(entries: Set<EntryId>) = false
+
+    override fun groupedSourceCount(entries: Set<EntryId>): Int {
+        val state = model.state.value
+        return groupedSourceIdsOf(entries.ownIds()) { state.memberIdsFor(listOf(it)) }.size
+    }
+
+    override suspend fun assignableCategories() =
+        getNovelCategories.await().filterNot { it.isSystemCategory }
+
+    override suspend fun categoryIdsFor(entries: Set<EntryId>): List<Set<Long>> =
+        model.state.value.memberIdsFor(entries.ownIds())
+            .map { id -> getNovelCategories.awaitByNovelId(id).mapTo(mutableSetOf()) { it.id } }
+}

@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="update_check_notification_download_in_progress">Ndonlot…</string>
     <string name="update_check_confirm">Donlot</string>
     <string name="track_type">Jinis</string>
     <string name="title">Judhul</string>
@@ -126,7 +125,6 @@
     <string name="pref_category_reader">Pamaca</string>
     <string name="pref_category_library">Koleksi</string>
     <string name="pref_category_appearance">Tampilan</string>
-    <string name="pref_category_general">Umum</string>
     <string name="app_not_available">Aplikasi ora ono</string>
     <string name="loading">Ngemot…</string>
     <string name="action_start_downloading_now">Wiwiti ngunduh saiki</string>
@@ -143,7 +141,6 @@
     <string name="action_order_by_upload_date">Miturut tanggal unggah</string>
     <string name="action_order_by_chapter_number">Miturut nomer bab</string>
     <string name="action_sort">Urutke</string>
-    <string name="cancel_all_for_series">Batalke kabeh seri iki</string>
     <string name="action_cancel_all">Batalke kabeh</string>
     <string name="action_cancel">Batalke</string>
     <string name="action_unpin">Copot pin</string>
@@ -174,19 +171,15 @@
     <string name="pref_app_theme">Tema aplikasi</string>
     <string name="theme_monet">Dinamis</string>
     <string name="theme_greenapple">Ijo apel</string>
-    <string name="parental_controls_info">Iki ora nyegah ekstensi kang ora resmi utawa salah dilabeli kanggo nampilake konten NSFW (18+) ing aplikasi.</string>
     <string name="relative_time_today">Dinten puniki</string>
     <string name="update_never">Mati</string>
     <string name="pref_category_security">Kaamanan</string>
     <string name="lock_always">Tansah</string>
-    <string name="pref_category_nsfw_content">Sumber NSFW (18+)</string>
-    <string name="pref_show_nsfw_source">Tampilaken ing sumber lan dhaptar ekstensi</string>
     <string name="pref_update_only_completely_read">Karo bab durung diwaca</string>
     <string name="pref_manage_notifications">Kelola notifikasi</string>
     <string name="secure_screen_summary">Amanaken layar sembunikan konten aplikasi wektu ngaleh aplikasi lan blokir tangkapan layar</string>
     <string name="theme_midnightdusk">Surup wengi</string>
     <string name="lock_when_idle">Kunci wektu meneng</string>
-    <string name="action_move_to_top_all_for_series">Pindah seri mendhuwur</string>
     <string name="theme_strawberrydaiquiri">Stroberi Daiquiri</string>
     <string name="theme_tako">Tako</string>
     <string name="theme_yinyang">Yin lan Yang</string>
@@ -220,8 +213,6 @@
     <string name="ext_uninstall">Ucul</string>
     <string name="obsolete_extension_message">Ekstensi iki ora kasedhiya maneh.</string>
     <string name="extension_api_error">Gagal kanggo entuk dhaptar ekstensi</string>
-    <string name="ext_nsfw_short">18+</string>
-    <string name="ext_nsfw_warning">Sumber saka ekstensi iki bisa ngemot konten NSFW (18+)</string>
     <string name="ext_install_service_notif">Masang ekstensi…</string>
     <string name="ext_installer_pref">Pemasang</string>
     <string name="ext_installer_shizuku_stopped">Shizuku ora lumaku</string>
@@ -252,7 +243,6 @@
     <string name="ext_pending">Ketunda</string>
     <string name="ext_info_version">Versine</string>
     <string name="ext_info_language">Bohoso</string>
-    <string name="ext_info_age_rating">Rating umur</string>
     <string name="ext_app_info">Infone aplikasi</string>
     <string name="pref_show_navigation_mode_summary">Tampilake kanthi ringkes nalika maca dibukak</string>
     <string name="pref_dual_page_split">Pamisahan kaca kaping pindho</string>
@@ -324,7 +314,6 @@
     <string name="action_display_show_continue_reading_button">Tombol lajengaken maos</string>
     <string name="action_apply">Terapaken</string>
     <string name="action_ok">OK</string>
-    <string name="action_move_to_bottom_all_for_series">Pindhah seri ka ngisor</string>
     <string name="action_notes">Cathetan</string>
     <string name="action_edit_notes">Ganti cathetan</string>
     <string name="action_revert_to_default">Mbalikake marang default</string>

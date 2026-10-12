@@ -1,0 +1,222 @@
+package reikai.presentation.recents
+
+import android.content.Intent
+import cafe.adriel.voyager.core.screen.Screen
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onStart
+import reikai.domain.category.RecentsCategoryFilter
+import reikai.domain.entry.EntryCustomInfo
+import reikai.domain.entry.EntryId
+import reikai.domain.entry.overlayCustomInfo
+import reikai.domain.library.ContentType
+import reikai.domain.merge.MergeManager
+import reikai.domain.recents.RECENTS_FEED_LIMIT
+import reikai.domain.recents.recentsFeedCutoff
+import tachiyomi.core.common.preference.Preference
+import kotlin.time.Instant
+
+/**
+ * One lane's rows plus whether they are real yet. [loaded] cannot be recovered downstream: a lane
+ * mapped off a model's state emits immediately with an empty list while the query is still running,
+ * because the state flow is seeded rather than opened by its first emission. Treating that emission as
+ * data is what makes a feed announce itself empty a tick after it opens.
+ */
+data class RecentsLaneRows(val items: List<RecentsItem>, val loaded: Boolean) {
+    companion object {
+        val Loading = RecentsLaneRows(emptyList(), loaded = false)
+    }
+}
+
+/**
+ * One derivation for both adapters: this type's group memberships keyed neutrally, and empty while
+ * merging is off, so a feed collapses exactly when every other surface would.
+ */
+internal fun MergeManager.membershipFlow(
+    mergingEnabled: Preference<Boolean>,
+    entryId: (Long) -> EntryId,
+): Flow<Map<EntryId, Long>> =
+    combine(mergingEnabled.changes(), membershipChanges()) { enabled, memberships ->
+        if (enabled) memberships.mapKeys { entryId(it.key) } else emptyMap()
+    }
+
+/**
+ * A continue-reading target's inputs as one signal: [writes], the tables its resolve reads, plus each
+ * preference in [reads] that the resolve reads too (hidden chapters, the merging switch, a global
+ * chapter sort). A memo cleared on anything less keeps naming a target the user has re-sorted or hidden.
+ */
+internal fun recentsTargetInputs(writes: Flow<Unit>, vararg reads: Preference<*>): Flow<Unit> =
+    merge(writes, *reads.map { read -> read.changes().map { } }.toTypedArray())
+
+/**
+ * The newly-added lane both adapters build: [subscribe] asked under the surface's [categories], bounded
+ * by the feed's cutoff and limit, then each row's custom title and cover laid over it. Only the typed
+ * reads are per type.
+ */
+internal fun <T, C : EntryCustomInfo> recentsAddedLane(
+    categories: Flow<RecentsCategoryFilter>,
+    subscribe: (after: Instant, limit: Long, included: List<Long>, excluded: List<Long>) -> Flow<List<T>>,
+    customInfo: Flow<List<C>>,
+    customInfoId: (C) -> Long,
+    entryId: (T) -> Long,
+    withCustomInfo: T.(EntryCustomInfo?) -> T,
+    toItem: (T) -> RecentsItem,
+): Flow<RecentsLaneRows> = categories.flatMapLatest { filter ->
+    combine(
+        subscribe(recentsFeedCutoff(), RECENTS_FEED_LIMIT, filter.include, filter.exclude),
+        customInfo,
+    ) { rows, custom ->
+        rows.overlayCustomInfo(custom.associateBy(customInfoId), entryId, withCustomInfo).map(toItem)
+    }
+}.asLane()
+
+/** A query-backed lane: its first emission is real data, so it only needs a value to start from. */
+internal fun Flow<List<RecentsItem>>.asLane(): Flow<RecentsLaneRows> =
+    map { RecentsLaneRows(it, loaded = true) }.onStart { emit(RecentsLaneRows.Loading) }
+
+/**
+ * One content type's half of the recents surface: its three lane feeds plus the verbs in
+ * [RecentsBehavior]. The lanes are separate flows because an engine collects only the lanes its modes
+ * render, which is what stops the two-tab shape running every query twice.
+ */
+interface RecentsProvider : RecentsBehavior {
+    val contentType: ContentType
+
+    /** What this type's half of the surface offers beyond the rows; see [RecentsTypeCapability]. */
+    val typeCapabilities: Set<RecentsTypeCapability>
+
+    /** Entries with reading history, newest read first, one row per entry. */
+    val readLane: Flow<RecentsLaneRows>
+
+    /** Chapters fetched after the entry was added, newest first. */
+    val updatedLane: Flow<RecentsLaneRows>
+
+    /** Entries recently added to the library, newest first. */
+    val addedLane: Flow<RecentsLaneRows>
+
+    /**
+     * This type's entries that still have an unread chapter, so the combined modes can drop a row
+     * with nothing left to read. One set per emission, never a question per row: the feed re-emits on
+     * every library change, and [targetChapter] already pays a query per rendered row by design.
+     */
+    val unreadEntries: Flow<Set<EntryId>>
+
+    /**
+     * Emits whenever anything a resolved target was read from may have changed, the tables and the
+     * preferences both ([recentsTargetInputs]). It is what invalidates a resolved target, which a lane
+     * emission cannot do, since a lane re-emits on every download tick as well as on a write.
+     */
+    val targetInputs: Flow<Unit>
+
+    /** When this type's library last finished updating. Each type has its own update job and key. */
+    val lastUpdated: Flow<Long>
+
+    /**
+     * Whether this type's library update is running now, so a refreshing state ends when the job does.
+     * A data flow, so it belongs here rather than on the verb seam above; it reports a scheduled update
+     * as well as a pulled one, which is what the job itself already treats as "already running".
+     */
+    val updating: Flow<Boolean>
+
+    /**
+     * This type's entries that belong to a merge group, by group id, so a feed can show one row for a
+     * series merged across sources. Empty while the user has series merging off, matching every other
+     * path that resolves a group. Group ids are unique across both content types, so the two providers'
+     * maps combine without collision.
+     */
+    val membership: Flow<Map<EntryId, Long>>
+
+    /** Every library member of this type's merge groups with its cover, by group then in member order. */
+    val memberCovers: Flow<List<RecentsMemberCover>>
+
+    /**
+     * Emits whenever any of this type's chapter download states may have changed: the on-disk index,
+     * the queue, or a queued download's status. [downloadUi]'s callbacks are polled, so without this
+     * nothing tells a drawn row to ask again, and a History row kept its old icon.
+     */
+    val downloadChanges: Flow<Unit>
+
+    /**
+     * Emits when a queued download's progress moves. Kept apart from [downloadChanges] because it ticks
+     * several times a second and only a progress indicator reads it; one that reports no progress
+     * answers an empty flow.
+     */
+    val progressChanges: Flow<Unit>
+
+    /**
+     * Everything [item] draws, read out of this type's own payload. Answered per rendered row rather
+     * than baked into the item, matching the other two accessors here, so an assembly stays cheap and
+     * a row that never reaches the screen is never projected.
+     */
+    fun rowUi(item: RecentsItem): RecentsRowUi
+
+    /**
+     * This row's download state, null where the row has no chapter to download. Separate from [rowUi]
+     * because these are callbacks the renderer polls, not values, and folding them into an immutable
+     * projection would make its equality meaningless.
+     */
+    fun downloadUi(item: RecentsItem): RecentsDownloadUi?
+
+    /**
+     * The title this row displays, which is what a search matches. Every model already writes the
+     * user's custom title into the row it emits, so a renamed entry is findable by the name on screen
+     * without the engine ever unwrapping a payload.
+     */
+    fun title(item: RecentsItem): String = rowUi(item).title
+
+    /**
+     * The details screen for [entry], resolved rather than constructed by the caller: a novel screen is
+     * keyed by source and url, so the id a row carries is not enough to build one. Null when the entry
+     * has gone. Suspend for that lookup; the manga side answers without touching the database.
+     */
+    suspend fun detailsScreen(entry: EntryId): Screen?
+
+    fun lane(kind: RecentsLaneKind): Flow<RecentsLaneRows> = when (kind) {
+        RecentsLaneKind.READ -> readLane
+        RecentsLaneKind.UPDATED -> updatedLane
+        RecentsLaneKind.ADDED -> addedLane
+    }
+
+    /**
+     * The chapter [item]'s lane rule picks: resume where you were on read, the row's own chapter on
+     * updated, the first unread on added, or null when nothing is left. An updated row never asks,
+     * since it opens the chapter it names. [sourceScoped] pairs to which lanes resolve in-source.
+     *
+     * Suspend and called per rendered row on purpose: resolving at assembly would put one chapter query
+     * per row on every emission of a feed that can run to hundreds of rows.
+     */
+    suspend fun targetChapter(item: RecentsItem): ChapterRef?
+
+    /**
+     * The same chapter [targetChapter] resolves, projected into everything a row draws about it, or
+     * null where nothing is left to open and where the chapter or its entry has gone. The ref names
+     * the entry that owns the chapter, which a merged row can resolve to a sibling of its own, while
+     * [targetChapter] stamps the row's entry on the same id; only the verb dispatch reads that, and it
+     * cares about content type alone. Answered per rendered row, at the same cost as [targetChapter].
+     */
+    suspend fun targetRow(item: RecentsItem): RecentsTargetRow?
+
+    /**
+     * This type's most recently read entry, as a read-lane item, or null where the surface renders no
+     * read lane. Deliberately unfiltered: a search or a category filter narrows what you are looking
+     * through, and resuming is not about the list.
+     */
+    suspend fun latestRead(): RecentsItem?
+
+    /**
+     * How a tap on [item] opens [chapter], which the engine decided. The provider builds it because
+     * only it knows which reader its content type has.
+     */
+    fun open(item: RecentsItem, chapter: ChapterRef): Intent
+}
+
+/**
+ * An affordance one content type's half of the surface either has or does not, asked of the providers
+ * behind the chip so shared code never names a type. [UPCOMING] is Mihon's release calendar, which
+ * reads the manga library alone; [SCANLATOR_FILTER] is the excluded-scanlators switch, which novels do
+ * not offer. What no provider behind the chip answers is hidden, never drawn inert.
+ */
+enum class RecentsTypeCapability { UPCOMING, SCANLATOR_FILTER }

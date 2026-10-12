@@ -2,12 +2,19 @@ package eu.kanade.test
 
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.track.RefreshResult
 import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.model.TrackMangaMetadata
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.flowOf
 import okhttp3.OkHttpClient
+import reikai.data.track.MetadataAccess
 import tachiyomi.domain.track.model.Track
 import tachiyomi.i18n.MR
 
@@ -16,9 +23,14 @@ data class DummyTracker(
     override val name: String,
     override val supportsReadingDates: Boolean = false,
     override val supportsPrivateTracking: Boolean = false,
+    // RK --> per-type capability Tracker requires
     override val supportsNovels: Boolean = false,
+    override val supportsManga: Boolean = true,
+    // RK <--
     override val isLoggedIn: Boolean = false,
     override val isLoggedInFlow: Flow<Boolean> = flowOf(false),
+    override val isRefreshingFlow: StateFlow<Boolean> = MutableStateFlow(false),
+    override val refreshResultFlow: SharedFlow<RefreshResult> = MutableSharedFlow<RefreshResult>().asSharedFlow(),
     val valLogo: Int = R.drawable.brand_anilist,
     val valStatuses: List<Long> = (1L..6L).toList(),
     val valReadingStatus: Long = 1L,
@@ -73,11 +85,16 @@ data class DummyTracker(
 
     override suspend fun search(query: String): List<TrackSearch> = valSearchResults
 
+    // RK: Fill from tracker, which Tracker requires
     override suspend fun getMangaMetadata(track: Track): TrackMangaMetadata = TrackMangaMetadata()
+
+    override val metadataAccess: MetadataAccess = MetadataAccess.Public // RK
 
     override suspend fun refresh(
         track: eu.kanade.tachiyomi.data.database.models.Track,
     ): eu.kanade.tachiyomi.data.database.models.Track = track
+
+    override suspend fun refreshUser() = Unit
 
     override suspend fun login(username: String, password: String) = Unit
 

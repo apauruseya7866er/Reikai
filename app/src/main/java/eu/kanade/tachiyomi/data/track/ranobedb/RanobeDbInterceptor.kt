@@ -1,0 +1,42 @@
+package eu.kanade.tachiyomi.data.track.ranobedb
+
+import okhttp3.Interceptor
+import okhttp3.Response
+import reikai.data.track.REIKAI_TRACKER_USER_AGENT
+import reikai.data.track.TrackerSignedOutException
+
+class RanobeDbInterceptor(
+    ranobeDb: RanobeDb,
+) : Interceptor {
+
+    private var token: String? = ranobeDb.restoreToken()
+
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val credential = token ?: throw TrackerSignedOutException("RanobeDB")
+
+        val authRequest = chain.request().newBuilder()
+            // A WebView login stores the session cookie, a token login stores the token itself, and
+            // the server accepts either on /api/v0/user. The prefix tells them apart; see
+            // RanobeDb.SESSION_COOKIE_PREFIX for why it cannot collide with a token.
+            .apply {
+                if (credential.startsWith(RanobeDb.SESSION_COOKIE_PREFIX)) {
+                    addHeader("Cookie", credential)
+                } else {
+                    addHeader("Authorization", "Bearer $credential")
+                }
+            }
+            .header("User-Agent", REIKAI_TRACKER_USER_AGENT)
+            // SvelteKit refuses a non-GET whose content type is form-encoded unless Origin matches
+            // the site, with a 403 raised before the route runs. The shared DELETE helper defaults
+            // its body to an empty FormBody, so unbinding hit exactly that while the JSON PUT, which
+            // the check exempts, went through. tsundoku sends this header for the same reason.
+            .header("Origin", RanobeDbApi.BASE_URL)
+            .build()
+
+        return chain.proceed(authRequest)
+    }
+
+    fun newAuth(token: String?) {
+        this.token = token
+    }
+}

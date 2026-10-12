@@ -8,6 +8,7 @@ import mihon.data.extension.model.NetworkExtensionStore.ContentWarning
 import mihon.data.extension.model.NetworkExtensionStore.ExtensionList
 import mihon.domain.extension.model.ExtensionStore
 import eu.kanade.tachiyomi.extension.model.Extension as TachiyomiExtension
+import mihon.domain.extension.model.ContentWarning as DomainContentWarning
 
 @SuppressLint("UnsafeOptInUsageError")
 @Serializable
@@ -38,6 +39,9 @@ data class NetworkExtensionStore(
         @ProtoNumber(6) val versionName: String,
         @ProtoNumber(7) val contentWarning: ContentWarning,
         @ProtoNumber(8) val sources: List<Source>,
+        // RK --> the novel stores' field (NovelSourcery, tsundoku), set on each extension, not the store
+        @ProtoNumber(8000) val isNovel: Boolean = false,
+        // RK <--
     )
 
     @Serializable
@@ -104,7 +108,15 @@ fun ExtensionList.toAvailableExtensions(store: ExtensionStore): List<TachiyomiEx
             versionCode = extension.versionCode,
             versionName = extension.versionName,
             lang = if (lang.size == 1) lang.first() else "all",
-            isNsfw = extension.contentWarning >= ContentWarning.MIXED,
+            contentWarning = when (extension.contentWarning) {
+                ContentWarning.SAFE -> DomainContentWarning.SAFE
+                ContentWarning.MIXED -> DomainContentWarning.MIXED
+                ContentWarning.NSFW -> DomainContentWarning.NSFW
+                else -> DomainContentWarning.SAFE
+            },
+            // RK -->
+            kind = TachiyomiExtension.Kind.fromIndex(extension.packageName, extension.isNovel),
+            // RK <--
             sources = extension.sources.map { source ->
                 TachiyomiExtension.Available.Source(
                     id = source.id,

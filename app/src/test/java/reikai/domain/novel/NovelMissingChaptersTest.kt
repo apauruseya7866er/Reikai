@@ -3,6 +3,7 @@ package reikai.domain.novel
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.model.NovelChapter
+import kotlin.time.Instant
 
 class NovelMissingChaptersTest {
 
@@ -19,10 +20,13 @@ class NovelMissingChaptersTest {
             lastTextProgress = 0,
             chapterNumber = number,
             sourceOrder = nextId,
-            dateFetch = 0L,
-            dateUpload = 0L,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
             page = "",
         )
+
+    private fun entries(chapters: List<NovelChapter>, sortDescending: Boolean) =
+        buildNovelChapterListEntries(chapters, sortDescending, chapters.gapPresent(), paged = false) { false }
 
     private fun List<NovelChapterListEntry>.numbers(): List<Double> =
         filterIsInstance<NovelChapterListEntry.Item>().map { it.chapter.chapterNumber }
@@ -32,7 +36,7 @@ class NovelMissingChaptersTest {
 
     @Test
     fun `inserts a missing separator before the chapter that opens the gap`() {
-        val entries = buildNovelChapterListEntries(
+        val entries = entries(
             chapters = listOf(chapter(1.0), chapter(2.0), chapter(4.0)),
             sortDescending = false,
         )
@@ -48,7 +52,7 @@ class NovelMissingChaptersTest {
 
     @Test
     fun `consecutive chapters produce no separators`() {
-        val entries = buildNovelChapterListEntries(
+        val entries = entries(
             chapters = listOf(chapter(1.0), chapter(2.0), chapter(3.0)),
             sortDescending = false,
         )
@@ -58,7 +62,7 @@ class NovelMissingChaptersTest {
 
     @Test
     fun `ascending list emits a leading gap before the first chapter`() {
-        val entries = buildNovelChapterListEntries(
+        val entries = entries(
             chapters = listOf(chapter(3.0), chapter(4.0)),
             sortDescending = false,
         )
@@ -68,17 +72,17 @@ class NovelMissingChaptersTest {
 
     @Test
     fun `descending list emits a trailing gap after the last chapter`() {
-        val entries = buildNovelChapterListEntries(
+        val entries = entries(
             chapters = listOf(chapter(4.0), chapter(3.0)),
             sortDescending = true,
         )
 
-        entries.last() shouldBe NovelChapterListEntry.Missing(id = "null-2", count = 2)
+        entries.last() shouldBe NovelChapterListEntry.Missing(id = "2-null", count = 2)
     }
 
     @Test
     fun `an unrecognized chapter number yields no separator`() {
-        val entries = buildNovelChapterListEntries(
+        val entries = entries(
             chapters = listOf(chapter(-1.0), chapter(1.0)),
             sortDescending = false,
         )

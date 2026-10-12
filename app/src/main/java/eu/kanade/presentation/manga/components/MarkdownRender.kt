@@ -5,8 +5,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.InlineTextContent
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -39,17 +37,22 @@ import com.mikepenz.markdown.compose.elements.listDepth
 import com.mikepenz.markdown.model.DefaultMarkdownColors
 import com.mikepenz.markdown.model.DefaultMarkdownInlineContent
 import com.mikepenz.markdown.model.DefaultMarkdownTypography
+import com.mikepenz.markdown.model.MarkdownAlertPadding
 import com.mikepenz.markdown.model.MarkdownAnnotator
 import com.mikepenz.markdown.model.MarkdownColors
 import com.mikepenz.markdown.model.MarkdownPadding
 import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
+import com.mikepenz.markdown.model.markdownAlertPadding
 import com.mikepenz.markdown.model.markdownAnnotator
-import com.mikepenz.markdown.model.rememberMarkdownState
+import com.mikepenz.markdown.model.parseMarkdown
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Image
 import org.intellij.markdown.MarkdownTokenTypes.Companion.HTML_TAG
 import org.intellij.markdown.flavours.MarkdownFlavourDescriptor
 import org.intellij.markdown.flavours.commonmark.CommonMarkFlavourDescriptor
 import org.intellij.markdown.flavours.commonmark.CommonMarkMarkerProcessor
+import org.intellij.markdown.flavours.gfm.GFMElementTypes // RK
 import org.intellij.markdown.flavours.gfm.table.GitHubTableMarkerProvider
 import org.intellij.markdown.parser.MarkerProcessor
 import org.intellij.markdown.parser.MarkerProcessorFactory
@@ -64,6 +67,7 @@ import org.intellij.markdown.parser.markerblocks.providers.CodeFenceProvider
 import org.intellij.markdown.parser.markerblocks.providers.HorizontalRuleProvider
 import org.intellij.markdown.parser.markerblocks.providers.ListMarkerProvider
 import org.intellij.markdown.parser.markerblocks.providers.SetextHeaderProvider
+import reikai.presentation.components.MarkdownAlert // RK
 import tachiyomi.presentation.core.components.material.padding
 
 const val MARKDOWN_INLINE_IMAGE_TAG = "MARKDOWN_INLINE_IMAGE"
@@ -77,11 +81,9 @@ fun MarkdownRender(
     loadImages: Boolean = true,
 ) {
     Markdown(
-        markdownState = rememberMarkdownState(
-            content = content,
-            flavour = flavour,
-            immediate = true,
-        ),
+        // rememberMarkdownState parses again in the background even when it already parsed immediately, and its
+        // new result recomposes the whole content a second time
+        state = remember(content, flavour) { parseMarkdown(content = content, flavour = flavour) },
         annotator = annotator,
         colors = getMarkdownColors(),
         typography = getMarkdownTypography(),
@@ -140,6 +142,7 @@ private fun getMarkdownTypography(): MarkdownTypography {
 }
 
 private val markdownPadding = object : MarkdownPadding {
+    override val alert: MarkdownAlertPadding = markdownAlertPadding()
     override val block: Dp = 2.dp
     override val blockQuote: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 0.dp)
     override val blockQuoteBar: PaddingValues.Absolute = PaddingValues.Absolute(
@@ -219,6 +222,15 @@ private val markdownComponents = markdownComponents(
         )
     },
     custom = { type, model ->
+        // RK -->
+        // The GFM parser gives "> [!WARNING]" its own node type, which this renderer has no
+        // component for. Without a branch here the whole callout vanishes rather than degrading
+        // to a quote: an unhandled type counts as handled the moment a custom slot exists, so the
+        // library never falls back to drawing the children itself.
+        if (type == GFMElementTypes.ALERT) {
+            MarkdownAlert(model)
+        }
+        // RK <--
         if (type in DISALLOWED_MARKDOWN_TYPES) {
             MarkdownText(
                 content = model.content.substring(model.node.startOffset, model.node.endOffset),
@@ -241,7 +253,7 @@ private fun getMarkdownInlineContent() = DefaultMarkdownInlineContent(
             ),
             children = {
                 Icon(
-                    imageVector = Icons.Outlined.Image,
+                    imageVector = MaterialSymbols.Rounded.Image,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                 )

@@ -1,0 +1,215 @@
+package reikai.presentation.download
+
+import eu.kanade.tachiyomi.ui.more.DownloadQueueState
+import reikai.domain.entry.EntryCustomInfo
+import reikai.domain.library.ContentType
+
+/** One downloader's share of the queue: how many chapters it holds and whether it is running. */
+data class EngineQueueStatus(val pending: Int, val isRunning: Boolean)
+
+/**
+ * The queue's state across both downloaders, the one answer the More row and the queue screen's
+ * pause button read. Downloading while any downloader with something queued runs, so a paused novel
+ * queue beside an idle manga one reads Paused on both screens.
+ */
+fun downloadQueueState(engines: List<EngineQueueStatus>): DownloadQueueState {
+    val pending = engines.sumOf { it.pending }
+    return when {
+        pending == 0 -> DownloadQueueState.Stopped
+        engines.any { it.pending > 0 && it.isRunning } -> DownloadQueueState.Downloading(pending)
+        else -> DownloadQueueState.Paused(pending)
+    }
+}
+
+/** A queued chapter's state in the terms both downloaders share. */
+enum class QueuedChapterStatus { QUEUED, DOWNLOADING, ERROR }
+
+/**
+ * One queued chapter, as its downloader holds it. [pages] is null for a novel chapter, which arrives
+ * in one fetch, and for a manga chapter whose page list has not loaded. [failure] is only meaningful
+ * while it failed.
+ */
+data class QueuedChapter(
+    val seriesId: Long,
+    val chapterId: Long,
+    val status: QueuedChapterStatus,
+    val pages: PageProgress? = null,
+    val failure: String? = null,
+)
+
+/** A manga chapter's pages: how many are saved, of how many, and the byte progress in percent. */
+data class PageProgress(val downloaded: Int, val total: Int, val percent: Int)
+
+/** One row of a series' chapter sheet. */
+data class EntryDownloadChapterUi(val chapter: QueuedChapter, val name: String)
+
+/** A series' card label: the title and the name of the source it downloads from. */
+data class QueuedSeriesLabel(val title: String, val sourceName: String)
+
+/** Each series' label under its Edit info title, looked up by [customOf] from the series id. */
+fun DownloadQueueSnapshot.withCustomInfo(customOf: (Long) -> EntryCustomInfo?): DownloadQueueSnapshot =
+    copy(labels = labels.mapValues { (id, label) -> label.copy(title = customOf(id)?.title ?: label.title) })
+
+/**
+ * Everything one downloader reports to the queue screen. [chapters] is in the downloader's own order,
+ * which is the order it downloads in. [activeSeries] are the series it is working on now, by that
+ * downloader's own rule, and [completed] counts what it finished per series while the series stayed
+ * queued. [restored] is whether [chapters] was read after the downloader loaded the queue it saved before
+ * the app last stopped, decided in the same read so a stale queue never passes for a restored one.
+ */
+data class DownloadQueueSnapshot(
+    val chapters: List<QueuedChapter>,
+    val activeSeries: Set<Long>,
+    val completed: Map<Long, Int>,
+    val labels: Map<Long, QueuedSeriesLabel>,
+    val restored: Boolean,
+)
+
+/**
+ * One card per series, in the downloader's order. The total is what remains plus what finished, so
+ * a cancelled chapter shrinks it. A series reads as failed only when every chapter left in it failed,
+ * so one bad chapter does not mislabel a series still downloading. The current chapter of an active
+ * series is the one downloading, or the next one while its downloader pauses between chapters.
+ */
+fun DownloadQueueSnapshot.toCards(contentType: ContentType): List<EntryDownloadCardUi> =
+    chapters.groupBy { it.seriesId }.map { (seriesId, queued) ->
+        val completedCount = completed[seriesId] ?: 0
+        val active = seriesId in activeSeries
+        val label = labels[seriesId]
+        EntryDownloadCardUi(
+            contentType = contentType,
+            seriesId = seriesId,
+            sourceName = label?.sourceName.orEmpty(),
+            title = label?.title.orEmpty(),
+            downloadedChapters = completedCount,
+            totalChapters = queued.size + completedCount,
+            status = when {
+                active -> EntryDownloadCardStatus.DOWNLOADING
+                queued.all { it.status == QueuedChapterStatus.ERROR } -> EntryDownloadCardStatus.ERROR
+                else -> EntryDownloadCardStatus.QUEUED
+            },
+            currentChapterId = if (active) {
+                (
+                    queued.firstOrNull { it.status == QueuedChapterStatus.DOWNLOADING }
+                        ?: queued.firstOrNull { it.status == QueuedChapterStatus.QUEUED }
+                    )?.chapterId
+            } else {
+                null
+            },
+        )
+    }
+
+/**
+ * The one list's order. The saved order decides which positions belong to which content type, and
+ * each type fills its positions in its downloader's own order, so the list never shows an order a
+ * downloader is not actually following. A series the saved order has not seen yet goes last.
+ */
+fun arrangeCards(
+    savedKeys: List<String>,
+    cardsByType: Map<ContentType, List<EntryDownloadCardUi>>,
+): List<EntryDownloadCardUi> {
+    val present = cardsByType.values.flatten().associateBy { it.cardKey }
+    val remaining = cardsByType.mapValuesTo(LinkedHashMap()) { (_, cards) -> ArrayDeque(cards) }
+    val slotted = savedKeys.mapNotNull { key ->
+        present[key]?.let { remaining[it.contentType]?.removeFirstOrNull() }
+    }
+    return slotted + remaining.values.flatten()
+}
+
+/** The card order the list shows, and the committed order it still waits to see echoed, if any. */
+data class CardOrder(val keys: List<String>, val pending: List<String>?)
+
+/**
+ * The list's order after the queue emits [incomingKeys]. A committed [pending] order is held until the
+ * queue echoes it back, so a stale progress emission arriving first cannot undo a drag; an emission
+ * that changes both the cards and their order is a real external change, so the list resyncs to it.
+ */
+fun reconcileCardOrder(incomingKeys: List<String>, localKeys: List<String>, pending: List<String>?): CardOrder {
+    if (pending == null) return CardOrder(incomingKeys, null)
+    val incoming = incomingKeys.toHashSet()
+    val pendingSet = pending.toHashSet()
+    return when {
+        pending.filter { it in incoming } == incomingKeys.filter { it in pendingSet } -> CardOrder(incomingKeys, null)
+        incoming == localKeys.toHashSet() -> CardOrder(localKeys, pending)
+        else -> CardOrder(incomingKeys, null)
+    }
+}
+
+/**
+ * This list's own items in [keys]' order, then any item [keys] does not name, in its current order. A
+ * key naming nothing here is skipped, so an order computed from an older copy of a list can be applied
+ * to the live one without bringing back what left it or dropping what joined it.
+ */
+fun <T, K> List<T>.inOrderOf(keys: List<K>, keyOf: (T) -> K): List<T> {
+    val byKey = associateBy(keyOf)
+    val seen = HashSet<K>()
+    return buildList {
+        keys.forEach { key -> byKey[key]?.let { if (seen.add(key)) add(it) } }
+        this@inOrderOf.forEach { if (seen.add(keyOf(it))) add(it) }
+    }
+}
+
+/**
+ * The saved order with every series that has left the queue taken out, so one queued again later goes
+ * last instead of taking back its old position and moving a card nobody dragged. A key of a type not in
+ * [restored] keeps its slot: that downloader has not loaded its saved queue yet, so its card may still come.
+ */
+fun prunedOrder(
+    savedKeys: List<String>,
+    cardsByType: Map<ContentType, List<EntryDownloadCardUi>>,
+    restored: Set<ContentType>,
+): List<String> {
+    val present = cardsByType.values.flatten().mapTo(HashSet()) { it.cardKey }
+    return savedKeys.filter { key ->
+        key in present || restored.none { key.startsWith(EntryDownloadCardUi.keyPrefix(it)) }
+    }
+}
+
+/**
+ * The new series order of each content type whose own order a list reorder moved. A type whose
+ * series kept their relative order is left out: Mihon's reorder restarts the chapters it is
+ * downloading, so moving a novel past a manga must not touch the manga downloader.
+ */
+fun seriesOrderChanges(
+    cards: List<EntryDownloadCardUi>,
+    cardKeysInOrder: List<String>,
+): Map<ContentType, List<Long>> {
+    val byKey = cards.associateBy { it.cardKey }
+    val ordered = cardKeysInOrder.mapNotNull { byKey[it] }
+    return ordered.groupBy({ it.contentType }, { it.seriesId })
+        .filter { (type, wanted) -> wanted != cards.filter { it.contentType == type }.map { it.seriesId } }
+}
+
+/**
+ * The queue with one chapter moved behind the rest of its series, the chapter sheet's Move to bottom.
+ * The series keeps its place: its card, not the sheet, orders it against other series.
+ */
+fun <T> List<T>.withChapterLastInSeries(chapterId: Long, chapterIdOf: (T) -> Long, seriesOf: (T) -> Long): List<T> {
+    val moved = find { chapterIdOf(it) == chapterId } ?: return this
+    val rest = this - moved
+    val lastOfSeries = rest.indexOfLast { seriesOf(it) == seriesOf(moved) }
+    return rest.toMutableList().apply { add(lastOfSeries + 1, moved) }
+}
+
+/**
+ * The queue with its series in [seriesIdsInOrder], each keeping its chapters' order, and any series
+ * not named kept behind them in its current place. Both downloaders' card drag goes through this.
+ */
+fun <T> List<T>.withSeriesInOrder(seriesIdsInOrder: List<Long>, seriesOf: (T) -> Long): List<T> {
+    val bySeries = groupBy(seriesOf)
+    val named = seriesIdsInOrder.toSet()
+    return (seriesIdsInOrder + bySeries.keys.filter { it !in named }).flatMap { bySeries[it].orEmpty() }
+}
+
+/**
+ * Reorders chapters within each series by [keyOf], keeping the series in their current order. Both
+ * downloaders' sort goes through this, so Sort means the same thing for either type.
+ */
+fun <T, K : Comparable<K>> List<T>.sortedWithinSeries(
+    seriesOf: (T) -> Long,
+    keyOf: (T) -> K?,
+    descending: Boolean,
+): List<T> = groupBy(seriesOf).values.flatMap { group ->
+    val sorted = group.sortedBy(keyOf)
+    if (descending) sorted.reversed() else sorted
+}

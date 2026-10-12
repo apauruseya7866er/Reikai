@@ -11,7 +11,7 @@ Reikai manages several things within a selected storage location, including auto
 ::: tip Selecting a storage location
 Keep the following in mind when setting up your Storage location:
 * Create a "Reikai" folder at the top-level of your storage (ex. `/Internal Storage/Reikai/`).
-* Do not use your device's system folders (such as "**Documents**" or "**Downloads**"), they are restricted by Android and will cause issues when Reikai tries to access them.
+* Do not pick your device's **Download** folder or the top level of your storage or SD card. On Android 11 and newer, the folder picker does not allow these, so pick the "Reikai" folder you made instead.
 * When selecting your storage location during the setup process, give access to the "Reikai" folder, not the folders within.
 :::
 
@@ -106,7 +106,7 @@ The following illustrates the folder structure:
 </div>
 :::
 
-A fourth folder, **`novel_downloads`**, is created beside these along with the others. It follows a similar shape, `novel_downloads/Plugin id/Novel title/`, with each chapter saved as an `.html` file rather than an archive of images. The source folder is named after the plugin's id rather than its display name.
+Two more folders are created beside these. **`fonts`** holds the fonts you import or download for the novel reader. **`novel_downloads`** follows a similar shape to `downloads`, `novel_downloads/Source id/Novel title/`, with each chapter saved as an `.html` file rather than an archive of images. The source folder is named after the source's id rather than its display name (see [how downloads are organized](/docs/faq/downloads#how-are-downloads-organized-on-the-filesystem)).
 
 Backup file name prefixes are unique for the app to avoid potential collisions between forks.
 

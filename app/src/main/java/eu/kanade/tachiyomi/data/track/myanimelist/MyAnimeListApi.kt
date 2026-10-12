@@ -28,6 +28,7 @@ import okhttp3.Headers
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
+import reikai.data.track.isMyAnimeListNovel
 import tachiyomi.core.common.util.lang.withIOContext
 import uy.kohesive.injekt.injectLazy
 import java.text.SimpleDateFormat
@@ -35,7 +36,7 @@ import java.util.Locale
 import tachiyomi.domain.track.model.Track as DomainTrack
 
 class MyAnimeListApi(
-    private val trackId: Long,
+    private val trackerId: Long,
     private val client: OkHttpClient,
     interceptor: MyAnimeListInterceptor,
 ) {
@@ -75,7 +76,7 @@ class MyAnimeListApi(
         }
     }
 
-    suspend fun search(query: String, novel: Boolean = false): List<TrackSearch> {
+    suspend fun search(query: String, novel: Boolean = false): List<TrackSearch> { // RK: novel flag
         return withIOContext {
             val url = "$BASE_API_URL/manga".toUri().buildUpon()
                 // MAL API throws a 400 when the query is over 64 characters...
@@ -88,15 +89,15 @@ class MyAnimeListApi(
                     .awaitSuccess()
                     .parseAs<MALSearchResult>()
                     .data
-                    // RK --> light novels share the /manga endpoint with media_type containing "novel" (Active #8)
-                    .filter { it.node.mediaType.contains("novel") == novel }
+                    // RK --> light novels share the /manga endpoint with media_type containing "novel"
+                    .filter { isMyAnimeListNovel(it.node.mediaType) == novel }
                     // RK <--
                     .map { parseSearchItem(it.node) }
             }
         }
     }
 
-    suspend fun getMangaDetails(id: Int): TrackSearch {
+    suspend fun getMangaDetails(id: Int, novel: Boolean = false): TrackSearch? { // RK: novel flag
         return withIOContext {
             val url = "$BASE_API_URL/manga".toUri().buildUpon()
                 .appendPath(id.toString())
@@ -106,7 +107,9 @@ class MyAnimeListApi(
                 authClient.newCall(GET(url.toString()))
                     .awaitSuccess()
                     .parseAs<MALManga>()
-                    .let { parseSearchItem(it) }
+                    // RK: the same media-type split the title search filters on.
+                    .takeIf { isMyAnimeListNovel(it.mediaType) == novel }
+                    ?.let { parseSearchItem(it) }
             }
         }
     }
@@ -196,7 +199,7 @@ class MyAnimeListApi(
         withIOContext {
             authClient
                 .newCall(DELETE(mangaUrl(track.remoteId).toString()))
-                .awaitSuccess()
+                .awaitSuccess().close()
         }
     }
 
@@ -218,17 +221,18 @@ class MyAnimeListApi(
         }
     }
 
-    suspend fun findListItems(query: String, offset: Int = 0): List<TrackSearch> {
+    suspend fun findListItems(query: String, offset: Int = 0, novel: Boolean = false): List<TrackSearch> { // RK
         return withIOContext {
             val myListSearchResult = getListPage(offset)
 
             val matches = myListSearchResult.data
                 .filter { it.node.title.contains(query, ignoreCase = true) }
+                .filter { isMyAnimeListNovel(it.node.mediaType) == novel } // RK: the list holds both kinds
                 .map { parseSearchItem(it.node) }
 
             // Check next page if there's more
             if (!myListSearchResult.paging.next.isNullOrBlank()) {
-                matches + findListItems(query, offset + LIST_PAGINATION_AMOUNT)
+                matches + findListItems(query, offset + LIST_PAGINATION_AMOUNT, novel) // RK
             } else {
                 matches
             }
@@ -304,7 +308,7 @@ class MyAnimeListApi(
     }
 
     private fun parseSearchItem(searchItem: MALManga): TrackSearch {
-        return TrackSearch.create(trackId).apply {
+        return TrackSearch.create(trackerId).apply {
             remote_id = searchItem.id
             title = searchItem.title
             summary = searchItem.synopsis
@@ -326,7 +330,13 @@ class MyAnimeListApi(
     }
 
     private fun parseDate(isoDate: String): Long {
-        return SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(isoDate)?.time ?: 0L
+        val pattern = when (isoDate.length) {
+            10 -> "yyyy-MM-dd"
+            7 -> "yyyy-MM"
+            4 -> "yyyy"
+            else -> throw IllegalArgumentException("Unsupported date format: \"$isoDate\"")
+        }
+        return SimpleDateFormat(pattern, Locale.US).parse(isoDate)?.time ?: 0L
     }
 
     private fun convertToIsoDate(epochTime: Long): String? {

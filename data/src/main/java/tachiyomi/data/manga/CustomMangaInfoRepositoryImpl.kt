@@ -1,6 +1,9 @@
 package tachiyomi.data.manga
 
-import app.cash.sqldelight.async.coroutines.awaitAsList
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesBinding
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import kotlinx.coroutines.flow.Flow
 import tachiyomi.data.Database
 import tachiyomi.data.subscribeToList
@@ -8,13 +11,12 @@ import tachiyomi.data.subscribeToOneOrNull
 import tachiyomi.domain.manga.model.CustomMangaInfo
 import tachiyomi.domain.manga.repository.CustomMangaInfoRepository
 
+@Inject
+@SingleIn(AppScope::class)
+@ContributesBinding(AppScope::class)
 class CustomMangaInfoRepositoryImpl(
     private val database: Database,
 ) : CustomMangaInfoRepository {
-
-    override suspend fun getAll(): List<CustomMangaInfo> {
-        return database.custom_manga_infoQueries.getAll(::mapCustomMangaInfo).awaitAsList()
-    }
 
     override fun getByMangaIdAsFlow(mangaId: Long): Flow<CustomMangaInfo?> {
         return database.custom_manga_infoQueries

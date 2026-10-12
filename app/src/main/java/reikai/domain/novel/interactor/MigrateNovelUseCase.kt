@@ -1,130 +1,209 @@
 package reikai.domain.novel.interactor
 
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import kotlinx.coroutines.CancellationException
+import logcat.LogPriority
+import reikai.data.novel.refreshNovelFromSource
+import reikai.domain.backup.mergedHistory
+import reikai.domain.category.GetNovelCategories
+import reikai.domain.chapter.ChapterNumberOverrideRepository
+import reikai.domain.chapter.isRecognizedChapterNumber
+import reikai.domain.db.Transactions
+import reikai.domain.entry.EntryId
 import reikai.domain.novel.NovelChapterRepository
+import reikai.domain.novel.NovelGroupCategories
+import reikai.domain.novel.NovelHistoryRepository
 import reikai.domain.novel.NovelMergeManager
+import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
+import reikai.domain.novel.model.NovelHistory
+import reikai.domain.novel.model.NovelHistoryUpdate
 import reikai.domain.novel.model.NovelMigrationFlag
 import reikai.domain.novel.model.NovelUpdate
 import reikai.domain.novel.model.hasCustomCover
+import reikai.domain.track.source.SourceTrackerDispatcher
 import reikai.novel.download.NovelDownloadManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import reikai.novel.source.NovelSourceManager
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.library.service.LibraryPreferences
+import kotlin.time.Clock
 
 /**
  * Move a favorited novel's state onto a [target] novel from another source, the novel twin of
- * [mihon.domain.migration.usecases.MigrateMangaUseCase] (and modelled on LNReader's `migrateNovel`).
- *
- * The target is already materialised + chapter-synced by the picker, so this is mostly DB-only: it
- * copies per-chapter read / bookmark / scroll-progress (matched by chapter number), moves categories,
- * carries the custom cover + notes when their flags are set, favorites the target, carries tracker
- * links (re-pointed to the target, like manga), and keeps any merge group consistent: the target takes
- * the source's place on [replace], or joins it on copy, for manual and same-title auto groups alike.
- * History-tab rows are intentionally not carried (parity with Mihon, which carries tracks but not
- * history).
+ * [mihon.domain.migration.usecases.MigrateMangaUseCase], pinned by MigrateEngineConformanceTest.
+ * Mostly DB work: per-chapter read, bookmark and progress matched by chapter number, categories, the
+ * custom cover and notes when their flags are set, favoriting, tracker links re-pointed to the target,
+ * and the merge group kept consistent (the target takes the source's place on [replace], or joins it
+ * on copy). Reading history carries with the chapter flag, as Komikku's manga migration does.
  */
+@Inject
 class MigrateNovelUseCase(
-    private val novelChapterRepository: NovelChapterRepository = Injekt.get(),
-    private val getNovelCategories: GetNovelCategories = Injekt.get(),
-    private val setNovelCategories: SetNovelCategories = Injekt.get(),
-    private val novelMergeManager: NovelMergeManager = Injekt.get(),
-    private val novelDownloadManager: NovelDownloadManager = Injekt.get(),
-    private val updateNovel: UpdateNovel = Injekt.get(),
-    private val coverCache: CoverCache = Injekt.get(),
-    private val getNovelTracks: GetNovelTracks = Injekt.get(),
-    private val insertNovelTrack: InsertNovelTrack = Injekt.get(),
+    private val novelChapterRepository: NovelChapterRepository,
+    private val getNovelCategories: GetNovelCategories,
+    private val setNovelCategories: SetNovelCategories,
+    private val novelMergeManager: NovelMergeManager,
+    // A Provider: constructing the manager restores the persisted download queue and can start the
+    // download worker, which building a migration must not do.
+    private val novelDownloadManagerProvider: () -> NovelDownloadManager,
+    private val updateNovel: UpdateNovel,
+    private val coverCache: CoverCache,
+    private val getNovelTracks: GetNovelTracks,
+    private val upsertNovelTrack: UpsertNovelTrack,
+    private val sourceManager: NovelSourceManager,
+    private val novelRepository: NovelRepository,
+    private val libraryPreferences: LibraryPreferences,
+    private val chapterNumberOverrides: ChapterNumberOverrideRepository,
+    // So the favorite swap and the merge-group rewrite can share one transaction; see below.
+    private val transactions: Transactions,
+    private val sourceTracker: SourceTrackerDispatcher,
+    private val novelHistoryRepository: NovelHistoryRepository,
 ) {
+
+    private val novelDownloadManager: NovelDownloadManager get() = novelDownloadManagerProvider()
+
+    private val groupCategories = NovelGroupCategories(getNovelCategories, setNovelCategories)
 
     suspend operator fun invoke(
         current: Novel,
         target: Novel,
         flags: Set<NovelMigrationFlag>,
         replace: Boolean,
+        /** The caller just fetched the target's chapters, so the refresh below would repeat the
+         *  identical request; a novel refresh also walks every chapter page, so it is not cheap. */
+        skipTargetRefresh: Boolean = false,
     ) {
-        if (current.id == target.id) return
+        check(current.id != target.id) { "Target is the entry itself" }
         try {
+            // Checked before anything is written, and outside the refresh branch below, so the engine
+            // fails the same way manga's does whether or not the caller pre-fetched. Inside that branch,
+            // which the normal commit path skips, it would let the engine migrate onto a source it
+            // cannot resolve and leave the entry unreadable.
+            val targetSource = checkNotNull(sourceManager.get(target.source)) {
+                "Target source ${target.source} unavailable"
+            }
             // Capture the source's merge group up front, before the target is favorited, so it's the
             // source plus its existing siblings, not the target (which shares the title on a clean match).
-            val group = novelMergeManager.computeRelatedNovelIds(current.id, current.title, current.author)
+            val group = novelMergeManager.computeRelatedIds(current.id)
 
-            // Fetch the source's chapters once when either the chapter-state carry or the
-            // remove-download flag needs them.
-            val currentChapters = if (
-                NovelMigrationFlag.CHAPTER in flags || NovelMigrationFlag.REMOVE_DOWNLOAD in flags
-            ) {
-                novelChapterRepository.getByNovelId(current.id)
-            } else {
-                emptyList()
+            // Fetch the target's chapters from its source first, so read progress can match onto them
+            // (parity with MigrateMangaUseCase.updateMangaFromRemote). This lets the migrate work from any
+            // add-path, including browse / global search where the target is a fresh, unsynced row.
+            // A refresh failure fails the row, matching manga's getOrThrow contract: migrating onto a
+            // target whose chapter list could not be brought up to date would carry read state onto
+            // whatever stale rows happen to be there. The row's retry is the recovery path.
+            if (!skipTargetRefresh) {
+                refreshNovelFromSource(
+                    target,
+                    targetSource,
+                    novelChapterRepository,
+                    novelRepository,
+                    libraryPreferences,
+                    chapterNumberOverrides,
+                    coverCache,
+                    novelDownloadManager,
+                )
             }
-            // Disk-download membership on the old source (from NovelDownloadCache), for both the
-            // re-download carry and the remove-download delete below.
-            val currentDownloadedIds = currentChapters
-                .filter { novelDownloadManager.isChapterDownloaded(current, it) }
-                .mapTo(HashSet()) { it.id }
 
             if (NovelMigrationFlag.CHAPTER in flags) {
+                val currentChapters = novelChapterRepository.getByNovelId(current.id)
                 val targetChapters = novelChapterRepository.getByNovelId(target.id)
-                computeChapterMigration(currentChapters, targetChapters).forEach {
-                    novelChapterRepository.update(it)
+                val carried = computeChapterMigration(currentChapters, targetChapters)
+                // One transaction, the twin of the manga carry's repository write, and checked: a
+                // half-carried read state is exactly what the Failed row + retry exist to prevent. The
+                // check is pinned by MigrateEngineConformanceTest's failed-carry case.
+                if (carried.isNotEmpty()) {
+                    check(novelChapterRepository.updateAll(carried)) {
+                        "Chapter-state carry failed (${current.id} -> ${target.id})"
+                    }
                 }
-                // Re-queue downloads for the target chapters that were offline on the old source (the
-                // file isn't copied, it's re-fetched, like LNReader). downloadChapters skips ones the
-                // target already has.
-                chaptersToRedownload(currentChapters, targetChapters, currentDownloadedIds)
-                    .takeIf { it.isNotEmpty() }
-                    ?.let { novelDownloadManager.downloadChapters(it) }
+                computeHistoryMigration(
+                    currentChapters,
+                    targetChapters,
+                    novelHistoryRepository.getHistoryByNovelId(current.id),
+                    novelHistoryRepository.getHistoryByNovelId(target.id),
+                ).forEach { novelHistoryRepository.upsertNovelHistory(it) }
             }
 
-            if (NovelMigrationFlag.CATEGORY in flags) {
-                val categoryIds = getNovelCategories.awaitByNovelId(current.id).map { it.id }
-                setNovelCategories.await(target.id, categoryIds)
+            // Read here, written once the target is in the library, see the group write below
+            val categoryIds = if (NovelMigrationFlag.CATEGORY in flags) {
+                getNovelCategories.awaitByNovelId(current.id).map { it.id }
+            } else {
+                null
             }
-
-            if (NovelMigrationFlag.COVER in flags && current.hasCustomCover(coverCache)) {
-                coverCache.getCustomCoverFile(-current.id).inputStream().use { input ->
-                    coverCache.getCustomCoverFile(-target.id).outputStream().use { output -> input.copyTo(output) }
-                }
-                // Bump the target's coverLastModified so coil reloads, mirroring NovelCoverScreenModel.
-                updateNovel.awaitUpdateCoverLastModified(target.id)
-            }
-
-            // Delete the old source's downloaded chapters (parity with manga's REMOVE_DOWNLOAD). The
-            // file delete is a no-op when nothing is downloaded.
-            if (NovelMigrationFlag.REMOVE_DOWNLOAD in flags) {
-                novelDownloadManager.deleteChapters(currentChapters.filter { it.id in currentDownloadedIds })
-            }
-
-            updateNovel.await(
-                NovelUpdate(
-                    id = target.id,
-                    favorite = true,
-                    // Carry the chapter-list (sort/filter/display) and reader (orientation) flags onto
-                    // the target unconditionally, matching manga migration.
-                    chapterFlags = current.chapterFlags,
-                    viewerFlags = current.viewerFlags,
-                    lastReadAt = current.lastReadAt ?: target.lastReadAt,
-                    notes = if (NovelMigrationFlag.NOTES in flags) current.notes else null,
-                ),
-            )
 
             // Carry tracker links onto the target, re-pointed to its id (matching manga migration). The
             // source's own track rows are left intact, which is correct for a Copy.
-            getNovelTracks.await(current.id).forEach { insertNovelTrack.await(it.copy(novelId = target.id)) }
+            upsertNovelTrack.awaitAll(
+                getNovelTracks.await(current.id).map { it.copy(novelId = target.id) },
+            )
 
-            // Keep the merge consistent: the target takes the source's place in the group on a replace
-            // (split the source out, merge the target in with the survivors), or joins it on a copy.
-            if (replace) {
-                updateNovel.await(NovelUpdate(id = current.id, favorite = false))
-                if (group.size > 1) {
-                    val survivors = novelMergeManager.removeFromGroup(group, listOf(current.id))
-                    novelMergeManager.mergeNovels(survivors.toList() + target.id)
-                }
-            } else if (group.size > 1) {
-                novelMergeManager.mergeNovels(group.toList() + target.id)
+            // Delete the old source's downloaded chapters (parity with manga's REMOVE_DOWNLOAD). The
+            // file delete is a no-op when nothing is downloaded. Downloads are never auto re-fetched
+            // onto the target: parity with manga, and a silent re-download costs metered data.
+            if (NovelMigrationFlag.REMOVE_DOWNLOAD in flags) {
+                // The whole entry, not its downloaded chapters: filtering by the disk cache misses
+                // everything still queued, which then keeps downloading into the source being left,
+                // and misses everything on disk when the cache has not warmed up yet. Awaited, unlike
+                // manga's detached delete, so a failure can fail the row.
+                novelDownloadManager.awaitDeleteNovel(current)
             }
-        } catch (e: CancellationException) {
+
+            if (NovelMigrationFlag.COVER in flags && current.hasCustomCover(coverCache)) {
+                coverCache.getCustomCoverFile(EntryId.Novel(current.id)).inputStream().use { input ->
+                    coverCache.setCustomCoverToCache(EntryId.Novel(target.id), input)
+                }
+                // Bump the target's coverLastModified so coil reloads, mirroring NovelCoverViewModel.
+                updateNovel.awaitUpdateCoverLastModified(target.id)
+            }
+
+            // The favorite swap and the merge-group rewrite are ONE unit of work, with the swap
+            // genuinely last inside it, matching manga. As two transactions with a suspension
+            // point between them, a batch the user cancelled could commit the swap and never reach
+            // the rewrite, leaving the source out of the library but still in the group,
+            // feeding chapters into it while invisible there and unreachable to unmerge. Everything
+            // above touches only satellite state, so a failure there leaves both entries' library
+            // membership untouched.
+            val currentUpdate = NovelUpdate(current.id) {
+                favoriteAt = null
+            }.takeIf { replace }
+            val targetUpdate = NovelUpdate(target.id) {
+                // Inherit the source's added-date on a replace, else stamp now, matching manga migration.
+                favoriteAt = current.favoriteAt?.takeIf { replace } ?: Clock.System.now()
+                // Carry the chapter-list (sort/filter/display) and reader (orientation) flags onto
+                // the target unconditionally, matching manga migration.
+                chapterFlags = current.chapterFlags
+                viewerFlags = current.viewerFlags
+                if (NovelMigrationFlag.NOTES in flags) notes = current.notes
+            }
+            transactions.run {
+                // Keep the merge consistent: the target takes the source's place in the group on a
+                // replace, or joins it on a copy.
+                if (replace) {
+                    novelMergeManager.replaceInGroup(current.id, target.id)
+                } else if (group.size > 1) {
+                    novelMergeManager.merge(group.toList() + target.id)
+                }
+                // The repository swallows into a Boolean; a false MUST fail the row, or a half swap
+                // could drop the entry from the library with the row reading Migrated. Throwing here
+                // rolls the group rewrite back with it, which is the point of the shared transaction.
+                check(novelRepository.updateAll(listOfNotNull(currentUpdate, targetUpdate))) {
+                    "Migration favorite swap failed (${current.id} -> ${target.id})"
+                }
+            }
+            groupCategories.fileMigrationTarget(target.id, categoryIds, novelMergeManager)
+            sourceTracker.migrated(
+                EntryId.Novel(current.id),
+                EntryId.Novel(target.id),
+                replace,
+                carriedChapters = NovelMigrationFlag.CHAPTER in flags,
+            )
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            // Rethrown after logging, matching manga migration: a caller that shows per-row outcomes
+            // has to be able to tell a failure from a success.
+            logcat(LogPriority.ERROR, e) { "Novel migration failed (${current.id} -> ${target.id})" }
             throw e
         }
     }
@@ -132,49 +211,68 @@ class MigrateNovelUseCase(
 
 /**
  * Pure core: given the source novel's chapters and the target's, return the target chapters whose
- * read / bookmark / progress should change. A target chapter takes its matched (same chapter number)
- * source chapter's state; additionally every target chapter at or below the highest read source
- * number is marked read (mirrors Mihon's `maxChapterRead` sweep, so coarser target numbering still
- * reflects how far you'd read). Unrecognized numbers (< 0) are skipped, matching the sync convention.
+ * read, bookmark, progress or dateFetch should change. A target chapter takes its matched (same
+ * number) source chapter's state, and every target chapter at or below the highest read source number
+ * is marked read, mirroring Mihon's `maxChapterRead` sweep. Unrecognized numbers are skipped.
+ * PROGRESS ONLY EVER RISES: read and position are merged, never overwritten, so migrating onto a
+ * target already in the library cannot un-read it. [NovelChapter.bookmark] is deliberately NOT merged.
  */
 internal fun computeChapterMigration(
     currentChapters: List<NovelChapter>,
     targetChapters: List<NovelChapter>,
 ): List<NovelChapter> {
     val maxReadNumber = currentChapters
-        .filter { it.read && it.chapterNumber >= 0.0 }
+        .filter { it.read && isRecognizedChapterNumber(it.chapterNumber) }
         .maxOfOrNull { it.chapterNumber }
 
     return targetChapters.mapNotNull { target ->
-        if (target.chapterNumber < 0.0) return@mapNotNull null
+        if (!isRecognizedChapterNumber(target.chapterNumber)) return@mapNotNull null
 
-        val match = currentChapters.firstOrNull { it.chapterNumber >= 0.0 && it.chapterNumber == target.chapterNumber }
-        var read = if (match != null) match.read else target.read
+        val match = currentChapters.sameNumberAs(target)
+        var read = target.read || match?.read == true
         val bookmark = if (match != null) match.bookmark else target.bookmark
-        val progress = if (match != null) match.lastTextProgress else target.lastTextProgress
+        val progress = maxOf(target.lastTextProgress, match?.lastTextProgress ?: 0L)
+        // dateFetch carries too (manga parity): without it every migrated chapter reads as
+        // freshly fetched and floods recency-ordered surfaces.
+        val dateFetch = if (match != null) match.dateFetch else target.dateFetch
         if (maxReadNumber != null && target.chapterNumber <= maxReadNumber) read = true
 
-        if (read == target.read && bookmark == target.bookmark && progress == target.lastTextProgress) {
+        if (read == target.read && bookmark == target.bookmark && progress == target.lastTextProgress &&
+            dateFetch == target.dateFetch
+        ) {
             null
         } else {
-            target.copy(read = read, bookmark = bookmark, lastTextProgress = progress)
+            target.copy(read = read, bookmark = bookmark, lastTextProgress = progress, dateFetch = dateFetch)
         }
     }
 }
 
 /**
- * The target chapters to re-queue for download: those whose chapter number matches a chapter that was
- * downloaded on the old source. Unrecognized numbers (< 0) are skipped. The download manager itself
- * skips any the target already has, so this is safe to call with the full matched set.
+ * Each target chapter with a recognized number takes the reading history of the source chapter with the
+ * same number, as the manga engine's carry does (MigrateEngineConformanceTest pins the two). A row with
+ * no read time carries nothing, and one merges onto the target's own through [mergedHistory], so a retry
+ * adds no time and a later read on the target stays.
  */
-internal fun chaptersToRedownload(
+internal fun computeHistoryMigration(
     currentChapters: List<NovelChapter>,
     targetChapters: List<NovelChapter>,
-    downloadedChapterIds: Set<Long>,
-): List<NovelChapter> {
-    val downloadedNumbers = currentChapters
-        .filter { it.id in downloadedChapterIds && it.chapterNumber >= 0.0 }
-        .mapTo(HashSet()) { it.chapterNumber }
-    if (downloadedNumbers.isEmpty()) return emptyList()
-    return targetChapters.filter { it.chapterNumber >= 0.0 && it.chapterNumber in downloadedNumbers }
+    currentHistory: List<NovelHistory>,
+    targetHistory: List<NovelHistory>,
+): List<NovelHistoryUpdate> {
+    val historyByChapter = currentHistory.associateBy { it.chapterId }
+    val targetHistoryByChapter = targetHistory.associateBy { it.chapterId }
+    return targetChapters.mapNotNull { target ->
+        if (!isRecognizedChapterNumber(target.chapterNumber)) return@mapNotNull null
+        val history = currentChapters.sameNumberAs(target)?.let { historyByChapter[it.id] } ?: return@mapNotNull null
+        val readAt = history.readAt ?: return@mapNotNull null
+        val stored = targetHistoryByChapter[target.id]
+        val (mergedReadAt, addedDuration) =
+            mergedHistory(readAt, history.readDuration, stored?.readAt, stored?.readDuration ?: 0L)
+        // Never null here, since the incoming read has a time
+        NovelHistoryUpdate(target.id, mergedReadAt ?: readAt, addedDuration)
+    }
 }
+
+/** The source chapter a recognized [target] carries state from: the one with the same number. */
+private fun List<NovelChapter>.sameNumberAs(target: NovelChapter): NovelChapter? =
+    firstOrNull { it.chapterNumber == target.chapterNumber }

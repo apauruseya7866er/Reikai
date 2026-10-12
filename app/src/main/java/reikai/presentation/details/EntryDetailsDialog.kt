@@ -1,0 +1,213 @@
+package reikai.presentation.details
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import eu.kanade.presentation.components.NavigatorAdaptiveSheet
+import eu.kanade.presentation.manga.EditCoverAction
+import eu.kanade.presentation.manga.components.DeleteChaptersDialog
+import eu.kanade.presentation.manga.components.SetIntervalDialog
+import eu.kanade.presentation.util.Screen
+import reikai.data.coil.withCoverFallbacks
+import reikai.domain.chapter.ChapterNumberEdit
+import reikai.domain.entry.EntryId
+import reikai.domain.merge.DetailsRemoval
+import reikai.presentation.components.EntryCoverDialog
+import reikai.presentation.components.ManageMergeSourceRow
+import reikai.presentation.components.ManageMergeSourcesDialog
+import reikai.presentation.track.EntryTrackInfoDialogHomeScreen
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.i18n.pluralStringResource
+import tachiyomi.presentation.core.screens.LoadingScreen
+import kotlin.time.Instant
+
+/**
+ * The details dialogs that are genuinely shared by both content types: same composable, same neutral data,
+ * so a change reaches manga and novels at once. Each screen maps its own model's dialog into this and hands
+ * it to [EntryDetailsDialogHost]; the per-type dialogs (change-category, duplicate, chapter-settings, migrate,
+ * page-selector, ...) stay in each screen's own dispatcher, where their data genuinely diverges.
+ */
+sealed interface EntryDetailsDialog {
+    /** Edit custom info. Save / reset / tracker-autofill route through the behaviour; only the seed values
+     *  and the per-type cover-model factory (for the live preview) are carried. */
+    data class EditInfo(
+        val initial: EntryEditInfoUi,
+        val source: EntryEditInfoUi,
+        val seedColor: Color?,
+        val coverModel: (String) -> Any,
+    ) : EntryDetailsDialog
+
+    /** Full cover viewer; the per-type cover ViewModel is resolved via [EntryDetailsBehavior.createCoverViewModel]. */
+    data object Cover : EntryDetailsDialog
+
+    data class ManageSources(
+        val sources: List<EntryManageSourceInfo>,
+        val isOverridden: Boolean,
+    ) : EntryDetailsDialog
+
+    data class TrackSheet(val entry: EntryId, val entryTitle: String) : EntryDetailsDialog
+
+    /** Confirm a bulk chapter delete; [chapterIds] are the rows captured when the dialog opened. */
+    data class DeleteChapters(val chapterIds: List<Long>) : EntryDetailsDialog
+
+    /** Smart update's prediction for the entry: its [interval] in days (negative when the user set it) and
+     *  when it is next due. [editable] is whether the release-period restriction is on, as the choice needs. */
+    data class SetFetchInterval(val interval: Int, val nextUpdate: Instant?, val editable: Boolean) : EntryDetailsDialog
+
+    /** Confirm clearing downloads, [target] captured when it opened. */
+    data class ClearDownloads(val target: ClearDownloadsTarget) : EntryDetailsDialog
+
+    /** The heart's remove confirm for [entryTitle], [removal] captured when it opened. */
+    data class RemoveFromLibrary(val removal: DetailsRemoval, val entryTitle: String) : EntryDetailsDialog
+
+    /** Correct one chapter's number, [edit] read when it opened. */
+    data class ChapterNumber(val edit: ChapterNumberEdit) : EntryDetailsDialog
+}
+
+/** One merge source for the manage-sources dialog: id + name + chapter count (for the coverage subtitle). */
+data class EntryManageSourceInfo(val id: Long, val sourceName: String, val chapterCount: Int)
+
+/**
+ * Renders the shared details dialogs from the neutral [EntryDetailsDialog], driving every action through
+ * [behavior]. A `Screen` extension because the cover viewer resolves a ViewModel (needs the Screen receiver).
+ * The caller also runs its own per-type dispatcher for the dialogs that stay type-specific; the two never
+ * overlap (a shared dialog maps here and the caller's `when` skips it, and vice versa).
+ */
+@Composable
+fun Screen.EntryDetailsDialogHost(
+    dialog: EntryDetailsDialog?,
+    behavior: EntryDetailsBehavior,
+    onDismissRequest: () -> Unit,
+) {
+    val context = LocalContext.current
+    when (dialog) {
+        null -> {}
+        is EntryDetailsDialog.EditInfo -> EntryEditInfoDialog(
+            initial = dialog.initial,
+            source = dialog.source,
+            seedColor = dialog.seedColor,
+            coverModel = dialog.coverModel,
+            onDismissRequest = onDismissRequest,
+            onSave = behavior::saveInfo,
+            onResetAll = behavior::resetInfo,
+            autofill = TrackerAutofill(
+                candidates = behavior::autofillCandidates,
+                fetch = behavior::fetchTrackerMetadata,
+            ),
+        )
+        EntryDetailsDialog.Cover -> {
+            // The behavior returns the per-type subclass through the star-projected base. Voyager only
+            // used that type as a store key, but AndroidX's default factory would try to instantiate it
+            // reflectively, so the construction moves into an explicit initializer. An initializer
+            // freezes the entry it captures, and both adapters build for the source chip's entry, so
+            // the model is keyed by that entry: without the key the store would hand back the model
+            // built for whichever chip opened the dialog first.
+            val coverFactory = remember(behavior) {
+                viewModelFactory { initializer { behavior.createCoverViewModel() } }
+            }
+            val coverViewModel = viewModel<EntryCoverViewModel<*>>(
+                key = behavior.coverKey(),
+                factory = coverFactory,
+            )
+            val cover by coverViewModel.coverModel.collectAsStateWithLifecycle()
+            val isCoverEditable by coverViewModel.isCoverEditable.collectAsStateWithLifecycle()
+            val page by behavior.state.collectAsStateWithLifecycle()
+            val isCoverAnchored = (page as? EntryDetailsScreenState.Loaded)?.isCoverAnchored == true
+            // The header's fallbacks, so the viewer, Save and Share show the cover the header drew.
+            val coverFallbacks = (page as? EntryDetailsScreenState.Loaded)?.details?.header?.coverFallbacks.orEmpty()
+            if (cover != null) {
+                val getContent = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                    if (uri != null) coverViewModel.editCover(context, uri)
+                }
+                val shownCover = remember(cover, coverFallbacks) { withCoverFallbacks(cover!!, coverFallbacks) }
+                EntryCoverDialog(
+                    cover = shownCover,
+                    isCustomCover = remember(cover) { coverViewModel.hasCustomCover() },
+                    snackbarHostState = coverViewModel.snackbarHostState,
+                    onShareClick = { coverViewModel.shareCover(context, shownCover) },
+                    onSaveClick = { coverViewModel.saveCover(context, shownCover) },
+                    // Null hides Edit and Delete: for an entry that cannot keep a custom cover, and for
+                    // a chip's sibling, since a custom cover has to land on the entry the library
+                    // renders, so it is only offered where the group's own cover is the one on screen.
+                    onEditClick = if (isCoverEditable && isCoverAnchored) {
+                        { action: EditCoverAction ->
+                            when (action) {
+                                EditCoverAction.EDIT -> getContent.launch("image/*")
+                                EditCoverAction.DELETE -> coverViewModel.deleteCustomCover(context)
+                            }
+                        }
+                    } else {
+                        null
+                    },
+                    onDismissRequest = onDismissRequest,
+                )
+            } else {
+                LoadingScreen(Modifier.systemBarsPadding())
+            }
+        }
+        is EntryDetailsDialog.ManageSources -> ManageMergeSourcesDialog(
+            sources = dialog.sources.map {
+                ManageMergeSourceRow(
+                    id = it.id,
+                    sourceName = it.sourceName,
+                    subtitle = pluralStringResource(MR.plurals.manga_num_chapters, it.chapterCount, it.chapterCount),
+                )
+            },
+            isOverridden = dialog.isOverridden,
+            onDismissRequest = onDismissRequest,
+            onReorder = behavior::reorderSources,
+            onResetOrder = behavior::resetSourceOrder,
+            onSplit = behavior::splitSources,
+            onRemoveFromLibrary = behavior::removeSourcesFromLibrary,
+            onRemoveAll = behavior::removeAllSourcesFromLibrary,
+        )
+        is EntryDetailsDialog.TrackSheet -> {
+            // Remember the screen so the merge collectors' frequent recompositions don't rebuild it and reset
+            // its navigator mid-write (the manga side hit an UpsertTrack JobCancellationException here).
+            val trackScreen = remember(dialog.entry) {
+                EntryTrackInfoDialogHomeScreen(entry = dialog.entry, entryTitle = dialog.entryTitle)
+            }
+            NavigatorAdaptiveSheet(
+                screen = trackScreen,
+                enableSwipeDismiss = { it.lastItem is EntryTrackInfoDialogHomeScreen },
+                onDismissRequest = onDismissRequest,
+            )
+        }
+        is EntryDetailsDialog.DeleteChapters -> DeleteChaptersDialog(
+            onDismissRequest = onDismissRequest,
+            onConfirm = { behavior.deleteChapters(dialog.chapterIds) },
+        )
+        is EntryDetailsDialog.SetFetchInterval -> SetIntervalDialog(
+            interval = dialog.interval,
+            nextUpdate = dialog.nextUpdate,
+            onDismissRequest = onDismissRequest,
+            onValueChanged = behavior::setFetchInterval.takeIf { dialog.editable },
+        )
+        is EntryDetailsDialog.ClearDownloads -> ClearDownloadsDialog(
+            sourceName = dialog.target.sourceName,
+            onDismissRequest = onDismissRequest,
+            onConfirm = { behavior.clearDownloads(dialog.target.ids) },
+        )
+        is EntryDetailsDialog.RemoveFromLibrary -> RemoveFromLibraryDialog(
+            entryTitle = dialog.entryTitle,
+            groupedSourceCount = if (dialog.removal.offersGroup) dialog.removal.groupIds.size else 0,
+            onDismissRequest = onDismissRequest,
+            onConfirm = { behavior.removeFromLibrary(dialog.removal.targets(it)) },
+        )
+        is EntryDetailsDialog.ChapterNumber -> ChapterNumberDialog(
+            edit = dialog.edit,
+            onDismissRequest = onDismissRequest,
+            onSave = { behavior.saveChapterNumber(dialog.edit, it) },
+        )
+    }
+}

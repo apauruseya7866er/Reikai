@@ -1,0 +1,131 @@
+package reikai.presentation.details
+
+import android.content.Context
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
+import dev.icerock.moko.resources.StringResource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import reikai.domain.library.EntryLibraryRemoval
+import reikai.domain.merge.MergeManager
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.i18n.MR
+
+/**
+ * The shared source split / remove / reorder actions for a merged entry's details screen, so the
+ * snackbar-with-undo logic both details models run lives in one place. The per-type parts are the
+ * type's [removal] and its [offerToDeleteDownloads]. Handing each member its own tracker copy is NOT
+ * here; [MergeManager] does it on every path that breaks a group up. [anchorId] is a getter, not a
+ * captured value, because the novel model resolves its anchor after construction. The chip switch is
+ * [EntryMergeGroupHost.selectSource]; showManageSourcesDialog stays out, since its bodies diverge.
+ */
+class EntryMergeActionHost(
+    private val scope: CoroutineScope,
+    // Runs what must finish after the screen closes: the undo's restore
+    private val appScope: CoroutineScope,
+    private val snackbarHostState: SnackbarHostState,
+    private val context: Context,
+    private val group: EntryMergeGroupHost,
+    private val anchorId: () -> Long,
+    private val mergeManager: MergeManager,
+    private val dismissDialog: () -> Unit,
+    private val removal: EntryLibraryRemoval,
+    private val offerToDeleteDownloads: suspend (removedIds: List<Long>) -> Unit,
+) {
+
+    /** Persist a manage-sources drag as the group's source order, then re-read the group: a fresh array
+     *  re-emits the list, whose stitch the new ranking has made stale, so it is rebuilt on the new trunk. */
+    fun reorderSources(orderedIds: List<Long>) {
+        scope.launchIO {
+            mergeManager.setSourceOrder(orderedIds)
+            group.refresh(anchorId())
+        }
+    }
+
+    /** Clear the per-group source-order override (back to the global ranking) and re-read the group,
+     *  which rebuilds its stitch on the global ranking. */
+    fun resetSourceOrder() {
+        dismissDialog()
+        scope.launchIO {
+            mergeManager.clearSourceOrder(anchorId())
+            group.refresh(anchorId())
+        }
+    }
+
+    /**
+     * Split [targetIds] out of the merge group, with an Undo that re-merges the prior group. Selecting
+     * every source dissolves the whole group (each entry becomes standalone, still in the library). The
+     * split sources stay favorited.
+     */
+    fun splitSources(targetIds: List<Long>) {
+        if (targetIds.isEmpty()) return
+        val prevRelated = group.relatedIds
+        dismissDialog()
+        scope.launchIO {
+            // Read the group BEFORE splitting it: splitting a pair deletes the group row, and with it
+            // the per-group ranking an undo has to put back. Re-merging can only recover the members.
+            val snapshot = mergeManager.captureGroup(anchorId())
+            mergeManager.removeFromGroup(prevRelated, targetIds)
+            // Re-read rather than publishing what the split returned: it returns the SURVIVORS, which
+            // do not include the anchor when the user splits the anchor's own source.
+            group.refresh(anchorId())
+            if (undoRequested(MR.strings.merge_sources_split)) {
+                mergeManager.restoreGroup(snapshot)
+                group.refresh(anchorId())
+            }
+        }
+    }
+
+    /**
+     * Split [targetIds] out and take them out of the library, with an Undo that puts both back. Covers
+     * and the downloads offer wait for the Undo window to close, as nothing is deleted while it can still
+     * be undone; leaving the screen closes it.
+     */
+    fun removeSourcesFromLibrary(targetIds: List<Long>) {
+        if (targetIds.isEmpty()) return
+        val prevRelated = group.relatedIds
+        dismissDialog()
+        scope.launchIO {
+            // Captured before the split, for the same reason as splitSources.
+            val snapshot = mergeManager.captureGroup(anchorId())
+            mergeManager.removeFromGroup(prevRelated, targetIds)
+            // Taken out only AFTER the split, and never in parallel with it: the split hands each member
+            // its own copy of the group's shared tracker binding, and that hand-out skips non-favorites.
+            // Non-cancellable because a half-done removal is worse than a slow one.
+            val joined = withContext(NonCancellable) { removal.takeOut(targetIds) }
+            // Re-read, for the same reason as splitSources: removing the anchor's own source leaves it
+            // ungrouped, and the survivors are the entries the user is NOT looking at.
+            group.refresh(anchorId())
+            var undone = false
+            try {
+                undone = undoRequested(MR.strings.merge_sources_removed)
+            } finally {
+                if (!undone) withContext(NonCancellable) { removal.dropCovers(joined.keys.toList()) }
+            }
+            if (undone) {
+                mergeManager.restoreGroup(snapshot)
+                group.refresh(anchorId())
+                appScope.launch { removal.restore(joined) }
+            } else {
+                offerToDeleteDownloads(joined.keys.toList())
+            }
+        }
+    }
+
+    /** Remove the whole merge group from the library at once (Manage Sources "Remove all"). */
+    fun removeAllSourcesFromLibrary() = removeSourcesFromLibrary(group.relatedIds.toList())
+
+    private suspend fun undoRequested(message: StringResource): Boolean {
+        val result = snackbarHostState.showSnackbar(
+            message = context.stringResource(message),
+            actionLabel = context.stringResource(MR.strings.action_undo),
+            duration = SnackbarDuration.Short,
+            withDismissAction = true,
+        )
+        return result == SnackbarResult.ActionPerformed
+    }
+}

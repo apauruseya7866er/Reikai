@@ -1,53 +1,54 @@
 package reikai.domain.novel.interactor
 
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.track.Tracker
+import kotlinx.datetime.TimeZone
 import reikai.domain.novel.NovelChapterRepository
+import reikai.domain.novel.NovelHistoryRepository
 import reikai.domain.novel.track.NovelTrackUpdater
 import reikai.domain.novel.track.toDbTrack
 import reikai.domain.novel.track.toNovelTrack
+import reikai.domain.track.BindChapter
+import reikai.domain.track.bindBackfill
 import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.core.common.util.lang.withNonCancellableContext
 import eu.kanade.tachiyomi.data.database.models.Track as DbTrack
 
 /**
- * Novel twin of [eu.kanade.domain.track.interactor.AddTracks.bind]: registers a freshly picked tracker
- * entry remotely, persists it to `novel_tracks`, then pushes the local read progress so a novel the
- * user has already read is reflected on the tracker. Skips the EnhancedTracker chapter-sync (a no-op
- * for the four light-novel trackers). The start-date backfill is deferred (the date stays settable in
- * the sheet); only the last-chapter push is carried, which is the high-value parity behaviour.
+ * Novel twin of [eu.kanade.domain.track.interactor.AddTracks.bind], pinned by the [bindBackfill] kernel
+ * both call: registers a freshly picked tracker entry remotely, persists it to `novel_tracks`, then
+ * pushes the local read progress. Nothing pulls the site's progress back into the chapters, as manga's
+ * server sync does: that was declined for novels (docs/dev/subsystems/browse-and-sources.md, Decisions).
  */
+@Inject
 class AddNovelTrack(
-    private val insertNovelTrack: InsertNovelTrack,
+    private val upsertNovelTrack: UpsertNovelTrack,
     private val novelTrackUpdater: NovelTrackUpdater,
     private val novelChapterRepository: NovelChapterRepository,
+    private val novelHistoryRepository: NovelHistoryRepository,
 ) {
 
-    suspend fun bind(tracker: Tracker, item: DbTrack, novelId: Long) = withNonCancellableContext {
-        withIOContext {
-            val allChapters = novelChapterRepository.getByNovelId(novelId)
-            val hasReadChapters = allChapters.any { it.read }
-            tracker.bind(item, hasReadChapters)
+    suspend fun bind(tracker: Tracker, item: DbTrack, novelId: Long) = withIOContext {
+        val allChapters = novelChapterRepository.getByNovelId(novelId)
+        val hasReadChapters = allChapters.any { it.read }
+        tracker.bind(item, hasReadChapters)
 
-            item.manga_id = novelId
-            var track = item.toNovelTrack(idRequired = false) ?: return@withIOContext
-            insertNovelTrack.await(track)
+        item.manga_id = novelId
+        var track = item.toNovelTrack(idRequired = false) ?: return@withIOContext
+        upsertNovelTrack.await(track)
 
-            if (hasReadChapters) {
-                val latestLocalReadChapterNumber = allChapters
-                    .sortedBy { it.chapterNumber }
-                    .takeWhile { it.read }
-                    .lastOrNull()
-                    ?.chapterNumber ?: -1.0
-
-                if (latestLocalReadChapterNumber > track.lastChapterRead) {
-                    track = track.copy(lastChapterRead = latestLocalReadChapterNumber)
-                    novelTrackUpdater.setRemoteLastChapterRead(
-                        tracker,
-                        track.toDbTrack(),
-                        latestLocalReadChapterNumber.toInt(),
-                    )
-                }
-            }
+        val backfill = bindBackfill(
+            allChapters.map { BindChapter(it.chapterNumber, it.read) },
+            track.lastChapterRead,
+            track.startDate,
+            TimeZone.currentSystemDefault(),
+        ) { novelHistoryRepository.getHistoryByNovelId(novelId).map { it.readAt } }
+        backfill.lastChapterRead?.let {
+            track = track.copy(lastChapterRead = it)
+            novelTrackUpdater.setRemoteLastChapterRead(tracker, track.toDbTrack(), it.toInt())
+        }
+        backfill.startDate?.let {
+            track = track.copy(startDate = it)
+            novelTrackUpdater.setRemoteStartDate(tracker, track.toDbTrack(), it.toEpochMilliseconds())
         }
     }
 }

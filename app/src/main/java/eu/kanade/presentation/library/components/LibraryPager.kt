@@ -20,10 +20,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import eu.kanade.core.preference.PreferenceMutableState
 import eu.kanade.tachiyomi.ui.library.LibraryItem
-import reikai.presentation.library.ReikaiLibraryComfortableGridPanorama // RK
-import tachiyomi.domain.category.model.Category
+import reikai.domain.entry.EntryId // RK
+import reikai.presentation.library.LibraryBucket // RK
 import tachiyomi.domain.library.model.LibraryDisplayMode
-import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.util.plus
@@ -33,16 +32,17 @@ fun LibraryPager(
     state: PagerState,
     contentPadding: PaddingValues,
     hasActiveFilters: Boolean,
-    selection: Set<Long>,
+    selection: Set<EntryId>, // RK: neutral identity, a manga and a novel can share a row id
     searchQuery: String?,
     onGlobalSearchClicked: () -> Unit,
-    getCategoryForPage: (Int) -> Category,
+    // RK: a page is one section of the assembled library, which is a category or a dynamic group
+    getCategoryForPage: (Int) -> LibraryBucket,
     getDisplayMode: (Int) -> PreferenceMutableState<LibraryDisplayMode>,
     getColumnsForOrientation: (Boolean) -> PreferenceMutableState<Int>,
-    getItemsForCategory: (Category) -> List<LibraryItem>,
-    onClickManga: (Category, LibraryManga) -> Unit,
-    onLongClickManga: (Category, LibraryManga) -> Unit,
-    onClickContinueReading: ((LibraryManga) -> Unit)?,
+    getItemsForCategory: (LibraryBucket) -> List<LibraryItem>,
+    onClickManga: (LibraryBucket, LibraryItem) -> Unit,
+    onLongClickManga: (LibraryBucket, LibraryItem) -> Unit,
+    onClickContinueReading: ((LibraryItem) -> Unit)?,
 ) {
     HorizontalPager(
         modifier = Modifier.fillMaxSize(),
@@ -53,8 +53,8 @@ fun LibraryPager(
             // To make sure only one offscreen page is being composed
             return@HorizontalPager
         }
-        val category = getCategoryForPage(page)
-        val items = getItemsForCategory(category)
+        val bucket = getCategoryForPage(page) // RK
+        val items = getItemsForCategory(bucket)
 
         if (items.isEmpty()) {
             LibraryPagerEmptyScreen(
@@ -76,8 +76,9 @@ fun LibraryPager(
             remember { mutableIntStateOf(0) }
         }
 
-        val onClickManga: (LibraryManga) -> Unit = { onClickManga(category, it) }
-        val onLongClickManga: (LibraryManga) -> Unit = { onLongClickManga(category, it) }
+        // RK: rows are neutral LibraryItems in a LibraryBucket, so both content types page alike
+        val onClickManga: (LibraryItem) -> Unit = { onClickManga(bucket, it) }
+        val onLongClickManga: (LibraryItem) -> Unit = { onLongClickManga(bucket, it) }
 
         when (displayMode) {
             LibraryDisplayMode.List -> {
@@ -106,9 +107,10 @@ fun LibraryPager(
                     onGlobalSearchClicked = onGlobalSearchClicked,
                 )
             }
-            LibraryDisplayMode.ComfortableGrid -> {
+            LibraryDisplayMode.ComfortableGrid, LibraryDisplayMode.ComfortableGridPanorama -> { // RK
                 LibraryComfortableGrid(
                     items = items,
+                    usePanoramaCover = displayMode is LibraryDisplayMode.ComfortableGridPanorama, // RK
                     columns = columns,
                     contentPadding = contentPadding,
                     selection = selection,
@@ -119,21 +121,6 @@ fun LibraryPager(
                     onGlobalSearchClicked = onGlobalSearchClicked,
                 )
             }
-            // RK -->
-            LibraryDisplayMode.ComfortableGridPanorama -> {
-                ReikaiLibraryComfortableGridPanorama(
-                    items = items,
-                    columns = columns,
-                    contentPadding = contentPadding,
-                    selection = selection,
-                    onClick = onClickManga,
-                    onLongClick = onLongClickManga,
-                    onClickContinueReading = onClickContinueReading,
-                    searchQuery = searchQuery,
-                    onGlobalSearchClicked = onGlobalSearchClicked,
-                )
-            }
-            // RK <--
         }
     }
 }

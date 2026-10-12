@@ -1,0 +1,43 @@
+package reikai.domain.track
+
+import android.content.Context
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import eu.kanade.tachiyomi.util.system.toast
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
+import reikai.presentation.track.trackerErrorMessage
+import reikai.util.runCatchingCancellable
+import tachiyomi.core.common.util.lang.withUIContext
+import tachiyomi.core.common.util.system.logcat
+
+/**
+ * A removal whose local half only makes sense once a remote one went through: a tracker binding and its
+ * service entry, a library gallery and its account favourite. The remote goes first and a failure there
+ * is toasted with the local state kept, so the user can retry. Both run on this app-wide scope, since a
+ * screen closed mid-request would otherwise cancel the local half after the remote one landed. Upstream
+ * drops the tracker binding either way; see docs/dev/subsystems/tracking.md and adult-sources.md.
+ */
+@Inject
+@SingleIn(AppScope::class)
+class RemoteFirstRemoval(
+    private val context: Context,
+    @AppCoroutineScope private val scope: CoroutineScope,
+) {
+
+    /** [name] is who the remote call went to, for the failure toast. */
+    fun launch(name: String, alsoRemote: Boolean, remote: suspend () -> Unit, local: suspend () -> Unit) {
+        scope.launch {
+            runCatchingCancellable {
+                if (alsoRemote) remote()
+                local()
+            }.onFailure { e ->
+                logcat(LogPriority.ERROR, e) { "Failed to remove from $name" }
+                withUIContext { context.toast(context.trackerErrorMessage(name, e)) }
+            }
+        }
+    }
+}

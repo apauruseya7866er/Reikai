@@ -1,42 +1,65 @@
 package reikai.domain.recommendation
 
-import java.util.concurrent.ConcurrentHashMap
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.updateAndGet
 
 /**
- * App-scoped, in-memory cache of the related-mangas carousel pool, keyed by manga id.
- *
- * Lets reopening a manga show its carousel instantly instead of re-querying the source plus the
- * tracker endpoints every time. Each entry carries its fetch timestamp so the caller can serve a
- * fresh entry untouched and refresh a stale one in the background ("cache, then refresh").
- *
- * In-memory only: cleared on process death (a longer-lived disk cache for the raw tracker responses
- * lands in R2). A stale entry is still served immediately while a background fetch updates it,
- * bounding how out-of-date the carousel can look to [FRESH_MS].
+ * In-memory cache of the related-mangas pool, keyed by manga id, so reopening a manga shows its
+ * carousel instantly instead of re-querying the source and every tracker endpoint. The pool is kept
+ * unranked, since [RecommendationAssembly] filters and ranks it on read. A stale entry is still served
+ * immediately while a background fetch updates it, so the carousel can be up to [FRESH_MS] out of
+ * date. Cleared on process death.
  */
+@Inject
+@SingleIn(AppScope::class)
 class RelatedMangaCache {
     data class Entry(
-        val carousel: List<RelatedMangaCandidate>,
         val fullPool: List<RelatedMangaCandidate>,
+        val agreementByUrl: Map<String, Int>,
         val fetchedAt: Long,
         // False while the load is still streaming; a partial entry is served (so "See all" isn't
         // empty mid-load) but never treated as fresh, so it still refreshes to completion.
         val isComplete: Boolean = true,
-    )
-
-    private val entries = ConcurrentHashMap<Long, Entry>()
-
-    fun get(mangaId: Long): Entry? = entries[mangaId]
-
-    fun put(
-        mangaId: Long,
-        carousel: List<RelatedMangaCandidate>,
-        fullPool: List<RelatedMangaCandidate>,
-        isComplete: Boolean = true,
     ) {
-        entries[mangaId] = Entry(carousel, fullPool, System.currentTimeMillis(), isComplete)
+        val pool: RelatedPool get() = RelatedPool(fullPool, agreementByUrl)
     }
 
-    /** True while [entry] is within the freshness window and can be served without a refresh. */
+    private val entries = MutableStateFlow<Map<Long, Entry>>(emptyMap())
+
+    fun get(mangaId: Long): Entry? = entries.value[mangaId]
+
+    /** The "See all" grid renders live off this, so it fills to the full pool even when opened
+     *  mid-load, which the menu placement does (it opens before the background load finishes). */
+    fun observe(mangaId: Long): Flow<Entry?> = entries.map { it[mangaId] }.distinctUntilChanged()
+
+    /**
+     * Stores the pool unless it would replace a fuller one: an incomplete snapshot never replaces a
+     * complete entry, and an empty result never replaces a non-empty one. A refused put keeps the old
+     * entry and its fetch time, so a failed refresh is retried on the next open. Returns the entry the
+     * cache now holds, which is what the caller shows.
+     */
+    fun put(
+        mangaId: Long,
+        pool: RelatedPool,
+        isComplete: Boolean = true,
+    ): Entry {
+        val entry = Entry(pool.candidates, pool.agreementByUrl, System.currentTimeMillis(), isComplete)
+        return entries.updateAndGet { if (replaces(it[mangaId], entry)) it + (mangaId to entry) else it }
+            .getValue(mangaId)
+    }
+
+    private fun replaces(current: Entry?, next: Entry): Boolean = when {
+        current == null -> true
+        current.isComplete && !next.isComplete -> false
+        else -> next.fullPool.isNotEmpty() || current.fullPool.isEmpty()
+    }
+
     fun isFresh(entry: Entry, now: Long = System.currentTimeMillis()): Boolean =
         now - entry.fetchedAt < FRESH_MS
 

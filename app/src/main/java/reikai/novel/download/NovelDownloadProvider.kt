@@ -1,45 +1,38 @@
 package reikai.novel.download
 
 import com.hippo.unifile.UniFile
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.download.Downloader
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import mihon.core.metro.AppCoroutineScope
+import reikai.domain.download.renameDownloadFolder
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.storage.service.StorageManager
-import uy.kohesive.injekt.injectLazy
 
 /**
- * Resolves on-disk locations for downloaded novel chapter text. Stable-name scheme mirroring the manga
- * [DownloadProvider]: `<novel downloads dir>/<source>/<novel title>/<chapter name>_<url hash>.html`.
- * Because the path is derived from stable metadata (not the row's numeric DB ids), a downloaded chapter
- * survives reinstall / restore / storage-move, and the folders are human-readable (the old
- * `<novelId>/<chapterId>.html` scheme broke on any id reshuffle and was opaque).
- *
- * The `<source>` segment keys on the **plugin id** ([Novel.source]) rather than a display name: a novel
- * source's display name can change on a plugin update, so the id is the hardier folder key (the manga
- * side keys on display name because its numeric source ids are stable). Title + chapter naming is
- * **reused** from the manga [DownloadProvider]: this class delegates to `getMangaDirName` /
- * `getChapterDirName` rather than copying the logic, so the two schemes can never drift by
- * construction, which a later unified download layer depends on.
- *
- * Text-only: one self-contained HTML file per chapter (inline images embedded as `data:` URIs). Writes
- * land on a `<name>.html<TMP_DIR_SUFFIX>` temp file and rename on success, so a [NovelDownloadCache]
- * scan mid-download never counts a half-written file (mirrors the manga Downloader's tmp-then-rename).
+ * Resolves on-disk locations for downloaded novel chapter text, mirroring the manga [DownloadProvider]:
+ * `<novel downloads dir>/<source>/<novel title>/<chapter name>[_<url hash>].html`, the chapter part named by
+ * manga's rule, hash setting included. Derived from stable metadata rather than numeric DB ids, so a download
+ * survives reinstall, restore and storage moves. The `<source>` segment keys on the PLUGIN ID, not a display name,
+ * which a plugin update can change (the manga side keys on display name because its numeric source ids are stable).
+ * One self-contained HTML file per chapter, written to a temp name and renamed on success.
  */
-class NovelDownloadProvider {
-
-    private val storageManager: StorageManager by injectLazy()
-    private val downloadProvider: DownloadProvider by injectLazy()
-    private val libraryPreferences: LibraryPreferences by injectLazy()
-
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+@Inject
+@SingleIn(AppScope::class)
+class NovelDownloadProvider(
+    @AppCoroutineScope private val scope: CoroutineScope,
+    private val storageManager: StorageManager,
+    private val downloadProvider: DownloadProvider,
+    private val libraryPreferences: LibraryPreferences,
+) {
 
     private var downloadsDir = storageManager.getNovelDownloadsDirectory()
 
@@ -63,21 +56,23 @@ class NovelDownloadProvider {
     fun novelDirName(title: String): String = downloadProvider.getMangaDirName(title)
 
     /** The on-disk file name a chapter's download is written to: `<manga-style chapter dir name>.html`. */
-    fun chapterFileName(chapterName: String, chapterUrl: String): String =
-        downloadProvider.getChapterDirName(chapterName, null, chapterUrl) + HTML_EXT
+    fun chapterFileName(
+        chapterName: String,
+        chapterUrl: String,
+        enableChapterNameHash: Boolean = libraryPreferences.enableChapterNameHash.get(),
+    ): String = downloadProvider.getChapterDirName(
+        chapterName,
+        null,
+        chapterUrl,
+        enableChapterNameHash = enableChapterNameHash,
+    ) + HTML_EXT
 
     /**
-     * File names a chapter's download might sit under: the current one plus the variant produced under
-     * the opposite non-ASCII-filenames setting, so toggling that setting doesn't orphan a download
-     * (mirrors the manga [DownloadProvider.getValidChapterDirNames]). No `.cbz`: novels are text-only.
+     * File names a chapter's download might sit under, current first: the manga provider's names for it under
+     * every file-name setting, so changing one doesn't orphan a download. No `.cbz`: novels are text-only.
      */
-    fun validChapterFileNames(chapterName: String, chapterUrl: String): List<String> {
-        val ascii = libraryPreferences.disallowNonAsciiFilenames.get()
-        return listOf(
-            downloadProvider.getChapterDirName(chapterName, null, chapterUrl, ascii) + HTML_EXT,
-            downloadProvider.getChapterDirName(chapterName, null, chapterUrl, !ascii) + HTML_EXT,
-        ).distinct()
-    }
+    fun validChapterFileNames(chapterName: String, chapterUrl: String): List<String> =
+        downloadProvider.getChapterNameVariants(chapterName, null, chapterUrl).map { it + HTML_EXT }
 
     fun sourceDirName(novel: Novel): String = sourceDirName(novel.source)
     fun novelDirName(novel: Novel): String = novelDirName(novel.title)
@@ -88,16 +83,15 @@ class NovelDownloadProvider {
     private fun novelDir(novel: Novel): UniFile? =
         downloadsDir?.createDirectory(sourceDirName(novel))?.createDirectory(novelDirName(novel))
 
-    private fun findNovelDir(novel: Novel): UniFile? =
+    /** The novel's download directory, or null when nothing has been downloaded yet. Public for the
+     *  details overflow's Open folder, through [NovelDownloadManager.findNovelDir]. */
+    fun findNovelDir(novel: Novel): UniFile? =
         downloadsDir?.findFile(sourceDirName(novel))?.findFile(novelDirName(novel))
 
-    private fun findChapterFile(novel: Novel, chapter: NovelChapter): UniFile? {
+    fun findChapterFile(novel: Novel, chapter: NovelChapter): UniFile? {
         val dir = findNovelDir(novel) ?: return null
         return validChapterFileNames(chapter).firstNotNullOfOrNull { dir.findFile(it) }
     }
-
-    fun isChapterDownloaded(novel: Novel, chapter: NovelChapter): Boolean =
-        findChapterFile(novel, chapter)?.exists() == true
 
     fun readChapter(novel: Novel, chapter: NovelChapter): String? =
         findChapterFile(novel, chapter)?.takeIf { it.exists() }
@@ -107,9 +101,13 @@ class NovelDownloadProvider {
      * Persist a chapter's HTML, creating parent dirs. Writes to a temp file then renames, so a scan
      * never sees a partial file. False when no storage dir is configured or the rename fails.
      */
-    fun writeChapter(novel: Novel, chapter: NovelChapter, html: String): Boolean {
+    fun writeChapter(
+        novel: Novel,
+        chapter: NovelChapter,
+        html: String,
+        finalName: String = chapterFileName(chapter),
+    ): Boolean {
         val dir = novelDir(novel) ?: return false
-        val finalName = chapterFileName(chapter)
         val tmpName = finalName + Downloader.TMP_DIR_SUFFIX
         dir.findFile(tmpName)?.delete()
         val tmp = dir.createFile(tmpName) ?: return false
@@ -119,17 +117,42 @@ class NovelDownloadProvider {
         return tmp.renameTo(finalName)
     }
 
-    fun deleteChapter(novel: Novel, chapter: NovelChapter) {
-        findChapterFile(novel, chapter)?.delete()
+    /**
+     * Deletes [chapters]' files, all [novel]'s, each the first of its names found, as Mihon's findChapterDirs
+     * picks. Lists the folder once, where a lookup per chapter costs a few storage-provider queries each.
+     */
+    fun deleteChapters(novel: Novel, chapters: List<NovelChapter>) {
+        val files = findNovelDir(novel)?.listFiles()?.associateBy { it.name } ?: return
+        chapters.forEach { chapter -> validChapterFileNames(chapter).firstNotNullOfOrNull(files::get)?.delete() }
     }
 
+    /** Deletes the novel's folder, then its source's folder once that is empty, as manga's does. */
     fun deleteNovel(novel: Novel) {
         findNovelDir(novel)?.delete()
+        val sourceDir = downloadsDir?.findFile(sourceDirName(novel))
+        if (sourceDir?.listFiles()?.isEmpty() == true) sourceDir.delete()
     }
 
     /**
+     * Moves the novel's folder to [newTitle]'s name by [renameDownloadFolder]. False when there was nothing to move
+     * or the move failed.
+     */
+    fun renameNovel(novel: Novel, newTitle: String): Boolean {
+        val dir = findNovelDir(novel) ?: return false
+        val newName = novelDirName(newTitle)
+        if (dir.name == newName) return false
+        return renameDownloadFolder(dir, newName)
+    }
+
+    /** Free bytes on the volume novel downloads go to, or -1 when it cannot be read. */
+    fun availableSpace(): Long = downloadsDir?.let(DiskUtil::getAvailableStorageSpace) ?: -1L
+
+    fun isNovelDirEmpty(novel: Novel): Boolean = findNovelDir(novel)?.listFiles()?.isEmpty() == true
+
+    /**
      * Rename a downloaded chapter's file when its title changes, so the stable-name path follows the new
-     * title (mirrors the manga [eu.kanade.tachiyomi.data.download.DownloadManager] rename-on-sync).
+     * title (mirrors the manga [eu.kanade.tachiyomi.data.download.DownloadManager] rename-on-sync, pinned by
+     * RenameOnSyncConformanceTest, and named by the manga provider's getChapterDirName on both sides).
      * No-op when nothing is downloaded or the name is unchanged; returns true only when a file was
      * actually renamed.
      */

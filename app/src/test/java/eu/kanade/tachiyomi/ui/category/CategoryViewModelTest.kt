@@ -1,0 +1,185 @@
+package eu.kanade.tachiyomi.ui.category
+
+import androidx.lifecycle.viewModelScope
+import io.kotest.matchers.shouldBe
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.plus
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.RegisterExtension
+import reikai.domain.category.CategoryIdPreferences
+import reikai.domain.library.ContentType
+import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.domain.novel.NovelPreferences
+import reikai.domain.source.ReikaiSourcePreferences
+import reikai.presentation.MainDispatcherExtension
+import reikai.presentation.category.CategoryActions
+import reikai.presentation.recents.EmittingPreferenceStore
+import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.category.repository.CategoryRepository
+import tachiyomi.domain.download.service.DownloadPreferences
+import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.upcoming.service.UpcomingPreferences
+
+class CategoryViewModelTest {
+
+    private val a = Category(id = 1L, name = "A", order = 0L, flags = 0L)
+    private val b = Category(id = 2L, name = "B", order = 1L, flags = 0L)
+    private val c = Category(id = 3L, name = "C", order = 2L, flags = 0L)
+
+    private val table = MutableStateFlow(listOf(a, b, c))
+    private val repository = mockk<CategoryRepository>(relaxed = true) {
+        every { getUnfilteredAsFlow() } returns table
+        coEvery { getUnfiltered() } answers { table.value }
+        coEvery { delete(any()) } answers { table.update { rows -> rows.filterNot { it.id == firstArg<Long>() } } }
+    }
+
+    private val store = EmittingPreferenceStore()
+    private val libraryPreferences = LibraryPreferences(store)
+    private val reikaiLibraryPreferences = ReikaiLibraryPreferences(store)
+    private val upcomingPreferences = UpcomingPreferences(store)
+    private val actions = CategoryActions(
+        categoryRepository = repository,
+        categoryIdPreferences = CategoryIdPreferences(
+            libraryPreferences,
+            DownloadPreferences(store),
+            NovelPreferences(store),
+            reikaiLibraryPreferences,
+            ReikaiSourcePreferences(store),
+            upcomingPreferences,
+        ),
+        libraryPreferences = libraryPreferences,
+        renameCategory = mockk(),
+    )
+
+    // Every model is tracked, so its state's stop timeout is cancelled before Main is reset.
+    @JvmField
+    @RegisterExtension
+    val main = MainDispatcherExtension()
+
+    /** A model whose state and events are collected, as the screen collects them. */
+    private fun TestScope.model(events: MutableList<CategoryEvent> = mutableListOf()): CategoryViewModel {
+        // Unconfined, so a committed delete has landed by the time the call returns
+        val appScope = backgroundScope + UnconfinedTestDispatcher(testScheduler)
+        val model = main.track(CategoryViewModel(appScope, actions, reikaiLibraryPreferences))
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { model.state.collect {} }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { model.events.collect { events += it } }
+        return model
+    }
+
+    private val CategoryViewModel.selection
+        get() = (state.value as CategoryScreenState.Success).selection
+
+    /** The screen only masks picks the chip hides, so kept ones came back on the next flip. */
+    @Test
+    fun `flipping the chip drops the picks it would hide`() = runTest {
+        val model = model()
+        model.toggleSelection(a.id)
+        model.setContentType(ContentType.NOVELS)
+
+        model.setContentType(ContentType.ALL)
+
+        model.selection shouldBe emptySet()
+    }
+
+    @Test
+    fun `re-selecting the chip shown keeps the selection`() = runTest {
+        val model = model()
+        model.toggleSelection(a.id)
+
+        model.setContentType(ContentType.ALL)
+
+        model.selection shouldBe setOf(a.id)
+    }
+
+    /** The long press ranges from the selection's anchor, so a delete that cleared only what the screen
+     *  shows left the deleted rows to come back with it. */
+    @Test
+    fun `a long press after undoing a bulk delete selects only the pressed row`() = runTest {
+        val events = mutableListOf<CategoryEvent>()
+        val model = model(events)
+        model.toggleSelection(a.id)
+        model.toggleRangeSelection(b.id)
+        model.deleteSelected()
+        model.undoPendingDelete(events.undoBatches().single())
+
+        model.toggleRangeSelection(c.id)
+
+        model.selection shouldBe setOf(c.id)
+    }
+
+    /** The screen shows one snackbar per delete, one after another, so each must resolve only its own rows. */
+    @Test
+    fun `undoing the first delete leaves the second to its own snackbar`() = runTest {
+        val events = mutableListOf<CategoryEvent>()
+        val model = model(events)
+        model.deleteCategory(a)
+        model.deleteCategory(b)
+        val (first, second) = events.undoBatches()
+
+        model.undoPendingDelete(first)
+        model.commitPendingDelete(second)
+
+        table.value shouldBe listOf(a, c)
+    }
+
+    @Test
+    fun `committing the first delete leaves the second undoable`() = runTest {
+        val events = mutableListOf<CategoryEvent>()
+        val model = model(events)
+        model.deleteCategory(a)
+        model.deleteCategory(b)
+        val (first, second) = events.undoBatches()
+
+        model.commitPendingDelete(first)
+        model.undoPendingDelete(second)
+
+        table.value shouldBe listOf(b, c)
+    }
+
+    @Test
+    fun `committing a delete drops the category from the collapsed ones`() = runTest {
+        val events = mutableListOf<CategoryEvent>()
+        val model = model(events)
+        reikaiLibraryPreferences.collapsedCategories.set(setOf(a.id.toString(), b.id.toString()))
+        model.deleteCategory(a)
+
+        model.commitPendingDelete(events.undoBatches().single())
+
+        reikaiLibraryPreferences.collapsedCategories.get() shouldBe setOf(b.id.toString())
+    }
+
+    @Test
+    fun `committing a delete drops the category from the Upcoming filter`() = runTest {
+        val events = mutableListOf<CategoryEvent>()
+        val model = model(events)
+        upcomingPreferences.filterIncludedCategories.set(listOf(a.id, b.id))
+        model.deleteCategory(a)
+
+        model.commitPendingDelete(events.undoBatches().single())
+
+        upcomingPreferences.filterIncludedCategories.get() shouldBe listOf(b.id)
+    }
+
+    /** Voyager clears the popped screen's model before its exit animation ends and onDispose commits. */
+    @Test
+    fun `leaving the screen commits a delete after the model's scope is gone`() = runTest {
+        val model = model()
+        model.deleteCategory(a)
+        model.viewModelScope.cancel()
+
+        model.commitAllPendingDeletes()
+
+        table.value shouldBe listOf(b, c)
+    }
+
+    private fun List<CategoryEvent>.undoBatches() = filterIsInstance<CategoryEvent.ShowUndoSnackbar>().map { it.batch }
+}

@@ -1,6 +1,5 @@
 ---
 title: Troubleshooting
-titleTemplate: Guides
 description: Facing source or app issues? Here's how to troubleshoot.
 ---
 
@@ -60,12 +59,17 @@ It's best to use the standard [Android System WebView](https://play.google.com/s
 
 ## Cloudflare
 
-**Cloudflare**, an anti-bot mechanism, is used by some sources.
-Some sources intentionally have higher **Cloudflare** protection to deter apps like **Reikai**.
+Some sources sit behind **Cloudflare**, an anti-bot check, and stronger settings of it can block apps like **Reikai**.
+It usually shows up as a `Failed to bypass Cloudflare` error, or as **WebView** reloading the page over and over.
 
-### Dealing with Cloudflare looping
-Certain sources may employ more advanced **Cloudflare** protection, leading to **WebView** continuously reloading when bypassing using the above solution.
-If this occurs, try [Accessing the Website via WebView](#accessing-websites-via-webview).
+Work through these in order, and stop at the first one that works:
+
+1. [Open the source in WebView](#accessing-websites-via-webview) and complete the check there, then go back and retry.
+1. If the page stops on a **Verify you are human** box, turn on **Solve interactive Cloudflare challenges** in <nav to="advanced">, which ticks the box for you. It is off by default. To let library updates get past the check too, also turn on **Solve with the app closed**.
+1. [Change your user agent](#changing-your-user-agent), restart the app and try WebView again.
+1. Route the source through a [Cloudflare bypass proxy](/docs/flaresolverr) you run yourself. This is for protection the in-app WebView cannot clear at all, and it needs a computer or server that stays on.
+
+If none of these work, wait for the source to lower its protection, or switch to a different source.
 
 ### Changing your user agent
 A user agent string shares requester information with websites, potentially affecting **Cloudflare**'s bot detection.
@@ -80,17 +84,21 @@ While some sources have specific user agent strings, most rely on the app's defa
 1. After changing the user agent string, remember to restart the app & check WebView to see if it passes verification.
 :::
 
-### Routing the source through a bypass proxy
-
-Some sources sit on protection the in-app WebView cannot clear at all, and no amount of retrying or user-agent swapping helps.
-
-For those, **Reikai** can hand the request to a bypass proxy you run yourself, which solves the challenge in a real browser. See [Cloudflare bypass](/docs/flaresolverr).
-
-::: tip Did none of this work?
-Wait for the source to lower its protection, or switch to a different source.
-:::
-
 ## General
+
+### A download keeps failing
+
+Whether a chapter can be fetched is usually decided by the source, extension or plugin, not by Reikai.
+Common cases:
+
+- **The chapter is blank in the reader too, or shows a Cloudflare error:** the source's site is unreachable or blocking you. Wait for it to come back, or follow the [Cloudflare steps](#cloudflare) if that is the block.
+- **It won't download until you open the chapter first:** some sources only list a chapter's pages once you have opened it in the reader. Open the chapter once, then download it.
+- **It opens in the reader but saves no pages:** the extension finds no pages to save, so there is nothing to download. Report it to whoever publishes the extension.
+
+To tell whether the problem is Reikai or the source:
+
+- **Manga:** try the same source and chapter in Mihon. If it fails there too, the cause is the source or your network (ISP, DNS, a VPN or a firewall). If it works in Mihon but not in Reikai, open an issue with the exact source, chapter and steps.
+- **Light novels:** open the chapter in the reader, then on the site itself with **Open in WebView**. If the site will not show it either, the cause is the site or your network. If the chapter reads fine but will not download, open an issue with the exact source, chapter and steps.
 
 ### Obtaining crash/error logs
 For crash investigations, navigate to <nav to="advanced"> and tap **Share crash logs**.
@@ -135,7 +143,7 @@ Seeing this error while installing means the `.apk` already exists on the device
 :::
 
 ::: details `DISPLAY_NAME column is null`
-Seeing this error points to a corrupted `.apk` file.
+This error can mean the `.apk` file is corrupted or did not download completely.
 * Try re-downloading the `.apk`.
 :::
 

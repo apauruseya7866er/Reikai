@@ -51,11 +51,16 @@ fun PreferenceScreen(
             when (preference) {
                 // Create Preference Group
                 is Preference.PreferenceGroup -> {
-                    if (!preference.enabled) return@fastForEachIndexed
+                    if (!preference.visible) return@fastForEachIndexed
 
                     item {
                         Column {
-                            PreferenceGroupHeader(title = preference.title)
+                            PreferenceGroupHeader(
+                                title = preference.title,
+                                // RK: a heading result carries HighlightKey.heading, not the bare title
+                                highlighted = highlightKey != null &&
+                                    HighlightKey.heading(preference.title).matches(highlightKey),
+                            )
                         }
                     }
                     items(preference.preferenceItems) { item ->
@@ -86,12 +91,12 @@ fun PreferenceScreen(
     }
 }
 
-// RK: match on (group, title) so the scroll lands on the exact row when two rows share a title.
+// RK --> match on (group, title) so the scroll lands on the exact row when two rows share a title
 private fun List<Preference>.findHighlightedIndex(highlightKey: HighlightKey): Int {
     return flatMap { pref ->
         if (pref is Preference.PreferenceGroup) {
             buildList<HighlightKey?> {
-                add(null) // Header
+                add(HighlightKey.heading(pref.title)) // Header
                 addAll(pref.preferenceItems.map { groupItem -> HighlightKey(pref.title, groupItem.title) })
                 add(null) // Spacer
             }
@@ -100,3 +105,4 @@ private fun List<Preference>.findHighlightedIndex(highlightKey: HighlightKey): I
         }
     }.indexOfFirst { it != null && it.matches(highlightKey) }
 }
+// RK <--

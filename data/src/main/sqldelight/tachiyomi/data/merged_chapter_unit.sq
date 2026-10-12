@@ -1,0 +1,606 @@
+-- What the cross-source stitch decided for a merge group, stored so every surface that has to
+-- count or order the group reads one answer instead of restating the stitch's rules in its own terms.
+-- A restatement cannot express what the stitch knows anyway: two sources numbering the same chapter
+-- differently are matched by position between shared titles, which no per-chapter key can carry.
+--
+-- A CACHE, NEVER TRUTH. Nothing here cannot be rebuilt from the chapter rows, so a change to the
+-- stitch rules is a DELETE in a migration and the next reconciliation pass, not a data conversion.
+-- That migration must also put every group in merged_group_pending, or nothing checks them.
+--
+-- MAINTAINED BY RECONCILIATION, NOT BY WRITE HOOKS IN CODE. Chapter rows are created from several
+-- places (the source sync, the gallery-chain reconciler, backup restore, the novel chapter sync), so
+-- hooking each one means every future write path has to remember, and a forgotten one is a silently
+-- wrong badge. Each row records the values its unit was derived from, and the stale views below find
+-- every group whose chapters no longer match what was stitched. Triggers on the tables themselves only
+-- name the groups worth that check (merged_group_pending), which covers write paths that do not exist yet.
+--
+-- derived_order is the chapter's place in its own source's list, which the stitch walks each source
+-- in, so a source reordering chapters it already listed restitches like a renumber. It defaults to -1,
+-- which no chapter carries, so a row written before it existed reads as stale once.
+--
+-- Only MERGED entries are maintained: an unmerged entry uses its own per-source count, so a row for it
+-- would never be read.
+--
+-- unit is the chapter's position in the merged list. NULL means the stitch dropped this copy, which
+-- happens when nothing identifies it and nothing places it: it renders nowhere and counts nowhere,
+-- but it keeps a row so the staleness queries can still see it.
+--
+-- copy_order ranks the sources holding one merged chapter, 0 being the copy the list shows. A reader
+-- that hides a copy for an excluded scanlator takes the lowest surviving one, so that stays a live
+-- filter. A source leaving or rejoining the library is a stitch input instead (see the stale view).
+CREATE TABLE merged_chapter_unit (
+    chapter_id INTEGER NOT NULL PRIMARY KEY,
+    group_id INTEGER NOT NULL,
+    unit INTEGER,
+    copy_order INTEGER NOT NULL,
+    derived_number REAL NOT NULL,
+    derived_order INTEGER NOT NULL DEFAULT -1,
+    FOREIGN KEY(chapter_id) REFERENCES chapter (id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(group_id) REFERENCES merge_group (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX merged_chapter_unit_group_index ON merged_chapter_unit(group_id, unit, copy_order);
+
+-- Novel twin. It carries the name too, because the novel identity is the normalized title and only
+-- falls back to the number, so a retitled chapter has to read as stale.
+CREATE TABLE merged_novel_chapter_unit (
+    chapter_id INTEGER NOT NULL PRIMARY KEY,
+    group_id INTEGER NOT NULL,
+    unit INTEGER,
+    copy_order INTEGER NOT NULL,
+    derived_name TEXT NOT NULL,
+    derived_number REAL NOT NULL,
+    derived_order INTEGER NOT NULL DEFAULT -1,
+    FOREIGN KEY(chapter_id) REFERENCES novel_chapters (_id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(group_id) REFERENCES merge_group (_id)
+    ON DELETE CASCADE
+);
+
+CREATE INDEX merged_novel_chapter_unit_group_index
+ON merged_novel_chapter_unit(group_id, unit, copy_order);
+
+-- The source ranking each group was last stitched under, as ranking stamps (see SourceRanking.kt), the
+-- one stitch input that is not a chapter row. The ranking picks the trunk, so a reorder or a changed
+-- preferred-source list is as much a reason to restitch as a new chapter. The preferred list lives in
+-- preferences, out of SQL's reach, so the comparison is the reconciliation's; this only remembers.
+--
+-- chapter_count is how many unit rows the stitch left, dropped copies included. A deleted chapter
+-- takes its row with it through the cascade above, so nothing else could see that the group lost a
+-- chapter, and a loss can change which member has the most chapters and so leads.
+CREATE TABLE merged_group_ranking (
+    group_id INTEGER NOT NULL PRIMARY KEY,
+    ranking TEXT NOT NULL,
+    chapter_count INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(group_id) REFERENCES merge_group (_id)
+    ON DELETE CASCADE
+);
+
+-- The count each manga member was ranked on when its group was last stitched (distinct recognized
+-- numbers, ChapterAggregation.recognizedChapterCount), so the library ranks members the way the stitch
+-- did without reading every member chapter on each chapter write. Written in the same transaction as
+-- the units, so it is as current as the stitch. Its own table rather than a merge_group_manga column:
+-- a write there re-runs the membership flow that starts a reconcile. Novels need none, since the novel
+-- library row carries the row count the novel stitch ranks on.
+CREATE TABLE merged_member_count (
+    manga_id INTEGER NOT NULL PRIMARY KEY,
+    group_id INTEGER NOT NULL,
+    recognized_count INTEGER NOT NULL,
+    FOREIGN KEY(manga_id) REFERENCES manga (id)
+    ON DELETE CASCADE,
+    FOREIGN KEY(group_id) REFERENCES merge_group (_id)
+    ON DELETE CASCADE
+);
+
+-- The groups a write may have left stale, so a reconcile checks those instead of scanning every group
+-- through the stale views. The triggers below fill it from every stitch input the views compare: a
+-- member chapter's insert, delete, number, order or owner (and name, for novels), a membership change,
+-- and a member entering or leaving the library. A group is listed more often than it goes stale, never
+-- less; the reconcile still runs the exact one-group check. claimed is 1 once a reconcile has taken the
+-- row, so a write landing while it runs adds a fresh row rather than being lost with the claimed one.
+-- Triggers on Mihon's chapter and manga tables: a migration rebuilding either must create them again.
+CREATE TABLE merged_group_pending (
+    group_id INTEGER NOT NULL,
+    claimed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(group_id, claimed),
+    FOREIGN KEY(group_id) REFERENCES merge_group (_id)
+    ON DELETE CASCADE
+);
+
+CREATE TRIGGER merged_pending_chapter_insert AFTER INSERT ON chapter
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_manga
+    WHERE manga_id = new.manga_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_chapter_delete AFTER DELETE ON chapter
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_manga
+    WHERE manga_id = old.manga_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_chapter_update
+AFTER UPDATE OF remote_chapter_number, remote_order, manga_id ON chapter
+WHEN old.remote_chapter_number IS NOT new.remote_chapter_number
+OR old.remote_order IS NOT new.remote_order
+OR old.manga_id IS NOT new.manga_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT DISTINCT group_id FROM merge_group_manga
+    WHERE manga_id IN (old.manga_id, new.manga_id)
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_manga_favorite AFTER UPDATE OF user_favorite_at ON manga
+WHEN (old.user_favorite_at IS NULL) != (new.user_favorite_at IS NULL)
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_manga
+    WHERE manga_id = new.id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_member_insert AFTER INSERT ON merge_group_manga
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT new.group_id
+    WHERE new.group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+-- A member leaving with its whole group finds the group already gone, and lists nothing.
+CREATE TRIGGER merged_pending_member_delete AFTER DELETE ON merge_group_manga
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id = old.group_id
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_member_update AFTER UPDATE OF group_id, manga_id ON merge_group_manga
+WHEN old.group_id IS NOT new.group_id OR old.manga_id IS NOT new.manga_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id IN (old.group_id, new.group_id)
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_chapter_insert AFTER INSERT ON novel_chapters
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_novel
+    WHERE novel_id = new.novel_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_chapter_delete AFTER DELETE ON novel_chapters
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_novel
+    WHERE novel_id = old.novel_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_chapter_update
+AFTER UPDATE OF name, chapter_number, source_order, novel_id ON novel_chapters
+WHEN old.name IS NOT new.name
+OR old.chapter_number IS NOT new.chapter_number
+OR old.source_order IS NOT new.source_order
+OR old.novel_id IS NOT new.novel_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT DISTINCT group_id FROM merge_group_novel
+    WHERE novel_id IN (old.novel_id, new.novel_id)
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_favorite AFTER UPDATE OF favorite_at ON novels
+WHEN (old.favorite_at IS NULL) != (new.favorite_at IS NULL)
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_novel
+    WHERE novel_id = new._id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_member_insert AFTER INSERT ON merge_group_novel
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT new.group_id
+    WHERE new.group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_member_delete AFTER DELETE ON merge_group_novel
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id = old.group_id
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_member_update AFTER UPDATE OF group_id, novel_id ON merge_group_novel
+WHEN old.group_id IS NOT new.group_id OR old.novel_id IS NOT new.novel_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id IN (old.group_id, new.group_id)
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+-- Every group whose stored stitch no longer describes the chapters behind it, once per stale row: a
+-- member chapter with no row or with changed inputs, a row for a chapter that is no longer a library
+-- member's, and a group left with fewer rows than it was stitched with, which is a deleted chapter or
+-- one another group's rebuild took over. A stale group is rebuilt whole, since one new chapter moves every
+-- position after it. Both halves see only members still in the library, which is what the stitch
+-- itself is given, so removing an entry from the library and re-adding it are self-correcting like any
+-- other change. A view so the library-wide and the one-group check share one definition: a filter on
+-- groupId reaches into both halves, so the one-group check costs that group's chapters alone.
+CREATE VIEW mergedChapterStaleView AS
+SELECT MGM.group_id AS groupId
+FROM merge_group_manga MGM
+JOIN manga M
+ON M.id = MGM.manga_id
+AND M.user_favorite_at IS NOT NULL
+JOIN chapter C
+ON C.manga_id = MGM.manga_id
+LEFT JOIN merged_chapter_unit U
+ON U.chapter_id = C.id
+AND U.group_id = MGM.group_id
+WHERE U.chapter_id IS NULL OR U.derived_number != C.remote_chapter_number
+OR U.derived_order != C.remote_order
+UNION ALL
+SELECT U.group_id AS groupId
+FROM merged_chapter_unit U
+LEFT JOIN chapter C
+ON C.id = U.chapter_id
+LEFT JOIN merge_group_manga MGM
+ON MGM.manga_id = C.manga_id
+AND MGM.group_id = U.group_id
+LEFT JOIN manga M
+ON M.id = MGM.manga_id
+AND M.user_favorite_at IS NOT NULL
+WHERE M.id IS NULL
+UNION ALL
+SELECT R.group_id AS groupId
+FROM merged_group_ranking R
+WHERE EXISTS (SELECT 1 FROM merge_group_manga MGM WHERE MGM.group_id = R.group_id)
+AND R.chapter_count != (SELECT count(*) FROM merged_chapter_unit U WHERE U.group_id = R.group_id);
+
+CREATE VIEW mergedNovelChapterStaleView AS
+SELECT MGN.group_id AS groupId
+FROM merge_group_novel MGN
+JOIN novels N
+ON N._id = MGN.novel_id
+AND N.favorite_at IS NOT NULL
+JOIN novel_chapters C
+ON C.novel_id = MGN.novel_id
+LEFT JOIN merged_novel_chapter_unit U
+ON U.chapter_id = C._id
+AND U.group_id = MGN.group_id
+WHERE U.chapter_id IS NULL OR U.derived_name != C.name OR U.derived_number != C.chapter_number
+OR U.derived_order != C.source_order
+UNION ALL
+SELECT U.group_id AS groupId
+FROM merged_novel_chapter_unit U
+LEFT JOIN novel_chapters C
+ON C._id = U.chapter_id
+LEFT JOIN merge_group_novel MGN
+ON MGN.novel_id = C.novel_id
+AND MGN.group_id = U.group_id
+LEFT JOIN novels N
+ON N._id = MGN.novel_id
+AND N.favorite_at IS NOT NULL
+WHERE N._id IS NULL
+UNION ALL
+SELECT R.group_id AS groupId
+FROM merged_group_ranking R
+WHERE EXISTS (SELECT 1 FROM merge_group_novel MGN WHERE MGN.group_id = R.group_id)
+AND R.chapter_count != (SELECT count(*) FROM merged_novel_chapter_unit U WHERE U.group_id = R.group_id);
+
+-- The merged chapter copies every count reads: units the stitch placed, on members still in the
+-- library, and on manga none an excluded scanlator hides. One definition per type, so the group counts,
+-- the recents unread filter, the download badge and a recents row's copies cannot disagree on which
+-- copies count. Excluded scanlators are dropped HERE rather than before the stitch, so hiding one stays
+-- instant. A member leaving the library restitches the group instead; the favorite join only covers the
+-- moment before reconciliation runs. Novels offer no scanlator filter (see novelLibraryView).
+CREATE VIEW mergedCountedUnitView AS
+SELECT U.group_id AS groupId, U.unit AS unit, U.chapter_id AS chapterId, C.manga_id AS ownerId,
+    C.user_read AS read, C.user_bookmark AS bookmark,
+    C.remote_name AS name, C.remote_scanlator AS scanlator, C.remote_url AS url
+FROM merged_chapter_unit U
+JOIN chapter C
+ON C.id = U.chapter_id
+JOIN manga M
+ON M.id = C.manga_id
+AND M.user_favorite_at IS NOT NULL
+LEFT JOIN excluded_scanlator ES
+ON C.manga_id = ES.manga_id
+AND C.remote_scanlator = ES.scanlator
+WHERE U.unit IS NOT NULL
+AND ES.scanlator IS NULL;
+
+CREATE VIEW mergedNovelCountedUnitView AS
+SELECT U.group_id AS groupId, U.unit AS unit, U.chapter_id AS chapterId, C.novel_id AS ownerId,
+    C.read AS read, C.bookmark AS bookmark, C.name AS name, C.url AS url
+FROM merged_novel_chapter_unit U
+JOIN novel_chapters C
+ON C._id = U.chapter_id
+JOIN novels N
+ON N._id = C.novel_id
+AND N.favorite_at IS NOT NULL
+WHERE U.unit IS NOT NULL;
+
+-- One row per merged chapter, with how many of its counted copies are read and bookmarked. A unit is
+-- read when any copy is and unread only when none is, so the answer never depends on which source leads.
+CREATE VIEW mergedUnitCopiesView AS
+SELECT groupId, unit,
+    sum(CASE WHEN read = 1 THEN 1 ELSE 0 END) AS readCopies,
+    sum(CASE WHEN bookmark = 1 THEN 1 ELSE 0 END) AS bookmarkedCopies
+FROM mergedCountedUnitView
+GROUP BY groupId, unit;
+
+CREATE VIEW mergedNovelUnitCopiesView AS
+SELECT groupId, unit,
+    sum(CASE WHEN read = 1 THEN 1 ELSE 0 END) AS readCopies,
+    sum(CASE WHEN bookmark = 1 THEN 1 ELSE 0 END) AS bookmarkedCopies
+FROM mergedNovelCountedUnitView
+GROUP BY groupId, unit;
+
+staleMergedGroup:
+SELECT groupId FROM mergedChapterStaleView WHERE groupId = :groupId LIMIT 1;
+
+staleMergedNovelGroup:
+SELECT groupId FROM mergedNovelChapterStaleView WHERE groupId = :groupId LIMIT 1;
+
+-- A reconcile's claim on its type's pending groups, in one transaction. A claimed row still there is
+-- one a reconcile has not finished: dropped where a write has listed its group again since, and claimed
+-- again otherwise, so a run that failed midway leaves nothing unchecked.
+dropSupersededClaims:
+DELETE FROM merged_group_pending
+WHERE claimed = 1
+AND group_id IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0)
+AND group_id IN (SELECT _id FROM merge_group WHERE content_type = :contentType);
+
+claimPending:
+UPDATE merged_group_pending SET claimed = 1
+WHERE claimed = 0
+AND group_id IN (SELECT _id FROM merge_group WHERE content_type = :contentType);
+
+claimedGroups:
+SELECT group_id FROM merged_group_pending
+WHERE claimed = 1
+AND group_id IN (SELECT _id FROM merge_group WHERE content_type = :contentType);
+
+-- After the group's exact check, which covered every write made before the claim. A write since has
+-- listed the group again as unclaimed, which this leaves.
+deleteClaim:
+DELETE FROM merged_group_pending
+WHERE group_id = :groupId
+AND claimed = 1;
+storedRankings:
+SELECT group_id, ranking FROM merged_group_ranking;
+
+-- Guarded like insert below: the rebuild reads the ranking before it writes, and a group dissolved in
+-- between would otherwise leave a row the foreign-key check refuses. Written after the group's units,
+-- and counted from them rather than passed in, since insert's own guard can skip a row.
+insertRanking:
+INSERT OR REPLACE INTO merged_group_ranking(group_id, ranking, chapter_count)
+SELECT :groupId, :ranking, (SELECT count(*) FROM merged_chapter_unit WHERE group_id = :groupId)
+WHERE EXISTS (SELECT 1 FROM merge_group WHERE _id = :groupId);
+
+insertNovelRanking:
+INSERT OR REPLACE INTO merged_group_ranking(group_id, ranking, chapter_count)
+SELECT :groupId, :ranking, (SELECT count(*) FROM merged_novel_chapter_unit WHERE group_id = :groupId)
+WHERE EXISTS (SELECT 1 FROM merge_group WHERE _id = :groupId);
+
+deleteRanking:
+DELETE FROM merged_group_ranking
+WHERE group_id = :groupId;
+
+-- Clearing before a rebuild reaches rows by group AND by member, because a member that has just left
+-- the group still owns rows stamped with it, and those are exactly what makes the group stale.
+deleteGroup:
+DELETE FROM merged_chapter_unit
+WHERE group_id = :groupId
+OR chapter_id IN (
+    SELECT C.id FROM merge_group_manga MGM
+    JOIN chapter C ON C.manga_id = MGM.manga_id
+    WHERE MGM.group_id = :groupId
+);
+
+deleteNovelGroup:
+DELETE FROM merged_novel_chapter_unit
+WHERE group_id = :groupId
+OR chapter_id IN (
+    SELECT C._id FROM merge_group_novel MGN
+    JOIN novel_chapters C ON C.novel_id = MGN.novel_id
+    WHERE MGN.group_id = :groupId
+);
+
+-- The EXISTS guard is load-bearing, not defensive. The rebuild reads a group's chapters and writes its
+-- units in a later transaction, so a chapter deleted in between (a sync re-adding one under a new row
+-- id is the common case) would otherwise get a unit written to an id that no longer exists, which the
+-- driver's foreign-key verification later refuses to open the database with.
+insert:
+INSERT OR REPLACE INTO merged_chapter_unit(chapter_id, group_id, unit, copy_order, derived_number, derived_order)
+SELECT :chapterId, :groupId, :unit, :copyOrder, :derivedNumber, :derivedOrder
+WHERE EXISTS (SELECT 1 FROM chapter WHERE id = :chapterId);
+
+insertNovel:
+INSERT OR REPLACE INTO merged_novel_chapter_unit(
+    chapter_id, group_id, unit, copy_order, derived_name, derived_number, derived_order
+)
+SELECT :chapterId, :groupId, :unit, :copyOrder, :derivedName, :derivedNumber, :derivedOrder
+WHERE EXISTS (SELECT 1 FROM novel_chapters WHERE _id = :chapterId);
+
+-- One group's stored stitch, for a screen about to render it. Ordered so the caller can walk it
+-- straight into a list: by merged position, then by how the stitch ranked the sources holding it.
+stitchOfGroup:
+SELECT chapter_id AS chapterId, unit, copy_order AS copyOrder
+FROM merged_chapter_unit
+WHERE group_id = :groupId
+AND unit IS NOT NULL
+ORDER BY unit, copy_order;
+
+stitchOfNovelGroup:
+SELECT chapter_id AS chapterId, unit, copy_order AS copyOrder
+FROM merged_novel_chapter_unit
+WHERE group_id = :groupId
+AND unit IS NOT NULL
+ORDER BY unit, copy_order;
+
+-- Deduplicated chapter counts per merge group: one unit per chapter the group covers, counted over
+-- mergedUnitCopiesView. Nothing here restates the stitch; it reads what the stitch decided, so this
+-- cannot come to a different answer than the chapter list. A unit whose every copy is filtered out
+-- disappears from these counts and from the list together.
+--
+-- CONSUMER CONTRACT: a group with any placed, unfiltered unit has a row, carrying 0 read when nothing
+-- is read. An absent group is one not stitched yet (or with every unit filtered out), which the caller
+-- must show as its leading source's own counts rather than as zero: reconciliation runs while the
+-- library is already on screen, so "no row yet" and "nothing read" have to be told apart.
+countsByGroup:
+SELECT
+    groupId,
+    count(*) AS totalCount,
+    coalesce(sum(CASE WHEN readCopies > 0 THEN 1 ELSE 0 END), 0) AS readCount,
+    coalesce(sum(CASE WHEN bookmarkedCopies > 0 THEN 1 ELSE 0 END), 0) AS bookmarkCount
+FROM mergedUnitCopiesView
+GROUP BY groupId;
+
+countsByGroupNovel:
+SELECT
+    groupId,
+    count(*) AS totalCount,
+    coalesce(sum(CASE WHEN readCopies > 0 THEN 1 ELSE 0 END), 0) AS readCount,
+    coalesce(sum(CASE WHEN bookmarkedCopies > 0 THEN 1 ELSE 0 END), 0) AS bookmarkCount
+FROM mergedNovelUnitCopiesView
+GROUP BY groupId;
+
+-- The count each grouped member was ranked on at its group's last stitch, for the collapsed library row
+-- to lead on the member the stitch does. Only rows for the group the member is in now.
+savedRecognizedCounts:
+SELECT S.manga_id AS mangaId, S.recognized_count AS recognizedCount
+FROM merged_member_count S
+JOIN merge_group_manga MGM
+ON MGM.manga_id = S.manga_id
+AND MGM.group_id = S.group_id;
+
+-- The distinct recognized chapter numbers of each grouped library member with no saved count, which is
+-- one its group has not been stitched with yet, so the library ranks it exactly before that stitch.
+-- The caller counts them as the stitch does, narrowed to Float, which SQL cannot. Excluded scanlators
+-- are included, as the stitch reads them. A row count cannot stand in: a source listing one chapter
+-- under several scanlators wins on rows while covering no more of the series. Costs one saved-count
+-- lookup per member once every group is stitched, rather than a pass over every member chapter.
+unsavedRecognizedChapterNumbers:
+SELECT DISTINCT C.manga_id AS mangaId, C.remote_chapter_number AS chapterNumber
+FROM chapter C
+WHERE C.remote_chapter_number >= 0
+AND C.manga_id IN (
+    SELECT MGM.manga_id
+    FROM merge_group_manga MGM
+    JOIN manga M
+    ON M.id = MGM.manga_id
+    AND M.user_favorite_at IS NOT NULL
+    WHERE NOT EXISTS (
+        SELECT 1 FROM merged_member_count S
+        WHERE S.manga_id = MGM.manga_id AND S.group_id = MGM.group_id
+    )
+);
+
+-- Guarded like insert above, for a group dissolved or a member removed while it was being stitched.
+insertMemberCount:
+INSERT OR REPLACE INTO merged_member_count(manga_id, group_id, recognized_count)
+SELECT :mangaId, :groupId, :recognizedCount
+WHERE EXISTS (SELECT 1 FROM manga WHERE id = :mangaId)
+AND EXISTS (SELECT 1 FROM merge_group WHERE _id = :groupId);
+
+deleteMemberCounts:
+DELETE FROM merged_member_count
+WHERE group_id = :groupId;
+
+-- Every merged group's member chapters, with what a download probe needs to find the file. Whether a
+-- chapter is on disk is not in this database, so the count itself cannot be a query: the caller probes
+-- the download cache over these rows and counts the units that answer. Scanlator rides along because
+-- the manga download folder name is built from it.
+downloadUnitsByGroup:
+SELECT groupId, unit, ownerId, name, scanlator, url
+FROM mergedCountedUnitView;
+
+-- Novel twin, with no scanlator selected: a novel's download name carries none.
+downloadUnitsByGroupNovel:
+SELECT groupId, unit, ownerId, name, url
+FROM mergedNovelCountedUnitView;
+
+-- downloadUnitsByGroup for :ownerIds only, through the chapter table's owner index, so its cost follows
+-- the chapters of the members asked about rather than every merged chapter.
+downloadUnitsOfOwners:
+SELECT groupId, unit, ownerId, name, scanlator, url
+FROM mergedCountedUnitView
+WHERE ownerId IN :ownerIds;
+
+downloadUnitsOfNovelOwners:
+SELECT groupId, unit, ownerId, name, url
+FROM mergedNovelCountedUnitView
+WHERE ownerId IN :ownerIds;
+
+-- How many grouped members are in the library, which the download read weighs its owners against.
+mergedLibraryMemberCount:
+SELECT count(*)
+FROM merge_group_manga MGM
+JOIN manga M
+ON M.id = MGM.manga_id
+AND M.user_favorite_at IS NOT NULL;
+
+mergedNovelLibraryMemberCount:
+SELECT count(*)
+FROM merge_group_novel MGN
+JOIN novels N
+ON N._id = MGN.novel_id
+AND N.favorite_at IS NOT NULL;
+
+-- For each of :chapterIds the stitch places, every copy of the same merged chapter its group holds, the
+-- chapter itself always included, with what a download probe needs. The other copies are only the
+-- counted ones (mergedCountedUnitView), the same rows downloadUnitsByGroup counts, so a recents row and
+-- the library badge agree on what is downloaded. The chapter itself is kept whatever hides it,
+-- since a row names it and a tap opens it where it is on disk. A chapter no group places returns nothing.
+copiesOfChapters:
+SELECT U1.chapter_id AS namedId, U2.chapter_id AS copyId, U2.unit AS unit, U2.copy_order AS copyOrder,
+    C.manga_id AS ownerId, M.remote_title AS ownerTitle, M.source_id AS ownerSource,
+    C.remote_name AS name, C.remote_scanlator AS scanlator, C.remote_url AS url
+FROM merged_chapter_unit U1
+JOIN merged_chapter_unit U2
+ON U2.group_id = U1.group_id
+AND U2.unit = U1.unit
+JOIN chapter C
+ON C.id = U2.chapter_id
+JOIN manga M
+ON M.id = C.manga_id
+WHERE U1.chapter_id IN :chapterIds
+AND (
+    U2.chapter_id = U1.chapter_id
+    OR EXISTS (SELECT 1 FROM mergedCountedUnitView V WHERE V.chapterId = U2.chapter_id)
+);
+
+-- Novel twin.
+copiesOfNovelChapters:
+SELECT U1.chapter_id AS namedId, U2.chapter_id AS copyId, U2.unit AS unit, U2.copy_order AS copyOrder,
+    C.novel_id AS ownerId, N.title AS ownerTitle, N.source AS ownerSource, C.name, C.url
+FROM merged_novel_chapter_unit U1
+JOIN merged_novel_chapter_unit U2
+ON U2.group_id = U1.group_id
+AND U2.unit = U1.unit
+JOIN novel_chapters C
+ON C._id = U2.chapter_id
+JOIN novels N
+ON N._id = C.novel_id
+WHERE U1.chapter_id IN :chapterIds
+AND (
+    U2.chapter_id = U1.chapter_id
+    OR EXISTS (SELECT 1 FROM mergedNovelCountedUnitView V WHERE V.chapterId = U2.chapter_id)
+);

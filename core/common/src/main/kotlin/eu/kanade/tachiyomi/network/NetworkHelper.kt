@@ -1,17 +1,27 @@
 package eu.kanade.tachiyomi.network
 
 import android.content.Context
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor
 import eu.kanade.tachiyomi.network.interceptor.FlareSolverrClient
 import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
 import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
+import eu.kanade.tachiyomi.network.interceptor.pinFlareSolverrUserAgents // RK
+import kotlinx.coroutines.CoroutineScope
+import mihon.core.metro.AppCoroutineScope
 import okhttp3.Cache
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import java.io.File
-import java.util.concurrent.TimeUnit
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
+@Inject
+@SingleIn(AppScope::class)
 class NetworkHelper(
+    @AppCoroutineScope private val scope: CoroutineScope,
     private val context: Context,
     private val preferences: NetworkPreferences,
 ) {
@@ -19,15 +29,15 @@ class NetworkHelper(
     val cookieJar = AndroidCookieJar()
 
     // RK -->
-    val flareSolverr = FlareSolverrClient(cookieJar)
+    val flareSolverr = FlareSolverrClient(cookieJar, preferences)
     // RK <--
 
-    private val clientBuilder: OkHttpClient.Builder = run {
+    private fun clientBuilder(): OkHttpClient.Builder = run {
         val builder = OkHttpClient.Builder()
             .cookieJar(cookieJar)
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .callTimeout(2, TimeUnit.MINUTES)
+            .connectTimeout(30.seconds)
+            .readTimeout(30.seconds)
+            .callTimeout(2.minutes)
             .cache(
                 Cache(
                     directory = File(context.cacheDir, "network_cache"),
@@ -35,9 +45,9 @@ class NetworkHelper(
                 ),
             )
             .addInterceptor(UncaughtExceptionInterceptor())
-            // RK --> pin per-host UA after a FlareSolverr solve
-            .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider, flareSolverr::pinnedUserAgentFor))
-        // RK <--
+            .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
+            // RK: ahead of the logging interceptor, so verbose logs show the User-Agent actually sent.
+            .pinFlareSolverrUserAgents(flareSolverr::pinnedUserAgentFor)
 
         if (preferences.verboseLogging.get()) {
             val httpLoggingInterceptor = HttpLoggingInterceptor().apply {
@@ -47,6 +57,8 @@ class NetworkHelper(
                 redactHeader("Authorization")
                 redactHeader("Cookie")
                 redactHeader("Set-Cookie")
+                //     Hikka sends its OAuth token in a header of its own name.
+                redactHeader("auth")
             }
             builder.addNetworkInterceptor(httpLoggingInterceptor)
         }
@@ -68,20 +80,22 @@ class NetworkHelper(
         }
     }
 
-    val client = clientBuilder
-        .addInterceptor(
-            // RK --> pass preferences + the FlareSolverr client for the FS bypass path
-            CloudflareInterceptor(context, cookieJar, ::defaultUserAgentProvider, preferences, flareSolverr),
-            // RK <--
-        )
-        .build()
+    val client: OkHttpClient by lazy {
+        clientBuilder()
+            .addInterceptor(
+                // RK --> pass preferences + the FlareSolverr client for the FS bypass path
+                CloudflareInterceptor(context, cookieJar, scope, ::defaultUserAgentProvider, preferences, flareSolverr),
+                // RK <--
+            )
+            .build()
+    }
 
     /**
      * @deprecated Since extension-lib 1.5
      */
     @Deprecated("The regular client handles Cloudflare by default")
     @Suppress("UNUSED")
-    val cloudflareClient: OkHttpClient = client
+    val cloudflareClient: OkHttpClient get() = client
 
     fun defaultUserAgentProvider() = preferences.defaultUserAgent.get().trim()
 }

@@ -1,91 +1,102 @@
 package reikai.presentation.library
 
 import eu.kanade.tachiyomi.ui.library.LibraryItem
-import reikai.domain.MergeGroupAlgebra
+import reikai.domain.library.mangaLibraryRanking
+import reikai.domain.merge.MergedGroupCounts
+import reikai.domain.merge.bucketByMergeGroup
+import reikai.domain.merge.coverFallbacks
 import tachiyomi.domain.source.model.Source
 
 /**
- * Collapses pref-based merge groups in the library so the same series favorited from several
- * sources renders as ONE cover with combined counts. Faithful port of the Yokai-era
- * `MangaLibraryGrouping.collapse`, re-typed onto Mihon's flat pre-grouping [LibraryItem] list.
- *
- * Buckets items by their canonical merge key (sorted comma id group from `mangaManualMerges`) or,
- * when [autoMergeSameTitle] is on, their lowercase-trimmed title. Each bucket is split into
- * subgroups with no `mangaManualUnmerges` pair between members (greedy first-fit). Each multi-member
- * subgroup keeps a single primary (most chapters, then earliest added) stamped with the group ids,
- * summed unread / download counts, and the grouped sources for the badge.
- *
- * Pure: reads only its arguments and the [resolveSource] lambda.
+ * Collapses persisted merge groups so a series favorited from several sources renders as ONE library
+ * cover with combined counts: each multi-member bucket keeps one primary stamped with the group by
+ * [stampMergedGroup], the rule the novel collapse stamps by too. Ungrouped items, and all items when
+ * merging is off, pass through. The primary is the trunk the merged chapter list uses
+ * ([reikai.domain.manga.ChapterAggregation]), so its `isLocal` follows the chosen source: a local trunk
+ * locks Download, a remote one does not. Pure; the caller supplies [membership].
  */
 object MangaMergeCollapse {
 
-    fun collapse(
+    suspend fun collapse(
         items: List<LibraryItem>,
-        manualMerges: Set<String>,
-        manualUnmerges: Set<String>,
-        autoMergeSameTitle: Boolean,
+        // Manga id -> group id for grouped items; absent for standalone.
+        membership: Map<Long, Long>,
+        mergingEnabled: Boolean,
         // When false, the group's sources are not resolved and the badge falls back to a count.
         showMergeSourceIcons: Boolean,
-        resolveSource: (Long) -> Source,
+        resolveSource: suspend (Long) -> Source,
+        // Group id -> the stored stitch's counts. Absent for a group not stitched yet or with every unit
+        // filtered out, which keeps the primary's own counts, as on the novel side.
+        mergedCountsByGroup: Map<Long, MergedGroupCounts> = emptyMap(),
+        // Group id -> merged chapters with a copy on disk. Absent keeps the members' own sum, as on novels.
+        mergedDownloadsByGroup: Map<Long, Int> = emptyMap(),
+        // So a merged count never lights a badge the user turned off.
+        badgePrefs: LibraryBadgePrefs,
+        // Group id -> member manga ids in trunk order, only for groups whose per-group source-order
+        // override is on. Empty for a group means "no override": rank by the global preferred list instead.
+        overrideRankings: Map<Long, List<Long>> = emptyMap(),
+        // Global preferred-source ids, highest priority first; the fallback ranking when a group has no
+        // override. Empty means no preference, so ranking falls through to chapter count then id.
+        preferredSourceIds: List<Long> = emptyList(),
+        // Manga id -> distinct recognized chapter numbers, the count the stitch ranks its trunk on. An
+        // absent manga lists none, and ranks as zero there too.
+        recognizedChapterCounts: Map<Long, Long> = emptyMap(),
     ): List<LibraryItem> {
-        if (items.size <= 1) return items
-        val mergeKey = MergeGroupAlgebra.parseMergeKeys(manualMerges)
-        val unmergedPairs = MergeGroupAlgebra.parseUnmergedPairs(manualUnmerges)
-
-        val buckets = LinkedHashMap<String, MutableList<LibraryItem>>()
-        for (item in items) {
-            val id = item.libraryManga.manga.id
-            val key = mergeKey[id]
-                ?: if (autoMergeSameTitle) item.libraryManga.manga.title.lowercase().trim() else "id:$id"
-            buckets.getOrPut(key) { mutableListOf() }.add(item)
+        return items.bucketByMergeGroup(membership, mergingEnabled) { it.libraryManga.manga.id }.map { bucket ->
+            if (bucket.members.size == 1) return@map bucket.members.single()
+            val groupId = bucket.groupId
+            mergePrimary(
+                subGroup = bucket.members,
+                overrideOrder = groupId?.let { overrideRankings[it] }.orEmpty(),
+                preferredSourceIds = preferredSourceIds,
+                showMergeSourceIcons = showMergeSourceIcons,
+                resolveSource = resolveSource,
+                mergedCounts = groupId?.let { mergedCountsByGroup[it] },
+                mergedDownloads = groupId?.let { mergedDownloadsByGroup[it] },
+                badgePrefs = badgePrefs,
+                recognizedChapterCounts = recognizedChapterCounts,
+            )
         }
-
-        val result = mutableListOf<LibraryItem>()
-        for ((_, bucket) in buckets) {
-            if (bucket.size == 1) {
-                result.add(bucket.first())
-                continue
-            }
-            for (subGroup in MergeGroupAlgebra.splitByUnmergedPairs(bucket, unmergedPairs) {
-                it.libraryManga.manga.id
-            }) {
-                if (subGroup.size == 1) {
-                    result.add(subGroup.first())
-                } else {
-                    result.add(mergePrimary(subGroup, showMergeSourceIcons, resolveSource))
-                }
-            }
-        }
-        return result
     }
 
-    private fun mergePrimary(
+    private suspend fun mergePrimary(
         subGroup: List<LibraryItem>,
+        overrideOrder: List<Long>,
+        preferredSourceIds: List<Long>,
         showMergeSourceIcons: Boolean,
-        resolveSource: (Long) -> Source,
+        resolveSource: suspend (Long) -> Source,
+        mergedCounts: MergedGroupCounts?,
+        mergedDownloads: Int?,
+        badgePrefs: LibraryBadgePrefs,
+        recognizedChapterCounts: Map<Long, Long>,
     ): LibraryItem {
-        val primary = subGroup.maxWith(
-            compareBy<LibraryItem> { it.libraryManga.totalChapters }
-                .thenBy { it.libraryManga.manga.dateAdded },
-        )
-        return primary.copy(
-            // Unread tracks the primary (most-chapters) source rather than summing every source, which
-            // double-counts the chapters they share. The primary is effectively the unified list, so
-            // this is far closer to the real deduped unread than a sum. Downloads stay summed (each is
-            // a real per-source file).
-            downloadCount = subGroup.sumOf { it.downloadCount },
-            // LastRead sorts by the most recent read across all members, not just the primary's own, so
-            // reading any source bubbles the merged entry up.
-            libraryManga = primary.libraryManga.copy(lastRead = subGroup.maxOf { it.libraryManga.lastRead }),
-            relatedMangaIds = subGroup.map { it.libraryManga.manga.id },
-            badges = primary.badges.copy(
-                downloadCount = subGroup.sumOf { it.badges.downloadCount },
-                mergedSources = if (showMergeSourceIcons) {
-                    subGroup.map { resolveSource(it.libraryManga.manga.source) }
-                } else {
-                    emptyList()
-                },
-            ),
+        val ranked = mangaLibraryRanking(subGroup, overrideOrder, preferredSourceIds, recognizedChapterCounts) {
+            it.libraryManga.manga
+        }
+        val primary = ranked.first()
+        return primary.stampMergedGroup(
+            coverFallbacks = coverFallbacks(primary.id, ranked) { it.id }.map(::libraryCoverModel),
+            members = subGroup.map {
+                MergedRowMember(
+                    it.id,
+                    it.libraryManga.manga.source,
+                    it.libraryManga.lastRead,
+                    it.downloadCount,
+                    it.libraryManga.manga.genre,
+                    it.libraryManga.manga.lastUpdate,
+                    it.libraryManga.latestUpload,
+                    it.libraryManga.chapterFetchedAt,
+                )
+            },
+            counts = mergedCounts,
+            mergedDownloads = mergedDownloads,
+            badgePrefs = badgePrefs,
+            showSourceIcons = showMergeSourceIcons,
+            // A manga row carries its source's search terms itself, so any member on that source answers.
+            querySource = { source ->
+                subGroup.first { it.libraryManga.manga.source == source }.querySource(source.toString())
+            },
+            sourceBadge = { SourceBadge.Manga(resolveSource(it)) },
         )
     }
 }

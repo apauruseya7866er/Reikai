@@ -1,12 +1,15 @@
 import kotlin.Boolean;
+import kotlin.time.Instant;
 
--- Parallel of chapters. Three divergences from the manga chapter table:
--- 1. No `scanlator` (novels don't have scanlator groups).
--- 2. `last_text_progress` replaces `last_page_read` + `pages_left`. A hundredths scroll percent
---    (0..10000) so the reader resumes mid-chapter without snapping to a paragraph boundary.
--- 3. `page` labels the volume / section / arc a chapter belongs to (e.g. "Volume 3"). Used by
+-- Parallel of chapters. Two divergences from the manga chapter table:
+-- 1. `last_text_progress` replaces `last_page_read` + `pages_left`. Scroll progress in hundredths of a
+--    percent (0..10000), though the reader writes and resumes it in whole-percent steps.
+-- 2. `page` labels the volume / section / arc a chapter belongs to (e.g. "Volume 3"). Used by
 --    paged-novel sources whose chapter lists span multiple endpoints; empty string when the
 --    source doesn't expose this metadata.
+-- `scanlator` is the translation group the source names, as on manga's table (53.sqm).
+-- `raw_chapter_number` is what number recognition starts from: the plugin's own number, -1 for none.
+-- A row stored before it was recorded holds its stored number until its page syncs again (63.sqm).
 CREATE TABLE novel_chapters(
     _id INTEGER NOT NULL PRIMARY KEY,
     novel_id INTEGER NOT NULL,
@@ -17,22 +20,35 @@ CREATE TABLE novel_chapters(
     last_text_progress INTEGER NOT NULL DEFAULT 0,
     chapter_number REAL NOT NULL,
     source_order INTEGER NOT NULL,
-    date_fetch INTEGER NOT NULL,
-    date_upload INTEGER NOT NULL,
+    date_fetch INTEGER AS Instant NOT NULL,
+    date_upload INTEGER AS Instant,
     page TEXT NOT NULL DEFAULT '',
     is_downloaded INTEGER AS Boolean NOT NULL DEFAULT 0,
+    scanlator TEXT,
+    raw_chapter_number REAL,
     FOREIGN KEY(novel_id) REFERENCES novels (_id)
     ON DELETE CASCADE
 );
 
-CREATE INDEX novel_chapters_novel_id_index ON novel_chapters(novel_id);
+-- A novel lists a chapter once, as a manga does under chapter's UNIQUE(manga_id, remote_url) (51.sqm)
+CREATE UNIQUE INDEX novel_chapters_novel_id_url_index ON novel_chapters(novel_id, url);
 CREATE INDEX novel_chapters_unread_by_novel_index ON novel_chapters(novel_id, read) WHERE read = 0;
+-- The updates feed reads chapters newest fetch first and stops at its limit, as chapter's
+-- chapter_state_date_fetch_index lets the manga feed do (55.sqm)
+CREATE INDEX novel_chapters_date_fetch_index ON novel_chapters(date_fetch);
 
 getByNovelId:
 SELECT *
 FROM novel_chapters
 WHERE novel_id = :novelId
 ORDER BY source_order;
+
+-- How many chapters and the highest number, counted here so the migration list loads no chapter rows,
+-- as chapter.sq's getChapterSummaryByMangaId does for manga.
+getChapterSummaryByNovelId:
+SELECT count(*) AS total, max(chapter_number) AS latestChapterNumber
+FROM novel_chapters
+WHERE novel_id = :novelId;
 
 -- Chapters for one page of a paged source (page = the transport index "1".."N"), or one volume
 -- label for label-grouped sources. Drives the lazy per-page chapter list on the details screen.
@@ -43,12 +59,21 @@ WHERE novel_id = :novelId AND page = :page
 ORDER BY source_order;
 
 -- Distinct non-empty page labels, used to build the page selector for label-grouped sources
--- (whose chapters arrive in one parseNovel call rather than via parsePage).
+-- (whose chapters arrive in one parseNovel call rather than via parsePage). In the source's order, so
+-- "Volume 10" follows "Volume 2"; a label casts to 0, and a numbered page, whose source order may
+-- restart per page, runs by its number.
 getDistinctPages:
-SELECT DISTINCT page
+SELECT page
 FROM novel_chapters
 WHERE novel_id = :novelId AND page != ''
-ORDER BY page;
+GROUP BY page
+ORDER BY CAST(page AS INTEGER), min(source_order);
+
+-- The novel twin of chapter.sq's getMangaIdsWithChapterNameLike, backing the library's `chapter:` term.
+getNovelIdsWithChapterNameLike:
+SELECT DISTINCT novel_id
+FROM novel_chapters
+WHERE lower(name) LIKE '%' || lower(:name) || '%';
 
 getById:
 SELECT *
@@ -62,8 +87,8 @@ WHERE url = :url AND novel_id = :novelId
 LIMIT 1;
 
 insert:
-INSERT INTO novel_chapters (novel_id, url, name, read, bookmark, last_text_progress, chapter_number, source_order, date_fetch, date_upload, page)
-VALUES (:novelId, :url, :name, :read, :bookmark, :lastTextProgress, :chapterNumber, :sourceOrder, :dateFetch, :dateUpload, :page);
+INSERT INTO novel_chapters (novel_id, url, name, read, bookmark, last_text_progress, chapter_number, source_order, date_fetch, date_upload, page, scanlator, raw_chapter_number)
+VALUES (:novelId, :url, :name, :read, :bookmark, :lastTextProgress, :chapterNumber, :sourceOrder, :dateFetch, :dateUpload, :page, :scanlator, :rawChapterNumber);
 
 update:
 UPDATE novel_chapters SET
@@ -77,7 +102,9 @@ UPDATE novel_chapters SET
     source_order = coalesce(:sourceOrder, source_order),
     date_fetch = coalesce(:dateFetch, date_fetch),
     date_upload = coalesce(:dateUpload, date_upload),
-    page = coalesce(:page, page)
+    page = coalesce(:page, page),
+    scanlator = coalesce(:scanlator, scanlator),
+    raw_chapter_number = coalesce(:rawChapterNumber, raw_chapter_number)
 WHERE _id = :chapterId;
 
 delete:

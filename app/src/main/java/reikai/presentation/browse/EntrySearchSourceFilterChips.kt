@@ -4,30 +4,32 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.DoneAll
-import androidx.compose.material.icons.outlined.FilterList
-import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.DoneAll
+import mihon.icons.materialsymbols.rounded.FilterList
+import mihon.icons.materialsymbols.rounded.Keep
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
 
 /**
- * The Pinned / All / Has-results filter chips shared by the manga and novel global search, with a
- * horizontal divider beneath the row. Driven by primitives ([isPinnedOnly] rather than either side's
- * `SourceFilter` enum) so the one row serves both. [showSourceFilter] hides Pinned / All (e.g. a
- * source-scoped search that only toggles results).
+ * The Pinned / All / Has-results filter chips of the global search, with a horizontal divider
+ * beneath the row. [showSourceFilter] hides Pinned / All (e.g. a source-scoped search that only
+ * toggles results).
  */
 @Composable
 fun EntrySearchSourceFilterChips(
@@ -44,13 +46,14 @@ fun EntrySearchSourceFilterChips(
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = MaterialTheme.padding.small),
             horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             if (showSourceFilter) {
                 FilterChip(
                     selected = isPinnedOnly,
                     onClick = onSelectPinnedOnly,
                     leadingIcon = {
-                        Icon(Icons.Outlined.PushPin, null, Modifier.size(FilterChipDefaults.IconSize))
+                        Icon(MaterialSymbols.Rounded.Keep, null, Modifier.size(FilterChipDefaults.IconSize))
                     },
                     label = { Text(stringResource(MR.strings.pinned_sources)) },
                 )
@@ -58,16 +61,18 @@ fun EntrySearchSourceFilterChips(
                     selected = !isPinnedOnly,
                     onClick = onSelectAll,
                     leadingIcon = {
-                        Icon(Icons.Outlined.DoneAll, null, Modifier.size(FilterChipDefaults.IconSize))
+                        Icon(MaterialSymbols.Rounded.DoneAll, null, Modifier.size(FilterChipDefaults.IconSize))
                     },
-                    label = { Text(stringResource(MR.strings.all)) },
+                    label = { Text(stringResource(MR.strings.all_sources)) },
                 )
+
+                VerticalDivider(modifier = Modifier.height(FilterChipDefaults.Height))
             }
             FilterChip(
                 selected = onlyShowHasResults,
                 onClick = onToggleResults,
                 leadingIcon = {
-                    Icon(Icons.Outlined.FilterList, null, Modifier.size(FilterChipDefaults.IconSize))
+                    Icon(MaterialSymbols.Rounded.FilterList, null, Modifier.size(FilterChipDefaults.IconSize))
                 },
                 label = { Text(stringResource(MR.strings.has_results)) },
             )

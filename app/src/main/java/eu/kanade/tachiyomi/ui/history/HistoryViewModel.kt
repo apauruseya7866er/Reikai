@@ -1,0 +1,138 @@
+package eu.kanade.tachiyomi.ui.history
+
+import androidx.compose.runtime.Immutable
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Assisted
+import dev.zacsweers.metro.AssistedFactory
+import dev.zacsweers.metro.AssistedInject
+import dev.zacsweers.metro.ContributesIntoMap
+import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactory
+import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactoryKey
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.plus
+import logcat.LogPriority
+import reikai.domain.category.RecentsSurface
+import reikai.domain.category.recentsCategoryFilterFlow
+import reikai.domain.entry.overlayCustomInfo
+import reikai.domain.entry.withCustomInfo
+import reikai.domain.source.ReikaiSourcePreferences
+import reikai.presentation.history.emptyOnFailure
+import tachiyomi.core.common.util.lang.SubscriberGate
+import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.history.interactor.GetHistory
+import tachiyomi.domain.history.interactor.RemoveHistory
+import tachiyomi.domain.history.model.HistoryWithRelations
+import tachiyomi.domain.manga.interactor.GetCustomMangaInfo
+import kotlin.time.Duration.Companion.seconds
+
+// RK --> assisted, so the tab building this feed says whose category selection it reads.
+@AssistedInject
+class HistoryViewModel(
+    @Assisted private val surface: RecentsSurface,
+    // RK <--
+    // RK: per-entry custom title/cover overrides, overlaid on the displayed rows (display-only)
+    private val getCustomMangaInfo: GetCustomMangaInfo,
+    private val getHistory: GetHistory,
+    private val removeHistory: RemoveHistory,
+    // RK: the building surface's category filter, one selection covering both content types.
+    private val reikaiSourcePreferences: ReikaiSourcePreferences,
+) : ViewModel() {
+
+    private val subscriberGate = SubscriberGate()
+
+    // RK --> the factory the assisted surface needs, so a bare metroViewModel() cannot build this.
+    @AssistedFactory
+    @ManualViewModelAssistedFactoryKey
+    @ContributesIntoMap(AppScope::class)
+    interface Factory : ManualViewModelAssistedFactory {
+        fun create(surface: RecentsSurface): HistoryViewModel
+    }
+    // RK <--
+
+    private val _events: Channel<Event> = Channel(Channel.UNLIMITED)
+    val events: Flow<Event> = _events.receiveAsFlow()
+
+    // RK: the recents category filter is a query parameter, so the subscription re-runs on it. Search
+    //     is not one: the engine matches the rows it already holds, so this feed asks for all of them.
+    private val history: StateFlow<List<HistoryWithRelations>?> =
+        reikaiSourcePreferences.recentsCategoryFilterFlow(surface)
+            .distinctUntilChanged()
+            .flatMapLatest { categories ->
+                // RK: overlay the display-only custom title/cover onto each row, keyed by the real manga id.
+                combine(
+                    getHistory.subscribe("", categories.include, categories.exclude),
+                    getCustomMangaInfo.subscribeAll(),
+                ) { history, customInfo ->
+                    history.overlayCustomInfo(
+                        customInfo.associateBy { it.mangaId },
+                        HistoryWithRelations::mangaId,
+                        HistoryWithRelations::withCustomInfo,
+                    )
+                }
+                    .distinctUntilChanged()
+                    // RK: a failure lands on an empty feed, where upstream's empty seed left it.
+                    .emptyOnFailure { error ->
+                        logcat(LogPriority.ERROR, error)
+                        _events.send(Event.InternalError)
+                    }
+                    .flowOn(Dispatchers.Default)
+            }
+            // RK: seeded null, where upstream seeds an empty list. Null is this feed's "not loaded yet",
+            //     read by the shared screen and by the recents read lane; an empty seed would make both
+            //     announce an empty history a tick before the query answers. A failed query therefore
+            //     has to emit its empty list itself (emptyOnFailure), or the tab loads for good.
+            .stateIn(viewModelScope + subscriberGate, SharingStarted.Eagerly, null)
+
+    val state: StateFlow<State> = history
+        .map { State(list = it) }
+        .stateIn(viewModelScope + subscriberGate, subscriberGate.whileSubscribed(5.seconds), State())
+
+    // RK: the latest manga read, which the seam resumes from. Reads the unfiltered query rather than
+    //     the rendered feed, so a category filter cannot change what resume opens.
+    suspend fun getLast(): HistoryWithRelations? = withIOContext { getHistory.getLast() }
+
+    fun removeFromHistory(history: HistoryWithRelations) {
+        viewModelScope.launchIO {
+            removeHistory.await(history)
+        }
+    }
+
+    fun removeAllFromHistory(mangaId: Long) {
+        viewModelScope.launchIO {
+            removeHistory.await(mangaId)
+        }
+    }
+
+    // RK: suspends and answers, where upstream launched and announced itself through an event. The
+    //     shared surface clears both content types behind one confirmation, so the message belongs to
+    //     the shell that asked, and it is owed the truth about whether the wipe happened.
+    suspend fun removeAllHistory(): Boolean = withIOContext { removeHistory.awaitAll() }
+
+    // RK: the state is down to the feed itself. Search, the dialogs and the whole add-from-a-row flow
+    // moved to the recents engine, which runs one add sequence for both content types. The rows leave
+    // as they are stored: upstream's date-grouped ui model went with the screen that drew it, and the
+    // engine dates its own rows over both feeds.
+    @Immutable
+    data class State(
+        val list: List<HistoryWithRelations>? = null,
+    )
+
+    sealed interface Event {
+        data object InternalError : Event
+    }
+}

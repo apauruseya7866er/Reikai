@@ -1,12 +1,10 @@
--- Parallel of manga_sync. Held disjoint from manga_sync because novel ids and manga ids share
+-- Parallel of manga_track. Held disjoint from manga_track because novel ids and manga ids share
 -- the same INTEGER PRIMARY KEY space across separate tables; a single shared sync table would
--- need a media_type discriminator or risk silent id collisions. Field names mirror manga_sync
--- wherever they have a direct analogue.
---
--- Table only for now: novel tracking is deferred, but the table ships in this migration so a
--- later tracking stage is purely additive code (no second schema migration). No queries are
--- wired until that stage.
+-- need a media_type discriminator or risk silent id collisions. Field names mirror manga_track
+-- wherever they have a direct analogue. `upsert` updates a stored row in place, as manga_track's does,
+-- so the table's ON CONFLICT REPLACE never gets to delete a row and give it a new id.
 import kotlin.Boolean;
+import kotlin.time.Instant;
 
 CREATE TABLE novel_tracks(
     _id INTEGER NOT NULL PRIMARY KEY,
@@ -20,8 +18,8 @@ CREATE TABLE novel_tracks(
     status INTEGER NOT NULL,
     score REAL NOT NULL,
     remote_url TEXT NOT NULL,
-    start_date INTEGER NOT NULL,
-    finish_date INTEGER NOT NULL,
+    start_date INTEGER AS Instant,
+    finish_date INTEGER AS Instant,
     private INTEGER AS Boolean NOT NULL DEFAULT 0,
     UNIQUE (novel_id, sync_id) ON CONFLICT REPLACE,
     FOREIGN KEY(novel_id) REFERENCES novels (_id)
@@ -30,7 +28,7 @@ CREATE TABLE novel_tracks(
 
 CREATE INDEX novel_tracks_novel_id_index ON novel_tracks(novel_id);
 
--- Queries mirror manga_sync.sq (Active #8). The `private` column was added in 25.sqm (the table
+-- Queries mirror manga_track.sq. The `private` column was added in 25.sqm (the table
 -- shipped in 14.sqm without it), so novel tracking supports private listing like manga.
 
 delete:
@@ -51,9 +49,24 @@ SELECT *
 FROM novel_tracks
 WHERE novel_id = :novelId;
 
-insert:
+upsert:
 INSERT INTO novel_tracks(novel_id,sync_id,remote_id,library_id,title,last_chapter_read,total_chapters,status,score,remote_url,start_date,finish_date,private)
-VALUES (:novelId,:syncId,:remoteId,:libraryId,:title,:lastChapterRead,:totalChapters,:status,:score,:remoteUrl,:startDate,:finishDate,:private);
+VALUES (:novelId,:syncId,:remoteId,:libraryId,:title,:lastChapterRead,:totalChapters,:status,:score,:remoteUrl,:startDate,:finishDate,:private)
+ON CONFLICT(novel_id, sync_id)
+DO UPDATE
+SET
+    remote_id = :remoteId,
+    library_id = :libraryId,
+    title = :title,
+    last_chapter_read = :lastChapterRead,
+    total_chapters = :totalChapters,
+    status = :status,
+    score = :score,
+    remote_url = :remoteUrl,
+    start_date = :startDate,
+    finish_date = :finishDate,
+    private = :private
+WHERE novel_id = :novelId AND sync_id = :syncId;
 
 update:
 UPDATE novel_tracks

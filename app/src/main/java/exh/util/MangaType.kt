@@ -4,16 +4,12 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import tachiyomi.domain.manga.model.Manga
 
 /**
- * RK: long-strip detection behind auto webtoon mode, ported from Komikku (exh/util/MangaType),
- * which inherited it from TachiyomiSY. Classification reads an entry's genre tags and its source's
- * display name only, never image dimensions, so it costs nothing at page-load time.
- *
- * The tag tokens are not guesswork: the Madara and MangaThemesia extension themes scrape each
- * site's own series-type field and append it to the genre list, so several hundred sources emit
- * "Manga" / "Manhwa" / "Manhua" as a genre directly. That injection is what makes this work.
- *
- * [sourceName] is required rather than resolved from a SourceManager default, so this stays a pure
- * function: no DI to fail invisibly at the call site, and it is directly unit-testable.
+ * Long-strip detection behind auto webtoon mode, ported from Komikku. Classification reads an entry's
+ * genre tags and its source's display name only, never image dimensions, so it costs nothing at
+ * page-load time. The tag tokens are not guesswork: the Madara and MangaThemesia extension themes
+ * scrape each site's own series-type field into the genre list, so several hundred sources emit
+ * "Manga" / "Manhwa" / "Manhua" as a genre directly, and that injection is what makes this work.
+ * [sourceName] is required rather than resolved from a SourceManager, so this stays a pure function.
  */
 fun Manga.mangaType(sourceName: String?): MangaType {
     val currentTags = genre.orEmpty()
@@ -53,6 +49,16 @@ fun defaultReaderType(type: MangaType): Int? {
         null
     }
 }
+
+/**
+ * The mode a merged group implies: any member calling itself long strip decides it. Grouped sources
+ * describe one series differently and often only one carries the manhwa / webtoon tag, which is
+ * rarely the source the reader opens from, so asking only the opened entry misses most of them.
+ * [sourceNameOf] resolves each member's own source, since the tag can be absent while the name says
+ * it. Lives here rather than in the reader so the rule can be tested without a ViewModel harness.
+ */
+fun defaultReaderType(entries: List<Manga>, sourceNameOf: (Manga) -> String?): Int? =
+    entries.firstNotNullOfOrNull { defaultReaderType(it.mangaType(sourceNameOf(it))) }
 
 private fun isMangaTag(tag: String): Boolean {
     return tag.contains("manga", true) ||

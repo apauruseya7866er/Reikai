@@ -6,8 +6,6 @@ import android.content.Intent
 import android.provider.Settings
 import android.webkit.WebStorage
 import android.webkit.WebView
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -25,13 +23,10 @@ import androidx.core.net.toUri
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.domain.base.BasePreferences
-import eu.kanade.domain.extension.interactor.TrustExtension
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.screen.advanced.ClearDatabaseScreen
 import eu.kanade.presentation.more.settings.screen.debug.DebugInfoScreen
-import eu.kanade.tachiyomi.data.download.DownloadCache
-import eu.kanade.tachiyomi.data.library.MetadataUpdateJob
-import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.data.library.MetadataUpdateWorker
 import eu.kanade.tachiyomi.network.NetworkPreferences
 import eu.kanade.tachiyomi.network.PREF_DOH_360
 import eu.kanade.tachiyomi.network.PREF_DOH_ADGUARD
@@ -46,32 +41,27 @@ import eu.kanade.tachiyomi.network.PREF_DOH_QUAD101
 import eu.kanade.tachiyomi.network.PREF_DOH_QUAD9
 import eu.kanade.tachiyomi.network.PREF_DOH_SHECAN
 import eu.kanade.tachiyomi.ui.more.OnboardingScreen
-import eu.kanade.tachiyomi.util.CrashLogUtil
-import eu.kanade.tachiyomi.util.system.GLUtil
 import eu.kanade.tachiyomi.util.system.isReleaseBuildType
 import eu.kanade.tachiyomi.util.system.isShizukuInstalled
 import eu.kanade.tachiyomi.util.system.powerManager
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
 import eu.kanade.tachiyomi.util.system.toast
-import exh.source.ExhPreferences
+import eu.kanade.tachiyomi.util.system.workManager
+import exh.debug.SettingsDebugScreen
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.app.di.appGraph
 import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import reikai.domain.library.ReikaiLibraryPreferences
-import reikai.domain.manga.MangaMergeManager
-import reikai.domain.novel.NovelMergeManager
-import tachiyomi.core.common.util.lang.launchNonCancellable
+import reikai.domain.novel.NovelPreferences
+import reikai.presentation.settings.bypassPreferenceItems
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withUIContext
-import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.library.service.LibraryPreferences
-import tachiyomi.domain.manga.interactor.ResetViewerFlags
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.File
 
 object SettingsAdvancedScreen : SearchableSettings {
@@ -86,116 +76,63 @@ object SettingsAdvancedScreen : SearchableSettings {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
 
-        val basePreferences = remember { Injekt.get<BasePreferences>() }
-        val networkPreferences = remember { Injekt.get<NetworkPreferences>() }
-        val libraryPreferences = remember { Injekt.get<LibraryPreferences>() }
-        // RK: opt-in for the library update-errors screen
-        val reikaiLibraryPreferences = remember { Injekt.get<ReikaiLibraryPreferences>() }
-        // RK: pref-based merge maintenance
-        val mergeManager = remember { Injekt.get<MangaMergeManager>() }
-        val novelMergeManager = remember { Injekt.get<NovelMergeManager>() }
-        // RK: gate for the built-in adult sources (E-Hentai / ExHentai)
-        val exhPreferences = remember { Injekt.get<ExhPreferences>() }
-
+        val graph = remember { context.appGraph }
+        val basePreferences = remember { graph.basePreferences }
+        val networkPreferences = remember { graph.networkPreferences }
+        val libraryPreferences = remember { graph.libraryPreferences }
+        // RK: listOfNotNull outlived the optional ExHentai login row it was for; no entry is null now
         return listOfNotNull(
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_dump_crash_logs),
-                subtitle = stringResource(MR.strings.pref_dump_crash_logs_summary),
-                onClick = {
-                    scope.launch {
-                        CrashLogUtil(context).dumpLogs()
-                    }
-                },
+            // RK --> upstream's loose rows at the top grouped under what they have in common (see
+            // docs/dev/subsystems/architecture.md). The update-error switches live in Settings -> Library,
+            // the adult-sources gate in Browse and sources, and clearing merges in the Library group below.
+            Preference.PreferenceGroup(
+                title = stringResource(MR.strings.label_debugging),
+                preferenceItems = listOf(
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.pref_dump_crash_logs),
+                        subtitle = stringResource(MR.strings.pref_dump_crash_logs_summary),
+                        onClick = {
+                            scope.launch {
+                                context.appGraph.crashLogUtil.dumpLogs()
+                            }
+                        },
+                    ),
+                    Preference.PreferenceItem.SwitchPreference(
+                        preference = networkPreferences.verboseLogging,
+                        title = stringResource(MR.strings.pref_verbose_logging),
+                        subtitle = stringResource(MR.strings.pref_verbose_logging_summary),
+                        onValueChanged = {
+                            context.toast(MR.strings.requires_app_restart)
+                            true
+                        },
+                    ),
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.pref_debug_info),
+                        onClick = { navigator.push(DebugInfoScreen()) },
+                    ),
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.open_debug_menu),
+                        subtitle = stringResource(MR.strings.open_debug_menu_summary),
+                        onClick = { navigator.push(SettingsDebugScreen()) },
+                    ),
+                ),
             ),
-            Preference.PreferenceItem.SwitchPreference(
-                preference = networkPreferences.verboseLogging,
-                title = stringResource(MR.strings.pref_verbose_logging),
-                subtitle = stringResource(MR.strings.pref_verbose_logging_summary),
-                onValueChanged = {
-                    context.toast(MR.strings.requires_app_restart)
-                    true
-                },
-            ),
-            // RK: opt-in for recording library update failures + the Update errors screen. Content-typed
-            // titles ("Track update errors · Manga|Novels") match the Library / Downloads label style.
-            Preference.PreferenceItem.SwitchPreference(
-                preference = reikaiLibraryPreferences.trackUpdateErrors,
-                title = contentTypedCategory(MR.strings.pref_track_update_errors, MR.strings.content_type_manga),
-                subtitle = stringResource(MR.strings.pref_track_update_errors_summary),
-            ),
-            Preference.PreferenceItem.SwitchPreference(
-                preference = reikaiLibraryPreferences.trackNovelUpdateErrors,
-                title = contentTypedCategory(MR.strings.pref_track_update_errors, MR.strings.content_type_novels),
-                subtitle = stringResource(MR.strings.pref_track_update_errors_summary),
-            ),
-            // RK: enable the built-in E-Hentai sources (anonymous browsing). Turning this on reveals
-            //     the dedicated E-Hentai settings as a top-level category (login, image quality, etc.).
-            Preference.PreferenceItem.SwitchPreference(
-                preference = exhPreferences.isHentaiEnabled(),
-                title = stringResource(MR.strings.pref_enable_adult_sources),
-                subtitle = stringResource(MR.strings.pref_enable_adult_sources_summary),
-            ),
-            // RK --> clear pref-based merge state
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_clear_manual_merges),
-                subtitle = stringResource(MR.strings.pref_clear_manual_merges_summary),
-                onClick = {
-                    mergeManager.clearManualMerges()
-                    context.toast(MR.strings.merges_cleared)
-                },
-            ),
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_separate_auto_merges),
-                subtitle = stringResource(MR.strings.pref_separate_auto_merges_summary),
-                onClick = {
-                    scope.launch {
-                        mergeManager.clearAllMergesIncludingAuto()
-                        context.toast(MR.strings.merges_cleared)
-                    }
-                },
-            ),
-            // Novel equivalents (P5 S8).
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_clear_manual_merges_novels),
-                subtitle = stringResource(MR.strings.pref_clear_manual_merges_summary),
-                onClick = {
-                    novelMergeManager.clearManualMerges()
-                    context.toast(MR.strings.merges_cleared)
-                },
-            ),
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_separate_auto_merges_novels),
-                subtitle = stringResource(MR.strings.pref_separate_auto_merges_summary),
-                onClick = {
-                    scope.launch {
-                        novelMergeManager.clearAllMergesIncludingAuto()
-                        context.toast(MR.strings.merges_cleared)
-                    }
-                },
+            Preference.PreferenceGroup(
+                title = stringResource(MR.strings.label_help),
+                preferenceItems = listOf(
+                    Preference.PreferenceItem.TextPreference(
+                        title = stringResource(MR.strings.pref_onboarding_guide),
+                        onClick = { navigator.push(OnboardingScreen()) },
+                    ),
+                ),
             ),
             // RK <--
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_debug_info),
-                onClick = { navigator.push(DebugInfoScreen()) },
-            ),
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_onboarding_guide),
-                onClick = { navigator.push(OnboardingScreen()) },
-            ),
-            Preference.PreferenceItem.TextPreference(
-                title = stringResource(MR.strings.pref_manage_notifications),
-                onClick = {
-                    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                        putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                    }
-                    context.startActivity(intent)
-                },
-            ),
             getBackgroundActivityGroup(),
             getDataGroup(),
             getNetworkGroup(networkPreferences = networkPreferences),
             getLibraryGroup(libraryPreferences = libraryPreferences),
-            getReaderGroup(basePreferences = basePreferences),
+            // RK: the reader group also carries the novel reader's WebView dev-tools switch
+            getReaderGroup(basePreferences = basePreferences, novelPreferences = remember { graph.novelPreferences }),
             getExtensionsGroup(basePreferences = basePreferences),
         )
     }
@@ -235,6 +172,17 @@ object SettingsAdvancedScreen : SearchableSettings {
                     subtitle = stringResource(MR.strings.about_dont_kill_my_app),
                     onClick = { uriHandler.openUri("https://dontkillmyapp.com/") },
                 ),
+                // RK --> moved from the top of the screen: like battery optimization, it opens Android's own settings
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_manage_notifications),
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        }
+                        context.startActivity(intent)
+                    },
+                ),
+                // RK <--
             ),
         )
     }
@@ -251,7 +199,8 @@ object SettingsAdvancedScreen : SearchableSettings {
                     title = stringResource(MR.strings.pref_invalidate_download_cache),
                     subtitle = stringResource(MR.strings.pref_invalidate_download_cache_summary),
                     onClick = {
-                        Injekt.get<DownloadCache>().invalidateCache()
+                        context.appGraph.downloadCache.invalidateCache()
+                        context.appGraph.novelDownloadCache.invalidate() // RK
                         context.toast(MR.strings.download_cache_invalidated)
                     },
                 ),
@@ -269,14 +218,11 @@ object SettingsAdvancedScreen : SearchableSettings {
         networkPreferences: NetworkPreferences,
     ): Preference.PreferenceGroup {
         val context = LocalContext.current
-        val networkHelper = remember { Injekt.get<NetworkHelper>() }
+        val networkHelper = remember { context.appGraph.networkHelper }
+        val scope = rememberCoroutineScope()
 
         val userAgentPref = networkPreferences.defaultUserAgent
         val userAgent by userAgentPref.collectAsState()
-
-        // RK: FlareSolverr settings live in the Network group, gated on the enable toggle
-        val scope = rememberCoroutineScope()
-        val flareSolverrEnabled by networkPreferences.enableFlareSolverr.collectAsState()
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.label_network),
@@ -300,8 +246,10 @@ object SettingsAdvancedScreen : SearchableSettings {
                                 clearSslPreferences()
                             }
                             WebStorage.getInstance().deleteAllData()
-                            context.applicationInfo?.dataDir?.let { File("$it/app_webview/").deleteRecursively() }
-                            context.toast(MR.strings.webview_data_deleted)
+                            scope.launchIO {
+                                context.applicationInfo?.dataDir?.let { File("$it/app_webview/").deleteRecursively() }
+                                withUIContext { context.toast(MR.strings.webview_data_deleted) }
+                            }
                         } catch (e: Throwable) {
                             logcat(LogPriority.ERROR, e)
                             context.toast(MR.strings.cache_delete_error)
@@ -348,56 +296,13 @@ object SettingsAdvancedScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(MR.strings.pref_reset_user_agent_string),
-                    enabled = remember(userAgent) { userAgent != userAgentPref.defaultValue() },
+                    visible = remember(userAgent) { userAgent != userAgentPref.defaultValue() },
                     onClick = {
                         userAgentPref.delete()
                         context.toast(MR.strings.requires_app_restart)
                     },
                 ),
-                // RK -->
-                Preference.PreferenceItem.SwitchPreference(
-                    preference = networkPreferences.enableFlareSolverr,
-                    title = stringResource(MR.strings.pref_enable_flaresolverr),
-                    subtitle = stringResource(MR.strings.pref_enable_flaresolverr_summary),
-                ),
-                Preference.PreferenceItem.EditTextPreference(
-                    preference = networkPreferences.flareSolverrUrl,
-                    title = stringResource(MR.strings.pref_flaresolverr_url),
-                    subtitle = stringResource(MR.strings.pref_flaresolverr_url_summary),
-                    enabled = flareSolverrEnabled,
-                    onValueChanged = {
-                        if (it.isBlank() || it.trim().toHttpUrlOrNull() != null) {
-                            true
-                        } else {
-                            context.toast(MR.strings.error_flaresolverr_invalid_url)
-                            false
-                        }
-                    },
-                ),
-                Preference.PreferenceItem.TextPreference(
-                    title = stringResource(MR.strings.pref_test_flaresolverr),
-                    subtitle = stringResource(MR.strings.pref_test_flaresolverr_summary),
-                    enabled = flareSolverrEnabled,
-                    onClick = {
-                        val url = networkPreferences.flareSolverrUrl.get().trim()
-                        if (url.isBlank()) {
-                            context.toast(MR.strings.error_flaresolverr_invalid_url)
-                        } else {
-                            scope.launch {
-                                networkHelper.flareSolverr.test(url)
-                                    .onSuccess { userAgent ->
-                                        userAgentPref.set(userAgent)
-                                        context.toast(MR.strings.flaresolverr_test_success)
-                                    }
-                                    .onFailure {
-                                        context.toast(MR.strings.flaresolverr_test_failure)
-                                    }
-                            }
-                        }
-                    },
-                ),
-                // RK <--
-            ),
+            ) + bypassPreferenceItems(networkPreferences), // RK: the Cloudflare bypass rows
         )
     }
 
@@ -408,27 +313,37 @@ object SettingsAdvancedScreen : SearchableSettings {
         val scope = rememberCoroutineScope()
         val context = LocalContext.current
 
+        // RK --> library maintenance. These stay in Advanced rather than moving beside the everyday merge switches in Library
+        // settings, because dissolving every merge group is destructive and belongs with the other
+        // destructive actions, not one mis-tap from a toggle.
+        val graph = remember { context.appGraph }
+        val mergeManager = remember { graph.mangaMergeManager }
+        val novelMergeManager = remember { graph.novelMergeManager }
+        val repairNovelDetails = remember { graph.repairNovelDetails }
+        // Their database work runs off the main thread and finishes if the screen is left
+        val appScope = remember { graph.appCoroutineScope }
+        val appContext = context.applicationContext
+        // RK <--
+
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.label_library),
             preferenceItems = listOf(
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(MR.strings.pref_refresh_library_covers),
-                    onClick = { MetadataUpdateJob.startNow(context) },
+                    onClick = { scope.launch { MetadataUpdateWorker.startNow(context.workManager) } },
                 ),
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(MR.strings.pref_reset_viewer_flags),
                     subtitle = stringResource(MR.strings.pref_reset_viewer_flags_summary),
                     onClick = {
-                        scope.launchNonCancellable {
-                            val success = Injekt.get<ResetViewerFlags>().await()
-                            withUIContext {
-                                val message = if (success) {
-                                    MR.strings.pref_reset_viewer_flags_success
-                                } else {
-                                    MR.strings.pref_reset_viewer_flags_error
-                                }
-                                context.toast(message)
+                        scope.launch {
+                            val success = context.appGraph.resetViewerFlags.await()
+                            val message = if (success) {
+                                MR.strings.pref_reset_viewer_flags_success
+                            } else {
+                                MR.strings.pref_reset_viewer_flags_error
                             }
+                            context.toast(message)
                         }
                     },
                 ),
@@ -442,6 +357,58 @@ object SettingsAdvancedScreen : SearchableSettings {
                     title = stringResource(MR.strings.pref_disallow_non_ascii_filenames),
                     subtitle = stringResource(MR.strings.pref_disallow_non_ascii_filenames_details),
                 ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = libraryPreferences.enableChapterNameHash,
+                    title = stringResource(MR.strings.pref_enable_chapter_name_hash),
+                    subtitle = stringResource(MR.strings.pref_enable_chapter_name_hash_details),
+                ),
+                // RK --> dissolve every merge group. The old "clear manual" vs "separate auto" split
+                // collapsed after the rebuild (both now clear every group), so it is one action per type.
+                Preference.PreferenceItem.TextPreference(
+                    title = contentTypedCategory(MR.strings.pref_clear_merges, MR.strings.content_type_manga),
+                    subtitle = stringResource(MR.strings.pref_clear_merges_summary),
+                    onClick = {
+                        appScope.launch {
+                            mergeManager.clearAllMergesIncludingAuto()
+                            withUIContext { appContext.toast(MR.strings.merges_cleared) }
+                        }
+                    },
+                ),
+                Preference.PreferenceItem.TextPreference(
+                    title = contentTypedCategory(MR.strings.pref_clear_merges, MR.strings.content_type_novels),
+                    subtitle = stringResource(MR.strings.pref_clear_merges_summary),
+                    onClick = {
+                        appScope.launch {
+                            novelMergeManager.clearAllMergesIncludingAuto()
+                            withUIContext { appContext.toast(MR.strings.merges_cleared) }
+                        }
+                    },
+                ),
+                // Repair novels left wearing another novel's details by the plugin-host result mix-up
+                // (fixed, but rows written before the fix stay wrong until something re-fetches them).
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_repair_novel_details),
+                    subtitle = stringResource(MR.strings.pref_repair_novel_details_summary),
+                    onClick = {
+                        appScope.launch {
+                            val result = repairNovelDetails.await()
+                            withUIContext {
+                                if (result.suspects == 0) {
+                                    appContext.toast(MR.strings.novel_details_repair_none)
+                                } else {
+                                    appContext.toast(
+                                        appContext.stringResource(
+                                            MR.strings.novel_details_repair_done,
+                                            result.repaired,
+                                            result.suspects,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                    },
+                ),
+                // RK <--
             ),
         )
     }
@@ -449,51 +416,23 @@ object SettingsAdvancedScreen : SearchableSettings {
     @Composable
     private fun getReaderGroup(
         basePreferences: BasePreferences,
+        // RK
+        novelPreferences: NovelPreferences,
     ): Preference.PreferenceGroup {
-        val context = LocalContext.current
-        val chooseColorProfile = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.OpenDocument(),
-        ) { uri ->
-            uri?.let {
-                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
-                context.contentResolver.takePersistableUriPermission(uri, flags)
-                basePreferences.displayProfile.set(uri.toString())
-            }
-        }
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.pref_category_reader),
             preferenceItems = listOf(
-                Preference.PreferenceItem.ListPreference(
-                    preference = basePreferences.hardwareBitmapThreshold,
-                    entries = GLUtil.CUSTOM_TEXTURE_LIMIT_OPTIONS
-                        .mapIndexed { index, option ->
-                            val display = if (index == 0) {
-                                stringResource(MR.strings.pref_hardware_bitmap_threshold_default, option)
-                            } else {
-                                option.toString()
-                            }
-                            option to display
-                        }
-                        .toMap(),
-                    title = stringResource(MR.strings.pref_hardware_bitmap_threshold),
-                    subtitleProvider = { value, options ->
-                        stringResource(MR.strings.pref_hardware_bitmap_threshold_summary, options[value].orEmpty())
-                    },
-                    enabled = !ImageUtil.HARDWARE_BITMAP_UNSUPPORTED &&
-                        GLUtil.DEVICE_TEXTURE_LIMIT > GLUtil.SAFE_TEXTURE_LIMIT,
-                ),
                 Preference.PreferenceItem.SwitchPreference(
-                    preference = basePreferences.alwaysDecodeLongStripWithSSIV,
-                    title = stringResource(MR.strings.pref_always_decode_long_strip_with_ssiv_2),
-                    subtitle = stringResource(MR.strings.pref_always_decode_long_strip_with_ssiv_summary),
+                    preference = basePreferences.highQualityRenderer,
+                    title = stringResource(MR.strings.pref_high_quality_renderer),
                 ),
-                Preference.PreferenceItem.TextPreference(
-                    title = stringResource(MR.strings.pref_display_profile),
-                    subtitle = basePreferences.displayProfile.get(),
-                    onClick = {
-                        chooseColorProfile.launch(arrayOf("*/*"))
-                    },
+                // RK -->
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = novelPreferences.readerWebViewDevTools(),
+                    title = stringResource(MR.strings.pref_novel_webview_dev_tools),
+                    subtitle = stringResource(MR.strings.pref_novel_webview_dev_tools_summary),
                 ),
+                // RK <--
             ),
         )
     }
@@ -506,7 +445,7 @@ object SettingsAdvancedScreen : SearchableSettings {
         val uriHandler = LocalUriHandler.current
         val extensionInstallerPref = basePreferences.extensionInstaller
         var shizukuMissing by rememberSaveable { mutableStateOf(false) }
-        val trustExtension = remember { Injekt.get<TrustExtension>() }
+        val trustExtension = remember { context.appGraph.trustExtension }
 
         if (shizukuMissing) {
             val dismiss = { shizukuMissing = false }
@@ -560,10 +499,7 @@ object SettingsAdvancedScreen : SearchableSettings {
                 ),
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(MR.strings.ext_revoke_trust),
-                    onClick = {
-                        trustExtension.revokeAll()
-                        context.toast(MR.strings.requires_app_restart)
-                    },
+                    onClick = { trustExtension.revokeAll() },
                 ),
             ),
         )

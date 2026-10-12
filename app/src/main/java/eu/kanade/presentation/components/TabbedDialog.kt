@@ -9,9 +9,6 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -26,9 +23,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEachIndexed
 import kotlinx.coroutines.launch
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.MoreVert
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.LocalPagerSwipeSetter
 import tachiyomi.presentation.core.components.material.TabText
@@ -46,6 +46,8 @@ fun TabbedDialog(
     modifier: Modifier = Modifier,
     tabOverflowMenuContent: (@Composable ColumnScope.(() -> Unit) -> Unit)? = null,
     pagerState: PagerState = rememberPagerState { tabTitles.size },
+    // RK: icon tabs, one per title, as tsundoku's reader sheet draws them; the titles become their labels.
+    tabIcons: List<ImageVector>? = null,
     content: @Composable (Int) -> Unit,
 ) {
     AdaptiveSheet(
@@ -60,13 +62,19 @@ fun TabbedDialog(
                     modifier = Modifier.weight(1f),
                     selectedTabIndex = pagerState.currentPage,
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    divider = {},
                 ) {
                     tabTitles.fastForEachIndexed { index, tab ->
                         Tab(
                             selected = pagerState.currentPage == index,
                             onClick = { scope.launch { pagerState.animateScrollToPage(index) } },
-                            text = { TabText(text = tab) },
+                            // RK -->
+                            text = if (tabIcons == null) ({ TabText(text = tab) }) else null,
+                            icon = if (tabIcons != null) {
+                                { Icon(imageVector = tabIcons[index], contentDescription = tab) }
+                            } else {
+                                null
+                            },
+                            // RK <--
                             unselectedContentColor = MaterialTheme.colorScheme.onSurface,
                         )
                     }
@@ -74,8 +82,8 @@ fun TabbedDialog(
 
                 tabOverflowMenuContent?.let { MoreMenu(it) }
             }
-            HorizontalDivider()
 
+            // RK --> a drag on a slider or chip row locks the pager swipe
             // Swipe-between-tabs stays on, but content can lock it for the duration of a drag (see
             // Modifier.lockPagerSwipeWhileDragging) so a horizontal drag on a slider or a
             // horizontally-scrolling chip row doesn't leak into the pager and switch tabs. Swiping the
@@ -90,6 +98,7 @@ fun TabbedDialog(
                     pageContent = { page -> content(page) },
                 )
             }
+            // RK <--
         }
     }
 }
@@ -102,7 +111,7 @@ private fun MoreMenu(
     Box(modifier = Modifier.wrapContentSize(Alignment.TopStart)) {
         IconButton(onClick = { expanded = true }) {
             Icon(
-                imageVector = Icons.Default.MoreVert,
+                imageVector = MaterialSymbols.Rounded.MoreVert,
                 contentDescription = stringResource(MR.strings.label_more),
             )
         }

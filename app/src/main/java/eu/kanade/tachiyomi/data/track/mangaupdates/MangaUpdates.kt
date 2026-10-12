@@ -7,11 +7,13 @@ import eu.kanade.tachiyomi.data.track.BaseTracker
 import eu.kanade.tachiyomi.data.track.DeletableTracker
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MUListItem
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MURating
-import eu.kanade.tachiyomi.data.track.mangaupdates.dto.copyTo
-import eu.kanade.tachiyomi.data.track.mangaupdates.dto.toTrackSearch
+import eu.kanade.tachiyomi.data.track.mangaupdates.dto.namesOfType
 import eu.kanade.tachiyomi.data.track.model.TrackMangaMetadata
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.util.lang.htmlDecode
+import reikai.data.track.MetadataAccess
+import reikai.data.track.isMangaUpdatesManga
+import reikai.data.track.isMangaUpdatesNovel
 import tachiyomi.i18n.MR
 import tachiyomi.domain.track.model.Track as DomainTrack
 
@@ -38,7 +40,7 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
 
     private val interceptor by lazy { MangaUpdatesInterceptor(this) }
 
-    private val api by lazy { MangaUpdatesApi(interceptor, client) }
+    private val api by lazy { MangaUpdatesApi(client, interceptor) }
 
     override fun getLogo(): Int = R.drawable.brand_mangaupdates
 
@@ -83,7 +85,7 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
         return try {
             val (series, rating) = api.getSeriesListItem(track)
             track.copyFrom(series, rating)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             track.score = 0.0
             api.addSeriesToList(track, hasReadChapters)
             track
@@ -91,22 +93,43 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
     }
 
     override suspend fun search(query: String): List<TrackSearch> {
+        // RK: id search through the shared trackerSearchId parser, kept to manga as searchNovel keeps to novels
+        query.trackerSearchId(::seriesId)?.let { seriesId ->
+            return api.getSeriesDetails(seriesId)
+                ?.takeIf { isMangaUpdatesManga(it.type) }
+                ?.let { listOf(it.toTrackSearch(id)) }
+                ?: emptyList()
+        }
+
         return api.search(query)
             .map {
                 it.toTrackSearch(id)
             }
     }
 
-    // RK --> novel-aware search (Active #8): keep only "Novel"-type series from the unfiltered results
+    // RK --> novel-aware search: keep only "Novel"-type series from the unfiltered results
     override val supportsNovels = true
 
+    // Series details are fetched on the unauthenticated client (MangaUpdatesApi.getSeriesDetails).
+    override val metadataAccess = MetadataAccess.Public
+
     override suspend fun searchNovel(query: String): List<TrackSearch> {
+        query.trackerSearchId(::seriesId)?.let { seriesId ->
+            return api.getSeriesDetails(seriesId)
+                ?.takeIf { isMangaUpdatesNovel(it.type) }
+                ?.let { listOf(it.toTrackSearch(id)) }
+                ?: emptyList()
+        }
+
         return api.search(query, novel = true)
-            .filter { it.type?.equals("novel", ignoreCase = true) == true }
+            .filter { isMangaUpdatesNovel(it.type) }
             .map {
                 it.toTrackSearch(id)
             }
     }
+
+    /** A series id is written decimal or in the base 36 form the site's own URLs carry. */
+    private fun seriesId(text: String): Long? = text.toLongOrNull() ?: text.toLongOrNull(36)
     // RK <--
 
     override suspend fun refresh(track: Track): Track {
@@ -115,7 +138,7 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
     }
 
     // RK --> autofill entry metadata (Fill from tracker). MangaUpdates splits one author list into
-    // authors vs artists by each entry's type; genres are a separate clean list.
+    // authors vs artists by each entry's type (see namesOfType); genres are a separate clean list.
     override suspend fun getMangaMetadata(track: DomainTrack): TrackMangaMetadata {
         val series = api.getSeries(track)
         return TrackMangaMetadata(
@@ -123,16 +146,8 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
             title = series.title?.htmlDecode(),
             thumbnailUrl = series.image?.url?.original,
             description = series.description?.htmlDecode(),
-            authors = series.authors
-                ?.filter { it.type != null && "Author" in it.type }
-                ?.mapNotNull { it.name }
-                ?.joinToString(", ")
-                ?.ifEmpty { null },
-            artists = series.authors
-                ?.filter { it.type != null && "Artist" in it.type }
-                ?.mapNotNull { it.name }
-                ?.joinToString(", ")
-                ?.ifEmpty { null },
+            authors = series.authors.namesOfType("Author").joinToString(", ").ifEmpty { null },
+            artists = series.authors.namesOfType("Artist").joinToString(", ").ifEmpty { null },
             genres = series.genres?.mapNotNull { it.genre }?.takeIf { it.isNotEmpty() },
         )
     }
@@ -149,6 +164,11 @@ class MangaUpdates(id: Long) : BaseTracker(id, "MangaUpdates"), DeletableTracker
         val currentUser = api.getCurrentUser()
         saveDisplayUsername(currentUser.username)
         saveCredentials(authenticated.uid.toString(), authenticated.sessionToken)
+    }
+
+    override suspend fun updateUserConfig() {
+        val currentUser = api.getCurrentUser()
+        saveDisplayUsername(currentUser.username)
     }
 
     fun restoreSession(): String? {

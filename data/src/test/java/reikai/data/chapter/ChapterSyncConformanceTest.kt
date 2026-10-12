@@ -1,0 +1,125 @@
+package reikai.data.chapter
+
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import eu.kanade.tachiyomi.source.model.UpdateStrategy
+import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
+import reikai.data.novel.NovelChapterRepositoryImpl
+import reikai.domain.novel.model.NovelChapter
+import tachiyomi.data.Database
+import tachiyomi.data.DatabaseBindings
+import tachiyomi.data.chapter.ChapterRepositoryImpl
+import tachiyomi.domain.chapter.model.Chapter
+import kotlin.time.Instant
+
+/**
+ * A source sync adds a chapter only when the entry does not already have one at that url, read inside
+ * the sync's own transaction, so two syncs racing on one entry cannot store it twice (mihon 6ee529c5a).
+ */
+class ChapterSyncConformanceTest {
+
+    private lateinit var driver: JdbcSqliteDriver
+    private lateinit var database: Database
+
+    @BeforeEach
+    fun setUp() = runTest {
+        driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        Database.Schema.create(driver).await()
+        database = DatabaseBindings.providesDatabase(driver)
+    }
+
+    @AfterEach
+    fun tearDown() {
+        driver.close()
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `a chapter the entry already has is not added again`(type: Type) = runTest {
+        type.seed(database, url = "c")
+
+        type.sync(database, urls = listOf("c", "d"))
+
+        type.urls(database) shouldBe listOf("c", "d")
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `a sync reports only the chapters it added`(type: Type) = runTest {
+        type.seed(database, url = "c")
+
+        type.sync(database, urls = listOf("c", "d")) shouldBe listOf("d")
+    }
+
+    enum class Type {
+        MANGA {
+            override suspend fun seed(database: Database, url: String) {
+                database.mangaQueries.insertReturningId(
+                    sourceId = 1, remoteUrl = "m", remoteArtist = null, remoteAuthor = null, remoteDescription = null,
+                    remoteGenre = null, remoteTitle = "T", remoteStatus = 0, remoteCover = null,
+                    userFavoriteAt = Instant.fromEpochMilliseconds(0),
+                    stateChapterLastUpdate = null, stateChapterNextUpdate = null, stateInitialized = false,
+                    userReaderFlags = 0, userChapterFlags = 0, stateCoverLastModified = null,
+                    remoteUpdateStrategy = UpdateStrategy.ALWAYS_UPDATE,
+                    stateChapterFetchInterval = 0, userNotes = "", remoteMemo = JsonObject(emptyMap()),
+                )
+                sync(database, listOf(url))
+            }
+
+            override suspend fun sync(database: Database, urls: List<String>) = ChapterRepositoryImpl(database)
+                .updateFromRemote(
+                    emptyList(),
+                    urls.map {
+                        Chapter.create().copy(mangaId = 1, url = it, name = it)
+                    },
+                    emptyList(),
+                )
+                .map { it.url }
+
+            override suspend fun urls(database: Database) =
+                ChapterRepositoryImpl(database).getChapterByMangaId(1).map { it.url }.sorted()
+        },
+        NOVEL {
+            override suspend fun seed(database: Database, url: String) {
+                database.novelsQueries.insert(
+                    source = "src", url = "n", title = "T", author = null, artist = null, description = null,
+                    genre = null, status = 0, thumbnailUrl = null,
+                    favoriteAt = Instant.fromEpochMilliseconds(
+                        0,
+                    ),
+                    lastUpdate = null, initialized = false,
+                    chapterFlags = 0, updateStrategy = UpdateStrategy.ALWAYS_UPDATE,
+                    coverLastModified = null, totalPages = 1, notes = "", viewerFlags = 0,
+                )
+                sync(database, listOf(url))
+            }
+
+            override suspend fun sync(database: Database, urls: List<String>) = NovelChapterRepositoryImpl(database)
+                .updateFromRemote(emptyList(), urls.map { chapter(it) }, emptyList())
+                .map { it.url }
+
+            override suspend fun urls(database: Database) =
+                NovelChapterRepositoryImpl(database).getByNovelId(1).map { it.url }.sorted()
+
+            private fun chapter(url: String) = NovelChapter(
+                id = -1L, novelId = 1L, url = url, name = url, read = false, bookmark = false,
+                lastTextProgress = 0L, chapterNumber = 1.0, sourceOrder = 0L,
+                dateFetch = Instant.fromEpochMilliseconds(
+                    0,
+                ),
+                dateUpload = null, page = "",
+            )
+        }, ;
+
+        abstract suspend fun seed(database: Database, url: String)
+
+        abstract suspend fun sync(database: Database, urls: List<String>): List<String>
+
+        abstract suspend fun urls(database: Database): List<String>
+    }
+}

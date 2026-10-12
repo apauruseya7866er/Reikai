@@ -1,28 +1,24 @@
 package reikai.domain.novel.track
 
-import android.app.Application
+import android.content.Context
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.track.Tracker
-import eu.kanade.tachiyomi.util.system.toast
-import logcat.LogPriority
-import reikai.domain.novel.interactor.InsertNovelTrack
+import reikai.domain.novel.interactor.UpsertNovelTrack
 import reikai.domain.track.TrackFieldMutations
 import reikai.domain.track.TrackWriter
-import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.core.common.util.lang.withUIContext
-import tachiyomi.core.common.util.system.logcat
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import reikai.domain.track.pushTrackEdit
 import eu.kanade.tachiyomi.data.database.models.Track as DbTrack
 
 /**
- * Novel twin of [eu.kanade.tachiyomi.data.track.BaseTracker]'s `setRemoteX` + `updateRemote`: pushes a
- * field change to the remote tracker and persists the result to `novel_tracks` (never `manga_sync`).
- * The status/chapter/score transitions come from the shared [reikai.domain.track.TrackFieldMutations],
- * the same source [eu.kanade.tachiyomi.data.track.BaseTracker] uses, so a novel behaves identically to
- * a manga and inherits any upstream change instead of drifting from a hand-copy.
+ * Novel twin of [eu.kanade.tachiyomi.data.track.BaseTracker]'s `setRemoteX` + `updateRemote`, pinned by
+ * [TrackFieldMutations] and [pushTrackEdit], the kernels both call: pushes a field change to the remote
+ * tracker and persists the result to `novel_tracks` (never `manga_track`), so a novel behaves identically
+ * to a manga and inherits any upstream change instead of drifting from a hand-copy.
  */
+@Inject
 class NovelTrackUpdater(
-    private val insertNovelTrack: InsertNovelTrack,
+    private val upsertNovelTrack: UpsertNovelTrack,
+    private val context: Context,
 ) : TrackWriter {
 
     override suspend fun setRemoteStatus(tracker: Tracker, track: DbTrack, status: Long) {
@@ -55,15 +51,8 @@ class NovelTrackUpdater(
         updateRemote(tracker, track)
     }
 
-    private suspend fun updateRemote(tracker: Tracker, track: DbTrack): Unit = withIOContext {
-        try {
-            tracker.update(track)
-            track.toNovelTrack(idRequired = false)?.let {
-                insertNovelTrack.await(it)
-            }
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Failed to update remote novel track id=${tracker.id}" }
-            withUIContext { Injekt.get<Application>().toast(e.message) }
+    private suspend fun updateRemote(tracker: Tracker, track: DbTrack) =
+        tracker.pushTrackEdit(context, track) { pushed ->
+            pushed.toNovelTrack(idRequired = false)?.let { upsertNovelTrack.await(it) }
         }
-    }
 }

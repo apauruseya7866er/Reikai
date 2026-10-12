@@ -14,25 +14,36 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.core.net.toUri
-import cafe.adriel.voyager.core.model.StateScreenModel
-import cafe.adriel.voyager.core.model.rememberScreenModel
-import cafe.adriel.voyager.core.model.screenModelScope
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Assisted
+import dev.zacsweers.metro.AssistedFactory
+import dev.zacsweers.metro.AssistedInject
+import dev.zacsweers.metro.ContributesIntoMap
+import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactory
+import dev.zacsweers.metrox.viewmodel.ManualViewModelAssistedFactoryKey
+import dev.zacsweers.metrox.viewmodel.assistedMetroViewModel
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.WarningBanner
 import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.data.backup.BackupFileValidator
-import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
+import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreWorker
 import eu.kanade.tachiyomi.data.backup.restore.RestoreOptions
 import eu.kanade.tachiyomi.util.system.DeviceUtil
+import eu.kanade.tachiyomi.util.system.workManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.LabeledCheckbox
@@ -48,10 +59,10 @@ class RestoreBackupScreen(
 
     @Composable
     override fun Content() {
-        val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
-        val model = rememberScreenModel { RestoreBackupScreenModel(context, uri) }
-        val state by model.state.collectAsState()
+        val viewModel =
+            assistedMetroViewModel<RestoreBackupViewModel, RestoreBackupViewModel.Factory> { create(uri = uri) }
+        val state by viewModel.state.collectAsState()
 
         Scaffold(
             topBar = {
@@ -67,7 +78,7 @@ class RestoreBackupScreen(
                 actionLabel = stringResource(MR.strings.action_restore),
                 actionEnabled = state.canRestore && state.options.canRestore(),
                 onClickAction = {
-                    model.startRestore()
+                    viewModel.startRestore()
                     navigator.pop()
                 },
             ) {
@@ -85,7 +96,7 @@ class RestoreBackupScreen(
                                     label = stringResource(option.label),
                                     checked = option.getter(state.options),
                                     onCheckedChange = {
-                                        model.toggle(option.setter, it)
+                                        viewModel.toggle(option.setter, it)
                                     },
                                 )
                             }
@@ -113,6 +124,19 @@ class RestoreBackupScreen(
                         when (error) {
                             is MissingRestoreComponents -> {
                                 appendLine(stringResource(MR.strings.backup_restore_content_full))
+                                // RK --> a restore installs no extension app or plugin, so the backup's are listed
+                                if (error.extensions.isNotEmpty()) {
+                                    appendLine()
+                                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                                        appendLine(stringResource(MR.strings.backup_restore_missing_extensions))
+                                    }
+                                    error.extensions.joinTo(
+                                        this,
+                                        separator = "\n- ",
+                                        prefix = "- ",
+                                    )
+                                }
+                                // RK <--
                                 if (error.sources.isNotEmpty()) {
                                     appendLine()
                                     withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
@@ -166,20 +190,32 @@ class RestoreBackupScreen(
     }
 }
 
-private class RestoreBackupScreenModel(
+@AssistedInject
+class RestoreBackupViewModel(
+    @Assisted private val uri: String,
+    private val backupFileValidator: BackupFileValidator,
     private val context: Context,
-    private val uri: String,
-) : StateScreenModel<RestoreBackupScreenModel.State>(State()) {
+) : ViewModel() {
+
+    val state: StateFlow<RestoreBackupViewModel.State>
+        field = MutableStateFlow<RestoreBackupViewModel.State>(State())
+
+    @AssistedFactory
+    @ManualViewModelAssistedFactoryKey
+    @ContributesIntoMap(AppScope::class)
+    interface Factory : ManualViewModelAssistedFactory {
+        fun create(uri: String): RestoreBackupViewModel
+    }
 
     init {
         // RK: validate now streams the file (suspend), so run it off the main thread.
-        screenModelScope.launchIO {
+        viewModelScope.launchIO {
             validate(uri.toUri())
         }
     }
 
     fun toggle(setter: (RestoreOptions, Boolean) -> RestoreOptions, enabled: Boolean) {
-        mutableState.update {
+        state.update {
             it.copy(
                 options = setter(it.options, enabled),
             )
@@ -187,8 +223,8 @@ private class RestoreBackupScreenModel(
     }
 
     fun startRestore() {
-        BackupRestoreJob.start(
-            context = context,
+        BackupRestoreWorker.start(
+            workManager = context.workManager,
             uri = uri.toUri(),
             options = state.value.options,
         )
@@ -196,7 +232,7 @@ private class RestoreBackupScreenModel(
 
     private suspend fun validate(uri: Uri) {
         val results = try {
-            BackupFileValidator(context).validate(uri)
+            backupFileValidator.validate(uri)
         } catch (e: Exception) {
             setError(
                 error = InvalidRestore(uri, e.message.toString()),
@@ -205,9 +241,18 @@ private class RestoreBackupScreenModel(
             return
         }
 
-        if (results.missingSources.isNotEmpty() || results.missingTrackers.isNotEmpty()) {
+        if (
+            results.missingSources.isNotEmpty() ||
+            results.missingTrackers.isNotEmpty() ||
+            results.missingExtensions.isNotEmpty() // RK
+        ) {
             setError(
-                error = MissingRestoreComponents(uri, results.missingSources, results.missingTrackers),
+                error = MissingRestoreComponents(
+                    uri,
+                    results.missingSources,
+                    results.missingTrackers,
+                    results.missingExtensions, // RK
+                ),
                 canRestore = true,
             )
             return
@@ -217,7 +262,7 @@ private class RestoreBackupScreenModel(
     }
 
     private fun setError(error: Any?, canRestore: Boolean) {
-        mutableState.update {
+        state.update {
             it.copy(
                 error = error,
                 canRestore = canRestore,
@@ -237,6 +282,7 @@ private data class MissingRestoreComponents(
     val uri: Uri,
     val sources: List<String>,
     val trackers: List<String>,
+    val extensions: List<String>, // RK
 )
 
 private data class InvalidRestore(

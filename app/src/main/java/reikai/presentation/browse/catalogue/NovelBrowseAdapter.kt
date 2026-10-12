@@ -1,0 +1,214 @@
+package reikai.presentation.browse.catalogue
+
+import androidx.lifecycle.viewModelScope
+import androidx.paging.PagingData
+import androidx.paging.map
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import reikai.domain.source.filter.NovelSavedSearchFilters
+import reikai.novel.install.description
+import reikai.novel.source.NovelListing
+import reikai.presentation.browse.EntryBulkFavoriteViewModel
+import reikai.presentation.browse.item
+import reikai.presentation.browse.novelBrowseRow
+import reikai.presentation.browse.novelRowKey
+import reikai.presentation.novel.browse.NovelBrowseState
+import reikai.presentation.novel.browse.NovelBrowseViewModel
+import reikai.presentation.novel.browse.NovelBulkFavoriteViewModel
+import reikai.presentation.novel.browse.NovelSavedSearchRun
+import reikai.presentation.novel.browse.SelectedNovel
+import tachiyomi.domain.library.model.LibraryDisplayMode
+
+/**
+ * Adapts the live [NovelBrowseViewModel] plus its bulk-selection model to the neutral
+ * [EntryBrowseBehavior]. Symmetric with [MangaBrowseAdapter], so one shared browse screen drives both
+ * catalogues. [migrateForId] is set only when the screen was opened to choose a migration target,
+ * which is what fills the matching capability slot.
+ */
+class NovelBrowseAdapter(
+    private val model: NovelBrowseViewModel,
+    private val bulk: NovelBulkFavoriteViewModel,
+    private val sourceId: String,
+    migrateForId: Long? = null,
+    private val onPickUnavailable: () -> Unit = {},
+    private val onMigrationPicked: () -> Unit = {},
+) : EntryBrowseBehavior {
+
+    private val savedSearchFilters = NovelSavedSearchFilters()
+
+    private val capabilities = EntryBrowseCapabilities(
+        migrationPick = migrateForId?.let { id ->
+            MigrationPickCapability(id) { row, onPicked ->
+                model.pickAsMigrationTarget(
+                    row.item,
+                    id,
+                    onPicked = {
+                        onPicked()
+                        onMigrationPicked()
+                    },
+                    onUnavailable = onPickUnavailable,
+                )
+            }
+        },
+    )
+
+    /**
+     * The in-toolbar text, which the model has no field for: its own `query` is the committed one.
+     * Until the screen types, that committed query stands in, so a source opened with one shows the
+     * field holding it. Seeding at construction would read too early: the model applies its initial
+     * query only once the plugin has resolved.
+     */
+    private val toolbarText = MutableStateFlow<ToolbarText>(ToolbarText.Untouched)
+
+    // Above [state], whose initial value reads it.
+    private val retry = SourceLoadRetry(model::retryLoad)
+
+    override val state: StateFlow<EntryBrowseScreenState> =
+        combine(model.state, bulk.state, toolbarText, ::toNeutral)
+            // WhileSubscribed, not Eagerly: the adapter is rebuilt per composition entry while its
+            // sharing coroutine lives in the model's scope, so an eager start leaves one orphaned
+            // mapper running per re-entry.
+            .stateIn(
+                model.viewModelScope,
+                SharingStarted.WhileSubscribed(),
+                toNeutral(model.state.value, bulk.state.value, toolbarText.value),
+            )
+
+    // A browse result carries no library state of its own, so the cell reads it off the model's
+    // favorited set, which is what re-renders the badge when the entry is added.
+    private val favorited = model.state.mapState { it.favoritedKeys }
+
+    override val rows: StateFlow<Flow<PagingData<EntryBrowseRow>>> = model.novelPagerFlowFlow
+        .map { pagerFlow ->
+            pagerFlow.map { pagingData -> pagingData.map { novelBrowseRow(it, sourceId, favorited) } }
+        }
+        .stateIn(model.viewModelScope, SharingStarted.WhileSubscribed(), emptyFlow())
+
+    private fun toNeutral(
+        state: NovelBrowseState,
+        bulkState: EntryBulkFavoriteViewModel.State<SelectedNovel>,
+        toolbar: ToolbarText,
+    ): EntryBrowseScreenState {
+        val source = state.source ?: return unavailable(state)
+        val searching = state.query.isNotBlank()
+        return EntryBrowseScreenState.Loaded(
+            sourceName = source.name,
+            listing = when {
+                searching -> EntryBrowseListing.Search(state.query)
+                state.listing == NovelListing.Latest -> EntryBrowseListing.Latest
+                else -> EntryBrowseListing.Popular
+            },
+            query = when (toolbar) {
+                ToolbarText.Untouched -> state.query.takeIf { it.isNotBlank() }
+                is ToolbarText.Typed -> toolbar.value
+            },
+            isUserQuery = searching,
+            supportsLatest = source.supportsLatest,
+            hasFilters = source.filters != null,
+            filtersActive = state.filterChipActive(),
+            hasSettings = source.settings != null,
+            webUrl = source.site.takeIf { it.isNotBlank() },
+            rowStyle = EntryBrowseRowStyle.Standard(state.displayMode, state.columns),
+            selectionMode = bulkState.selectionMode,
+            selectedKeys = bulkState.selection.mapTo(mutableSetOf()) { novelRowKey(it.sourceId, it.item.path) },
+            capabilities = capabilities,
+            dialog = EntryBrowseDialog.Filter.takeIf { state.filterSheetOpen },
+        )
+    }
+
+    private fun unavailable(state: NovelBrowseState): EntryBrowseScreenState {
+        val label = state.missingSourceLabel ?: return EntryBrowseScreenState.Loading
+        val failure = state.loadFailure ?: return EntryBrowseScreenState.SourceMissing(label)
+        return EntryBrowseScreenState.SourceLoadFailed(label, failure.reason.description, failure.reason.message, retry)
+    }
+
+    override fun setListing(listing: EntryBrowseListing) {
+        toolbarText.value = ToolbarText.Typed(null)
+        model.resetFilters()
+        when (listing) {
+            EntryBrowseListing.Latest -> model.setListing(NovelListing.Latest)
+            EntryBrowseListing.Popular -> model.setListing(NovelListing.Popular)
+            is EntryBrowseListing.Search -> model.search(listing.query.orEmpty())
+        }
+    }
+
+    override fun setQuery(query: String?) {
+        toolbarText.value = ToolbarText.Typed(query)
+    }
+
+    override fun search(query: String?) {
+        // A search the screen did not type (a details page handing one over) still has to show, and
+        // clearing empties the field, so the toolbar cannot stand open over the listing it went
+        // back to. The manga twin gets the second half from `setListing` nulling its toolbar query.
+        toolbarText.value = ToolbarText.Typed(query)
+        model.search(query.orEmpty())
+    }
+
+    override fun searchGenre(genre: String) {
+        // A matched genre searches with an empty field, as manga's does; otherwise it is the text.
+        toolbarText.value = ToolbarText.Typed(if (model.searchGenre(genre)) null else genre)
+    }
+
+    override fun setDisplayMode(mode: LibraryDisplayMode) = model.setDisplayMode(mode)
+
+    override fun openFilterSheet() = model.openFilterSheet()
+
+    override fun resetFilters() = model.resetFilters()
+
+    override fun captureSearch(): SavedSearchDraft {
+        val state = model.state.value
+        val query = state.query.takeIf { it.isNotBlank() }
+        val run = NovelSavedSearchRun.of(state.source?.filters?.applyToSearch == true, query)
+        return SavedSearchDraft(
+            query = query,
+            filtersJson = state.filterDraft
+                .takeUnless { run is NovelSavedSearchRun.PlainSearch }
+                ?.let(savedSearchFilters::encode),
+        )
+    }
+
+    override fun applySearch(query: String?, filtersJson: String?) {
+        val filters = model.state.value.source?.filters
+        model.setFilterState(filters?.let { savedSearchFilters.restore(filtersJson, it::defaultState) })
+        toolbarText.value = ToolbarText.Typed(query)
+        model.applySavedSearch(query)
+    }
+
+    override val addFlow = model.addFlow
+
+    override fun onRowLongClick(row: EntryBrowseRow) = addFlow.onLongClick(row.item, sourceId)
+
+    override fun setSelectionMode(enabled: Boolean) = bulk.toggleSelectionMode(enabled)
+
+    override fun toggleSelection(row: EntryBrowseRow) =
+        bulk.toggleSelection(SelectedNovel(sourceId, row.item))
+
+    override fun selectAll(rows: List<EntryBrowseRow>) =
+        rows.forEach { bulk.select(SelectedNovel(sourceId, it.item)) }
+
+    override fun invertSelection(rows: List<EntryBrowseRow>) =
+        bulk.reverseSelection(rows.map { SelectedNovel(sourceId, it.item) })
+
+    override fun addSelectionToLibrary() = bulk.addFavorite()
+
+    override fun dismissDialog() = model.closeFilterSheet()
+}
+
+/**
+ * The novel half of the Filter chip rule. No Search listing exists here, because a text search
+ * and a filtered listing go through different pagers, so the two halves of upstream's single
+ * condition are read separately. FilterChipConformanceTest runs this against the manga twin.
+ */
+internal fun NovelBrowseState.filterChipActive(): Boolean = query.isNotBlank() || filtersApplied
+
+/** Whether the catalogue's search field is still showing the query it was opened with. */
+private sealed interface ToolbarText {
+    data object Untouched : ToolbarText
+    data class Typed(val value: String?) : ToolbarText
+}

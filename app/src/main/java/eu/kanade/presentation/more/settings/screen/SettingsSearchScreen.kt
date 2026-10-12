@@ -17,8 +17,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.rememberTextFieldState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,6 +30,9 @@ import androidx.compose.runtime.NonRestartableComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withCompositionLocal
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -49,7 +50,11 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import eu.kanade.presentation.components.UpIcon
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.screen.about.AboutScreen
 import eu.kanade.presentation.util.Screen
+import kotlinx.coroutines.flow.collectLatest
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Close
 import reikai.presentation.recommendation.SettingsRecommendationsScreen
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -129,7 +134,7 @@ class SettingsSearchScreen : Screen() {
                             if (textFieldState.text.isNotEmpty()) {
                                 IconButton(onClick = { textFieldState.clearText() }) {
                                     Icon(
-                                        imageVector = Icons.Outlined.Close,
+                                        imageVector = MaterialSymbols.Rounded.Close,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -142,7 +147,7 @@ class SettingsSearchScreen : Screen() {
             },
         ) { contentPadding ->
             SearchResult(
-                searchKey = textFieldState.text.toString(),
+                searchKey = { textFieldState.text.toString() },
                 listState = listState,
                 contentPadding = contentPadding,
             ) { result ->
@@ -155,63 +160,26 @@ class SettingsSearchScreen : Screen() {
 
 @Composable
 private fun SearchResult(
-    searchKey: String,
+    searchKey: () -> String,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     contentPadding: PaddingValues = PaddingValues(),
     onItemClick: (SearchResultItem) -> Unit,
 ) {
-    if (searchKey.isEmpty()) return
+    // RK: a gate may await the extension scan, so it suspends here instead of blocking composition.
+    val enabledScreens by produceState<List<SearchableSettings>?>(initialValue = null) {
+        value = settingScreens.filter { it.isEnabled() }
+    }
+    val screens = enabledScreens ?: return // RK
 
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
 
-    val index = getIndex()
-    val result by produceState<List<SearchResultItem>?>(initialValue = null, searchKey) {
-        value = index.asSequence()
-            .flatMap { settingsData ->
-                settingsData.contents.asSequence()
-                    // Only search from enabled prefs and one with valid title
-                    .filter { it.enabled && it.title.isNotBlank() }
-                    // Flatten items contained inside *enabled* PreferenceGroup
-                    .flatMap { p ->
-                        when (p) {
-                            is Preference.PreferenceGroup -> {
-                                if (p.enabled) {
-                                    p.preferenceItems.asSequence()
-                                        .filter { it.enabled && it.title.isNotBlank() }
-                                        .map { p.title to it }
-                                } else {
-                                    emptySequence()
-                                }
-                            }
-                            is Preference.PreferenceItem<*, *> -> sequenceOf(null to p)
-                        }
-                    }
-                    // Don't show info preference
-                    .filterNot { it.second is Preference.PreferenceItem.InfoPreference }
-                    // Filter by search query
-                    .filter { (_, p) ->
-                        val inTitle = p.title.contains(searchKey, true)
-                        val inSummary = p.subtitle?.contains(searchKey, true) ?: false
-                        inTitle || inSummary
-                    }
-                    // Map result data
-                    .map { (categoryTitle, p) ->
-                        SearchResultItem(
-                            route = settingsData.route,
-                            title = p.title,
-                            breadcrumbs = getLocalizedBreadcrumb(
-                                path = settingsData.title,
-                                node = categoryTitle,
-                                isLtr = isLtr,
-                            ),
-                            // RK: carry the group so highlighting lands on the exact row.
-                            highlightKey = HighlightKey(categoryTitle, p.title),
-                        )
-                    }
-            }
-            .take(10) // Just take top 10 result for quicker result
-            .toList()
+    val index = getIndex(screens) // RK
+    // The query is read here rather than in composition, so typing doesn't rebuild the index on every key
+    val result by produceState<List<SearchResultItem>?>(initialValue = null, index) {
+        snapshotFlow(searchKey).collectLatest { searchKey ->
+            value = if (searchKey.isEmpty()) null else search(index, searchKey, isLtr)
+        }
     }
 
     Crossfade(
@@ -266,18 +234,78 @@ private fun SearchResult(
     }
 }
 
+private fun search(index: List<SettingsData>, searchKey: String, isLtr: Boolean): List<SearchResultItem> {
+    return index.asSequence()
+        .flatMap { settingsData ->
+            // RK: highlightKey is (group, title), so the scroll lands on the exact row
+            fun result(title: String, categoryTitle: String?, highlightKey: HighlightKey) = SearchResultItem(
+                route = settingsData.route,
+                title = title,
+                breadcrumbs = getLocalizedBreadcrumb(
+                    path = settingsData.title,
+                    node = categoryTitle,
+                    isLtr = isLtr,
+                ),
+                highlightKey = highlightKey, // RK
+            )
+
+            fun Preference.PreferenceItem<*, *>.matches(): Boolean {
+                // Don't show info preference
+                if (this is Preference.PreferenceItem.InfoPreference) return false
+                val inTitle = title.contains(searchKey, true)
+                val inSummary = subtitle?.contains(searchKey, true) ?: false
+                return inTitle || inSummary
+            }
+
+            settingsData.contents.asSequence()
+                // Only search from enabled prefs and one with valid title
+                .filter { it.visible && it.title.isNotBlank() }
+                .flatMap { p ->
+                    when (p) {
+                        is Preference.PreferenceGroup -> {
+                            // A matching heading leads to the group itself, not to one of its items
+                            val heading = if (p.title.contains(searchKey, true)) {
+                                sequenceOf(result(p.title, null, HighlightKey.heading(p.title))) // RK
+                            } else {
+                                emptySequence()
+                            }
+                            val items = p.preferenceItems.asSequence()
+                                .filter { it.visible && it.title.isNotBlank() && it.matches() }
+                                .map { result(it.title, p.title, HighlightKey(p.title, it.title)) } // RK
+                            heading + items
+                        }
+                        is Preference.PreferenceItem<*, *> -> {
+                            if (p.matches()) {
+                                sequenceOf(result(p.title, null, HighlightKey(null, p.title))) // RK
+                            } else {
+                                emptySequence()
+                            }
+                        }
+                    }
+                }
+        }
+        .take(10) // Just take top 10 result for quicker result
+        .toList()
+}
+
 @Composable
 @NonRestartableComposable
-private fun getIndex() = settingScreens
-    // RK: skip screens that opt out (E-Hentai while adult sources are disabled).
-    .filter(SearchableSettings::isEnabled)
+private fun getIndex(screens: List<SearchableSettings>) = screens // RK: only the enabled ones
     .map { screen ->
         SettingsData(
             title = stringResource(screen.getTitleRes()),
             route = screen,
-            contents = screen.getPreferences(),
+            // RK -->
+            contents = withCompositionLocal(LocalSettingsIndexing provides true) { screen.getPreferences() },
+            // RK <--
         )
     }
+
+// RK -->
+
+/** True while search composes a screen's rows only to read their titles, so a row costly to back skips that. */
+internal val LocalSettingsIndexing = staticCompositionLocalOf { false }
+// RK <--
 
 private fun getLocalizedBreadcrumb(path: String, node: String?, isLtr: Boolean): String {
     return if (node == null) {
@@ -296,18 +324,24 @@ private fun getLocalizedBreadcrumb(path: String, node: String?, isLtr: Boolean):
 private val settingScreens = listOf(
     SettingsAppearanceScreen,
     SettingsLibraryScreen,
-    SettingsReaderScreen,
+    // RK: the two per-content-type reader screens, replacing the single Reader screen. A screen absent
+    // from this list is invisible to settings search, so splitting one without registering both halves
+    // silently loses their rows.
+    SettingsMangaReaderScreen,
+    SettingsNovelReaderScreen,
     SettingsDownloadScreen,
     SettingsTrackingScreen,
     SettingsBrowseScreen,
     SettingsDataScreen,
     SettingsSecurityScreen,
     SettingsEhScreen,
-    // RK: MangaDex enhanced-source hub (gated by isEnabled, filtered in getIndex).
+    // RK: MangaDex enhanced-source hub (gated by isEnabled, filtered in SearchResult).
     SettingsMangaDexScreen,
-    // RK: recommendations settings, previously unreachable from settings search.
+    // RK: recommendations settings, a top-level screen of its own.
     SettingsRecommendationsScreen,
     SettingsAdvancedScreen,
+    // RK: About, rebuilt on the preference DSL so "licenses" and "check for updates" are findable.
+    AboutScreen,
 )
 
 private data class SettingsData(

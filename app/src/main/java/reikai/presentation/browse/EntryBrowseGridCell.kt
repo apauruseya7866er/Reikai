@@ -6,11 +6,14 @@ import eu.kanade.presentation.library.components.CommonMangaItemDefaults
 import eu.kanade.presentation.library.components.MangaComfortableGridItem
 import eu.kanade.presentation.library.components.MangaCompactGridItem
 import eu.kanade.presentation.library.components.MangaListItem
-import reikai.data.coil.NovelCover
+import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelCover
+import reikai.domain.novel.model.novelResultCover
 import reikai.novel.host.NovelItem
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.manga.model.MangaCover
+import tachiyomi.domain.manga.model.asMangaCover
 
 /**
  * Content-neutral data for one browse-catalogue result. The cover is typed [Any] so a [MangaCover] or
@@ -25,29 +28,22 @@ data class EntryBrowseItemUi(
 
 fun Manga.toEntryBrowseUi() = EntryBrowseItemUi(
     title = title,
-    cover = MangaCover(
-        mangaId = id,
-        sourceId = source,
-        isMangaFavorite = favorite,
-        url = thumbnailUrl,
-        lastModified = coverLastModified,
-    ),
+    cover = asMangaCover(),
     favorite = favorite,
 )
 
-/** [NovelItem] carries no favorite/source, so the caller supplies whether it's [inLibrary] and the
- *  source [site] (the novel cover's Referer). */
-fun NovelItem.toEntryBrowseUi(inLibrary: Boolean, site: String?) = EntryBrowseItemUi(
+/** [NovelItem] carries no library state or source, so the caller supplies its [stored] library row and [sourceId]. */
+fun NovelItem.toEntryBrowseUi(stored: Novel?, sourceId: String) = EntryBrowseItemUi(
     title = name,
-    cover = NovelCover(url = cover, site = site, isNovelFavorite = inLibrary, lastModified = 0L),
-    favorite = inLibrary,
+    cover = novelResultCover(stored, cover, sourceId),
+    favorite = stored?.favorite == true,
 )
 
 /**
  * The single browse-result cell for both manga and novels: switches on [displayMode] and renders the
  * matching shared leaf (`MangaComfortableGridItem` / `MangaCompactGridItem` / `MangaListItem`), so the
- * two catalogues can't drift. Panorama renders as comfortable and cover-only as compact, matching how
- * browse has always ignored those two library-only modes. The grid/list container stays per-type.
+ * two catalogues can't drift. Cover-only draws as compact, as browse has always drawn it. The container
+ * is the catalogue's `StandardRows` or global search's card row.
  */
 @Composable
 fun EntryBrowseGridCell(
@@ -63,7 +59,7 @@ fun EntryBrowseGridCell(
             coverData = ui.cover,
             title = ui.title,
             coverAlpha = coverAlpha,
-            badge = { InLibraryBadge(enabled = ui.favorite) },
+            badgeStart = { InLibraryBadge(enabled = ui.favorite) },
             onClick = onClick,
             onLongClick = onLongClick,
             isSelected = isSelected,
@@ -85,6 +81,7 @@ fun EntryBrowseGridCell(
             onClick = onClick,
             onLongClick = onLongClick,
             isSelected = isSelected,
+            usePanoramaCover = displayMode is LibraryDisplayMode.ComfortableGridPanorama,
         )
     }
 }

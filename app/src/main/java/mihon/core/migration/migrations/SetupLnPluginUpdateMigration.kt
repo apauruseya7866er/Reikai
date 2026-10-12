@@ -1,20 +1,26 @@
 package mihon.core.migration.migrations
 
-import android.app.Application
+import android.content.Context
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesIntoSet
+import dev.zacsweers.metro.Inject
 import mihon.core.migration.Migration
 import mihon.core.migration.MigrationContext
-import reikai.data.novel.update.LnPluginUpdateJob
+import reikai.data.novel.update.LnPluginUpdateWorker
 
 /**
- * RK: schedules the periodic light-novel plugin update check on every app start, mirroring
- * [SetupLibraryUpdateMigration]. Idempotent via [LnPluginUpdateJob.setupTask]'s unique-work policy.
+ * Schedules the periodic light-novel plugin update check on install and on each app upgrade, mirroring
+ * [SetupLibraryUpdateMigration]. Idempotent via [LnPluginUpdateWorker.setupTask]'s unique-work policy.
  */
-class SetupLnPluginUpdateMigration : Migration {
+@Inject
+@ContributesIntoSet(AppScope::class)
+class SetupLnPluginUpdateMigration(
+    private val context: Context,
+) : Migration {
     override val version: Float = Migration.ALWAYS
 
     override suspend fun invoke(migrationContext: MigrationContext): Boolean {
-        val context = migrationContext.get<Application>() ?: return false
-        LnPluginUpdateJob.setupTask(context)
+        LnPluginUpdateWorker.setupTask(context)
         return true
     }
 }

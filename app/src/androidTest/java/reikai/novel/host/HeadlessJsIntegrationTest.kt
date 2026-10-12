@@ -4,42 +4,52 @@ import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.cash.quickjs.QuickJs
+import com.dokar.quickjs.binding.function
 import eu.kanade.tachiyomi.network.JavaScriptEngine
 import eu.kanade.tachiyomi.network.NetworkHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonPrimitive
+import mihon.app.di.appGraph
 import okhttp3.Request
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import reikai.data.novel.NovelStatusCode
+import reikai.data.novel.toNovel
 import reikai.novel.registry.LnRegistry
-import reikai.presentation.novel.browse.buildOptions
-import reikai.presentation.novel.browse.defaultFilterValues
+import reikai.novel.source.buildOptions
+import reikai.novel.source.defaultFilterValues
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import com.dokar.quickjs.QuickJs as DokarQuickJs
 
 /**
- * On-device integration test for the headless QuickJS stack (NOT a CI test: network-dependent).
+ * On-device integration test for the headless QuickJS stack, not a CI test: it is network-dependent
+ * and pulls the live plugin registry, so it runs on demand.
  *
- * Exercises the production classes, not an inline spike:
- *  - [LnPluginHost] running real lnreader plugins from the registry with NO WebView and NO Activity
- *    (the prerequisite for background novel updates / downloads), across a broad sample so engine
- *    incompatibilities surface per-plugin.
- *  - [JavaScriptEngine] (the extensions-lib helper, now dokar-backed after dropping app.cash.quickjs)
- *    on representative synchronous snippets, so the manga-source path is covered too.
- *
- * Read the full per-plugin breakdown from logcat tag "HeadlessJsTest".
+ * Covers [LnPluginHost] running real lnreader plugins with no WebView and no Activity, which is what
+ * background novel updates need, plus [JavaScriptEngine] for the manga-source path. The per-plugin
+ * breakdown goes to logcat tag "HeadlessJsTest"; how to run it is in docs/dev/testing.md.
  */
 @RunWith(AndroidJUnit4::class)
 class HeadlessJsIntegrationTest {
 
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    // Stands in for the graph's app scope; only the hosts' idle sweeper runs on it.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     @Test
     fun lnPluginsRunInProductionHeadlessHost() = runBlocking {
-        val client = Injekt.get<NetworkHelper>().client
-        val host = LnPluginHost(context, client, Injekt.get())
-        val loader = LnPluginLoader(context, client)
+        val networkHelper = Injekt.get<NetworkHelper>()
+        val client = networkHelper.client
+        val host = LnPluginHost(scope, context, networkHelper, context.appGraph.preferenceStore)
+        val loader = LnPluginLoader(context, networkHelper)
         val report = StringBuilder("\n===== Production headless LN host =====\n")
 
         // Pull the real registry instead of hardcoding (fragile) plugin filenames. Test reinstalls
@@ -79,7 +89,7 @@ class HeadlessJsIntegrationTest {
 
         try {
             for (entry in sample) {
-                val source = runCatching { loader.fetchSource(entry.url, forceRefresh = false) }
+                val source = runCatching { loader.download(entry.url) }
                     .getOrElse {
                         report.appendLine("FETCH FAIL ${entry.id}: ${it.message}")
                         continue
@@ -128,7 +138,7 @@ class HeadlessJsIntegrationTest {
                 if (text.isNotBlank()) fullChain++
             }
         } finally {
-            host.destroy()
+            host.close()
         }
 
         report.appendLine("--- summary ---")
@@ -150,13 +160,12 @@ class HeadlessJsIntegrationTest {
     }
 
     /**
-     * Whole-registry health sweep, parameterized so no source edit is needed per run:
+     * Whole-registry health sweep, driven by scripts/plugin-sweep.ps1:
      * `am instrument -e class <fqcn>#lnPluginRegistrySweep -e registryUrl <url> [-e anchorIds a,b]`.
-     * Probes every plugin in the registry via popularNovels(1) built from the plugin's own default
-     * filters (Cloudflare solved through the app's configured FlareSolverr), logging one
-     * `RESULT <id> [<lang>] <STATUS> ...` line per plugin under tag "HeadlessJsTest". Anchors also run
-     * a full parseNovel + parseChapter chain. With no registryUrl arg it skips, so a normal test run
-     * never triggers a network sweep. The driver is scripts/plugin-sweep.ps1.
+     * Probes every plugin via popularNovels(1) from its own default filters (Cloudflare solved through
+     * the configured FlareSolverr), logging `RESULT <id> [<lang>] <STATUS> ...` per plugin under tag
+     * "HeadlessJsTest". Anchors also run a full parseNovel + parseChapter chain. With no registryUrl
+     * it skips, so a normal test run never triggers a network sweep.
      */
     @Test
     fun lnPluginRegistrySweep() = runBlocking {
@@ -169,9 +178,10 @@ class HeadlessJsIntegrationTest {
         val anchorIds = args.getString("anchorIds")
             ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet().orEmpty()
 
-        val client = Injekt.get<NetworkHelper>().client
-        val host = LnPluginHost(context, client, Injekt.get())
-        val loader = LnPluginLoader(context, client)
+        val networkHelper = Injekt.get<NetworkHelper>()
+        val client = networkHelper.client
+        val host = LnPluginHost(scope, context, networkHelper, context.appGraph.preferenceStore)
+        val loader = LnPluginLoader(context, networkHelper)
 
         val entries = runCatching {
             client.newCall(Request.Builder().url(registryUrl).build()).execute().use { res ->
@@ -192,7 +202,7 @@ class HeadlessJsIntegrationTest {
         try {
             for (entry in entries) {
                 val tag = "${entry.id} [${entry.lang}]"
-                val source = runCatching { loader.fetchSource(entry.url, forceRefresh = false) }
+                val source = runCatching { loader.download(entry.url) }
                     .getOrElse {
                         Log.i(TAG, "RESULT $tag FETCH_FAIL ${it.message?.take(160)}")
                         continue
@@ -238,7 +248,7 @@ class HeadlessJsIntegrationTest {
                 }
             }
         } finally {
-            host.destroy()
+            host.close()
         }
         Log.i(
             TAG,
@@ -275,6 +285,253 @@ class HeadlessJsIntegrationTest {
     }
 
     /**
+     * fetchProto hands the decoded message over as LNReader does, so an enum stays a number: WuxiaWorld
+     * switches on the numeric status and filed every novel as Completed when it arrived as a name.
+     */
+    @Test
+    fun grpcWebBodyKeepsEnumsNumeric() = runBlocking {
+        val q = DokarQuickJs.create(Dispatchers.IO)
+        try {
+            q.function("__lnLog") { null }
+            q.evaluate<Any?>("(function(){globalThis.self=globalThis;globalThis.window=globalThis;})()")
+            LnPluginHost.RUNTIME_ASSETS.forEach { path ->
+                q.evaluate<Any?>(context.assets.open(path).bufferedReader().use { it.readText() })
+            }
+            val status = q.evaluate<String>(
+                """
+                (function () {
+                  var root = protobuf.parse(
+                    'syntax = "proto3"; enum Status { Finished = 0; Active = 1; } message Item { Status status = 1; }'
+                  ).root;
+                  var Item = root.lookupType("Item");
+                  var msg = Item.encode({ status: 1 }).finish();
+                  var framed = new Uint8Array(5 + msg.length);
+                  framed[4] = msg.length;
+                  framed.set(msg, 5);
+                  var status = globalThis.__lnDecodeGrpcWebBody(Item, framed).status;
+                  return typeof status + ":" + status;
+                })()
+                """.trimIndent(),
+            )
+            assertEquals("number:1", status)
+        } finally {
+            q.close()
+        }
+    }
+
+    /**
+     * The host's text codecs answer bad input as a browser does (WHATWG Encoding): a malformed UTF-8
+     * sequence decodes to U+FFFD instead of throwing, which a fetched page's `text()` relies on, and a
+     * lone surrogate encodes to U+FFFD. `fatal` still throws. Inline: no network.
+     */
+    @Test
+    fun textCodecsReplaceMalformedInputLikeABrowser() = runBlocking {
+        val q = DokarQuickJs.create(Dispatchers.IO)
+        try {
+            q.function("__lnLog") { null }
+            q.evaluate<Any?>("(function(){globalThis.self=globalThis;globalThis.window=globalThis;})()")
+            LnPluginHost.RUNTIME_ASSETS.forEach { path ->
+                q.evaluate<Any?>(context.assets.open(path).bufferedReader().use { it.readText() })
+            }
+            val results = q.evaluate<String>(
+                """
+                (function () {
+                  function d(bytes, opts) { return new TextDecoder("utf-8", opts).decode(new Uint8Array(bytes)); }
+                  function hex(s) { var o = []; for (var i = 0; i < s.length; i++) o.push(s.charCodeAt(i).toString(16)); return o.join(" "); }
+                  var fatal;
+                  try { d([0xff], { fatal: true }); fatal = "no-throw"; } catch (e) { fatal = e.name; }
+                  return [
+                    hex(d([0x61, 0xff, 0x62])),
+                    hex(d([0xe2, 0x82])),
+                    hex(d([0xc0, 0xaf])),
+                    hex(d([0xed, 0xa0, 0x80])),
+                    d([0xef, 0xbb, 0xbf, 0x61]),
+                    hex(d([0xf0, 0x9f, 0x98, 0x80])),
+                    hex(new TextDecoder().decode(new Uint16Array([0x6261]))),
+                    fatal,
+                    Array.from(new TextEncoder().encode("a\uD800b")).join(","),
+                  ].join("|");
+                })()
+                """.trimIndent(),
+            )
+            val expected = listOf(
+                "61 fffd 62",
+                "fffd",
+                "fffd fffd",
+                "fffd fffd fffd",
+                "a",
+                "d83d de00",
+                "61 62",
+                "TypeError",
+                "97,239,191,189,98",
+            )
+            assertEquals(expected.joinToString("|"), results)
+        } finally {
+            q.close()
+        }
+    }
+
+    /**
+     * A stored undefined reads back as undefined, as LNReader's Storage.get returns item.value
+     * (refs/lnreader-main/src/plugins/helpers/storage.ts). JSON drops the undefined, so the envelope
+     * carried only its timestamp and came back whole. Inline plugin: no network.
+     */
+    @Test
+    fun storageReadsBackAStoredUndefined() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val plugin = """
+            var storage = require('@libs/storage').storage;
+            module.exports.default = {
+              id: 'storage-undefined-test', name: 'T', site: 'https://example.org', version: '1.0.0',
+              parseChapter: async function () {
+                storage.set('k', undefined);
+                return String(typeof storage.get('k'));
+              },
+            };
+        """.trimIndent()
+        host.loadPlugin("storage-undefined-test", plugin)
+
+        assertEquals("undefined", host.parseChapter("storage-undefined-test", "/c"))
+    }
+
+    /**
+     * A plugin that reads the site's storage while it is constructed, as RanobeLib reads its sign-in,
+     * sees what the WebView kept on its next call, without an app restart. Inline plugin: no network.
+     */
+    @Test
+    fun webStorageReachesAPluginThatReadsItAtConstruction() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val plugin = """
+            var localStorage = require('@libs/storage').localStorage;
+            var stored = localStorage.get();
+            module.exports.default = {
+              id: 'web-storage-test', name: 'T', site: 'https://example.org', version: '1.0.0',
+              auth: stored ? stored.auth : 'none',
+              parseChapter: async function () { return String(this.auth); },
+            };
+        """.trimIndent()
+        host.loadPlugin("web-storage-test", plugin)
+        host.storeWebStorage("web-storage-test", WebStorageSnapshot(local = "{}", session = "{}"))
+        host.parseChapter("web-storage-test", "/c")
+
+        host.storeWebStorage("web-storage-test", WebStorageSnapshot(local = """{"auth":"signed-in"}""", session = "{}"))
+
+        assertEquals("signed-in", host.parseChapter("web-storage-test", "/c"))
+    }
+
+    /** Plugin code runs in the runtime's global scope, so the id-taking storage bridge must not be on it. */
+    @Test
+    fun aPluginCannotReadAnotherPluginsStorage() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        host.loadPlugin(
+            "victim-test",
+            "module.exports.default = { id: 'victim-test', name: 'V', site: 'https://a.org', version: '1' };",
+        )
+        host.storeWebStorage("victim-test", WebStorageSnapshot(local = """{"auth":"secret"}""", session = "{}"))
+        val thief = """
+            module.exports.default = {
+              id: 'thief-test', name: 'T', site: 'https://b.org', version: '1',
+              parseChapter: async function () {
+                try { return String(__lnGetStorage('victim-test', 'webview:local')); } catch (e) { return 'blocked'; }
+              },
+            };
+        """.trimIndent()
+        host.loadPlugin("thief-test", thief)
+
+        assertEquals("blocked", host.parseChapter("thief-test", "/c"))
+    }
+
+    /** A reload that now declares another plugin's id would take over that plugin's engine and storage. */
+    @Test
+    fun aReloadDeclaringAnotherIdIsRefused() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        host.loadPlugin(
+            "owner-test",
+            "module.exports.default = { id: 'owner-test', name: 'O', site: 'https://a.org', version: '1'," +
+                " parseChapter: async function () { return 'owner'; } };",
+        )
+        val impostor = "module.exports.default = { id: 'owner-test', name: 'I', site: 'https://b.org', version: '1'," +
+            " parseChapter: async function () { return 'impostor'; } };"
+
+        runCatching { host.loadPlugin("impostor-test", impostor, expectedId = "impostor-test") }
+
+        assertEquals("owner", host.parseChapter("owner-test", "/c"))
+    }
+
+    /** LNReader's opt-in to the browser's storage reaches the app, which keeps none for a plugin without it. */
+    @Test
+    fun aPluginAskingForTheSiteStorageSaysSo() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val plugin = """
+            module.exports.default = {
+              id: 'web-storage-flag-test', name: 'T', site: 'https://example.org', version: '1.0.0',
+              webStorageUtilized: true,
+            };
+        """.trimIndent()
+
+        assertTrue(host.loadPlugin("web-storage-flag-test", plugin).webStorageUtilized)
+    }
+
+    /** The other half of the opt-in: a plugin that never asks is never handed the site's storage. */
+    @Test
+    fun aPluginNotAskingForTheSiteStorageSaysNo() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val plugin = """
+            module.exports.default = {
+              id: 'no-web-storage-test', name: 'T', site: 'https://example.org', version: '1.0.0',
+            };
+        """.trimIndent()
+
+        assertFalse(host.loadPlugin("no-web-storage-test", plugin).webStorageUtilized)
+    }
+
+    /**
+     * LNReader's newer statuses (plugins c432ad8) reach a stored novel as the shared status each reads as.
+     * The host's NovelStatus lacked them, so a plugin naming one sent no status at all. Inline plugin: no network.
+     */
+    @Test
+    fun aPluginsNewerStatusesReadAsSharedOnes() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val plugin = """
+            var NovelStatus = require('@libs/novelStatus').NovelStatus;
+            module.exports.default = {
+              id: 'status-test', name: 'T', site: 'https://example.org', version: '1.0.0',
+              parseNovel: async function (path) { return { path: path, name: 'T', status: NovelStatus[path] }; },
+            };
+        """.trimIndent()
+        host.loadPlugin("status-test", plugin)
+
+        val codes = listOf("Inactive", "STUB").map { host.parseNovel("status-test", it).toNovel("status-test").status }
+
+        assertEquals(listOf(NovelStatusCode.ON_HIATUS, NovelStatusCode.LICENSED).map(Int::toLong), codes)
+    }
+
+    /**
+     * A plugin whose constructor throws in its own engine is built again on the next call, so it
+     * recovers once the cause is gone. A half-built engine used to be kept, answering "plugin not
+     * loaded" until it idled out. Inline plugin: no network.
+     */
+    @Test
+    fun aPluginWhoseReplayFailedLoadsAgainOnTheNextCall() = runBlocking {
+        val host = LnPluginHost(scope, context, Injekt.get<NetworkHelper>(), context.appGraph.preferenceStore)
+        val plugin = """
+            var storage = require('@libs/storage').storage;
+            if (storage.get('fail')) throw new Error('constructor failed');
+            module.exports.default = {
+              id: 'replay-failure-test', name: 'T', site: 'https://example.org', version: '1.0.0',
+              parseChapter: async function () { return 'ok'; },
+            };
+        """.trimIndent()
+        host.loadPlugin("replay-failure-test", plugin)
+        host.setSetting("replay-failure-test", "fail", JsonPrimitive(true))
+        runCatching { host.parseChapter("replay-failure-test", "/c") }
+
+        host.setSetting("replay-failure-test", "fail", null)
+
+        assertEquals("ok", host.parseChapter("replay-failure-test", "/c"))
+    }
+
+    /**
      * The `app.cash.quickjs.QuickJs` compat class, used directly by extensions like Mangago
      * (issue #26). Covers plain evaluate plus the cross-instance compile -> execute -> evaluate
      * roundtrip those extensions rely on. Synchronous, exactly as extensions call it.
@@ -285,6 +542,9 @@ class HeadlessJsIntegrationTest {
             assertEquals("ab", qjs.evaluate("'a' + 'b'"))
             assertEquals("HELLO", qjs.evaluate("'hello'.toUpperCase()"))
             assertEquals("42", qjs.evaluate("String(6 * 7)"))
+            // Cash returned arrays as Object[], which extensions test for with `is Array<*>`.
+            val nested = qjs.evaluate("[['a'], 'b']") as Array<*>
+            assertEquals(listOf("a"), (nested[0] as Array<*>).toList())
         }
         // Mangago compiles a helper on one (throwaway) engine, then executes that "bytecode" on the
         // engine that actually runs the page-descrambling code.

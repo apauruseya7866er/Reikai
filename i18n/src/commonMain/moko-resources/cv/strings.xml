@@ -55,7 +55,6 @@
     <string name="pref_category_advanced">Тата</string>
     <string name="pref_category_downloads">Тийевсем</string>
     <string name="pref_category_library">Вулавӑш</string>
-    <string name="pref_category_general">Тӗп</string>
     <string name="app_not_available">Апа кӗме май ҫук</string>
     <string name="action_webview_refresh">Ҫӗнет</string>
     <string name="action_webview_forward">Малалла</string>
@@ -125,8 +124,6 @@
     <string name="download_notifier_text_only_wifi">Wi-Fi ҫыхӑну ҫук</string>
     <string name="download_notifier_title_error">Йӑнӑш</string>
     <string name="update_check_notification_update_available">Ҫӗнӗ версси пур!</string>
-    <string name="update_check_notification_download_error">Тийев йӑнӑшӗ</string>
-    <string name="update_check_notification_download_complete">Тиенсе пӗтрӗ</string>
     <string name="notification_chapters_single">%1$s-мӗш сыпӑк</string>
     <string name="notification_new_chapters">Ҫӗнӗ сыпӑксем тупӑнман</string>
     <string name="information_no_recent_manga">Йулашки вӑхӑтра нимӗн те вуламан</string>
@@ -238,7 +235,6 @@
     <string name="untrusted_extension_message">Сийенлӗ хушма упранакан кирек мӗнле шут пӗлӗмӗсене шута илме йе хӑй ирӗклӗ йума пурнӑҫлама пултарать. \n \nҪак ӗнентерӳ хутне шаннипе есӗ ҫав теветкеле йышӑнатӑн.</string>
     <string name="add_tracking">Йӗрлев хуш</string>
     <string name="manga_tracking_tab">Йӗрле</string>
-    <string name="custom_filter">Усӑҫ али</string>
     <string name="pref_acra_summary">Кирек мӗнле йӑнӑшсене тӳрлетме пулӑшать. Нимӗнле харкам пӗлӗм те ярӑнмасть</string>
     <string name="label_downloaded_only">Тиенӗсене ҫеҫ</string>
     <string name="file_select_backup">Янтӑв файла суйла</string>
@@ -255,7 +251,6 @@
     <string name="download_notifier_download_paused">Тийеве вӑхӑтлӑха чарнӑ</string>
     <string name="download_notifier_unknown_error">Кӗтмен йӑнӑша пула сыпӑксене тийесе илеймест</string>
     <string name="download_notifier_downloader_title">Тийевҫӗ</string>
-    <string name="update_check_notification_download_in_progress">Тийев…</string>
     <string name="update_check_no_new_updates">Ҫӗнетӳ тупӑнман</string>
     <string name="update_check_confirm">Тиесе ил</string>
     <string name="file_select_cover">Хуплашка суйла</string>
@@ -317,8 +312,7 @@
     <string name="chapter_downloading_progress">Тиенет (%1$d/%2$d)</string>
     <string name="snack_add_to_library">Манкка вулавăша хушмалла-и?</string>
     <string name="source_not_installed">Ҫӑл куҫа лартман: %1$s</string>
-    <string name="copied_to_clipboard">Пайлашу буфере ӑтавланӑ:
-\n%1$s</string>
+    <string name="copied_to_clipboard">Пайлашу буфере ӑтавланӑ: \n%1$s</string>
     <string name="delete_downloads_for_manga">Тиенӗ сыпӑксене катертмелле-и?</string>
     <string name="manga_info_collapse">Сахалрах</string>
     <string name="manga_info_expand">Ытларах</string>
@@ -403,9 +397,6 @@
     <string name="backup_restore_missing_trackers">Кӗмен йӗрлевсем:</string>
     <string name="pref_remove_bookmarked_chapters">Картнӑ сыпӑксене катертмелле</string>
     <string name="pref_category_delete_chapters">Сыпӑксене катерт</string>
-    <string name="ext_nsfw_warning">NSFW (18+) шалаш пулма пултарать</string>
-    <string name="ext_nsfw_short">18+</string>
-    <string name="parental_controls_info">Ҫакӑ апра чӑнлавлӑ мар йе тӗрӗс мар палӑртнӑ хушмасен NSFW (18+) шалашне кӑтартма чӑрмантармасть.</string>
     <string name="no_chapters_error">Сыпӑксем ҫук</string>
     <string name="also_set_chapter_settings_for_library">Тата манӑн вулавăшри пур манкӑ валли усӑ кур</string>
     <string name="chapter_settings_updated">Яланхилле сыпӑк ӗнерлев ҫӗнетнӗ</string>
@@ -424,10 +415,8 @@
     <string name="spen_next_page">Маллали сыпӑк</string>
     <string name="spen_previous_page">Умӗнхи эл</string>
     <string name="migration_help_guide">Ҫӑл куҫ куҫарассипе пулӑшу</string>
-    <string name="pref_category_nsfw_content">NSFW (18+) ҫӑл куҫсем</string>
     <string name="file_picker_error">Файлсене суйламалли хушӑм тупӑнман</string>
     <string name="myanimelist_relogin">Тархасшӑн MAL-а ҫӗнӗрен кӗр</string>
-    <string name="pref_show_nsfw_source">Ҫӑл куҫсен тата хушмасен йат-йышӗнче кӑтартни</string>
     <string name="track_finished_reading_date">Вулама вӗҫленӗ вӑхӑчӗ</string>
     <string name="track_started_reading_date">Вулама пуҫланӑ вӑхӑчӗ</string>
     <string name="edge_nav">Хӗррипе</string>
@@ -466,7 +455,6 @@
     <string name="pref_reader_actions">Тӑвӑмсем</string>
     <string name="pref_show_navigation_mode_summary">Пусма вырӑнсене вулӑш уҫӑ чухне кӑтартмалла</string>
     <string name="action_show_errors">Йӑнӑшсене кӑтарт</string>
-    <string name="cancel_all_for_series">Ҫак серилӗх валли пурне те пӑрахӑҫла</string>
     <string name="pref_downloads_summary">Хӑй халлӗн тийесе илни, малтанах тийени</string>
     <string name="action_sort_last_manga_update">Йулашки хут ҫӗнетӳ пуррине тӗрӗсленипе</string>
     <string name="action_sort_unread_count">Йулнӑ сыпӑксемпе</string>
@@ -477,7 +465,6 @@
     <string name="action_display_local_badge">Вырӑнти ҫӑл куҫран</string>
     <string name="label_warning">Асӑрхаттару</string>
     <string name="action_display_cover_only_grid">Йатсӑр сетке</string>
-    <string name="action_move_to_top_all_for_series">Хайлава пуҫа куҫар</string>
     <string name="confirm_lock_change">Улшӑнӑва ҫирӗплетме есӗлӗхе ҫирӗплет</string>
     <string name="action_show_manga">Хайлава кӑтарт</string>
     <string name="action_display_language_badge">Чӗлхе</string>
@@ -548,7 +535,6 @@
     <string name="pref_chapter_swipe_start">Сулахайалла туртсан сыпӑк</string>
     <string name="ext_installer_pref">Ларткӑч</string>
     <string name="ext_installer_shizuku_stopped">Shizuku ӗҫлемест</string>
-    <string name="ext_info_age_rating">Ҫул-ӳсӗм чаравӗ</string>
     <string name="action_sort_next_updated">Тепӗр кӗтӗнекен ҫӗнетӳпе</string>
     <string name="ext_install_service_notif">Хушма лартни…</string>
     <string name="action_set_interval">Тӑтӑшлӑх палӑрт</string>
@@ -557,7 +543,6 @@
     <string name="ext_installer_shizuku_unavailable_dialog">Shizuku-н хушма ларткӑча усӑ курма Shizuku ларт тата ҫут.</string>
     <string name="action_ok">Йурӗ</string>
     <string name="unlock_app_title">%s уҫ</string>
-    <string name="action_move_to_bottom_all_for_series">Хайлава вӗҫе куҫар</string>
     <string name="pref_library_update_categories_details">Кӗртнӗ пухмӑшсенче пулнӑ пулсан та кӑларса пӑрахнӑ пухмӑшсенче пулнӑ серилӗхсем ҫӗнелмӗҫ.</string>
     <string name="selected">Суйланӑ</string>
     <string name="not_selected">Суйламан</string>
@@ -625,7 +610,6 @@
     <string name="pref_flash_style_black">Хура</string>
     <string name="pref_flash_style_white">Шурӑ</string>
     <string name="pref_flash_style_white_black">Шурӑпа хура</string>
-    <string name="pref_hardware_bitmap_threshold_default">Йаланхилле (%d)</string>
     <string name="pref_inverted_colors">Хирӗҫле тӗссем</string>
     <string name="pref_skip_dupe_chapters">Иккӗллӗ сыпӑксене сиктермелле</string>
     <string name="rotation_reverse_portrait">Хирӗҫле урлӑ</string>

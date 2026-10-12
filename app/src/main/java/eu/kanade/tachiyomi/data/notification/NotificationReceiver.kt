@@ -5,35 +5,37 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.core.app.NotificationManagerCompat // RK
 import androidx.core.net.toUri
-import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
+import dev.zacsweers.metro.Inject
+import eu.kanade.domain.chapter.interactor.SetReadStatus
+import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreWorker
 import eu.kanade.tachiyomi.data.download.DownloadManager
-import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
-import eu.kanade.tachiyomi.data.updater.AppUpdateDownloadJob
+import eu.kanade.tachiyomi.data.library.LibraryUpdateWorker
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.getParcelableExtraCompat
 import eu.kanade.tachiyomi.util.system.notificationManager
 import eu.kanade.tachiyomi.util.system.toShareIntent
-import eu.kanade.tachiyomi.util.system.toast
-import kotlinx.coroutines.runBlocking
-import reikai.data.novel.update.NovelUpdateJob
-import reikai.novel.download.NovelDownloadJob
+import eu.kanade.tachiyomi.util.system.workManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import mihon.app.di.appGraph
+import mihon.core.metro.AppCoroutineScope
+import reikai.data.notification.NovelNewChaptersNotice
+import reikai.data.novel.update.NovelUpdateWorker
+import reikai.domain.novel.NovelChapterRepository
+import reikai.domain.novel.interactor.SetNovelReadStatus
+import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelChapter
+import reikai.novel.download.NovelDownloadManager
+import reikai.presentation.details.novelDetailsIntent
 import tachiyomi.core.common.Constants
-import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.domain.chapter.interactor.GetChapter
-import tachiyomi.domain.chapter.interactor.UpdateChapter
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.chapter.model.toChapterUpdate
-import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.source.service.SourceManager
-import tachiyomi.i18n.MR
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
-import uy.kohesive.injekt.injectLazy
 import eu.kanade.tachiyomi.BuildConfig.APPLICATION_ID as ID
 
 /**
@@ -43,21 +45,42 @@ import eu.kanade.tachiyomi.BuildConfig.APPLICATION_ID as ID
  */
 class NotificationReceiver : BroadcastReceiver() {
 
-    private val getManga: GetManga by injectLazy()
-    private val getChapter: GetChapter by injectLazy()
-    private val updateChapter: UpdateChapter by injectLazy()
-    private val downloadManager: DownloadManager by injectLazy()
+    @Inject private lateinit var getManga: GetManga
+
+    @Inject private lateinit var getChapter: GetChapter
+
+    // RK: updateChapter, downloadPreferences and sourceManager went with markAsRead's own delete; setReadStatus below
+
+    @Inject private lateinit var downloadManager: DownloadManager
+
+    // RK: the novel downloader's own manager, so its notification actions clear the queue rather than
+    // only stopping the worker, which left a cancelled queue to restart on the next app open.
+    // Deferred: onReceive injects every field, and building this manager restores the persisted queue
+    // and resumes the drain, so any notification tap would resume novel downloads.
+    @Inject private lateinit var novelDownloadManager: () -> NovelDownloadManager
+
+    // RK: the novel update notification's mark-read and download actions resolve chapters by id.
+    @Inject private lateinit var novelChapterRepository: NovelChapterRepository
+
+    @Inject private lateinit var setNovelReadStatus: SetNovelReadStatus
+
+    // RK: marking a manga chapter read goes through the interactor every other screen marks with.
+    @Inject private lateinit var setReadStatus: SetReadStatus
+
+    @Inject @AppCoroutineScope
+    private lateinit var scope: CoroutineScope
 
     override fun onReceive(context: Context, intent: Intent) {
+        context.appGraph.inject(this)
         when (intent.action) {
             // Dismiss notification
             ACTION_DISMISS_NOTIFICATION -> dismissNotification(context, intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1))
             // Resume the download service
             ACTION_RESUME_DOWNLOADS -> downloadManager.startDownloads()
             // Pause the download service
-            ACTION_PAUSE_DOWNLOADS -> downloadManager.pauseDownloads()
+            ACTION_PAUSE_DOWNLOADS -> launchAsync { downloadManager.pauseDownloads() }
             // Clear the download queue
-            ACTION_CLEAR_DOWNLOADS -> downloadManager.clearQueue()
+            ACTION_CLEAR_DOWNLOADS -> launchAsync { downloadManager.clearQueue() }
             // Launch share activity and dismiss notification
             ACTION_SHARE_IMAGE ->
                 shareImage(
@@ -74,22 +97,15 @@ class NotificationReceiver : BroadcastReceiver() {
             ACTION_CANCEL_RESTORE -> cancelRestore(context)
             // Cancel library update and dismiss notification
             ACTION_CANCEL_LIBRARY_UPDATE -> cancelLibraryUpdate(context)
-            // RK: cancel the novel chapter downloader
-            ACTION_CANCEL_NOVEL_DOWNLOAD -> NovelDownloadJob.stop(context)
+            // RK: cancel the novel chapter downloader. Clears the queue too: stopping only the worker
+            // left the queue and its store intact, and the manager restarts a stored queue on the next
+            // app open, so Cancel deferred the downloads rather than cancelling them.
+            ACTION_CANCEL_NOVEL_DOWNLOAD -> novelDownloadManager().cancelAllDownloads()
+            // RK: the novel downloader's pause and resume, as the manga notification offers
+            ACTION_PAUSE_NOVEL_DOWNLOADS -> novelDownloadManager().pauseDownloads()
+            ACTION_RESUME_NOVEL_DOWNLOADS -> novelDownloadManager().startDownloads()
             // RK: cancel the background novel library update
-            ACTION_CANCEL_NOVEL_LIBRARY_UPDATE -> NovelUpdateJob.stop(context)
-            // Start downloading app update
-            ACTION_START_APP_UPDATE -> startDownloadAppUpdate(context, intent)
-            // Cancel downloading app update
-            ACTION_CANCEL_APP_UPDATE_DOWNLOAD -> cancelDownloadAppUpdate(context)
-            // Open reader activity
-            ACTION_OPEN_CHAPTER -> {
-                openChapter(
-                    context,
-                    intent.getLongExtra(EXTRA_MANGA_ID, -1),
-                    intent.getLongExtra(EXTRA_CHAPTER_ID, -1),
-                )
-            }
+            ACTION_CANCEL_NOVEL_LIBRARY_UPDATE -> launchAsync { NovelUpdateWorker.stop(context) }
             // Mark updated manga chapters as read
             ACTION_MARK_AS_READ -> {
                 val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
@@ -114,8 +130,50 @@ class NotificationReceiver : BroadcastReceiver() {
                     downloadChapters(urls, mangaId)
                 }
             }
+            // RK --> the same two actions for a novel's update notification. Keyed by chapter id
+            //        rather than url: a novel chapter's id is stable and its url is not unique across
+            //        the sources of a merged novel.
+            ACTION_MARK_NOVEL_AS_READ -> {
+                dismissNovelNotification(context, intent)
+                markNovelChaptersAsRead(intent.getLongArrayExtra(EXTRA_NOVEL_CHAPTER_IDS) ?: return)
+            }
+            ACTION_DOWNLOAD_NOVEL_CHAPTER -> {
+                dismissNovelNotification(context, intent)
+                downloadNovelChapters(intent.getLongArrayExtra(EXTRA_NOVEL_CHAPTER_IDS) ?: return)
+            }
+            // RK <--
         }
     }
+
+    // RK --> novel update-notification actions
+    private fun dismissNovelNotification(context: Context, intent: Intent) {
+        val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
+        if (notificationId > -1) {
+            dismissNotification(
+                context,
+                notificationId,
+                intent.getIntExtra(EXTRA_GROUP_ID, 0),
+                NovelNewChaptersNotice.TAG,
+            )
+        }
+    }
+
+    private fun markNovelChaptersAsRead(chapterIds: LongArray) {
+        launchAsync {
+            val chapters = chapterIds.toList().mapNotNull { novelChapterRepository.getById(it) }
+            // Through the interactor, so delete-after-read applies exactly as it does in the reader.
+            setNovelReadStatus.await(read = true, chapters = chapters)
+        }
+    }
+
+    private fun downloadNovelChapters(chapterIds: LongArray) {
+        launchAsync {
+            novelDownloadManager().downloadChapters(
+                chapterIds.toList().mapNotNull { novelChapterRepository.getById(it) },
+            )
+        }
+    }
+    // RK <--
 
     /**
      * Dismiss the notification
@@ -147,32 +205,12 @@ class NotificationReceiver : BroadcastReceiver() {
     }
 
     /**
-     * Starts reader activity
-     *
-     * @param context context of application
-     * @param mangaId id of manga
-     * @param chapterId id of chapter
-     */
-    private fun openChapter(context: Context, mangaId: Long, chapterId: Long) {
-        val manga = runBlocking { getManga.await(mangaId) }
-        val chapter = runBlocking { getChapter.await(chapterId) }
-        if (manga != null && chapter != null) {
-            val intent = ReaderActivity.newIntent(context, manga.id, chapter.id).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            context.startActivity(intent)
-        } else {
-            context.toast(MR.strings.chapter_error)
-        }
-    }
-
-    /**
      * Method called when user wants to stop a backup restore job.
      *
      * @param context context of application
      */
     private fun cancelRestore(context: Context) {
-        BackupRestoreJob.stop(context)
+        BackupRestoreWorker.stop(context.workManager)
     }
 
     /**
@@ -181,16 +219,9 @@ class NotificationReceiver : BroadcastReceiver() {
      * @param context context of application
      */
     private fun cancelLibraryUpdate(context: Context) {
-        LibraryUpdateJob.stop(context)
-    }
-
-    private fun startDownloadAppUpdate(context: Context, intent: Intent) {
-        val url = intent.getStringExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_URL) ?: return
-        AppUpdateDownloadJob.start(context, url)
-    }
-
-    private fun cancelDownloadAppUpdate(context: Context) {
-        AppUpdateDownloadJob.stop(context)
+        launchAsync {
+            LibraryUpdateWorker.stop(context)
+        }
     }
 
     /**
@@ -200,25 +231,13 @@ class NotificationReceiver : BroadcastReceiver() {
      * @param mangaId id of manga
      */
     private fun markAsRead(chapterUrls: Array<String>, mangaId: Long) {
-        val downloadPreferences: DownloadPreferences = Injekt.get()
-        val sourceManager: SourceManager = Injekt.get()
-
-        launchIO {
-            val toUpdate = chapterUrls.mapNotNull { getChapter.await(it, mangaId) }
-                .map {
-                    val chapter = it.copy(read = true)
-                    if (downloadPreferences.removeAfterMarkedAsRead.get()) {
-                        val manga = getManga.await(mangaId)
-                        if (manga != null) {
-                            val source = sourceManager.get(manga.source)
-                            if (source != null) {
-                                downloadManager.deleteChapters(listOf(it), manga, source)
-                            }
-                        }
-                    }
-                    chapter.toChapterUpdate()
-                }
-            updateChapter.awaitAll(toUpdate)
+        launchAsync {
+            // RK -->
+            // SetReadStatus deletes the rows as written, so a category kept from removal keeps them, and
+            // tells the source's own tracker.
+            val chapters = chapterUrls.mapNotNull { getChapter.await(it, mangaId) }
+            setReadStatus.await(true, *chapters.toTypedArray())
+            // RK <--
         }
     }
 
@@ -229,10 +248,25 @@ class NotificationReceiver : BroadcastReceiver() {
      * @param mangaId id of manga
      */
     private fun downloadChapters(chapterUrls: Array<String>, mangaId: Long) {
-        launchIO {
-            val manga = getManga.await(mangaId) ?: return@launchIO
+        launchAsync {
+            val manga = getManga.await(mangaId) ?: return@launchAsync
             val chapters = chapterUrls.mapNotNull { getChapter.await(it, mangaId) }
             downloadManager.downloadChapters(manga, chapters)
+        }
+    }
+
+    /**
+     * Runs [block] on the application scope while keeping the broadcast alive, so the process isn't torn down before
+     * the work finishes.
+     */
+    private fun launchAsync(block: suspend CoroutineScope.() -> Unit) {
+        val pendingResult = goAsync()
+        scope.launch {
+            try {
+                block()
+            } finally {
+                pendingResult.finish()
+            }
         }
     }
 
@@ -247,17 +281,23 @@ class NotificationReceiver : BroadcastReceiver() {
 
         private const val ACTION_CANCEL_LIBRARY_UPDATE = "$ID.$NAME.CANCEL_LIBRARY_UPDATE"
 
-        // RK: cancel the novel chapter downloader (P5 S5)
+        // RK: cancel the novel chapter downloader
         private const val ACTION_CANCEL_NOVEL_DOWNLOAD = "$ID.$NAME.CANCEL_NOVEL_DOWNLOAD"
 
-        // RK: cancel the background novel library update (P5 S7)
+        // RK: pause and resume the novel chapter downloader
+        private const val ACTION_PAUSE_NOVEL_DOWNLOADS = "$ID.$NAME.PAUSE_NOVEL_DOWNLOADS"
+        private const val ACTION_RESUME_NOVEL_DOWNLOADS = "$ID.$NAME.RESUME_NOVEL_DOWNLOADS"
+
+        // RK: cancel the background novel library update
         private const val ACTION_CANCEL_NOVEL_LIBRARY_UPDATE = "$ID.$NAME.CANCEL_NOVEL_LIBRARY_UPDATE"
 
-        private const val ACTION_START_APP_UPDATE = "$ID.$NAME.ACTION_START_APP_UPDATE"
-        private const val ACTION_CANCEL_APP_UPDATE_DOWNLOAD = "$ID.$NAME.CANCEL_APP_UPDATE_DOWNLOAD"
+        // RK: the novel twins of the two update-notification actions below
+        private const val ACTION_MARK_NOVEL_AS_READ = "$ID.$NAME.MARK_NOVEL_AS_READ"
+        private const val ACTION_DOWNLOAD_NOVEL_CHAPTER = "$ID.$NAME.ACTION_DOWNLOAD_NOVEL_CHAPTER"
+        private const val EXTRA_NOVEL_CHAPTER_IDS = "$ID.$NAME.EXTRA_NOVEL_CHAPTER_IDS"
+        private const val ACTION_OPEN_NOVEL_CHAPTER = "$ID.$NAME.ACTION_OPEN_NOVEL_CHAPTER" // RK
 
         private const val ACTION_MARK_AS_READ = "$ID.$NAME.MARK_AS_READ"
-        private const val ACTION_OPEN_CHAPTER = "$ID.$NAME.ACTION_OPEN_CHAPTER"
         private const val ACTION_DOWNLOAD_CHAPTER = "$ID.$NAME.ACTION_DOWNLOAD_CHAPTER"
 
         private const val ACTION_OPEN_ENTRY = "$ID.$NAME.ACTION_OPEN_ENTRY"
@@ -272,7 +312,6 @@ class NotificationReceiver : BroadcastReceiver() {
         private const val EXTRA_NOTIFICATION_ID = "$ID.$NAME.NOTIFICATION_ID"
         private const val EXTRA_GROUP_ID = "$ID.$NAME.EXTRA_GROUP_ID"
         private const val EXTRA_MANGA_ID = "$ID.$NAME.EXTRA_MANGA_ID"
-        private const val EXTRA_CHAPTER_ID = "$ID.$NAME.EXTRA_CHAPTER_ID"
         private const val EXTRA_CHAPTER_URL = "$ID.$NAME.EXTRA_CHAPTER_URL"
 
         /**
@@ -349,6 +388,8 @@ class NotificationReceiver : BroadcastReceiver() {
             )
         }
 
+        // RK --> takes a tag, for the novel updater's notifications, whose ids share numbers with manga's
+
         /**
          * Returns [PendingIntent] that starts a service which dismissed the notification
          *
@@ -356,7 +397,13 @@ class NotificationReceiver : BroadcastReceiver() {
          * @param notificationId id of notification
          * @return [PendingIntent]
          */
-        internal fun dismissNotification(context: Context, notificationId: Int, groupId: Int? = null) {
+        internal fun dismissNotification(
+            context: Context,
+            notificationId: Int,
+            groupId: Int? = null,
+            tag: String? = null,
+        ) {
+            // RK <--
             /*
             Group notifications always have at least 2 notifications:
             - Group summary notification
@@ -368,7 +415,7 @@ class NotificationReceiver : BroadcastReceiver() {
             When programmatically dismissing this notification, the group notification is not automatically dismissed.
              */
             val groupKey = context.notificationManager.activeNotifications.find {
-                it.id == notificationId
+                it.id == notificationId && it.tag == tag // RK: the tag too
             }?.groupKey
 
             if (groupId != null && groupId != 0 && !groupKey.isNullOrEmpty()) {
@@ -382,7 +429,7 @@ class NotificationReceiver : BroadcastReceiver() {
                 }
             }
 
-            context.cancelNotification(notificationId)
+            NotificationManagerCompat.from(context).cancel(tag, notificationId) // RK: by tag too
         }
 
         /**
@@ -414,7 +461,8 @@ class NotificationReceiver : BroadcastReceiver() {
          * @param chapter chapter that needs to be opened
          */
         internal fun openChapterPendingActivity(context: Context, manga: Manga, chapter: Chapter): PendingIntent {
-            val newIntent = ReaderActivity.newIntent(context, manga.id, chapter.id)
+            // RK: new-chapter notifications open the chapter's own source list (source scope), like Updates.
+            val newIntent = ReaderActivity.newIntent(context, manga.id, chapter.id, sourceScoped = true)
             return PendingIntent.getActivity(
                 context,
                 manga.id.hashCode(),
@@ -536,10 +584,57 @@ class NotificationReceiver : BroadcastReceiver() {
             )
         }
 
-        // RK --> cancel the novel chapter downloader (P5 S5)
-        internal fun cancelNovelDownloadPendingBroadcast(context: Context): PendingIntent {
+        // RK --> cancel the novel chapter downloader
+        internal fun cancelNovelDownloadPendingBroadcast(context: Context): PendingIntent =
+            novelDownloaderPendingBroadcast(context, ACTION_CANCEL_NOVEL_DOWNLOAD)
+
+        /**
+         * A novel's details, which open by source and url rather than by row id as a manga's do. Opening
+         * them clears the novel's new-chapters notice, as opening a manga does: every caller shares one
+         * PendingIntent per novel, since extras are not part of its identity.
+         */
+        internal fun openNovelPendingActivity(context: Context, novel: Novel): PendingIntent {
+            val intent = novelDetailsIntent(context, novel.source, novel.url).apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra("notificationId", NovelNewChaptersNotice.id(novel.id))
+                putExtra("groupId", NovelNewChaptersNotice.SUMMARY_ID)
+                putExtra("notificationTag", NovelNewChaptersNotice.TAG)
+            }
+            return PendingIntent.getActivity(
+                context,
+                novel.id.hashCode(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+
+        /** Opens [chapter] in the reader, scoped to its source, as a manga notification's tap does. */
+        internal fun openNovelChapterPendingActivity(
+            context: Context,
+            novel: Novel,
+            chapter: NovelChapter,
+        ): PendingIntent {
+            // The action only keeps this apart from a manga chapter's PendingIntent: the two id spaces
+            // overlap, and an equal request code would let one notification's tap open the other entry.
+            val intent = ReaderActivity.newNovelIntent(context, novel.id, chapter.id, sourceScoped = true)
+                .setAction(ACTION_OPEN_NOVEL_CHAPTER)
+            return PendingIntent.getActivity(
+                context,
+                novel.id.hashCode(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+
+        internal fun pauseNovelDownloadsPendingBroadcast(context: Context): PendingIntent =
+            novelDownloaderPendingBroadcast(context, ACTION_PAUSE_NOVEL_DOWNLOADS)
+
+        internal fun resumeNovelDownloadsPendingBroadcast(context: Context): PendingIntent =
+            novelDownloaderPendingBroadcast(context, ACTION_RESUME_NOVEL_DOWNLOADS)
+
+        private fun novelDownloaderPendingBroadcast(context: Context, action: String): PendingIntent {
             val intent = Intent(context, NotificationReceiver::class.java).apply {
-                action = ACTION_CANCEL_NOVEL_DOWNLOAD
+                this.action = action
             }
             return PendingIntent.getBroadcast(
                 context,
@@ -550,7 +645,7 @@ class NotificationReceiver : BroadcastReceiver() {
         }
         // RK <--
 
-        // RK --> cancel the background novel library update (P5 S7)
+        // RK --> cancel the background novel library update
         internal fun cancelNovelLibraryUpdatePendingBroadcast(context: Context): PendingIntent {
             val intent = Intent(context, NotificationReceiver::class.java).apply {
                 action = ACTION_CANCEL_NOVEL_LIBRARY_UPDATE
@@ -564,44 +659,55 @@ class NotificationReceiver : BroadcastReceiver() {
         }
         // RK <--
 
-        /**
-         * Returns [PendingIntent] that starts the [AppUpdateDownloadJob] to download an app update.
-         *
-         * @param context context of application
-         * @return [PendingIntent]
-         */
-        internal fun downloadAppUpdatePendingBroadcast(
+        // RK --> the novel twins of markAsReadPendingBroadcast / downloadChaptersPendingBroadcast.
+        //        The request code is the novel's id, so two novels' actions cannot share one intent.
+        internal fun markNovelAsReadPendingBroadcast(
             context: Context,
-            url: String,
-            title: String? = null,
-        ): PendingIntent {
-            return Intent(context, NotificationReceiver::class.java).run {
-                action = ACTION_START_APP_UPDATE
-                putExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_URL, url)
-                title?.let { putExtra(AppUpdateDownloadJob.EXTRA_DOWNLOAD_TITLE, it) }
-                PendingIntent.getBroadcast(
-                    context,
-                    0,
-                    this,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                )
-            }
-        }
+            novelId: Long,
+            chapterIds: LongArray,
+            groupId: Int,
+        ): PendingIntent = novelChapterPendingBroadcast(
+            context,
+            ACTION_MARK_NOVEL_AS_READ,
+            novelId,
+            chapterIds,
+            groupId,
+        )
 
-        /**
-         *
-         */
-        internal fun cancelDownloadAppUpdatePendingBroadcast(context: Context): PendingIntent {
+        internal fun downloadNovelChaptersPendingBroadcast(
+            context: Context,
+            novelId: Long,
+            chapterIds: LongArray,
+            groupId: Int,
+        ): PendingIntent = novelChapterPendingBroadcast(
+            context,
+            ACTION_DOWNLOAD_NOVEL_CHAPTER,
+            novelId,
+            chapterIds,
+            groupId,
+        )
+
+        private fun novelChapterPendingBroadcast(
+            context: Context,
+            broadcastAction: String,
+            novelId: Long,
+            chapterIds: LongArray,
+            groupId: Int,
+        ): PendingIntent {
             val intent = Intent(context, NotificationReceiver::class.java).apply {
-                action = ACTION_CANCEL_APP_UPDATE_DOWNLOAD
+                action = broadcastAction
+                putExtra(EXTRA_NOVEL_CHAPTER_IDS, chapterIds)
+                putExtra(EXTRA_NOTIFICATION_ID, NovelNewChaptersNotice.id(novelId))
+                putExtra(EXTRA_GROUP_ID, groupId)
             }
             return PendingIntent.getBroadcast(
                 context,
-                0,
+                novelId.hashCode(),
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
+        // RK <--
 
         /**
          * Returns [PendingIntent] that opens the extensions controller.

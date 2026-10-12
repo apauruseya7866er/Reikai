@@ -5,21 +5,17 @@ import android.app.SearchManager
 import android.app.assist.AssistContent
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
-import android.view.KeyEvent
+import android.os.SystemClock
 import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -33,15 +29,8 @@ import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.VolunteerActivism
-import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -54,7 +43,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.core.animation.doOnEnd
 import androidx.core.net.toUri
@@ -63,19 +51,21 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.util.Consumer
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator
 import androidx.interpolator.view.animation.LinearOutSlowInInterpolator
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
 import cafe.adriel.voyager.navigator.NavigatorDisposeBehavior
 import cafe.adriel.voyager.navigator.currentOrThrow
+import dev.zacsweers.metro.Inject
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.source.interactor.GetIncognitoState
-import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.presentation.components.AppStateBanners
 import eu.kanade.presentation.components.DownloadedOnlyBannerBackgroundColor
 import eu.kanade.presentation.components.IncognitoModeBannerBackgroundColor
 import eu.kanade.presentation.components.IndexingBannerBackgroundColor
-import eu.kanade.presentation.more.settings.screen.browse.ExtensionStoresScreen
+import eu.kanade.presentation.more.AppMigratingScreen
 import eu.kanade.presentation.more.settings.screen.data.RestoreBackupScreen
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.DefaultNavigatorScreenTransition
@@ -83,14 +73,10 @@ import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.coil.MangaCoverMetadata
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
-import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
-import eu.kanade.tachiyomi.extension.api.ExtensionApi
+import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
-import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
-import eu.kanade.tachiyomi.ui.browse.source.globalsearch.GlobalSearchScreen
 import eu.kanade.tachiyomi.ui.deeplink.DeepLinkScreen
 import eu.kanade.tachiyomi.ui.home.HomeScreen
-import eu.kanade.tachiyomi.ui.manga.MangaScreen
 import eu.kanade.tachiyomi.ui.more.NewUpdateScreen
 import eu.kanade.tachiyomi.ui.more.OnboardingScreen
 import eu.kanade.tachiyomi.ui.setting.SettingsScreen
@@ -99,7 +85,11 @@ import eu.kanade.tachiyomi.util.system.isBenchmarkBuildType
 import eu.kanade.tachiyomi.util.system.isNavigationBarNeedsScrim
 import eu.kanade.tachiyomi.util.system.updaterEnabled
 import eu.kanade.tachiyomi.util.view.setComposeContent
+import exh.debug.DebugModeOverlay
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
@@ -108,10 +98,22 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import logcat.LogPriority
+import mihon.app.di.AppGraph
+import mihon.core.metro.metroGraph
 import mihon.core.migration.Migrator
-import mihon.feature.support.SupportUsScreen
-import reikai.presentation.novel.details.NovelScreen
-import reikai.presentation.novel.reader.NovelVolumeKeyHost
+import mihon.domain.database.repository.DatabaseRepository
+import mihon.icons.materialsymbols.automirroredrounded.OpenInNew
+import reikai.domain.library.ContentType
+import reikai.domain.novel.NovelRepository
+import reikai.domain.source.SourceKey
+import reikai.novel.download.NovelDownloadCache
+import reikai.presentation.browse.catalogue.EntryCatalogueScreen
+import reikai.presentation.browse.closesWhenIncognitoEnds
+import reikai.presentation.browse.globalsearch.searchIntentScreen
+import reikai.presentation.browse.repos.RepositoriesScreen
+import reikai.presentation.details.novelDetailsScreen
+import reikai.presentation.library.updateerror.UpdateErrorsScreen
+import reikai.util.isLauncherIntent
 import tachiyomi.core.common.Constants
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
@@ -120,57 +122,54 @@ import tachiyomi.domain.release.interactor.GetApplicationRelease
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.padding
-import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.injectLazy
 import kotlin.time.Clock
-import kotlin.time.Duration.Companion.days
-import kotlin.time.Instant
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 import kotlin.time.times
 
-class MainActivity :
-    BaseActivity(),
-    // RK: host hook for the novel reader's hardware volume-key scrolling
-    NovelVolumeKeyHost {
+class MainActivity : BaseActivity() {
 
-    private val libraryPreferences: LibraryPreferences by injectLazy()
-    private val preferences: BasePreferences by injectLazy()
+    private val graph: AppGraph by lazy { metroGraph() }
 
-    private val downloadCache: DownloadCache by injectLazy()
-    private val chapterCache: ChapterCache by injectLazy()
+    @Inject private lateinit var libraryPreferences: LibraryPreferences
 
-    private val getIncognitoState: GetIncognitoState by injectLazy()
+    // RK: moved up from the end of upstream's field list, unchanged
+    @Inject private lateinit var extensionManager: ExtensionManager
+
+    @Inject private lateinit var preferences: BasePreferences
+
+    @Inject private lateinit var downloadCache: DownloadCache
+
+    // RK: the novel index's first scan shows the same indexing banner
+    @Inject private lateinit var novelDownloadCache: NovelDownloadCache
+
+    // RK: a novel shortcut opens only a novel saved here
+    @Inject private lateinit var novelRepository: NovelRepository
+
+    @Inject private lateinit var chapterCache: ChapterCache
+
+    @Inject private lateinit var databaseRepository: DatabaseRepository
+
+    private val isAppMigrating = MutableStateFlow(Migrator.isRunning)
+
+    @Inject private lateinit var getIncognitoState: GetIncognitoState
+
+    // RK: cover-based theming; persisted on pause below
+    @Inject private lateinit var mangaCoverMetadata: MangaCoverMetadata
 
     // To be checked by splash screen. If true then splash screen will be removed.
     var ready = false
 
     private var navigator: Navigator? = null
 
-    // RK --> host hook for the novel reader's hardware volume-key scrolling (NovelVolumeKeyHost).
-    // The novel reader is a Voyager screen hosted here (no dedicated reader activity), so it registers
-    // a handler while on screen and clears it on dispose. dispatchKeyEvent is the host window's earliest
-    // key hook, so returning true swallows the volume key before the system volume UI, mirroring the
-    // manga ReaderActivity, which does the same in its own dedicated activity. The handler only exists
-    // while the reader is open, so volume behaves normally on every other screen.
-    override var novelVolumeKeyHandler: ((KeyEvent) -> Boolean)? = null
-
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val handler = novelVolumeKeyHandler
-        if (handler != null &&
-            (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP || event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
-            handler(event)
-        ) {
-            return true
-        }
-        return super.dispatchKeyEvent(event)
-    }
-    // RK <--
-
     init {
         registerSecureActivity(this)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        graph.inject(this)
         val isLaunch = savedInstanceState == null
 
         // Prevent splash screen showing up on configuration changes
@@ -178,20 +177,47 @@ class MainActivity :
 
         super.onCreate(savedInstanceState)
 
-        Migrator.awaitAndRelease()
+        lifecycleScope.launch {
+            Migrator.awaitAndRelease()
+            isAppMigrating.value = false
+        }
 
         // Do not let the launcher create a new activity http://stackoverflow.com/questions/16283079
-        if (!isTaskRoot) {
+        // RK: the launcher's only; a backup or link opened from another app lands in that app's task
+        if (!isTaskRoot && intent.isLauncherIntent()) {
             finish()
             return
         }
 
         setComposeContent {
+            val appMigrating by isAppMigrating.collectAsState()
+            val databaseMigrating by databaseRepository.isMigrating.collectAsState()
+            val migrating = appMigrating || databaseMigrating
+            var migratingSince by remember { mutableStateOf(if (migrating) TimeSource.Monotonic.markNow() else null) }
+            LaunchedEffect(migrating) {
+                val since = migratingSince
+                if (migrating) {
+                    if (since == null) migratingSince = TimeSource.Monotonic.markNow()
+                } else if (since != null) {
+                    // A migration that finishes right away would otherwise only flash the screen
+                    delay(MIGRATING_SCREEN_MIN_DURATION - since.elapsedNow())
+                    migratingSince = null
+                }
+            }
+            if (migrating || migratingSince != null) {
+                AppMigratingScreen()
+                // Release the splash screen so the reason for the wait shows
+                LaunchedEffect(Unit) { ready = true }
+                return@setComposeContent
+            }
+
             val context = LocalContext.current
 
-            var incognito by remember { mutableStateOf(getIncognitoState.await(null)) }
+            var incognito by remember { mutableStateOf(false) }
             val downloadOnly by preferences.downloadedOnly.collectAsState()
-            val indexing by downloadCache.isInitializing.collectAsState()
+            val mangaIndexing by downloadCache.isInitializing.collectAsState()
+            val novelIndexing by novelDownloadCache.isInitializing.collectAsState() // RK
+            val indexing = mangaIndexing || novelIndexing // RK
 
             val isSystemInDarkTheme = isSystemInDarkTheme()
             val statusBarBackgroundColor = when {
@@ -226,8 +252,9 @@ class MainActivity :
                     }
                 }
                 LaunchedEffect(navigator.lastItem) {
-                    (navigator.lastItem as? BrowseSourceScreen)?.sourceId
-                        .let(getIncognitoState::subscribe)
+                    // RK: keyed by SourceKey, so a novel catalogue shows its own per-source incognito too.
+                    val source: SourceKey? = (navigator.lastItem as? EntryCatalogueScreen)?.sourceKey
+                    getIncognitoState.subscribe(source)
                         .collectLatest { incognito = it }
                 }
 
@@ -273,10 +300,8 @@ class MainActivity :
                         .drop(1)
                         .filter { !it }
                         .onEach {
-                            val currentScreen = navigator.lastItem
-                            if (currentScreen is BrowseSourceScreen ||
-                                (currentScreen is MangaScreen && currentScreen.fromSource)
-                            ) {
+                            // RK: one rule for the catalogue and both details pages
+                            if (navigator.lastItem.closesWhenIncognitoEnds()) {
                                 navigator.popUntilRoot()
                             }
                         }
@@ -286,11 +311,13 @@ class MainActivity :
                 HandleOnNewIntent(context = context, navigator = navigator)
 
                 if (!isBenchmarkBuildType) {
-                    CheckForUpdates()
+                    if (isLaunch) CheckForUpdates()
                     ShowOnboarding()
                     // RK: Reikai does not run Mihon's donation campaign.
                 }
             }
+
+            DebugModeOverlay() // RK: the debug menu's overlay, over every screen
         }
 
         val startTime = System.currentTimeMillis()
@@ -316,10 +343,10 @@ class MainActivity :
         }
     }
 
-    // RK: persist cover-based theming colors (Y11)
+    // RK: persist cover-based theming colors
     override fun onPause() {
         super.onPause()
-        MangaCoverMetadata.savePrefs()
+        mangaCoverMetadata.savePrefs()
     }
 
     @Composable
@@ -342,20 +369,36 @@ class MainActivity :
 
         // App updates
         LaunchedEffect(Unit) {
-            if (updaterEnabled) {
-                try {
-                    val result = AppUpdateChecker().checkForUpdate(context)
-                    if (result is GetApplicationRelease.Result.NewUpdate) {
-                        val updateScreen = NewUpdateScreen(
-                            versionName = result.release.version,
-                            changelogInfo = result.release.info,
-                            releaseLink = result.release.releaseLink,
-                            downloadLink = result.release.downloadLink,
-                        )
-                        navigator.push(updateScreen)
+            if (!updaterEnabled) return@LaunchedEffect
+            var lastCheck: Long? = null
+            // The app can stay open for days now, so a cold start alone rarely checks.
+            // Elapsed realtime keeps counting while the device sleeps, unlike the monotonic clock.
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    lastCheck?.let {
+                        delay(it + APP_UPDATE_CHECK_INTERVAL.inWholeMilliseconds - SystemClock.elapsedRealtime())
                     }
-                } catch (e: Exception) {
-                    logcat(LogPriority.ERROR, e)
+                    lastCheck = SystemClock.elapsedRealtime()
+                    try {
+                        val result = graph.updateChecker.checkForUpdate() // RK: the activity's graph
+                        if (
+                            result is GetApplicationRelease.Result.NewUpdate &&
+                            result.release.version != preferences.skippedAppUpdate.get() &&
+                            navigator.items.none { it is NewUpdateScreen }
+                        ) {
+                            val updateScreen = NewUpdateScreen(
+                                versionName = result.release.version,
+                                changelogInfo = result.release.info,
+                                releaseLink = result.release.releaseLink,
+                                downloadLink = result.release.downloadLink,
+                            )
+                            navigator.push(updateScreen)
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logcat(LogPriority.ERROR, e)
+                    }
                 }
             }
         }
@@ -363,10 +406,12 @@ class MainActivity :
         // Extensions updates
         LaunchedEffect(Unit) {
             try {
-                ExtensionApi().checkForUpdates(context)
+                extensionManager.checkForUpdates()
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e)
             }
+            // RK: plugin updates feed the same Browse badge, so they refresh at launch too
+            graph.lnPluginUpdateChecker.runIfStale()
         }
     }
 
@@ -377,129 +422,6 @@ class MainActivity :
         LaunchedEffect(Unit) {
             if (!preferences.shownOnboardingFlow.get() && navigator.lastItem !is OnboardingScreen) {
                 navigator.push(OnboardingScreen())
-            }
-        }
-    }
-
-    // RK: Mihon's donation campaign, dead in Reikai. Never called, and the More-tab "Support us"
-    // entry is disabled too (see MoreScreen). Kept for now; safe to delete entirely (with
-    // SupportUsScreen, the donationCampaignShown pref, and the unused onClickSupport plumbing) later.
-    @Composable
-    private fun ShowDonationCampaign() {
-        val navigator = LocalNavigator.currentOrThrow
-
-        var showCampaign by remember { mutableStateOf(false) }
-        if (showCampaign) {
-            val uriHandler = LocalUriHandler.current
-            val dismissSupportMessage = {
-                preferences.donationCampaignShown.set(true)
-                showCampaign = false
-            }
-            AdaptiveSheet(
-                onDismissRequest = dismissSupportMessage,
-                enableImplicitDismiss = false,
-            ) {
-                Column {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Column(
-                        modifier = Modifier
-                            .verticalScroll(rememberScrollState())
-                            .padding(16.dp)
-                            .weight(1f, fill = false)
-                            .fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = stringResource(MR.strings.donationCampaign_title),
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.headlineSmall,
-                        )
-                        Text(
-                            text = stringResource(MR.strings.donationCampaign_paragraph1),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            text = stringResource(MR.strings.donationCampaign_paragraph2),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        Text(
-                            text = stringResource(MR.strings.donationCampaign_paragraph3),
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-
-                    HorizontalDivider()
-
-                    Button(
-                        modifier = Modifier
-                            .padding(top = MaterialTheme.padding.small)
-                            .padding(horizontal = MaterialTheme.padding.medium)
-                            .fillMaxWidth(),
-                        onClick = {
-                            navigator.push(SupportUsScreen())
-                            dismissSupportMessage()
-                        },
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.VolunteerActivism,
-                                contentDescription = null,
-                            )
-                            Text(
-                                text = stringResource(MR.strings.label_support_us),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        }
-                    }
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-                        modifier = Modifier
-                            .padding(bottom = MaterialTheme.padding.small)
-                            .padding(horizontal = MaterialTheme.padding.medium),
-                    ) {
-                        OutlinedButton(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            onClick = { uriHandler.openUri(Constants.URL_DISCORD) },
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
-                            ) {
-                                Text(
-                                    text = stringResource(MR.strings.donationCampaign_contactPlatform),
-                                )
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Default.OpenInNew,
-                                    contentDescription = null,
-                                )
-                            }
-                        }
-                        OutlinedButton(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f),
-                            onClick = dismissSupportMessage,
-                        ) {
-                            Text(
-                                text = stringResource(MR.strings.donationCampaign_dismiss),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        LaunchedEffect(Unit) {
-            try {
-                val firstInstallTime = packageManager.getPackageInfo(packageName, 0).firstInstallTime
-                val eligibleTime = Instant.fromEpochMilliseconds(firstInstallTime).plus(6 * 30.days)
-                showCampaign = (Clock.System.now() >= eligibleTime && !preferences.donationCampaignShown.get())
-            } catch (_: PackageManager.NameNotFoundException) {
             }
         }
     }
@@ -555,6 +477,7 @@ class MainActivity :
                 applicationContext,
                 notificationId,
                 intent.getIntExtra("groupId", 0),
+                intent.getStringExtra("notificationTag"), // RK: a novel's notices post under a tag
             )
         }
 
@@ -565,14 +488,24 @@ class MainActivity :
                 navigator.popUntilRoot()
                 HomeScreen.Tab.Library(idToOpen)
             }
-            // RK: open a novel's details from a per-novel update notification
+            // RK: open a saved novel's details, as built by novelDetailsIntent
             Constants.SHORTCUT_NOVEL -> {
-                val source = intent.getStringExtra(Constants.NOVEL_SOURCE_EXTRA)
-                val url = intent.getStringExtra(Constants.NOVEL_URL_EXTRA)
-                if (source != null && url != null) {
-                    navigator.popUntilRoot()
-                    navigator.push(NovelScreen(source, url))
+                lifecycleScope.launch {
+                    intent.novelDetailsScreen(novelRepository)?.let {
+                        navigator.popUntilRoot()
+                        navigator.push(it)
+                    }
                 }
+                null
+            }
+            // RK: open the Update errors screen from a failed-update notification, on the type that
+            //     failed. The extra is untrusted, so an unknown name falls back to showing everything.
+            Constants.SHORTCUT_UPDATE_ERRORS -> {
+                val contentType = intent.getStringExtra(Constants.CONTENT_TYPE_EXTRA)
+                    ?.let { name -> ContentType.entries.firstOrNull { it.name == name } }
+                    ?: ContentType.ALL
+                navigator.popUntilRoot()
+                navigator.push(UpdateErrorsScreen(contentType))
                 null
             }
             Constants.SHORTCUT_UPDATES -> HomeScreen.Tab.Updates
@@ -605,7 +538,15 @@ class MainActivity :
                 if (!query.isNullOrEmpty()) {
                     val filter = intent.getStringExtra(INTENT_SEARCH_FILTER)
                     navigator.popUntilRoot()
-                    navigator.push(GlobalSearchScreen(query, filter))
+                    // RK --> a novel app's link opens like a share; a manga filter scopes a manga search
+                    lifecycleScope.launch {
+                        navigator.push(
+                            searchIntentScreen(query, filter) {
+                                extensionManager.getLoadedNovelExtensions().map { it.pkgName }
+                            },
+                        )
+                    }
+                    // RK <--
                 }
                 null
             }
@@ -619,7 +560,8 @@ class MainActivity :
                 else if (intent.isAddExtensionStoreIntent()) {
                     intent.data?.getQueryParameter("url")?.let { repoUrl ->
                         navigator.popUntilRoot()
-                        navigator.push(ExtensionStoresScreen(repoUrl))
+                        // RK: the Repos screen, which reads the address as either kind of repo
+                        navigator.push(RepositoriesScreen(repoUrl))
                     }
                 }
                 null
@@ -651,3 +593,6 @@ class MainActivity :
 private const val SPLASH_MIN_DURATION = 500 // ms
 private const val SPLASH_MAX_DURATION = 5000 // ms
 private const val SPLASH_EXIT_ANIM_DURATION = 400L // ms
+
+private val MIGRATING_SCREEN_MIN_DURATION = 1.seconds
+private val APP_UPDATE_CHECK_INTERVAL = 6.hours

@@ -1,0 +1,307 @@
+package reikai.data.novel
+
+import eu.kanade.tachiyomi.source.model.UpdateStrategy
+import reikai.domain.novel.model.LibraryNovel
+import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelChapter
+import reikai.domain.novel.model.NovelCover
+import reikai.domain.novel.model.NovelHistoryWithRelations
+import reikai.domain.novel.model.NovelUpdateWithRelations
+import reikai.domain.novel.model.NovelWithChapterCount
+import kotlin.time.Instant
+
+/**
+ * Mappers from the generated SQLDelight row types to the domain models. SQLDelight invokes these
+ * as the `mapper:` argument; the parameter order must match the column order declared in the
+ * `.sq` file. The `genre`, `update_strategy` and date columns arrive already typed via the registered
+ * column adapters, so no conversion happens here.
+ */
+
+fun mapNovel(
+    id: Long,
+    source: String,
+    url: String,
+    title: String,
+    author: String?,
+    artist: String?,
+    description: String?,
+    genre: List<String>?,
+    status: Long,
+    thumbnailUrl: String?,
+    lastUpdate: Instant?,
+    initialized: Boolean,
+    chapterFlags: Long,
+    updateStrategy: UpdateStrategy,
+    coverLastModified: Instant?,
+    totalPages: Long,
+    notes: String,
+    viewerFlags: Long,
+    nextUpdate: Instant?,
+    calculateInterval: Long,
+    favoriteAt: Instant?,
+): Novel = Novel(
+    id = id,
+    source = source,
+    url = url,
+    title = title,
+    author = author,
+    artist = artist,
+    description = description,
+    genre = genre,
+    status = status,
+    thumbnailUrl = thumbnailUrl,
+    favoriteAt = favoriteAt,
+    lastUpdate = lastUpdate,
+    initialized = initialized,
+    chapterFlags = chapterFlags,
+    updateStrategy = updateStrategy,
+    coverLastModified = coverLastModified,
+    totalPages = totalPages,
+    notes = notes,
+    viewerFlags = viewerFlags,
+    nextUpdate = nextUpdate,
+    fetchInterval = calculateInterval.toInt(),
+)
+
+/**
+ * Maps a `novelLibraryView` row to [LibraryNovel]. The leading args are the `novels` columns (same
+ * order as [mapNovel]); the trailing 7 are the view's aggregates. `sum(...)` columns arrive as
+ * `Double` (SQLDelight bypasses the Boolean adapter for aggregates), so they are narrowed to `Long`.
+ * The download count is not in the view: it comes from NovelDownloadCache (disk), filled in the model.
+ */
+fun mapLibraryNovel(
+    id: Long,
+    source: String,
+    url: String,
+    title: String,
+    author: String?,
+    artist: String?,
+    description: String?,
+    genre: List<String>?,
+    status: Long,
+    thumbnailUrl: String?,
+    lastUpdate: Instant?,
+    initialized: Boolean,
+    chapterFlags: Long,
+    updateStrategy: UpdateStrategy,
+    coverLastModified: Instant?,
+    totalPages: Long,
+    notes: String,
+    viewerFlags: Long,
+    nextUpdate: Instant?,
+    calculateInterval: Long,
+    favoriteAt: Instant?,
+    totalCount: Long,
+    readCount: Double,
+    latestUpload: Instant?,
+    chapterFetchedAt: Instant?,
+    lastRead: Instant?,
+    bookmarkCount: Double,
+    categories: String,
+): LibraryNovel = LibraryNovel(
+    novel = mapNovel(
+        id,
+        source,
+        url,
+        title,
+        author,
+        artist,
+        description,
+        genre,
+        status,
+        thumbnailUrl,
+        lastUpdate,
+        initialized,
+        chapterFlags,
+        updateStrategy,
+        coverLastModified,
+        totalPages,
+        notes,
+        viewerFlags,
+        nextUpdate,
+        calculateInterval,
+        favoriteAt,
+    ),
+    categories = categories.split(",").map { it.toLong() },
+    totalChapters = totalCount,
+    readCount = readCount.toLong(),
+    bookmarkCount = bookmarkCount.toLong(),
+    // placeholder; NovelLibraryViewModel fills this from NovelDownloadCache
+    downloadCount = 0,
+    latestUpload = latestUpload,
+    chapterFetchedAt = chapterFetchedAt,
+    lastRead = lastRead,
+)
+
+/**
+ * Maps a `getDuplicateLibraryNovel` row to [NovelWithChapterCount]. The leading args are the
+ * `novels` columns (same order as [mapNovel]); the trailing arg is the joined chapter count.
+ */
+fun mapNovelWithChapterCount(
+    id: Long,
+    source: String,
+    url: String,
+    title: String,
+    author: String?,
+    artist: String?,
+    description: String?,
+    genre: List<String>?,
+    status: Long,
+    thumbnailUrl: String?,
+    lastUpdate: Instant?,
+    initialized: Boolean,
+    chapterFlags: Long,
+    updateStrategy: UpdateStrategy,
+    coverLastModified: Instant?,
+    totalPages: Long,
+    notes: String,
+    viewerFlags: Long,
+    nextUpdate: Instant?,
+    calculateInterval: Long,
+    favoriteAt: Instant?,
+    chapterCount: Long,
+): NovelWithChapterCount = NovelWithChapterCount(
+    novel = mapNovel(
+        id,
+        source,
+        url,
+        title,
+        author,
+        artist,
+        description,
+        genre,
+        status,
+        thumbnailUrl,
+        lastUpdate,
+        initialized,
+        chapterFlags,
+        updateStrategy,
+        coverLastModified,
+        totalPages,
+        notes,
+        viewerFlags,
+        nextUpdate,
+        calculateInterval,
+        favoriteAt,
+    ),
+    chapterCount = chapterCount,
+)
+
+/**
+ * Maps a `novelUpdatesView` row to [NovelUpdateWithRelations]. Param order matches the view's SELECT.
+ * The feed sorts/groups/filters on `dateFetch` (date_upload is unreliable for LN sources).
+ */
+fun mapNovelUpdate(
+    novelId: Long,
+    novelTitle: String,
+    chapterId: Long,
+    chapterName: String,
+    chapterUrl: String,
+    read: Boolean,
+    bookmark: Boolean,
+    lastTextProgress: Long,
+    source: String,
+    favorite: Boolean,
+    thumbnailUrl: String?,
+    coverLastModified: Instant?,
+    dateFetch: Instant,
+    novelUrl: String,
+): NovelUpdateWithRelations = NovelUpdateWithRelations(
+    novelId = novelId,
+    novelTitle = novelTitle,
+    chapterId = chapterId,
+    chapterName = chapterName,
+    chapterUrl = chapterUrl,
+    read = read,
+    bookmark = bookmark,
+    lastTextProgress = lastTextProgress,
+    source = source,
+    dateFetch = dateFetch,
+    novelUrl = novelUrl,
+    coverData = NovelCover(
+        url = thumbnailUrl,
+        sourceId = source,
+        isNovelFavorite = favorite,
+        lastModified = coverLastModified,
+        novelId = novelId,
+    ),
+)
+
+/**
+ * Maps a `novelHistoryView` row to [NovelHistoryWithRelations]. Param order matches the `novelHistory`
+ * / `getLatestNovelHistory` SELECT.
+ */
+fun mapNovelHistoryWithRelations(
+    id: Long,
+    novelId: Long,
+    chapterId: Long,
+    title: String,
+    thumbnailUrl: String?,
+    source: String,
+    favorite: Boolean,
+    coverLastModified: Instant?,
+    chapterNumber: Double,
+    chapterName: String,
+    chapterUrl: String,
+    read: Boolean,
+    bookmark: Boolean,
+    lastTextProgress: Long,
+    readAt: Instant?,
+    readDuration: Long,
+): NovelHistoryWithRelations = NovelHistoryWithRelations(
+    id = id,
+    chapterId = chapterId,
+    novelId = novelId,
+    title = title,
+    chapterNumber = chapterNumber,
+    readAt = readAt,
+    readDuration = readDuration,
+    chapterName = chapterName,
+    chapterUrl = chapterUrl,
+    read = read,
+    bookmark = bookmark,
+    lastTextProgress = lastTextProgress,
+    source = source,
+    storedTitle = title,
+    coverData = NovelCover(
+        url = thumbnailUrl,
+        sourceId = source,
+        isNovelFavorite = favorite,
+        lastModified = coverLastModified,
+        novelId = novelId,
+    ),
+)
+
+fun mapNovelChapter(
+    id: Long,
+    novelId: Long,
+    url: String,
+    name: String,
+    read: Boolean,
+    bookmark: Boolean,
+    lastTextProgress: Long,
+    chapterNumber: Double,
+    sourceOrder: Long,
+    dateFetch: Instant,
+    dateUpload: Instant?,
+    page: String,
+    @Suppress("UNUSED_PARAMETER") isDownloaded: Boolean,
+    scanlator: String?,
+    rawChapterNumber: Double?,
+): NovelChapter = NovelChapter(
+    id = id,
+    novelId = novelId,
+    url = url,
+    name = name,
+    read = read,
+    bookmark = bookmark,
+    lastTextProgress = lastTextProgress,
+    chapterNumber = chapterNumber,
+    sourceOrder = sourceOrder,
+    dateFetch = dateFetch,
+    dateUpload = dateUpload,
+    page = page,
+    // is_downloaded column ignored: downloaded state now comes from NovelDownloadCache (disk).
+    scanlator = scanlator,
+    rawChapterNumber = rawChapterNumber,
+)

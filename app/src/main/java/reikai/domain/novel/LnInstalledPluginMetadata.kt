@@ -3,14 +3,11 @@ package reikai.domain.novel
 import kotlinx.serialization.Serializable
 
 /**
- * Per-plugin record persisted alongside [NovelPreferences.installedPluginUrls]. Keyed in
- * [NovelPreferences.installedPluginMetadata] by the canonicalized plugin .js URL (the same key the
- * installed-URLs set uses).
- *
- * `iconUrl` is the absolute CDN URL resolved by lnreader's plugins.min.json; the plugin's own
- * `plugin.icon` field is the relative authoring path and is not a usable URL. `version` is captured
- * so update detection can compare installed vs registry versions. `lang` is the registry language
- * tag (lnreader plugin classes do not expose lang at runtime), injected back into the host on load.
+ * Per-plugin record persisted alongside [NovelPreferences.installedPluginUrls], keyed in
+ * [NovelPreferences.installedPluginMetadata] by the canonicalized plugin .js URL. `iconUrl` and
+ * `customCssUrl` are the absolute CDN URLs from lnreader's plugins.min.json, since the plugin's own
+ * fields are relative authoring paths. `version` is captured so update detection can compare installed
+ * against registry. `lang` is the registry language tag, which plugin classes do not expose at runtime.
  */
 @Serializable
 data class LnInstalledPluginMetadata(
@@ -18,4 +15,10 @@ data class LnInstalledPluginMetadata(
     val iconUrl: String? = null,
     val version: String? = null,
     val lang: String? = null,
+    val customCssUrl: String? = null,
+    /**
+     * The added repo last seen listing this URL, recorded by the update check, so a plugin waits out
+     * only its own repo's outage. Null until a check sees it listed.
+     */
+    val repoUrl: String? = null,
 )

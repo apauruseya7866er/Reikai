@@ -1,9 +1,11 @@
 package reikai.domain.recommendation.taste
 
+import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.myanimelist.MyAnimeList
 import eu.kanade.tachiyomi.data.track.myanimelist.dto.MALLibraryItem
-import eu.kanade.tachiyomi.data.track.myanimelist.dto.MALLibraryListStatus
+import eu.kanade.tachiyomi.data.track.myanimelist.toMyAnimeListStatus
 import reikai.domain.recommendation.ReikaiRecommendationPreferences
+import tachiyomi.core.common.preference.Preference
 
 /**
  * Pulls the user's full MyAnimeList manga list via the official API (`/users/@me/mangalist`, paged
@@ -15,13 +17,12 @@ import reikai.domain.recommendation.ReikaiRecommendationPreferences
  */
 class MyAnimeListLibraryFetcher(
     private val myAnimeList: MyAnimeList,
-    private val preferences: ReikaiRecommendationPreferences,
+    preferences: ReikaiRecommendationPreferences,
 ) : TrackerLibraryFetcher {
 
-    override val trackerId: Long = myAnimeList.id
+    override val tracker: Tracker get() = myAnimeList
 
-    override fun isEnabled(): Boolean =
-        preferences.pullLibraryFromMyAnimeList.get() && myAnimeList.isLoggedIn
+    override val pullPreference: Preference<Boolean> = preferences.pullLibraryFromMyAnimeList
 
     override suspend fun fetchLibrary(): List<TrackedEntry> =
         myAnimeList.getUserLibrary().map { it.toTrackedEntry() }
@@ -31,23 +32,14 @@ class MyAnimeListLibraryFetcher(
         remoteId = node.id,
         title = node.title,
         score = normalizeTrackerScore(listStatus?.score, 10),
-        status = mapStatus(listStatus),
-        tags = node.genres.map { it.name.toTagKey() }.filter { it.isNotEmpty() }.distinct(),
+        status = if (listStatus?.isRereading == true) {
+            myAnimeList.trackStatusOf(MyAnimeList.REREADING)
+        } else {
+            myAnimeList.trackStatusOfRemote(listStatus?.status) { it.toMyAnimeListStatus() }
+        },
+        tags = node.genres.map { it.name }.toTagKeys(),
         // MAL's remote id IS the MAL id, so cross-tracker dedup can collapse AniList entries that
         // point here via Media.idMal.
         malId = node.id,
     )
-
-    private fun mapStatus(listStatus: MALLibraryListStatus?): TrackStatus {
-        if (listStatus == null) return TrackStatus.UNKNOWN
-        if (listStatus.isRereading) return TrackStatus.READING
-        return when (listStatus.status) {
-            "reading" -> TrackStatus.READING
-            "completed" -> TrackStatus.COMPLETED
-            "on_hold" -> TrackStatus.ON_HOLD
-            "dropped" -> TrackStatus.DROPPED
-            "plan_to_read" -> TrackStatus.PLAN_TO_READ
-            else -> TrackStatus.UNKNOWN
-        }
-    }
 }

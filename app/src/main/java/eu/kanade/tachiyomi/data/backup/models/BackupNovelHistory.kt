@@ -1,6 +1,6 @@
-// RK: novel backup (Roadmap 9). Net-new Reikai file: novel-history twin of BackupHistory, keyed by
-// the chapter url so it re-links after restore (chapter ids change). last_read is plain epoch millis
-// on the novel side (no Date adapter), so it stays a Long here.
+// Novel backup. Net-new Reikai file: novel-history twin of BackupHistory, type only, keyed by
+// the chapter url so it re-links after restore (chapter ids change). lastRead is epoch millis, 0 for
+// history the user removed, as BackupHistory carries it.
 package eu.kanade.tachiyomi.data.backup.models
 
 import kotlinx.serialization.Serializable

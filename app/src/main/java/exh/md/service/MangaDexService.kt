@@ -1,25 +1,16 @@
 package exh.md.service
 
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
 import exh.md.dto.AggregateDto
-import exh.md.dto.AtHomeDto
-import exh.md.dto.AtHomeImageReportDto
 import exh.md.dto.ChapterDto
-import exh.md.dto.ChapterListDto
-import exh.md.dto.CoverListDto
 import exh.md.dto.MangaDto
 import exh.md.dto.MangaListDto
-import exh.md.dto.RelationListDto
-import exh.md.dto.ResultDto
 import exh.md.dto.StatisticsDto
 import exh.md.utils.MdApi
 import exh.md.utils.MdConstants
 import exh.md.utils.MdUtil
-import exh.util.dropEmpty
-import exh.util.trimAll
 import okhttp3.CacheControl
 import okhttp3.Headers
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -123,50 +114,6 @@ class MangaDexService(
         }
     }
 
-    private fun String.splitString() = replace("\n", "").split(',').trimAll().dropEmpty()
-
-    suspend fun viewChapters(
-        id: String,
-        translatedLanguage: String,
-        offset: Int,
-        blockedGroups: String,
-        blockedUploaders: String,
-    ): ChapterListDto {
-        val url = MdApi.manga.toHttpUrl()
-            .newBuilder()
-            .apply {
-                addPathSegment(id)
-                addPathSegment("feed")
-                addQueryParameter("limit", "500")
-                addQueryParameter("includes[]", MdConstants.Types.scanlator)
-                addQueryParameter("order[volume]", "desc")
-                addQueryParameter("order[chapter]", "desc")
-                addQueryParameter("contentRating[]", "safe")
-                addQueryParameter("contentRating[]", "suggestive")
-                addQueryParameter("contentRating[]", "erotica")
-                addQueryParameter("contentRating[]", "pornographic")
-                addQueryParameter("translatedLanguage[]", translatedLanguage)
-                addQueryParameter("offset", offset.toString())
-                blockedGroups.splitString().forEach {
-                    addQueryParameter("excludedGroups[]", it)
-                }
-                blockedUploaders.splitString().forEach {
-                    addQueryParameter("excludedUploaders[]", it)
-                }
-            }
-            .build()
-
-        return with(MdUtil.jsonParser) {
-            client.newCall(
-                GET(
-                    url,
-                    headers = headers,
-                    cache = CacheControl.FORCE_NETWORK,
-                ),
-            ).awaitSuccess().parseAs()
-        }
-    }
-
     suspend fun viewChapter(id: String): ChapterDto {
         return with(MdUtil.jsonParser) {
             client.newCall(GET("${MdApi.chapter}/$id", headers = headers, cache = CacheControl.FORCE_NETWORK))
@@ -181,65 +128,5 @@ class MangaDexService(
                 .awaitSuccess()
                 .parseAs()
         }
-    }
-
-    suspend fun atHomeImageReport(atHomeImageReportDto: AtHomeImageReportDto): ResultDto {
-        return with(MdUtil.jsonParser) {
-            client.newCall(
-                POST(
-                    MdConstants.atHomeReportUrl,
-                    headers = headers,
-                    body = MdUtil.encodeToBody(atHomeImageReportDto),
-                    cache = CacheControl.FORCE_NETWORK,
-                ),
-            ).awaitSuccess().parseAs()
-        }
-    }
-
-    suspend fun getAtHomeServer(
-        atHomeRequestUrl: String,
-    ): AtHomeDto {
-        return with(MdUtil.jsonParser) {
-            client.newCall(GET(atHomeRequestUrl, headers, CacheControl.FORCE_NETWORK))
-                .awaitSuccess()
-                .parseAs()
-        }
-    }
-
-    suspend fun relatedManga(id: String): RelationListDto {
-        return with(MdUtil.jsonParser) {
-            client.newCall(
-                GET(
-                    MdApi.manga.toHttpUrl().newBuilder()
-                        .apply {
-                            addPathSegment(id)
-                            addPathSegment("relation")
-                        }
-                        .build(),
-                    headers = headers,
-                    cache = CacheControl.FORCE_NETWORK,
-                ),
-            ).awaitSuccess().parseAs()
-        }
-    }
-
-    suspend fun fetchFirstVolumeCover(mangaDto: MangaDto): String? {
-        val mangaData = mangaDto.data
-        val result: CoverListDto = with(MdUtil.jsonParser) {
-            client.newCall(
-                GET(
-                    MdApi.cover.toHttpUrl().newBuilder()
-                        .apply {
-                            addQueryParameter("order[volume]", "asc")
-                            addQueryParameter("manga[]", mangaData.id)
-                            addQueryParameter("locales[]", mangaData.attributes.originalLanguage)
-                            addQueryParameter("limit", "1")
-                        }
-                        .build(),
-                    headers = headers,
-                ),
-            ).awaitSuccess().parseAs()
-        }
-        return result.data.firstOrNull()?.attributes?.fileName
     }
 }

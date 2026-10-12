@@ -3,10 +3,13 @@ package reikai.presentation.library
 import eu.kanade.tachiyomi.ui.library.LibraryItem
 import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.test.runTest
+import mihon.domain.library.model.search.QueryNode
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.library.model.LibraryManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.Source
+import kotlin.time.Instant
 
 class MangaMergeCollapseTest {
 
@@ -21,9 +24,14 @@ class MangaMergeCollapseTest {
         totalChapters: Long = 0,
         dateAdded: Long = 0,
         unread: Long = 0,
-        lastRead: Long = 0,
+        isLocal: Boolean = false,
     ): LibraryItem {
-        val manga = Manga.create().copy(id = id, source = source, title = title, dateAdded = dateAdded)
+        val manga = Manga.create().copy(
+            id = id,
+            source = source,
+            title = title,
+            favoriteAt = Instant.fromEpochMilliseconds(dateAdded),
+        )
         return LibraryItem(
             libraryManga = LibraryManga(
                 manga = manga,
@@ -31,99 +39,188 @@ class MangaMergeCollapseTest {
                 totalChapters = totalChapters,
                 readCount = 0,
                 bookmarkCount = 0,
-                latestUpload = 0,
-                chapterFetchedAt = 0,
-                lastRead = lastRead,
+                latestUpload = null,
+                chapterFetchedAt = null,
+                lastRead = null,
             ),
             downloadCount = 0,
             unreadCount = unread,
-            isLocal = false,
-            badges = LibraryItem.Badges(downloadCount = 0, unreadCount = unread, isLocal = false, sourceLanguage = ""),
+            isLocal = isLocal,
+            badges = LibraryItem.Badges(
+                downloadCount = 0,
+                unreadCount = unread,
+                isLocal = isLocal,
+                sourceLanguage = "",
+            ),
         )
     }
 
-    private fun collapse(
+    private suspend fun collapse(
         items: List<LibraryItem>,
-        merges: Set<String> = emptySet(),
-        unmerges: Set<String> = emptySet(),
-        auto: Boolean = true,
-    ) = MangaMergeCollapse.collapse(items, merges, unmerges, auto, showMergeSourceIcons = true, resolveSource)
+        membership: Map<Long, Long> = emptyMap(),
+        overrideRankings: Map<Long, List<Long>> = emptyMap(),
+        preferredSourceIds: List<Long> = emptyList(),
+        // Each member's rows all carry distinct recognized numbers unless a test says otherwise.
+        recognizedChapterCounts: Map<Long, Long> = items.associate { it.id to it.libraryManga.totalChapters },
+    ) = MangaMergeCollapse.collapse(
+        items,
+        membership,
+        mergingEnabled = true,
+        showMergeSourceIcons = true,
+        resolveSource,
+        overrideRankings = overrideRankings,
+        preferredSourceIds = preferredSourceIds,
+        recognizedChapterCounts = recognizedChapterCounts,
+        badgePrefs = LibraryBadgePrefs(true, true, true, true, true),
+    )
 
     @Test
-    fun `a single item is returned unchanged`() {
+    fun `a single item is returned unchanged`() = runTest {
         val items = listOf(item(1))
         collapse(items) shouldBe items
     }
 
     @Test
-    fun `same-title items collapse to one entry with the larger source as primary`() {
+    fun `with no ranking set the most-chapters source is the primary`() = runTest {
+        // No per-group override and no preferred-source list: the primary falls back to the most-chapters
+        // source (then lowest id), matching the details trunk's own fallback.
         val result = collapse(
             listOf(
-                item(1, title = "One Piece", source = 100L, totalChapters = 5, unread = 2),
-                item(2, title = "One Piece", source = 200L, totalChapters = 10, unread = 3),
+                item(1, source = 100L, totalChapters = 5, unread = 2),
+                item(2, source = 200L, totalChapters = 10, unread = 3),
             ),
+            membership = mapOf(1L to 7L, 2L to 7L),
         )
         result.size shouldBe 1
         val merged = result.single()
         merged.id shouldBe 2L // more chapters wins the primary
         merged.unreadCount shouldBe 3L // primary's unread (not summed), closer to the deduped count
         merged.relatedMangaIds shouldContainExactlyInAnyOrder listOf(1L, 2L)
-        merged.badges.mergedSources.map { it.id } shouldContainExactlyInAnyOrder listOf(100L, 200L)
+        merged.badges.mergedSources shouldContainExactlyInAnyOrder listOf(badge(100L), badge(200L))
     }
 
-    @Test
-    fun `auto-merge off keeps same-title items separate`() {
-        val result = collapse(
-            listOf(item(1, title = "Same"), item(2, title = "Same")),
-            auto = false,
-        )
-        result.map { it.id } shouldContainExactlyInAnyOrder listOf(1L, 2L)
-    }
+    private fun badge(sourceId: Long) = SourceBadge.Manga(resolveSource(sourceId))
 
     @Test
-    fun `a manual merge entry collapses items with different titles`() {
-        val result = collapse(
-            listOf(item(1, title = "Alpha"), item(2, title = "Beta")),
-            merges = setOf("1,2"),
-            auto = false,
-        )
-        result.size shouldBe 1
-        result.single().relatedMangaIds shouldContainExactlyInAnyOrder listOf(1L, 2L)
-    }
-
-    @Test
-    fun `an unmerge pair splits a same-title bucket`() {
-        val result = collapse(
-            listOf(item(1, title = "Dupe"), item(2, title = "Dupe")),
-            unmerges = setOf("1,2"),
-        )
-        result.map { it.id } shouldContainExactlyInAnyOrder listOf(1L, 2L)
-    }
-
-    @Test
-    fun `the merged entry reports the most recent read across the whole group`() {
-        // Manga 1 is the primary (more chapters), but manga 2's read is more recent: the merged entry
-        // must sort by the group max so reading any source bubbles it up.
+    fun `distinct chapter identities decide the primary, not the row count`() = runTest {
+        // Member 1 lists more chapter ROWS (its source repeats chapters under several scanlators) but
+        // covers fewer distinct chapters. ChapterAggregation trunks the details list on the distinct
+        // count, so the library row has to pick the same member or the two surfaces lead on different
+        // sources: the card would show member 1 while its chapter list came from member 2.
         val result = collapse(
             listOf(
-                item(1, title = "Saga", totalChapters = 10, lastRead = 100),
-                item(2, title = "Saga", totalChapters = 5, lastRead = 500),
+                item(1, source = 100L, totalChapters = 10),
+                item(2, source = 200L, totalChapters = 6),
             ),
+            membership = mapOf(1L to 7L, 2L to 7L),
+            recognizedChapterCounts = mapOf(1L to 4L, 2L to 6L),
         )
-        result.size shouldBe 1
+        result.single().id shouldBe 2L
+    }
+
+    @Test
+    fun `a member absent from the counts ranks last, as the stitch ranks it`() = runTest {
+        // No row means the member lists no recognized number, which the stitch counts as zero. Its row
+        // count is not a stand-in, however large.
+        val result = collapse(
+            listOf(
+                item(1, source = 100L, totalChapters = 20),
+                item(2, source = 200L, totalChapters = 2),
+            ),
+            membership = mapOf(1L to 7L, 2L to 7L),
+            recognizedChapterCounts = mapOf(2L to 2L),
+        )
+        result.single().id shouldBe 2L
+    }
+
+    @Test
+    fun `a per-group override picks the primary over chapter count`() = runTest {
+        // The override orders members [2, 1] (member 2 is the trunk) even though member 1 has more
+        // chapters, so the library row leads on the same source the details chapter list trunks on.
+        val result = collapse(
+            listOf(
+                item(1, source = 100L, totalChapters = 10),
+                item(2, source = 200L, totalChapters = 3),
+            ),
+            membership = mapOf(1L to 7L, 2L to 7L),
+            overrideRankings = mapOf(7L to listOf(2L, 1L)),
+        )
+        result.single().id shouldBe 2L // override trunk wins despite fewer chapters
+    }
+
+    @Test
+    fun `the global preferred-source list picks the primary when no override is set`() = runTest {
+        // Source 200 outranks source 100 in the global list, so its member is the primary even with fewer
+        // chapters. The override map is empty, so this is the fallback ranking.
+        val result = collapse(
+            listOf(
+                item(1, source = 100L, totalChapters = 10),
+                item(2, source = 200L, totalChapters = 3),
+            ),
+            membership = mapOf(1L to 7L, 2L to 7L),
+            preferredSourceIds = listOf(200L, 100L),
+        )
+        result.single().id shouldBe 2L // preferred source wins despite fewer chapters
+    }
+
+    @Test
+    fun `a local source chosen as the trunk keeps the collapsed entry local`() = runTest {
+        // The Local badge and whether Download is offered read the representative's own isLocal, so a
+        // local source promoted to the trunk (via the override) must carry its local state onto the row.
+        // Local member 1 has fewer chapters, so only the ranking, not the count, makes it the trunk.
+        val result = collapse(
+            listOf(
+                item(1, source = 100L, totalChapters = 3, isLocal = true),
+                item(2, source = 200L, totalChapters = 10, isLocal = false),
+            ),
+            membership = mapOf(1L to 7L, 2L to 7L),
+            overrideRankings = mapOf(7L to listOf(1L, 2L)),
+        )
         val merged = result.single()
-        merged.id shouldBe 1L
-        merged.libraryManga.lastRead shouldBe 500L
+        merged.isLocal shouldBe true
+        merged.badges.isLocal shouldBe true
     }
 
     @Test
-    fun `the most recently added wins the primary when chapter counts tie`() {
+    fun `a remote source chosen as the trunk keeps the collapsed entry non-local`() = runTest {
+        // The inverse: a remote source promoted to the trunk over a higher-chapter local member leaves the
+        // row non-local, so Download stays available.
         val result = collapse(
             listOf(
-                item(1, title = "Tie", totalChapters = 5, dateAdded = 200),
-                item(2, title = "Tie", totalChapters = 5, dateAdded = 100),
+                item(1, source = 100L, totalChapters = 10, isLocal = true),
+                item(2, source = 200L, totalChapters = 3, isLocal = false),
             ),
+            membership = mapOf(1L to 7L, 2L to 7L),
+            overrideRankings = mapOf(7L to listOf(2L, 1L)),
         )
-        result.single().id shouldBe 1L // same chapters; max date_added wins the tiebreak
+        val merged = result.single()
+        merged.isLocal shouldBe false
+        merged.badges.isLocal shouldBe false
+    }
+
+    @Test
+    fun `a merged entry is found by searching a source other than its primary`() = runTest {
+        // Member 2 has more chapters, so it is the primary; the search names member 1's source.
+        val merged = collapse(
+            listOf(item(1, source = 100L, totalChapters = 3), item(2, source = 200L, totalChapters = 10)),
+            membership = mapOf(1L to 7L, 2L to 7L),
+        ).single()
+        val fields = libraryItemQueryFields(sourceKey = { it.libraryManga.manga.source.toString() })
+        libraryQueryMatches(QueryNode.from(sourceKeyQuery("100")), merged, fields) shouldBe true
+    }
+
+    @Test
+    fun `the lowest id wins the primary when counts tie and no ranking is set`() = runTest {
+        // Same chapters, no override, no preferred list: the tiebreak is the lowest id (the stitch's own
+        // tiebreak). Member 2 is listed first and added earlier, so neither input order nor date_added
+        // can pass this in the id rule's place.
+        val result = collapse(
+            listOf(
+                item(2, totalChapters = 5, dateAdded = 100),
+                item(1, totalChapters = 5, dateAdded = 200),
+            ),
+            membership = mapOf(1L to 7L, 2L to 7L),
+        )
+        result.single().id shouldBe 1L // lowest id wins the tiebreak, regardless of date_added
     }
 }

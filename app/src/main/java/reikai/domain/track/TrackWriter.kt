@@ -3,14 +3,12 @@ package reikai.domain.track
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.Tracker
 import reikai.domain.novel.track.NovelTrackUpdater
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 /**
  * The tracker-write surface the unified track dialog ([reikai.presentation.track.EntryTrackInfoDialogHomeScreen])
  * writes through, so manga and novel share one dialog stack. Both content types already push the same mutable
  * [Track] (DbTrack); only the persistence sink differs, so a manga write delegates straight to the tracker
- * while a novel write routes through [NovelTrackUpdater] into `novel_tracks`.
+ * while a novel write routes through [NovelTrackUpdater] into `novel_tracks`. [EntryTrackPort.writer] picks one.
  */
 interface TrackWriter {
     suspend fun setRemoteStatus(tracker: Tracker, track: Track, status: Long)
@@ -21,7 +19,7 @@ interface TrackWriter {
     suspend fun setRemotePrivate(tracker: Tracker, track: Track, private: Boolean)
 }
 
-/** Manga writes call the tracker's own `setRemoteX` (BaseTracker persists to `manga_sync`). Stateless. */
+/** Manga writes call the tracker's own `setRemoteX` (BaseTracker persists to `manga_track`). Stateless. */
 object MangaTrackWriter : TrackWriter {
     override suspend fun setRemoteStatus(tracker: Tracker, track: Track, status: Long) {
         tracker.setRemoteStatus(track, status)
@@ -47,7 +45,3 @@ object MangaTrackWriter : TrackWriter {
         tracker.setRemotePrivate(track, private)
     }
 }
-
-/** The novel writer is the injected [NovelTrackUpdater]; the manga writer is the stateless [MangaTrackWriter]. */
-fun trackWriterFor(isNovel: Boolean): TrackWriter =
-    if (isNovel) Injekt.get<NovelTrackUpdater>() else MangaTrackWriter

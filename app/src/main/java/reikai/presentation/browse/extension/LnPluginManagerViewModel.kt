@@ -1,0 +1,257 @@
+package reikai.presentation.browse.extension
+
+import androidx.compose.runtime.Immutable
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesIntoMap
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.binding
+import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import eu.kanade.tachiyomi.extension.model.InstallStep
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.WhileSubscribed
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.getAndUpdate
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import mihon.core.metro.AppCoroutineScope
+import reikai.domain.extension.repoNameFromAddress
+import reikai.domain.novel.LnInstalledPluginMetadata
+import reikai.domain.novel.NovelPreferences
+import reikai.domain.source.ReikaiSourcePreferences
+import reikai.novel.install.LnPluginInstaller
+import reikai.novel.install.LnPluginLoadFailure
+import reikai.novel.install.canonicalizePluginUrl
+import reikai.novel.registry.LnRegistryEntry
+import reikai.novel.registry.LnRepoRegistries
+import reikai.novel.registry.LnRepoResult
+import reikai.novel.registry.pluginRepos
+import reikai.novel.source.LnPluginSource
+import reikai.novel.source.NovelSource
+import reikai.novel.source.NovelSourceManager
+import reikai.novel.source.isInDisabledNovelLanguage
+import reikai.novel.update.LnPluginUpdate
+import reikai.novel.update.LnPluginUpdateNotifier
+import reikai.novel.update.LnPluginUpdates
+import reikai.novel.update.findPluginUpdates
+import tachiyomi.core.common.util.lang.launchIO
+import kotlin.time.Duration.Companion.seconds
+
+/**
+ * The plugin half behind [NovelExtensionsProvider]: it produces the updates, not-loaded, installed and
+ * available lists over the plugin host ([NovelSourceManager] for what is installed, the shared
+ * [LnRepoRegistries] for what is available, a version diff for updates), and the shared Extensions
+ * engine sections and filters them. Every list is derived from the registries already fetched and the
+ * installed plugins' records, so an install, an uninstall or a return to the tab downloads nothing.
+ */
+@Inject
+@ViewModelKey
+@ContributesIntoMap(AppScope::class, binding = binding<ViewModel>())
+class LnPluginManagerViewModel(
+    manager: NovelSourceManager,
+    private val installer: LnPluginInstaller,
+    private val registries: LnRepoRegistries,
+    private val prefs: NovelPreferences,
+    private val updateNotifier: LnPluginUpdateNotifier,
+    // Uninstalls are deletes, which closing the Extensions screen must not cut off.
+    @AppCoroutineScope private val appScope: CoroutineScope,
+    sourcePreferences: ReikaiSourcePreferences,
+) : ViewModel() {
+
+    /** Canonical URLs with an install in flight, and the last error per URL. */
+    private val installs = MutableStateFlow(Installs())
+
+    // The registry holds the extension apps' catalogues too, which are installed and removed as apps.
+    private val installed: Flow<List<NovelSource>> =
+        manager.loadedSources().map { sources -> sources.filterIsInstance<LnPluginSource>() }
+
+    /** Null until the registries first load. */
+    private val fetched: Flow<RepoFetch?> = combine(
+        registries.results,
+        prefs.installedPluginUrls().changes(),
+        prefs.installedPluginMetadata().changes(),
+        sourcePreferences.disabledNovelLanguages.changes(),
+        ::repoFetch,
+    )
+        // Keep the Browse badge in sync with what the user is looking at.
+        .onEach { updateNotifier.setPending(it.found) }
+        .onStart<RepoFetch?> { emit(null) }
+
+    val state: StateFlow<State> = combine(
+        installed,
+        installer.failures,
+        fetched,
+        registries.isRefreshing,
+        installs,
+    ) { installed, failures, fetched, refreshing, installs ->
+        State(
+            isRefreshing = refreshing,
+            hasLoaded = fetched != null,
+            hasRepos = fetched?.hasRepos ?: false,
+            installed = installed,
+            notLoaded = failures.values.toList(),
+            installedVersions = fetched?.installedVersions.orEmpty(),
+            repoNames = fetched?.repoNames.orEmpty(),
+            installedRepoNames = fetched?.installedRepoNames.orEmpty(),
+            available = fetched?.available.orEmpty(),
+            updates = fetched?.found?.updates.orEmpty(),
+            inProgress = installs.inProgress,
+            errors = installs.errors,
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5.seconds), State())
+
+    fun refresh() {
+        viewModelScope.launchIO { registries.refresh() }
+    }
+
+    private fun repoFetch(
+        results: Map<String, LnRepoResult>,
+        installedUrls: Set<String>,
+        metadata: Map<String, LnInstalledPluginMetadata>,
+        disabledLanguages: Set<String>,
+    ): RepoFetch {
+        // Merge in repo order, so first-write-wins on URL collisions matches the install/check surfaces.
+        val registries = results.values.map { (it as? LnRepoResult.Reached)?.entries.orEmpty() }
+        val byUrl = LinkedHashMap<String, LnRegistryEntry>()
+        registries.flatten().forEach { entry -> byUrl.putIfAbsent(canonicalizePluginUrl(entry.url), entry) }
+        val repoByUrl = pluginRepos(results).mapValues { repoNameFromAddress(it.value).first }
+        return RepoFetch(
+            hasRepos = results.isNotEmpty(),
+            // The novel sources' language filter narrows what is offered, as manga's does for extensions.
+            available = byUrl.filterKeys { it !in installedUrls }.values
+                .filterNot { it.lang.isInDisabledNovelLanguage(disabledLanguages) },
+            found = findPluginUpdates(
+                installedUrls,
+                metadata,
+                registries.flatten(),
+                unreachable = results.filterValues { it !is LnRepoResult.Reached }.keys,
+            ),
+            installedVersions = metadata.values
+                .mapNotNull { meta -> meta.version?.let { meta.pluginId to it } }
+                .toMap(),
+            repoNames = repoByUrl,
+            installedRepoNames = metadata
+                .mapNotNull { (url, meta) -> repoByUrl[canonicalizePluginUrl(url)]?.let { meta.pluginId to it } }
+                .toMap(),
+        )
+    }
+
+    /**
+     * Force a re-load of the installed LN plugins (retrying any that failed). The shared "Re-check
+     * extensions" action fires this beside ExtensionManager.reloadInstalledExtensions(), which reloads
+     * the installed apps; the two split by source kind and differ by design, so neither twins the other.
+     */
+    fun reloadInstalled() {
+        viewModelScope.launchIO { installer.loadInstalled() }
+    }
+
+    fun install(entry: LnRegistryEntry) = install(entry.url, entry.toMetadata())
+
+    /** Fetches the script again for a plugin whose stored one is gone, keeping what its record knew. */
+    fun reinstall(failure: LnPluginLoadFailure) = install(
+        failure.url,
+        LnInstalledPluginMetadata(
+            pluginId = failure.pluginId.orEmpty(),
+            iconUrl = failure.iconUrl,
+            version = failure.version,
+            lang = failure.lang,
+            customCssUrl = failure.customCssUrl,
+        ),
+    )
+
+    private fun install(url: String, metadata: LnInstalledPluginMetadata) {
+        val key = canonicalizePluginUrl(url)
+        // Claimed before the launch, so a second tap on any entry point finds it taken: two installs
+        // of one plugin share its temp file, and the second rename fails.
+        val claimed = installs.getAndUpdate {
+            if (key in it.inProgress) it else it.copy(inProgress = it.inProgress + key, errors = it.errors - key)
+        }
+        if (key in claimed.inProgress) return
+        viewModelScope.launchIO {
+            try {
+                installer.installFromUrl(url, metadata)
+            } catch (e: Throwable) {
+                installs.update { it.copy(errors = it.errors + (key to InstallStep.Error.from(e))) }
+            } finally {
+                installs.update { it.copy(inProgress = it.inProgress - key) }
+            }
+        }
+    }
+
+    /** Update is a reinstall of the newer registry entry: re-fetch, re-register, overwrite version. */
+    fun update(update: LnPluginUpdate) = install(update.entry)
+
+    fun uninstall(source: NovelSource) {
+        appScope.launchIO {
+            // Uninstall by plugin id; the installer resolves the URL(s) from fresh metadata. A cached
+            // id->url map lags a same-session install (install registers the source before persisting
+            // metadata), which silently no-op'd the trash button until an app restart.
+            installer.uninstall(source.id)
+        }
+    }
+
+    /** A plugin that never loaded has no source to name it by, so it goes by its record instead. */
+    fun uninstall(failure: LnPluginLoadFailure) {
+        appScope.launchIO {
+            installer.uninstall(failure.pluginId.orEmpty(), failure.url)
+        }
+    }
+
+    private fun LnRegistryEntry.toMetadata() = LnInstalledPluginMetadata(
+        pluginId = id,
+        iconUrl = iconUrl,
+        version = version,
+        lang = lang,
+        customCssUrl = customCSS,
+    )
+
+    private data class Installs(
+        val inProgress: Set<String> = emptySet(),
+        val errors: Map<String, InstallStep.Error> = emptyMap(),
+    )
+
+    private class RepoFetch(
+        val hasRepos: Boolean,
+        val available: List<LnRegistryEntry>,
+        val found: LnPluginUpdates,
+        val installedVersions: Map<String, String>,
+        val repoNames: Map<String, String>,
+        val installedRepoNames: Map<String, String>,
+    )
+
+    @Immutable
+    data class State(
+        val isRefreshing: Boolean = false,
+        val hasLoaded: Boolean = false,
+        /** Whether any light-novel repo is added; lets the empty state tell "no repos" from "a repo is
+         *  added but returned nothing" (e.g. unreachable). */
+        val hasRepos: Boolean = false,
+        val installed: List<NovelSource> = emptyList(),
+        /** Installed plugins whose last load failed, which no source stands for. */
+        val notLoaded: List<LnPluginLoadFailure> = emptyList(),
+        /** Plugin id -> installed version. A manga row reads its version off the package;
+         *  a plugin's only record of one is the metadata written at install. */
+        val installedVersions: Map<String, String> = emptyMap(),
+        val available: List<LnRegistryEntry> = emptyList(),
+        val updates: List<LnPluginUpdate> = emptyList(),
+        /** Canonical URLs with an install/update in flight. */
+        val inProgress: Set<String> = emptySet(),
+        /** Canonical URL -> last install error, behind the row's Retry menu as an apk row's is. */
+        val errors: Map<String, InstallStep.Error> = emptyMap(),
+        /**
+         * Canonical plugin URL -> the name of the first added repo listing it, the plugin half of an
+         * apk row's store line. Named from the repo address, as the Repositories screen names it.
+         */
+        val repoNames: Map<String, String> = emptyMap(),
+        /** Plugin id -> the repo its installed script's URL is listed by, when one still lists it. */
+        val installedRepoNames: Map<String, String> = emptyMap(),
+    )
+}

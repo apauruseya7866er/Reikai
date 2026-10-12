@@ -2,33 +2,37 @@ package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
 import androidx.core.content.edit
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.online.HttpSource
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import mihon.core.migration.Migrator
+import reikai.domain.download.QueuedChapter
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 /**
  * This class is used to persist active downloads across application restarts.
  */
+@Inject
+@SingleIn(AppScope::class)
 class DownloadStore(
     context: Context,
-    private val sourceManager: SourceManager = Injekt.get(),
-    private val json: Json = Injekt.get(),
-    private val getManga: GetManga = Injekt.get(),
-    private val getChapter: GetChapter = Injekt.get(),
+    private val sourceManager: SourceManager,
+    private val json: Json,
+    private val getManga: GetManga,
+    private val getChapter: GetChapter,
 ) {
 
     /**
      * Preference file where active downloads are stored.
      */
-    private val preferences = context.getSharedPreferences("active_downloads", Context.MODE_PRIVATE)
+    private val preferences by lazy { context.getSharedPreferences("active_downloads", Context.MODE_PRIVATE) }
 
     /**
      * Counter used to keep the queue order.
@@ -89,7 +93,8 @@ class DownloadStore(
     /**
      * Returns the list of downloads to restore. It should be called in a background thread.
      */
-    fun restore(): List<Download> {
+    suspend fun restore(): List<Download> {
+        Migrator.await() // RK: MergedDuplicateDownloads re-points this queue in a migration, which runs beside this
         val objs = preferences.all
             .mapNotNull { it.value as? String }
             .mapNotNull { deserialize(it) }
@@ -100,10 +105,10 @@ class DownloadStore(
             val cachedManga = mutableMapOf<Long, Manga?>()
             for ((mangaId, chapterId) in objs) {
                 val manga = cachedManga.getOrPut(mangaId) {
-                    runBlocking { getManga.await(mangaId) }
+                    getManga.await(mangaId)
                 } ?: continue
                 val source = sourceManager.get(manga.source) as? HttpSource ?: continue
-                val chapter = runBlocking { getChapter.await(chapterId) } ?: continue
+                val chapter = getChapter.await(chapterId) ?: continue
                 downloads.add(Download(source, manga, chapter))
             }
         }
@@ -112,6 +117,24 @@ class DownloadStore(
         clear()
         return downloads
     }
+
+    // RK --> the saved rows as they are, for MergedDuplicateDownloads to re-point after the upgrade's dedupe
+    fun persisted(): List<QueuedChapter> = preferences.all.values
+        .mapNotNull { (it as? String)?.let(::deserialize) }
+        .map { QueuedChapter(it.mangaId, it.chapterId, it.order) }
+
+    fun replacePersisted(removed: List<QueuedChapter>, rows: List<QueuedChapter>) {
+        preferences.edit {
+            removed.forEach { remove(it.chapterId.toString()) }
+            rows.forEach {
+                putString(
+                    it.chapterId.toString(),
+                    json.encodeToString(DownloadObject(it.entryId, it.chapterId, it.order)),
+                )
+            }
+        }
+    }
+    // RK <--
 
     /**
      * Converts a download to a string.

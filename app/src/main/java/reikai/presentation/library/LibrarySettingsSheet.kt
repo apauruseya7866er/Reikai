@@ -1,0 +1,216 @@
+package reikai.presentation.library
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import eu.kanade.presentation.components.TabbedDialog
+import eu.kanade.presentation.components.TabbedDialogPaddings
+import eu.kanade.tachiyomi.ui.library.LibrarySettingsViewModel
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Refresh
+import reikai.domain.library.isSortOverridden
+import reikai.domain.library.sortForCategory
+import reikai.presentation.category.CategoryFilterRow
+import reikai.presentation.category.toLongIdSet
+import tachiyomi.core.common.preference.TriState
+import tachiyomi.domain.library.model.LibrarySort
+import tachiyomi.i18n.MR
+import tachiyomi.presentation.core.components.BaseSortItem
+import tachiyomi.presentation.core.components.HeadingItem
+import tachiyomi.presentation.core.components.RadioItem
+import tachiyomi.presentation.core.components.SortItem
+import tachiyomi.presentation.core.components.TriStateItem
+import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState
+
+/**
+ * The library settings sheet, shared by both content types. Filter, Sort and Group render whatever the
+ * active [LibrarySettingsBinding] describes, so a change reaches manga and novels at once and neither
+ * can gain an option the other silently misses. [settingsViewModel] backs the Display tab, the
+ * logged-in tracker list and the global "Downloaded only" mode, all library-wide. A null [categoryId]
+ * is the global scope, and the sort kernel (canOverrideSort) sends the Default category there too.
+ */
+@Composable
+fun LibrarySettingsSheet(
+    settings: LibrarySettingsBinding,
+    settingsViewModel: LibrarySettingsViewModel,
+    categoryId: Long?,
+    initialTab: LibrarySettingsTab,
+    onManageCategories: () -> Unit,
+    onDismissRequest: () -> Unit,
+) {
+    val tabs = LibrarySettingsTab.entries
+    TabbedDialog(
+        onDismissRequest = onDismissRequest,
+        // The hopper's settings actions and a category header can request a tab directly.
+        pagerState = rememberPagerState(initialPage = initialTab.ordinal) { tabs.size },
+        tabTitles = tabs.map { stringResource(it.titleRes) },
+    ) { page ->
+        Column(
+            modifier = Modifier
+                .padding(vertical = TabbedDialogPaddings.Vertical)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            when (tabs[page]) {
+                LibrarySettingsTab.FILTER -> FilterPage(settings, settingsViewModel, onManageCategories)
+                LibrarySettingsTab.SORT -> SortPage(settings, settingsViewModel, categoryId)
+                LibrarySettingsTab.DISPLAY ->
+                    EntryDisplayPage(viewModel = settingsViewModel, showLocalBadge = settings.showLocalBadge)
+                LibrarySettingsTab.GROUP -> GroupPage(settings)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.FilterPage(
+    settings: LibrarySettingsBinding,
+    settingsViewModel: LibrarySettingsViewModel,
+    onManageCategories: () -> Unit,
+) {
+    val axes by settings.filterAxes.collectAsState()
+    val downloadedOnly by settingsViewModel.preferences.downloadedOnly.collectAsState()
+
+    axes.forEach { axis ->
+        // The global Downloaded-only mode forces its axis on and locks it, so the sheet cannot promise a
+        // filter the mode overrides.
+        val locked = axis.lockedByDownloadedOnly && downloadedOnly
+        val state by axis.preference.collectAsState()
+        TriStateItem(
+            label = stringResource(axis.labelRes),
+            state = if (locked) TriState.ENABLED_IS else state,
+            enabled = !locked,
+            onClick = { next -> axis.preference.set(next) },
+        )
+    }
+
+    val trackers by settingsViewModel.trackersFlow.collectAsState()
+    when (trackers.size) {
+        0 -> Unit // No logged-in trackers: nothing to filter by.
+        1 -> {
+            val tracker = trackers[0]
+            val filterTracker by settings.trackerFilter(tracker.id.toInt()).collectAsState()
+            TriStateItem(
+                label = stringResource(MR.strings.action_filter_tracked),
+                state = filterTracker,
+                onClick = { next -> settings.trackerFilter(tracker.id.toInt()).set(next) },
+            )
+        }
+        else -> {
+            HeadingItem(MR.strings.action_filter_tracked)
+            trackers.forEach { tracker ->
+                val filterTracker by settings.trackerFilter(tracker.id.toInt()).collectAsState()
+                TriStateItem(
+                    label = tracker.name,
+                    state = filterTracker,
+                    onClick = { next -> settings.trackerFilter(tracker.id.toInt()).set(next) },
+                )
+            }
+        }
+    }
+
+    CategoriesFilter(settings, onManageCategories)
+}
+
+@Composable
+private fun ColumnScope.CategoriesFilter(
+    settings: LibrarySettingsBinding,
+    onManageCategories: () -> Unit,
+) {
+    val categoryFilter = settings.categoryFilter
+    val enabled by categoryFilter.enabled.collectAsState()
+    val included by categoryFilter.included.collectAsState()
+    val excluded by categoryFilter.excluded.collectAsState()
+    val categories by settings.categories.collectAsState()
+
+    CategoryFilterRow(
+        enabled = enabled,
+        onToggleEnabled = categoryFilter.enabled::set,
+        categories = categories,
+        included = included.toLongIdSet(),
+        excluded = excluded.toLongIdSet(),
+        onConfirm = { include, exclude ->
+            categoryFilter.included.set(include.mapTo(mutableSetOf()) { it.toString() })
+            categoryFilter.excluded.set(exclude.mapTo(mutableSetOf()) { it.toString() })
+        },
+        onManageCategories = onManageCategories,
+    )
+}
+
+@Composable
+private fun ColumnScope.SortPage(
+    settings: LibrarySettingsBinding,
+    settingsViewModel: LibrarySettingsViewModel,
+    categoryId: Long?,
+) {
+    val trackers by settingsViewModel.trackersFlow.collectAsState()
+    val globalSort by settings.globalSort.collectAsState()
+    val categories by settings.categories.collectAsState()
+
+    val category = categoryId?.let { id -> categories.find { it.id == id } }
+    val currentSort = category?.let { sortForCategory(it, globalSort) } ?: globalSort
+    val sortDescending = !currentSort.isAscending
+
+    val options = remember(trackers.isEmpty()) { librarySortTypes(hasTracker = trackers.isNotEmpty()) }
+
+    options.forEach { mode ->
+        if (mode == LibrarySort.Type.Random) {
+            BaseSortItem(
+                label = stringResource(sortLabelRes(mode)),
+                icon = MaterialSymbols.Rounded.Refresh.takeIf { currentSort.type == LibrarySort.Type.Random },
+                onClick = { settings.setSort(categoryId, mode, LibrarySort.Direction.Ascending) },
+            )
+            return@forEach
+        }
+        SortItem(
+            label = stringResource(sortLabelRes(mode)),
+            sortDescending = sortDescending.takeIf { currentSort.type == mode },
+            onClick = {
+                // Tapping the active mode flips direction; switching modes keeps the current one.
+                val direction = if (currentSort.type == mode) {
+                    if (sortDescending) LibrarySort.Direction.Ascending else LibrarySort.Direction.Descending
+                } else {
+                    currentSort.direction
+                }
+                settings.setSort(categoryId, mode, direction)
+            },
+        )
+    }
+
+    // Clear this category's override so it follows the global sort again (only when overridden).
+    if (category != null && isSortOverridden(category)) {
+        ResetToGlobalSortItem(onClick = { settings.resetSort(category.id) })
+    }
+}
+
+private val groupModes = listOf(
+    LibraryGroup.BY_DEFAULT to MR.strings.group_by_default,
+    LibraryGroup.BY_TAG to MR.strings.group_by_tag,
+    LibraryGroup.BY_SOURCE to MR.strings.group_by_source,
+    LibraryGroup.BY_STATUS to MR.strings.group_by_status,
+    LibraryGroup.BY_TRACK_STATUS to MR.strings.group_by_tracking_status,
+    LibraryGroup.BY_AUTHOR to MR.strings.group_by_author,
+    LibraryGroup.BY_LANGUAGE to MR.strings.group_by_language,
+    LibraryGroup.UNGROUPED to MR.strings.group_ungrouped,
+)
+
+@Composable
+private fun ColumnScope.GroupPage(settings: LibrarySettingsBinding) {
+    val groupMode = settings.groupMode
+    val groupBy by groupMode.collectAsState()
+    groupModes.forEach { (mode, labelRes) ->
+        RadioItem(
+            label = stringResource(labelRes),
+            selected = groupBy == mode,
+            onClick = { groupMode.set(mode) },
+        )
+    }
+}

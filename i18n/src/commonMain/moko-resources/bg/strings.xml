@@ -50,7 +50,6 @@
     <string name="action_reset">Изчисти</string>
     <string name="action_undo">Върни</string>
     <string name="loading">Зареждане…</string>
-    <string name="pref_category_general">Основни настройки</string>
     <string name="pref_category_reader">Четец</string>
     <string name="pref_category_downloads">Изтегляния</string>
     <string name="pref_category_tracking">Следене</string>
@@ -166,7 +165,6 @@
     <string name="dialog_with_checkbox_reset">Изчисти всички дати за тази манга</string>
     <string name="snack_add_to_library">Добавяне на мангата към библиотеката?</string>
     <string name="picture_saved">Изображението запазено</string>
-    <string name="custom_filter">Персонализиран филтър</string>
     <string name="set_as_cover">Постави за корица</string>
     <string name="cover_updated">Корицата обновена</string>
     <string name="chapter_progress">Страница: %1$d</string>
@@ -181,9 +179,6 @@
     <string name="file_select_backup">Изберете резервно копие</string>
     <string name="update_check_confirm">Изтегли</string>
     <string name="update_check_no_new_updates">Няма налични актуализации</string>
-    <string name="update_check_notification_download_in_progress">Изтегля се…</string>
-    <string name="update_check_notification_download_complete">Изтегляне завършено</string>
-    <string name="update_check_notification_download_error">Грешка при изтегляне</string>
     <string name="update_check_notification_update_available">Има нова версия!</string>
     <string name="information_no_downloads">Нямате изтегляния</string>
     <string name="information_no_recent">Нямате нови глави</string>
@@ -242,19 +237,14 @@
     <string name="ext_untrusted">Непотвърдени</string>
     <string name="ext_uninstall">Деинсталирай</string>
     <string name="untrusted_extension">Непотвърдено разширение</string>
-    <string name="untrusted_extension_message">Следното разширение имаше непотвърден сертификат и не беше активирано.
-\n
-\nЗлонамереното разширение може да види всичката информация за вход в системата на Mihon или да компилира неблагонадежден код.
-\n
-\nПотвърждавайки този сертификат, вие приемате тези рискове.</string>
+    <string name="untrusted_extension_message">Следното разширение имаше непотвърден сертификат и не беше активирано. \n \nЗлонамереното разширение може да види всичката информация за вход в системата на Reikai или да компилира неблагонадежден код. \n \nПотвърждавайки този сертификат, вие приемате тези рискове.</string>
     <string name="pref_double_tap_anim_speed">Скорост на анимацията</string>
     <string name="double_tap_anim_speed_0">Без анимация</string>
     <string name="double_tap_anim_speed_normal">Нормална</string>
     <string name="double_tap_anim_speed_fast">Бързо</string>
     <string name="manga_added_library">Добавена към библиотеката</string>
     <string name="manga_removed_library">Премахната от библиотеката</string>
-    <string name="copied_to_clipboard">Копирано към клипборда:
-\n%1$s</string>
+    <string name="copied_to_clipboard">Копирано към клипборда: \n%1$s</string>
     <string name="migration_dialog_what_to_include">Изберете кои данни ще мигрирате</string>
     <string name="migrate">Мигрирай</string>
     <string name="copy">Копирай</string>
@@ -404,13 +394,9 @@
     <string name="pref_remove_bookmarked_chapters">Позволи изтриване на отметнати глави</string>
     <string name="pref_category_delete_chapters">Изтрий глави</string>
     <string name="pref_category_reading_mode">Режим на четене</string>
-    <string name="ext_nsfw_warning">Може да съдържа неприлично (18+) съдържание</string>
-    <string name="ext_nsfw_short">18+</string>
-    <string name="parental_controls_info">Тази настройка няма да спре неофициални или потенциално неправилно маркирани разширения да позволяват достъп до съдържание за възрастни (18+) в апликацията.</string>
     <string name="pref_category_theme">Тема</string>
     <string name="action_sort_date_added">Добавено на</string>
     <string name="no_chapters_error">Не са намерени глави</string>
-    <string name="pref_category_nsfw_content">NSFW (18+) източници</string>
     <string name="action_desc">Низходящ</string>
     <string name="action_asc">Възходящ</string>
     <string name="action_order_by_chapter_number">По брой на главите</string>
@@ -422,9 +408,7 @@
     <string name="date">Дата</string>
     <string name="pref_dark_theme_pure_black">Чисто черен режим</string>
     <string name="label_default">По подразбиране</string>
-    <string name="backup_restore_content_full">Ще бъдат възстановени данните от резервното копие.
-\n
-\nТрябва да инсталирате липсващи разширения, ако има такива, и да се впишете в услугите за тракинг, за да ги ползвате.</string>
+    <string name="backup_restore_content_full">Ще бъдат възстановени данните от резервното копие. \n \nТрябва да инсталирате липсващи разширения, ако има такива, и да се впишете в услугите за тракинг, за да ги ползвате.</string>
     <string name="action_track">Проследи</string>
     <string name="restore_miui_warning">Съхраняването/възстановяването може да не функционира правилно, ако MIUI Optimization е изключено.</string>
     <string name="about_dont_kill_my_app">Някои производители ограничават приложенията, за да убият задноплановите услуги. Следният уебсайт съдържа информация за разрешаването на проблема.</string>
@@ -464,7 +448,6 @@
     <string name="manga_cover">Корица</string>
     <string name="label_warning">Предупреждение</string>
     <string name="confirm_lock_change">Удостоверете, за да потвърдите промяната</string>
-    <string name="cancel_all_for_series">Премахни всичко от тази серия</string>
     <string name="action_show_errors">Вижте пълните подробности за грешката</string>
     <string name="pref_app_theme">Тема</string>
     <string name="theme_monet">Динамично</string>
@@ -523,7 +506,6 @@
     <string name="spen_previous_page">Предишна страница</string>
     <string name="spen_next_page">Следваща страница</string>
     <string name="action_display_language_badge">Език</string>
-    <string name="pref_show_nsfw_source">Показвай в списъка с източници и разширения</string>
     <string name="relative_time_today">Днес</string>
     <string name="ext_app_info">Информация</string>
     <string name="pref_show_navigation_mode_summary">Покажи зони за натискане, когато четецът се отвори</string>
@@ -544,7 +526,6 @@
     <string name="pref_tablet_ui_mode">Потребителски интерфейс на таблет</string>
     <string name="clear_database_source_item_count">%1$d небиблиотечна манга в базата данни</string>
     <string name="database_clean">Нищо за почистване</string>
-    <string name="channel_app_updates">Актуализации на приложението</string>
     <string name="pref_auto_clear_chapter_cache">Изчистване на кеша на главата при затваряне на приложението</string>
     <string name="privacy_policy">Политика за поверителност</string>
     <string name="pref_update_only_completely_read">С непрочетени глави</string>
@@ -601,11 +582,9 @@
     <string name="theme_tidalwave">Приливна вълна</string>
     <string name="action_sort_unread_count">Брой непрочетени</string>
     <string name="network_not_metered">Само през неограничена мрежа</string>
-    <string name="action_move_to_top_all_for_series">Премести поредицата най-горе</string>
     <string name="theme_lavender">Лавандула</string>
     <string name="pref_app_language">Език на приложението</string>
     <string name="delete_category">Изтрий категория</string>
-    <string name="ext_info_age_rating">Възрастово ограничение</string>
     <string name="wish_list">Списък с желания</string>
     <string name="save_chapter_as_cbz">Запази като CBZ архив</string>
     <string name="webview_data_deleted">Данните на WebView изчистени</string>
@@ -671,7 +650,6 @@
     <string name="action_add_anyway">Добави все пак</string>
     <string name="action_create">Създай</string>
     <string name="invalid_backup_file_error">Пълна грешка:</string>
-    <string name="track_error">%1$s грешка: %2$s</string>
     <string name="updates_last_update_info_just_now">Току що</string>
     <string name="label_overview_section">Общ преглед</string>
     <string name="label_read_chapters">Прочетено</string>
@@ -719,13 +697,11 @@
     <string name="label_total_chapters">Общо</string>
     <string name="action_view_upcoming">Преглед на предстоящите обновления</string>
     <string name="label_titles_section">Манги</string>
-    <string name="action_move_to_bottom_all_for_series">Премести най-долу</string>
     <string name="label_started">Започнати</string>
     <string name="author">Автор</string>
     <string name="pref_chapter_swipe_end">Глава на дясно плъзгане</string>
     <string name="pref_double_tap_zoom">Натисни два пъти за увеличение</string>
     <string name="pref_flash_style_black">Черно</string>
-    <string name="pref_hardware_bitmap_threshold_default">По подразбиране (%d)</string>
     <string name="invalid_location">Невалидно местоположение: %s</string>
     <string name="exception_unknown_host">Не можа да достигне %s</string>
     <string name="action_display_unread_badge">Непрочетени глави</string>

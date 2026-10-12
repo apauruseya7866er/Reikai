@@ -1,5 +1,7 @@
 package tachiyomi.domain.manga.model
 
+import kotlin.time.Instant
+
 /**
  * Contains the required data for MangaCoverFetcher
  */
@@ -8,9 +10,9 @@ data class MangaCover(
     val sourceId: Long,
     val isMangaFavorite: Boolean,
     val url: String?,
-    val lastModified: Long,
-) {
-    // RK --> vibrant color extracted from the cover, used to seed the reader/details theme (Y11).
+    val lastModified: Instant?,
+) { // RK: a body for the cover colour below
+    // RK --> vibrant color extracted from the cover, used to seed the reader/details theme.
     var vibrantCoverColor: Int?
         get() = vibrantCoverColorMap[mangaId]
         set(value) {

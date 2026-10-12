@@ -1,50 +1,85 @@
 package eu.kanade.domain.track.interactor
 
 import android.content.Context
+import dev.zacsweers.metro.Inject
 import eu.kanade.domain.track.model.toDbTrack
 import eu.kanade.domain.track.model.toDomainTrack
-import eu.kanade.domain.track.service.DelayedTrackingUpdateJob
+import eu.kanade.domain.track.service.DelayedTrackingUpdateWorker
 import eu.kanade.domain.track.store.DelayedTrackingStore
+import eu.kanade.tachiyomi.data.track.EnhancedTracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import logcat.LogPriority
-import tachiyomi.core.common.util.lang.withNonCancellableContext
-import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.track.interactor.GetTracks
-import tachiyomi.domain.track.interactor.InsertTrack
+import kotlinx.coroutines.coroutineScope
+import reikai.domain.manga.GetTracksInGroup
+import reikai.domain.track.ChapterPushOutcome
+import reikai.domain.track.pushChapterProgress
+import tachiyomi.domain.track.interactor.UpsertTrack
+import tachiyomi.domain.track.model.Track
 
+@Inject
 class TrackChapter(
-    private val getTracks: GetTracks,
+    // RK --> the reader keys on the chapter's own manga, which differs across a merged group, so the
+    // group's tracks are read as one; the "is this tracker behind?" guard below would otherwise see a
+    // sibling's stale row and push the remote service backwards.
+    private val getTracks: GetTracksInGroup,
+    // RK <--
     private val trackerManager: TrackerManager,
-    private val insertTrack: InsertTrack,
+    private val upsertTrack: UpsertTrack,
     private val delayedTrackingStore: DelayedTrackingStore,
 ) {
 
-    suspend fun await(context: Context, mangaId: Long, chapterNumber: Double, setupJobOnFailure: Boolean = true) {
-        withNonCancellableContext {
-            val tracks = getTracks.await(mangaId)
-            if (tracks.isEmpty()) return@withNonCancellableContext
+    // RK: returns the trackers the push failed at, so the mark-read toast can name them
+    suspend fun await(
+        context: Context,
+        mangaId: Long,
+        chapterNumber: Double,
+        setupJobOnFailure: Boolean = true,
+    ): ChapterPushOutcome = push(context, mangaId, getTracks.await(mangaId), chapterNumber, setupJobOnFailure) // RK
 
+    // RK --> the delayed-tracking drain's push, of the queued row alone. The queue keeps the number read but
+    // not which source of a merged series it was read on, so no other row can be judged against it: a
+    // server tracker on that row's source would take a sibling source's numbering. Upstream retried every
+    // tracker of the row's entry.
+    suspend fun retry(context: Context, track: Track, chapterNumber: Double): ChapterPushOutcome =
+        push(context, track.mangaId, listOf(track), chapterNumber, setupJobOnFailure = false)
+
+    // [mangaId] is the entry the chapter was read on, [tracks] the rows to push to
+    private suspend fun push(
+        context: Context,
+        mangaId: Long,
+        tracks: List<Track>,
+        chapterNumber: Double,
+        setupJobOnFailure: Boolean,
+    ): ChapterPushOutcome {
+        return coroutineScope {
+            // RK <--
             tracks.mapNotNull { track ->
                 val service = trackerManager.get(track.trackerId)
                 if (service == null || !service.isLoggedIn || chapterNumber <= track.lastChapterRead) {
                     return@mapNotNull null
                 }
+                // RK: a server's chapter numbers belong to the source it serves, so a group row a server
+                // tracker holds on a sibling source never takes the number read here
+                if (service is EnhancedTracker && track.mangaId != mangaId) return@mapNotNull null
 
+                // RK: each result keyed by its tracker, for ChapterPushOutcome
                 async {
-                    runCatching {
+                    service to runCatching {
                         try {
-                            val updatedTrack = service.refresh(track.toDbTrack())
-                                .toDomainTrack(idRequired = true)!!
-                                .copy(lastChapterRead = chapterNumber)
-                            service.update(updatedTrack.toDbTrack(), true)
-                            insertTrack.await(updatedTrack)
+                            // RK --> pushed through the shared pushChapterProgress kernel, which keeps the
+                            // status and start date the tracker's update wrote, where upstream saved the row it
+                            // sent, starts the series on a first push of any chapter, where upstream needs 1,
+                            // and never moves the refreshed service back, where upstream sends any chapter
+                            val refreshed = service.refresh(track.toDbTrack()).toDomainTrack(idRequired = true)!!
+                            val pushed = service.pushChapterProgress(refreshed.toDbTrack(), chapterNumber)
+                            upsertTrack.await(pushed.toDomainTrack(idRequired = true)!!)
+                            // RK <--
                             delayedTrackingStore.remove(track.id)
                         } catch (e: Exception) {
                             delayedTrackingStore.add(track.id, chapterNumber)
                             if (setupJobOnFailure) {
-                                DelayedTrackingUpdateJob.setupTask(context)
+                                DelayedTrackingUpdateWorker.setupTask(context)
                             }
                             throw e
                         }
@@ -52,8 +87,7 @@ class TrackChapter(
                 }
             }
                 .awaitAll()
-                .mapNotNull { it.exceptionOrNull() }
-                .forEach { logcat(LogPriority.WARN, it) }
+                .let(ChapterPushOutcome::of) // RK: logs the failures as upstream's forEach did
         }
     }
 }

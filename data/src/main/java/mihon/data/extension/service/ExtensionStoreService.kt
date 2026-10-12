@@ -1,9 +1,14 @@
 package mihon.data.extension.service
 
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.network.awaitSuccess
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.okio.decodeFromBufferedSource
@@ -17,15 +22,23 @@ import mihon.domain.extension.model.ExtensionStore
 import okio.BufferedSource
 import okio.buffer
 import okio.gzip
+import reikai.data.extension.isIReaderIndex
+import reikai.data.extension.readIReaderExtensions
+import reikai.data.extension.readIReaderStore
+import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import kotlin.coroutines.cancellation.CancellationException
 
+@Inject
+@SingleIn(AppScope::class)
 class ExtensionStoreService(
     private val network: NetworkHelper,
     private val json: Json,
     private val protoBuf: ProtoBuf,
 ) {
-    suspend fun fetch(indexUrl: String): Result<ExtensionStore> {
+    suspend fun fetch(indexUrl: String): Result<ExtensionStore> = withIOContext { fetchStore(indexUrl) }
+
+    private suspend fun fetchStore(indexUrl: String): Result<ExtensionStore> {
         var updatedIndexUrl: String = indexUrl
         return try {
             val response = network.client.newCall(GET(updatedIndexUrl)).awaitSuccess()
@@ -36,6 +49,8 @@ class ExtensionStoreService(
                         if (!indexUrl.endsWith("/index.min.json")) {
                             throw IllegalArgumentException("Provided legacy store url is not valid")
                         }
+                        // RK: an IReader index has no repo.json to go on to
+                        readIReaderStore(indexUrl, source.peek(), json)?.let { return Result.success(it) }
                         updatedIndexUrl = indexUrl.replace("/index.min.json", "/repo.json")
                         network.client.newCall(GET(updatedIndexUrl)).awaitSuccess().body.source().use {
                             json.decodeFromBufferedSource<NetworkLegacyExtensionRepo>(it)
@@ -51,7 +66,7 @@ class ExtensionStoreService(
                 }
 
                 if (networkStore is NetworkLegacyExtensionRepo && networkStore.indexV2 != null) {
-                    return fetch(networkStore.indexV2)
+                    return fetchStore(networkStore.indexV2)
                 }
 
                 networkStore.toExtensionStore(updatedIndexUrl)
@@ -67,8 +82,8 @@ class ExtensionStoreService(
         }
     }
 
-    suspend fun getExtensions(store: ExtensionStore): Result<List<Extension.Available>> {
-        return try {
+    suspend fun getExtensions(store: ExtensionStore): Result<List<Extension.Available>> = withIOContext {
+        try {
             val extensions = if (store.extensionListUrl != null) {
                 val response = network.client.newCall(GET(store.extensionListUrl!!)).awaitSuccess()
                 response.body.source().decompressIfGzipped().use { source ->
@@ -92,6 +107,12 @@ class ExtensionStoreService(
                         .extensionList!!
                         .toAvailableExtensions(store)
                 }
+                // RK -->
+            } else if (store.isIReaderIndex) {
+                network.client.newCall(GET(store.indexUrl)).awaitSuccess().body.source().use {
+                    readIReaderExtensions(store, it, json)
+                }
+                // RK <--
             } else {
                 val storeBaseUrl = store.indexUrl.removeSuffix("/repo.json")
                 val response = network.client.newCall(GET("$storeBaseUrl/index.min.json")).awaitSuccess()

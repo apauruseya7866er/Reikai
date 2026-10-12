@@ -8,56 +8,26 @@ alwaysApply: true
 
 Update `CHANGELOG.md`:
 
-- Add a bullet under `## [Unreleased]` using these category labels: `Additions`, `Changes`, `Fixes`, `Other`.
+- Add a bullet under `## [Unreleased]`, inside the area it touches (`### Library`, `### Reader`, `### Tracking`, ...) and under that area's `#### Added` / `#### Changed` / `#### Fixed`. Create the area or the sub-header when the section has none yet. `### Other` is the last area, flat, for changes with no user-facing effect.
 - If `## [Unreleased]` doesn't exist, create it immediately above the most recent version entry.
 - **Do not add a new entry for mid-development churn.** If you're iterating on something already in `[Unreleased]`, edit the existing bullet or leave it. Don't accumulate "fix X in feature Y" bullets when Y was added in the same `[Unreleased]` block.
-- **Write for the user reading the release notes: scannable, benefit-first.** The point of a changelog is to tell a user, at a glance, what changed that affects them and whether to update. So each entry (in `Additions` / `Changes` / `Fixes`) leads with a **self-contained bold headline**: a complete user-facing phrase ending in `.`, `!`, or `?`, followed by **at most one short sentence**. The release pipeline auto-extracts that bold headline as the one-line release note (the trailing sentence stays only in the file, linked as the full changelog), so the headline must read on its own, e.g. `**Merging a series' sources now takes one tap.**`, not `**New options:** resume position, ...`. Group a large release's `Additions` under short area sub-headers (e.g. **Light novels**, **Library**, **Reader**) so it stays navigable instead of becoming a wall. Lead with the effect, never the implementation. **Keep technical / under-the-hood detail out of the changelog (class names, mechanisms, provenance, refactor rationale): that belongs in the commit history.** Changes with no user-facing effect (refactors, dependency / tooling bumps, infra) get a brief plain line under `Other` (no bold headline needed there). No dense multi-sentence paragraphs; no em dashes; no content-source names (see "Public-facing naming"). A `pre-commit` hook (`.githooks/pre-commit`) enforces the bold headline, the no-source-names rule, and a length cap on new `[Unreleased]` entries.
-- **`[Unreleased]` feeds preview builds; a stable release reads its own version section.** `[Unreleased]` is the running list of what's in preview but not yet in a stable release, and the preview workflow publishes the entries added since the previous preview. Cutting a stable release renames `[Unreleased]` to `[version]` (see "Cutting a release" below); the release workflow reads only that `[version]` section, never `[Unreleased]`.
+- **Write for the user reading the release notes: scannable, benefit-first.** The point of a changelog is to tell a user, at a glance, what changed that affects them and whether to update. So each entry (under `Added` / `Changed` / `Fixed`) leads with a **self-contained bold headline**: a complete user-facing phrase ending in `.`, `!`, or `?`, followed by **at most one short sentence**. The release pipeline auto-extracts that bold headline as the one-line release note (the trailing sentence stays only in the file and on the release's reikai.app page), so the headline must read on its own, e.g. `**Merging a series' sources now takes one tap.**`, not `**New options:** resume position, ...`. **Apply the deletion test before moving on, because the hook cannot.** The hook only checks that a bold phrase exists and ends in `.`, `!` or `?`, so a well-formed headline that drops the substance passes it clean. Delete the trailing sentence and read what is left: that is the entire release note a user will see. If it now omits where the change lives, who it affects, or what limits it, the split is wrong. Move that into the bold and re-trim. The trailing sentence carries detail a user can do without, never the qualifier that makes the headline true. Wrong: `**Swipe actions now work in Updates.** Manga only, and only in the Grouped view.` Right: `**Manga rows in the Updates Grouped view now take swipe actions.**` The recurring slip is a scope word (`only`, `manga`, `novels`, a screen name, a `Settings -> ...` path) sitting just outside the bold; if the headline needs two of those to be true, it is two entries. A release section is ordered area first, so everything about one surface sits together and a reader who only cares about the reader can stop after it; the GitHub release body and the reikai.app changelog page take their outline straight from those headings. **The two publish different amounts** (`release_notes` in `scripts/ci/lib.sh`). reikai.app renders the whole version section from CHANGELOG.md, trailing sentences and `Other` included. The GitHub release body, which the in-app update screen also shows, is capped: each area lists only the **first five** headlines of each of its `Added`, `Changed` and `Fixed` lists in file order, then a "+N more in the full changelog" line linking the release's reikai.app page, and `### Other` is left out. **So order every list by importance, most important first**: an entry below the fifth in its list reaches only the site. A large release also opens with a `### Highlights` block of plain prose, and may carry a `### Before you upgrade` block for anything a user must do first; both publish verbatim and are never capped. Lead with the effect, never the implementation. **Keep technical / under-the-hood detail out of the changelog (class names, mechanisms, provenance, refactor rationale): that belongs in the commit history.** Changes with no user-facing effect (refactors, dependency / tooling bumps, infra) get a brief plain line under `Other` (no bold headline needed there). No dense multi-sentence paragraphs; no em dashes; no content-source names (see "Public-facing naming"). A `pre-commit` hook (`.githooks/pre-commit`) enforces the bold headline, the no-source-names rule, and a length cap on new `[Unreleased]` entries.
+- **`[Unreleased]` feeds nightly builds; a stable release reads its own version section.** `[Unreleased]` is the running list of what has shipped to the nightly channel but not yet in a stable release, and `nightly.yml` publishes, uncapped, the entries whose headline the previous nightly's `[Unreleased]` lacked. A commit that changes only Markdown files and removes an entry (a collapse or rewrite of existing entries) is not news: the headlines it introduces count as already published, so a reworded headline is not republished. One that only adds entries (a fix noted after it landed) is news like any other (`reworded_entries` in `scripts/ci/lib.sh`). Cutting a stable release renames `[Unreleased]` to `[version]` (see "Cutting a release" below); the release workflow reads only that `[version]` section, never `[Unreleased]`.
 
 Check `README.md` and `docs/*.md` for stale references when behavior or fork-specific mechanics change. Update in the same change. Describe current behavior, not the journey: no "we tried X then switched to Y" paragraphs. Don't rewrite already-released CHANGELOG entries.
 
 ## Roadmap & plans
 
-Two artifacts hold the forward plan. Keep them separate: the roadmap is the terse what-and-when; the plan docs are the how-and-why.
-
-### `ROADMAP.md` (tracked, the single forward backlog)
-
-**Forward-looking only.** It holds what is *left* to build, never what already shipped. Structure, top to bottom:
-
-1. **Intro**: two lines pointing to `docs/dev/shipped.md` (done-log), `docs/dev/plans/` (detail), `Handoff.md` (session state), and this file (format).
-2. **Now** (in progress), **Next** (queued, in priority order), **Later** (backlog). Each item is **one line**: a bold title, a size tag (`[S]` / `[M]` / `[L]`), a one-sentence "what", and a link to its plan doc when one exists. No inline plans: the detail lives in the plan doc.
-3. **Later is grouped by stable area** (Library, Reader, Novels, Recommendations, adult sources, ...), never by phase. Phases are a plan artifact and rot; areas are durable. Only include areas that have open items.
-4. **Parked / not building**: one line per item, a one-line reason, a link if there's a plan/decision doc. Verbose rationale goes in the plan doc, not here.
-
-**No Status table, no Shipped section, no audit prose in this file.** Shipped work moves to [docs/dev/shipped.md](../../docs/dev/shipped.md): a terse done-log grouped by durable area (never by phase), each area free to carry sub-sections, plus a releases table mapping each version to what it carried. A line cites whatever identifies the work best: a commit short-SHA(s), a `(version)` parenthetical for the release it shipped in, and/or a link to its plan doc for anything with a full record. It is a dev record, so it *may* name sources. Audit reports live in `docs/dev/audits/` (local / gitignored; only their action items become roadmap lines). Decisions and rationale live in `docs/dev/plans/`.
-
-**Naming (enforced):** `ROADMAP.md` is a semi-public surface, so it stays generic about content sources: use an approved shorthand (`EH` / `ExH` / `MD` / `CMK`) or collective phrasing ("the built-in adult sources"), never a full source name, adult (`nhentai`, `pururin`, ...) or mainstream (`mangadex`, `comick`). Trackers (MangaUpdates, Shikimori, AniList, ...) are not content sources and stay named. The dev-record files (`docs/dev/shipped.md`, `docs/dev/plans/`, local `docs/dev/audits/`) may name sources freely. This mirrors the CHANGELOG rule (see "Public-facing naming"); the enforced deny-list lives in `.githooks/pre-commit` and `.github/workflows/docs-lint.yml` (extend both when a new source is named).
-
-**Other rules:** never paste an implementation plan into the roadmap; convert relative dates to absolute; no em dashes; `Roadmap N` (never a bare `#N`), a real issue/PR uses `owner/repo#N`. A `pre-commit` hook + the `docs-lint` CI enforce the three hard rules on `ROADMAP.md`: no content-source names, no em dash, no bare `#N`. Structural rules (one-line items, size tags, area grouping) are convention, not linted; review catches them.
-
-### `docs/dev/plans/` (tracked, implementation & decision records)
-
-A **substantial** feature or initiative gets one markdown here: a developer-facing record of what was built and why. Distinct from the architecture references already in `docs/` and `docs/dev/` (`multi-source.md`, `related-mangas.md`, `tracker-sync.md`, `ln-plugin-host.md`, etc.): cross-link those, do not duplicate them. One doc per feature; fold superseded iterations of the same feature into its single doc.
-
-**Template** (every plan doc follows it):
-
-- **Goal**: one or two sentences, what this delivers for the user.
-- **Why**: the motivation, the parity gap, or the constraint that made it worth building.
-- **Approach**: how it works now, in plain English first, then the mechanism. Describe current behavior, never the journey ("we tried X then switched to Y").
-- **Key files**: the entry points a developer would open first (`file:line` or path).
-- **Status**: shipped / in progress / deferred, with commit short-SHA(s).
-- **Decisions & tradeoffs**: the choices made and what was deliberately left out.
-
-Naming: real descriptive names (`novel-reader.md`, `manga-details-parity.md`), never generated slugs. `docs/dev/plans/README.md` indexes every doc with a one-line hook.
-
-**What does NOT go here:** bug-fix plans, polish batches, scouting / audit reports, doc-edit plans, and superseded drafts stay **local** (the session plan archive), out of the repo, so `docs/dev/plans/` holds only durable feature records.
+The forward backlog is `ROADMAP.md` (terse, forward-only, one-line items); how each area works now lives in `docs/dev/subsystems/`, one reference doc per area, rewritten in place; design still in flight gets a plan in `docs/dev/plans/`, folded into its subsystem doc and deleted once it lands; what shipped is in CHANGELOG.md and the release tags. The structure, naming, and lint rules live in [roadmap-plans.md](roadmap-plans.md), a path-scoped rule that loads when those files are in play. The hard rules (no content-source names, no em dash, no bare `#N`) are enforced by the `pre-commit` hook and `docs-lint` CI regardless.
 
 ## Cutting a release (user-initiated)
 
 When the user asks to cut a release:
 
-1. Rename `## [Unreleased]` to the version.
-2. Add a new empty `## [Unreleased]` section above it for the next cycle.
+1. **Collapse same-fact entries first, across every area and every category header** (each area's `Added`, `Changed` and `Fixed`, plus `Other`). Read the section top to bottom as a user would. Entries written one per commit were each correct when added, because the sibling landing three commits later was not knowable then; read together at cut time, N bullets stating one fact are a progress log. Merge them into one. What to look for in each: `Added`, a feature that landed surface by surface; `Changed` and `Fixed`, the same behaviour corrected on manga and then on novels, or one bug fixed at several call sites; `Other`, collapse and unification work, dependency bumps, and upstream syncs. Read across areas as well as down them, since one fact often sits under two (a grouped-series bug under both Library and Merged series). Keep entries separate when they carry a distinct user-visible fact, an on-upgrade data migration being the clearest case. **This is the last chance:** after the rename the section is frozen, since already-released entries are never rewritten.
+2. **Drop fixes to work that never shipped.** For each `Fixed` entry, and each `Changed` one that corrects this cycle's own work, find the commit that introduced the behaviour it corrects and run `git tag --contains <sha> -l 'v0*'`. No release tag means no stable user ever saw the bug, so drop the entry, or fold it into the feature's own entry if it changes what that one says.
+3. Rename `## [Unreleased]` to the version.
+4. Add a new empty `## [Unreleased]` section above it for the next cycle.
 
 ## Commits & PRs
 
@@ -67,7 +37,7 @@ After code changes, create a git commit (do not push unless asked).
 
 Public, indexed, marketing-facing surfaces stay generic about content sources: no specific source names (especially adult: `ehentai`, `nhentai`, `pururin`, `8muses`, ...) and no content-aggregation vocabulary (`source`, `gallery`, `scanlator`) used as a label. This covers the **repo description + topics, the README, GitHub release notes (and the CHANGELOG version sections that feed them), and branch / PR names**. Describe the capability generically ("adult content sources", "a Cloudflare-blocked source") and link to the detailed docs instead of listing sites. Branch example: `fix/paging-crash`, not `fix/ehentai-popular-pagination` or `fix/source-browse-pagination`.
 
-Exceptions that are fine: the **detailed feature docs** (e.g. `docs/adult-sources.md`) MAY name specific sources, they are reference, not marketing, and stay linked from a generic README bullet. **In-app strings and source code** name sources as the actual feature requires (don't break functionality). **Commit history** is left as-is (rewriting it is destructive).
+Exceptions that are fine: the **detailed feature docs** (e.g. `docs/adult-sources.md`) MAY name specific sources, they are reference, not marketing, and stay linked from a generic README bullet. **In-app strings and source code** name sources as the actual feature requires (don't break functionality). **Commit history** is left as-is (rewriting it is destructive). **A tracker that shares a site's name** is named in full, as "<Name> tracker" (the Comick tracker), in the README, the site and the CHANGELOG alike: trackers are not sources, and `scripts/lint-docs.sh` drops that phrase before its name check, so the bare site name is still caught.
 
 Why: avoid the project reading as a piracy tool (the attention that hit Tachiyomi). Calibration: Komikku (same lineage, healthy) names adult sources openly in its README and release notes while keeping its repo description + topics generic. **Reikai stays a notch tighter:** generic in every marketing surface too, with specific names only in the linked docs.
 
@@ -86,19 +56,37 @@ Write commits a user could skim and a contributor could read on. Scale the struc
 1. **Lead** with 1-2 plain-language sentences: what changed and why it matters, readable by a non-developer. Never open with implementation detail.
 2. **Bullets** for the notable changes, benefit-first and scannable. For a large commit, group them under short headers (a user-facing one first, e.g. the feature area, then `Under the hood:` for internals) so a reader can stop early.
 3. **Footer (optional):** tests, deferred items / tradeoffs, upstream refs (`mihonapp/mihon#N`, which links to the Mihon repo; a bare `#N` would auto-link to a Reikai issue).
+4. **`Reuse:` footer (required when the diff adds a non-private top-level `fun`, `class` or `object` under `reikai/` or `exh/`; tests exempt):** the symbol reused (`file:line`), or `none (searched: <terms>)`. It is the receipt for the DRY rule in [code-quality.md](code-quality.md). A fix also carries `Siblings:`, the sweep for the same defect elsewhere.
 
-**Rules:** blank line after the subject; no em dashes (see [code-quality.md](code-quality.md)); no AI watermarks (no `Co-Authored-By`, no generated-by footer). Lead with the user-facing effect; keep deep internals in a labeled section.
+**Rules:** blank line after the subject; no em dashes (see [code-quality.md](code-quality.md)); no AI watermarks (no AI co-author such as `Co-Authored-By: Claude`, no generated-by footer; a human co-author, such as the one GitHub adds for a committed review suggestion, is fine). Lead with the user-facing effect; keep deep internals in a labeled section.
 
 **Pre-commit checklist, run on EVERY commit (no exceptions: this includes `docs`, `chore`, and one-line fixes, not just feature commits).** A commit that fails any line gets reworded before it lands:
 
 1. Subject is `type(scope): summary`: a real conventional type, imperative, lower-case, no trailing period, `<=72` chars.
-2. **No bare `#N` anywhere in the message** (subject or body): it is ambiguous (a misformatted roadmap or upstream ref vs a real issue, indistinguishable to GitHub and the hook). A roadmap item is `Roadmap N` (not a GitHub issue, so no `#`); a real issue/PR uses the explicit `owner/repo#N` form, `unseensnick/Reikai#N` for our own and `mihonapp/mihon#N` for upstream, which links correctly and is unambiguous. A bare `#N` (and `Roadmap #8`, `Mihon PR #3403`) is the single most common past slip, check the body too, not just the subject.
-3. No em dashes; no AI watermark (`Co-Authored-By`, generated-by footer).
+2. **No bare `#N` anywhere in the message** (subject or body), per the ROADMAP-references rule above. A bare `#N` (and `Roadmap #8`, `Mihon PR #3403`) is the single most common past slip, so check the body too, not just the subject.
+3. No em dashes; no AI watermark (an AI `Co-Authored-By`, generated-by footer).
 4. Non-trivial commit: body leads with 1-2 plain-language sentences, then benefit-first bullets. A trivial commit is just the compliant subject (no body needed).
+5. A new non-private top-level declaration under `reikai/` or `exh/`: the `Reuse:` footer is there.
 
-A **`commit-msg` git hook enforces this** automatically: `.githooks/commit-msg` (tracked) is installed at `.git/hooks/commit-msg` and rejects a non-compliant message (bad subject, over-72 subject, bare `#<number>`, em dash, AI watermark). A companion **`pre-commit` hook** (`.githooks/pre-commit`) lints a staged `CHANGELOG.md` (no content-source names in added lines; a self-contained bold headline + length cap on new `[Unreleased]` entries); the same checks run in CI via `.github/workflows/docs-lint.yml`. Reinstall both on a fresh clone with `cp .githooks/commit-msg .githooks/pre-commit .git/hooks/ && chmod +x .git/hooks/commit-msg .git/hooks/pre-commit`. They leave `.git/hooks/` as the hooks path so Kotlinter's pre-push hook still works.
+A **`commit-msg` git hook enforces this** automatically: `.githooks/commit-msg` (tracked) is installed at `.git/hooks/commit-msg` and rejects a non-compliant message (bad subject, over-72 subject, bare `#<number>`, em dash, AI watermark, a missing `Reuse:` footer). A companion **`pre-commit` hook** (`.githooks/pre-commit`) runs the checks below, so a rejection can come from any of them. Most look only at staged content. Four read further: the plan-record check reads the staged records from the working tree, the RK-marker check and the duplicate check read `refs/mihon`, and the off-path check reads the manifest whether or not you staged it:
 
-Example (a large feature):
+1. `CHANGELOG.md`: no content-source names in added lines; a self-contained bold headline plus a length cap on new `[Unreleased]` entries.
+2. `ROADMAP.md`: no content-source names, no em dash, no bare `#N`.
+3. `docs/dev/upstream-sync.md` and `docs/dev/feature-ports.md`: no em dash, no bare `#N` (source names are allowed, they are dev records).
+4. **Plan records**: every path a staged `docs/dev/plans/` record's Key files section names exists. Read from the working tree, since a Key files link resolves from the record's own directory; CI checks every record, so a code rename that strands a record it did not stage fails there.
+5. `.kt` / `.kts` / `.sq` / `.sqm` comments: no plan codename markers and no calendar date (`20xx-MM-DD`) in added lines, an added `twin of` / `mirrors` comment names its pin (content-layer.md), and under `reikai/` or `exh/` a comment-block length cap.
+6. **RK markers only on Mihon's files**: an added `RK` marker in a `.kt` / `.kts` / `.sq` / `.sqm` file `refs/mihon` does not have is rejected, since that file is Reikai's (architecture.md). A file that already carried a marker is left to `scripts/rk-fence-report.ps1`. Warns rather than blocks when the clone is missing.
+7. **DI ownership**: if any `.kt` is staged (added, modified or renamed), it runs `scripts/di-interop-check.ps1` for an Injekt read `MetroInjektRegistrar` does not bind, an Injekt registration, an unscoped or unread binding, and a ViewModel or migration left out of its multibinding, none of which fails at build time. Needs `pwsh`; it skips with a message if `pwsh` is absent.
+8. **Off-path manifest** (`docs/dev/off-path-manifest.md`), three checks in one: no manifested path may exist in the tree, every named Replacement must exist, and staging the deletion of a file `refs/mihon` still has needs a manifest row in the same commit. The last one warns rather than blocks when the clone is missing.
+9. **Duplicated code**: `scripts/dup-check.ps1 -Staged` rejects a new cross-file clone of 100+ tokens that touches a staged file and is not in `scripts/dup-baseline.txt`, reading every main-source Kotlin file `refs/mihon` lacks plus the RK islands of the ones it has. Ownership comes from the clone at the synced base (the top ledger row of `docs/dev/upstream-sync.md`) and at its HEAD, so a missing clone fails the commit. Needs `pwsh`, and skips with a message without it; CI runs the whole tree against a blobless clone.
+10. **Same-name warning** (never blocks): a new top-level name under `reikai/` or `exh/` that already exists elsewhere, by name or by stem, is listed so the `Reuse:` footer can answer it.
+11. **KDoc links**: a `[Symbol]` in an added Kotlin comment must name something that exists in the code; a link to a renamed or deleted symbol is rejected. Runs only when Kotlin is staged.
+12. **Comment history** (never blocks): an added comment under `reikai/` or `exh/`, or an `// RK` line, that narrates history (`used to`, `previously`, `found by an audit`, an owner-ruling note) gets a warning: keep the rule, move the story to git.
+13. **Subsystem docs**: a staged `docs/dev/subsystems/` doc is rejected if it carries a date, a commit SHA, step / phase / round language, owner attribution, a Status section, or more than 300 lines.
+
+The doc checks also run in CI via `.github/workflows/docs-lint.yml`, from the same implementation: both call `scripts/lint-docs.sh`, so a rule exists once and the hook only decides what content to feed it. `scripts/lint-docs-test.sh` asserts each rule still rejects a real violation, and runs in that workflow. Reinstall both hooks on a fresh clone with `cp .githooks/commit-msg .githooks/pre-commit .git/hooks/ && chmod +x .git/hooks/commit-msg .git/hooks/pre-commit`.
+
+Shape of a large-feature body (real examples are in `git log`):
 
 ```
 feat(novel): track novels on AniList, MyAnimeList, MangaUpdates & Kitsu
@@ -107,25 +95,15 @@ Bind a novel to a tracker from its details screen and keep reading
 progress in sync, the same way manga tracking works.
 
 Tracking:
-- Bind to any tracker you're signed into; set status, chapters read,
-  score and dates from the details Tracking sheet.
-- Progress syncs automatically as you read and when marking chapters read.
-- Works across a merged novel's sources; each source keeps its tracker
-  if you later unmerge.
+- <benefit-first bullets a user can skim>
 
 Under the hood:
-- Persists to the existing novel_tracks table (model, repo, interactors);
-  bind/update port AddTracks.bind / BaseTracker onto it.
-- Reuses Mihon's tracker services; only search needed a // RK searchNovel
-  path, since Mihon's manga search excludes light novels.
-- Auto-sync from the reader and details mark-read, with an offline queue.
+- <internals, so a reader can stop early>
 
 Roadmap item 8. Tests: conversions, updater transitions, propagation.
 ```
 
-A small commit needs no headers, just the subject plus a sentence or two (see the `fix(icon)` / `feat(novel)` re-queue commits in the log).
-
-**Conventional types:** `feat:` new feature, `fix:` bug fix, `docs:` documentation only, `chore:` build / tooling, `refactor:` / `test:` / `perf:` as named.
+A small commit needs no headers, just the subject plus a sentence or two.
 
 Work lands on `main` (the Mihon-based main). PRs target `main`. Patches to Mihon's own files are fenced with `// RK -->` / `// RK <--`.
 
@@ -141,6 +119,10 @@ Don't bump per-push; ship alpha cycles by branch/tag. At release-cut, bump both 
 ## Syncing with Mihon (the live base)
 
 Mihon upstream changes are **ported manually** from the local `refs/mihon/` clone. When porting an upstream change that touches a file Reikai has patched, re-apply inside the `// RK` island.
+
+**Collapsing a Mihon file onto a Reikai-owned twin: delete pure-UI, keep engine + partial.** When a Mihon file's UI is *fully* replaced by a Reikai-owned twin (`reikai.*`), **delete** the Mihon original and record it in the [off-path manifest](../../docs/dev/off-path-manifest.md). `scripts/off-path-check.ps1` diffs every manifested path across the sync range and fails loudly if upstream changed one, and `refs/mihon` holds the pre-delete blob as the diff base. Two things stay live and are never deleted: an **engine** file (a ViewModel, repository, source manager) stays minimally patched on the render path, and a **partially collapsed** file keeps its live remainder in place, marked `// RK` with what moved out, until nothing live remains.
+
+**The old "copy, never move, mark `// RK: inert`" rule is retired**, superseded by the delete-and-manifest policy above: a retained dead copy bought a sync reference the `refs/mihon` clone already provides, at the cost of a file an edit could silently land in. Full rule in [docs/dev/upstream-sync.md](../../docs/dev/upstream-sync.md) "Porting method".
 
 **Commit-message reference convention (required):** in a Mihon-sync commit, reference an upstream pull request or issue as **`mihonapp/mihon#<num>`** (GitHub renders this as a link to the Mihon repo). Never a bare `#<num>` (it auto-links to a *Reikai* issue/PR) nor a bare `<num>`. Also cite the upstream short-SHA (e.g. `mihon 80541831b`).
 

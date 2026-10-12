@@ -1,18 +1,35 @@
 package reikai.domain.recommendation
 
+import dev.icerock.moko.resources.StringResource
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
+import tachiyomi.core.common.preference.getEnum
+import tachiyomi.i18n.MR
+
+/** Where the details screen surfaces the related-manga carousel when it is enabled. */
+enum class RelatedPlacement(val titleRes: StringResource) {
+    INLINE(MR.strings.pref_related_placement_inline),
+
+    /** A three-dot overflow-menu action that opens the recommendations screen; no inline carousel and
+     *  no inline search, so the details page opens without the suggestion request. */
+    MENU(MR.strings.pref_related_placement_menu),
+}
 
 /**
- * Net-new preferences for the recommendation carousel + taste profile. Key strings are preserved
- * from the Yōkai-era fork where they existed (so an in-place upgrade keeps the user's choices);
- * the new external trackers (Shikimori recs, Shikimori/Bangumi library pull) get net-new keys.
+ * Preferences for the recommendation carousel and taste profile. Key strings are stored on every
+ * install and restored verbatim from backups, so renaming one needs a migration that moves the value.
  *
  * MangaUpdates is recommendations-only (its user-library API is undocumented), so it has a recs
  * toggle but no library-pull toggle. Kitsu and Bangumi have no recommendations endpoint, so they
  * have a library-pull toggle but no recs toggle.
  */
+@Inject
+@SingleIn(AppScope::class)
 class ReikaiRecommendationPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
@@ -27,7 +44,10 @@ class ReikaiRecommendationPreferences(
     val enableRelatedMangas: Preference<Boolean> =
         preferenceStore.getBoolean("pref_enable_related_mangas", true)
 
-    /** Master switch for tracker-origin recommendation candidates. */
+    /** Inline body carousel vs a three-dot menu action; only meaningful while [enableRelatedMangas] is on. */
+    val relatedPlacement: Preference<RelatedPlacement> =
+        preferenceStore.getEnum("pref_related_placement", RelatedPlacement.INLINE)
+
     val includeTrackerRecommendations: Preference<Boolean> =
         preferenceStore.getBoolean("pref_include_tracker_recommendations", true)
 
@@ -80,7 +100,6 @@ class ReikaiRecommendationPreferences(
 
     // region Reranking
 
-    /** Master switch for taste-driven reordering of the carousel. */
     val enableRecommendationRerank: Preference<Boolean> =
         preferenceStore.getBoolean("pref_enable_recommendation_rerank", true)
 
@@ -96,8 +115,8 @@ class ReikaiRecommendationPreferences(
 
     // region Filters (hide already-tracked / in-library candidates from suggestions)
 
-    /** Hide any suggestion that matches a manga already in the library (by normalized title),
-     *  regardless of tracking. The simplest declutter; independent of the status filters below. */
+    /** Matches by normalized title regardless of tracking, and independently of the status filters
+     *  below. */
     val hideInLibraryRecommendations: Preference<Boolean> =
         preferenceStore.getBoolean("pref_hide_in_library_recommendations", false)
 
@@ -115,27 +134,43 @@ class ReikaiRecommendationPreferences(
 
     // endregion
 
-    /** Build a ranker from the current style/serendipity prefs (0..100 mapped to 0..1 weights). */
     fun buildRanker(): RecommendationRanker = RecommendationRanker(
         wPersonal = recommendationStyle.get().coerceIn(0, 100) / 100.0,
         wSerendipity = serendipity.get().coerceIn(0, 100) / 100.0,
     )
 
     /**
-     * Tracker ids whose recommendation stream is currently enabled: the master toggle on, AND that
-     * tracker's own sub-toggle on. Empty when the master toggle is off.
-     *
-     * Shared by both carousel paths (the title-search [RecommendationsFetcher] and the media-context
-     * [RelatedMangasLoader]) so they can't disagree on what the "Tracker recommendations" toggles
-     * gate. A media-context recommendation for a tracker not in this set is dropped from the pool.
+     * One switch per tracker with a recommendations endpoint, the same set [RecommendationProviders.forTracker]
+     * answers for. The settings screen draws these and [enabledRecommendationTrackerIds] reads them.
+     */
+    fun recommendationToggles(trackerManager: TrackerManager): List<TrackerToggle> = listOf(
+        TrackerToggle(trackerManager.aniList, anilistRecommendations),
+        TrackerToggle(trackerManager.myAnimeList, myAnimeListRecommendations),
+        TrackerToggle(trackerManager.mangaUpdates, mangaUpdatesRecommendations),
+        TrackerToggle(trackerManager.shikimori, shikimoriRecommendations),
+    )
+
+    /**
+     * Tracker ids whose recommendation stream is enabled: the master toggle on AND that tracker's own
+     * sub-toggle on. Shared by both carousel paths (the title-search [RecommendationsFetcher] and the
+     * media-context [RelatedMangasLoader]) so they can't disagree on what the toggles gate; a
+     * media-context recommendation for a tracker outside this set is dropped from the pool.
      */
     fun enabledRecommendationTrackerIds(trackerManager: TrackerManager): Set<Long> {
         if (!includeTrackerRecommendations.get()) return emptySet()
-        return buildSet {
-            if (anilistRecommendations.get()) add(trackerManager.aniList.id)
-            if (myAnimeListRecommendations.get()) add(trackerManager.myAnimeList.id)
-            if (mangaUpdatesRecommendations.get()) add(trackerManager.mangaUpdates.id)
-            if (shikimoriRecommendations.get()) add(trackerManager.shikimori.id)
-        }
+        return recommendationToggles(trackerManager).filter { it.preference.get() }.map { it.tracker.id }.toSet()
+    }
+
+    /** The master toggle gates the taste injections too, which ride on the trackers' recommendation graph. */
+    fun enabledStreams(trackerManager: TrackerManager): EnabledRecommendationStreams {
+        val trackerDerived = includeTrackerRecommendations.get()
+        return EnabledRecommendationStreams(
+            trackerIds = enabledRecommendationTrackerIds(trackerManager),
+            crossRecs = trackerDerived && injectCrossRecommendationCandidates.get(),
+            tagSearch = trackerDerived && injectTagSearchCandidates.get(),
+        )
     }
 }
+
+/** A tracker and the switch that gates its recommendations. */
+data class TrackerToggle(val tracker: Tracker, val preference: Preference<Boolean>)

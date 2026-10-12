@@ -1,12 +1,5 @@
 package reikai.presentation.details
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.FilterList
-import androidx.compose.material.icons.outlined.FlipToBack
-import androidx.compose.material.icons.outlined.SelectAll
-import androidx.compose.material.icons.outlined.Visibility
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.surfaceColorAtElevation
@@ -23,19 +16,23 @@ import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.presentation.components.DownloadDropdownMenu
 import eu.kanade.presentation.manga.DownloadAction
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Download
+import mihon.icons.materialsymbols.rounded.FilterList
+import mihon.icons.materialsymbols.rounded.FlipToBack
+import mihon.icons.materialsymbols.rounded.SelectAll
+import mihon.icons.materialsymbols.roundedfilled.Visibility
+import mihon.icons.materialsymbols.roundedfilled.VisibilityOff
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.theme.active
 
 /**
- * Shared details toolbar for manga and novels: a Filter action (tinted when a filter is active), the
+ * Shared details toolbar for manga and novels: a Filter action tinted when a filter is active, the
  * Download menu, one overflow, and the action-mode select-all / invert / hide-or-unhide. Each per-type
- * capability is a nullable slot, so a content type lights up only what it supports and the two toolbars
- * cannot drift. Title + background fade with scroll via the alpha providers, which the details shell feeds.
- *
- * Type-specific slots: [onClickMetadataViewer] (manga gallery sources only), [onClickEditInfo] and the
- * hide/unhide cluster ([onHide] / [onUnhide] / [onToggleShowHidden]) are the novel additions; a null
- * callback hides its item, so manga can leave them off until it wires them in a later phase.
+ * capability is a nullable slot, so a content type lights up only what it supports and the two cannot
+ * drift; a null callback hides its item. Title and background fade with scroll through the alpha
+ * providers the details shell feeds.
  */
 @Composable
 fun EntryToolbar(
@@ -50,24 +47,37 @@ fun EntryToolbar(
     onClickManageSources: (() -> Unit)?,
     onClickMigrate: (() -> Unit)?,
     onClickDownload: ((DownloadAction) -> Unit)?,
-    // Edit metadata. Non-null for novels; manga wires it once the shared editor lands.
+    // Edit metadata, non-null only for an entry in the library.
     onClickEditInfo: (() -> Unit)? = null,
     // Gallery metadata viewer, non-null only for adult/metadata manga sources.
     onClickMetadataViewer: (() -> Unit)? = null,
+    // Recommendations, non-null only when a manga's related suggestions are placed in this menu.
+    onClickRecommendations: (() -> Unit)? = null,
+    // Source settings, non-null only when the viewed source exposes any.
+    onClickSourceSettings: (() -> Unit)? = null,
+    // Clear downloads, non-null only when this entry has any and the source can hold them.
+    onClickClearDownloads: (() -> Unit)? = null,
+    // Open the download folder, gated the same way: there is nothing to open until something is there.
+    onClickOpenFolder: (() -> Unit)? = null,
+    // Search and word count over the downloaded text, novel-only and gated the same way.
+    onClickSearchText: (() -> Unit)? = null,
+    onClickWordCount: (() -> Unit)? = null,
 
     // For action mode
+    // Correct chapter number, non-null only while exactly one chapter is selected.
+    onCorrectChapterNumber: (() -> Unit)? = null,
     actionModeCounter: Int,
     onCancelActionMode: () -> Unit,
     onSelectAll: () -> Unit,
     onInvertSelection: () -> Unit,
 
-    // Hide/unhide chapters. Non-null for novels; manga wires them once it gains the mechanism.
-    showHidden: Boolean = false,
-    hasHiddenChapters: Boolean = false,
-    allHiddenSelected: Boolean = false,
-    onHide: (() -> Unit)? = null,
-    onUnhide: (() -> Unit)? = null,
-    onToggleShowHidden: (() -> Unit)? = null,
+    // Hide/unhide chapters.
+    showHidden: Boolean,
+    hasHiddenChapters: Boolean,
+    allHiddenSelected: Boolean,
+    onHide: () -> Unit,
+    onUnhide: () -> Unit,
+    onToggleShowHidden: () -> Unit,
 
     titleAlphaProvider: () -> Float,
     backgroundAlphaProvider: () -> Float,
@@ -104,38 +114,44 @@ fun EntryToolbar(
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select_all),
-                                icon = Icons.Outlined.SelectAll,
+                                icon = MaterialSymbols.Rounded.SelectAll,
                                 onClick = onSelectAll,
                             ),
                         )
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.action_select_inverse),
-                                icon = Icons.Outlined.FlipToBack,
+                                icon = MaterialSymbols.Rounded.FlipToBack,
                                 onClick = onInvertSelection,
                             ),
                         )
                         // Unhide only when every selected row is already hidden (reachable via the
                         // "Show hidden chapters" view); otherwise the action hides them. Same eye / eye-off
                         // icons as the category list (CategoryListItem).
-                        if (onHide != null && onUnhide != null) {
-                            if (allHiddenSelected) {
-                                add(
-                                    AppBar.Action(
-                                        title = stringResource(MR.strings.action_unhide),
-                                        icon = Icons.Outlined.Visibility,
-                                        onClick = onUnhide,
-                                    ),
-                                )
-                            } else {
-                                add(
-                                    AppBar.Action(
-                                        title = stringResource(MR.strings.action_hide),
-                                        icon = Icons.Outlined.VisibilityOff,
-                                        onClick = onHide,
-                                    ),
-                                )
-                            }
+                        if (allHiddenSelected) {
+                            add(
+                                AppBar.Action(
+                                    title = stringResource(MR.strings.action_unhide),
+                                    icon = MaterialSymbols.RoundedFilled.Visibility,
+                                    onClick = onUnhide,
+                                ),
+                            )
+                        } else {
+                            add(
+                                AppBar.Action(
+                                    title = stringResource(MR.strings.action_hide),
+                                    icon = MaterialSymbols.RoundedFilled.VisibilityOff,
+                                    onClick = onHide,
+                                ),
+                            )
+                        }
+                        if (onCorrectChapterNumber != null) {
+                            add(
+                                AppBar.OverflowAction(
+                                    title = stringResource(MR.strings.action_correct_chapter_number),
+                                    onClick = onCorrectChapterNumber,
+                                ),
+                            )
                         }
                         return@buildList
                     }
@@ -143,7 +159,7 @@ fun EntryToolbar(
                         add(
                             AppBar.Action(
                                 title = stringResource(MR.strings.manga_download),
-                                icon = Icons.Outlined.Download,
+                                icon = MaterialSymbols.Rounded.Download,
                                 onClick = { downloadExpanded = !downloadExpanded },
                             ),
                         )
@@ -151,14 +167,15 @@ fun EntryToolbar(
                     add(
                         AppBar.Action(
                             title = stringResource(MR.strings.action_filter),
-                            icon = Icons.Outlined.FilterList,
+                            icon = MaterialSymbols.Rounded.FilterList,
                             iconTint = filterTint,
                             onClick = onClickFilter,
                         ),
                     )
                     // Overflow order (both types): Refresh, Edit categories, Edit info, Migrate, Manage
-                    // sources, Notes, Share, Gallery info, Show/Hide hidden. Each is gated on its callback,
-                    // so a content type shows only the items it supports.
+                    // sources, Notes, Share, Gallery info, Search downloaded chapters, Word count, Open
+                    // folder, Clear downloads, Source settings, Show/Hide hidden. Each is gated on its
+                    // callback.
                     add(
                         AppBar.OverflowAction(
                             title = stringResource(MR.strings.action_webview_refresh),
@@ -219,7 +236,55 @@ fun EntryToolbar(
                             ),
                         )
                     }
-                    if (onToggleShowHidden != null && (hasHiddenChapters || showHidden)) {
+                    if (onClickSearchText != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.action_search_downloaded_text),
+                                onClick = onClickSearchText,
+                            ),
+                        )
+                    }
+                    if (onClickWordCount != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.action_word_count),
+                                onClick = onClickWordCount,
+                            ),
+                        )
+                    }
+                    if (onClickOpenFolder != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.action_open_folder),
+                                onClick = onClickOpenFolder,
+                            ),
+                        )
+                    }
+                    if (onClickClearDownloads != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.action_clear_downloads),
+                                onClick = onClickClearDownloads,
+                            ),
+                        )
+                    }
+                    if (onClickSourceSettings != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.source_settings),
+                                onClick = onClickSourceSettings,
+                            ),
+                        )
+                    }
+                    if (onClickRecommendations != null) {
+                        add(
+                            AppBar.OverflowAction(
+                                title = stringResource(MR.strings.pref_recommendations),
+                                onClick = onClickRecommendations,
+                            ),
+                        )
+                    }
+                    if (hasHiddenChapters || showHidden) {
                         add(
                             AppBar.OverflowAction(
                                 title = if (showHidden) {

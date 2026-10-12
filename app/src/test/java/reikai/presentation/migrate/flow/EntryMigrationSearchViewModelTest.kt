@@ -1,0 +1,213 @@
+package reikai.presentation.migrate.flow
+
+import eu.kanade.domain.source.service.SourcePreferences
+import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withContext
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import reikai.domain.entry.EntryId
+import reikai.presentation.recents.EmittingPreferenceStore
+
+/**
+ * The single-entry route. It runs the same search seam the batch list does, and the two are the two
+ * halves of one option: the extra query was dropped on both, and each route needs its own guard.
+ */
+class EntryMigrationSearchViewModelTest {
+
+    private val dispatcher = StandardTestDispatcher()
+    private val sourcePreferences = SourcePreferences(EmittingPreferenceStore())
+
+    @BeforeEach
+    fun setUp() = Dispatchers.setMain(dispatcher)
+
+    @AfterEach
+    fun tearDown() = Dispatchers.resetMain()
+
+    private fun model(
+        adapter: FakeMigrationFlowAdapter = FakeMigrationFlowAdapter(listOf(migrationEntry(1))),
+        extraQuery: String? = null,
+        pickHandoff: MigrationPickHandoff = MigrationPickHandoff(),
+    ) = EntryMigrationSearchViewModel(
+        entryId = 1L,
+        adapter = adapter,
+        pickHandoff = pickHandoff,
+        sourcePreferences = sourcePreferences,
+        extraQuery = extraQuery,
+        io = dispatcher,
+    )
+
+    @Test
+    fun `the opening search carries the extra query`() = runTest(dispatcher.scheduler) {
+        val adapter = FakeMigrationFlowAdapter(listOf(migrationEntry(1)))
+
+        model(adapter, extraQuery = "vol 2")
+        advanceUntilIdle()
+
+        adapter.candidateQueries shouldBe listOf("Entry 1 vol 2")
+    }
+
+    @Test
+    fun `a re-search from the toolbar carries it too`() = runTest(dispatcher.scheduler) {
+        val adapter = FakeMigrationFlowAdapter(listOf(migrationEntry(1)))
+        val model = model(adapter, extraQuery = "vol 2")
+        advanceUntilIdle()
+
+        model.search("another title")
+        advanceUntilIdle()
+
+        adapter.candidateQueries.last() shouldBe "another title vol 2"
+    }
+
+    @Test
+    fun `a superseded search never lands on the search that replaced it`() = runTest(dispatcher.scheduler) {
+        // The opening search is already past its last cancellation point when the re-search starts,
+        // so only the check after the search can keep its result off the new strips.
+        val openingAnswers = CompletableDeferred<Unit>()
+        val adapter = FakeMigrationFlowAdapter(
+            listOf(migrationEntry(1)),
+            beforeCandidates = { query ->
+                if (query == "Entry 1") withContext(NonCancellable) { openingAnswers.await() } else awaitCancellation()
+            },
+        )
+        val model = model(adapter)
+        advanceUntilIdle()
+
+        model.search("another title")
+        advanceUntilIdle()
+        openingAnswers.complete(Unit)
+        advanceUntilIdle()
+
+        model.state.value.sections.map { it.result } shouldBe listOf(StripResult.Loading)
+    }
+
+    @Test
+    fun `with no extra query the search is the query alone`() = runTest(dispatcher.scheduler) {
+        val adapter = FakeMigrationFlowAdapter(listOf(migrationEntry(1)))
+
+        model(adapter, extraQuery = null)
+        advanceUntilIdle()
+
+        adapter.candidateQueries shouldBe listOf("Entry 1")
+    }
+
+    @Test
+    fun `a picked target with no chapters is refused before the dialog`() = runTest(dispatcher.scheduler) {
+        val adapter = FakeMigrationFlowAdapter(listOf(migrationEntry(1)), suggestionLatestChapter = null)
+        val model = model(adapter)
+        advanceUntilIdle()
+        val chapterless = adapter.candidates(migrationEntry(1), "Entry 1", "target").single()
+
+        model.pick(chapterless)
+        advanceUntilIdle()
+
+        model.state.value.let { it.dialogTarget to it.pickOutcome } shouldBe (null to PickOutcome.NoChapters)
+    }
+
+    @Test
+    fun `a picked target with chapters opens the dialog on it`() = runTest(dispatcher.scheduler) {
+        val adapter = FakeMigrationFlowAdapter(listOf(migrationEntry(1)))
+        val model = model(adapter)
+        advanceUntilIdle()
+        val target = adapter.candidates(migrationEntry(1), "Entry 1", "target").single()
+
+        model.pick(target)
+        advanceUntilIdle()
+
+        model.state.value.dialogTarget shouldBe target
+    }
+
+    @Test
+    fun `a pick still being resolved shows as working`() = runTest(dispatcher.scheduler) {
+        val adapter = FakeMigrationFlowAdapter(listOf(migrationEntry(1)), onResolve = { awaitCancellation() })
+        val model = model(adapter)
+        advanceUntilIdle()
+
+        model.pick(adapter.candidates(migrationEntry(1), "Entry 1", "target").single())
+        advanceUntilIdle()
+
+        model.state.value.resolvingPick shouldBe true
+    }
+
+    @Test
+    fun `a settled pick stops showing as working`() = runTest(dispatcher.scheduler) {
+        val adapter = FakeMigrationFlowAdapter(listOf(migrationEntry(1)))
+        val model = model(adapter)
+        advanceUntilIdle()
+
+        model.pick(adapter.candidates(migrationEntry(1), "Entry 1", "target").single())
+        advanceUntilIdle()
+
+        model.state.value.resolvingPick shouldBe false
+    }
+
+    @Test
+    fun `a later pick replaces one still being resolved`() = runTest(dispatcher.scheduler) {
+        val slowResolve = CompletableDeferred<Unit>()
+        val adapter = FakeMigrationFlowAdapter(
+            listOf(migrationEntry(1)),
+            onResolve = {
+                if (it.key == "slow") slowResolve.await()
+                ResolvedTarget(it, syncedNow = true)
+            },
+        )
+        val model = model(adapter)
+        advanceUntilIdle()
+        val later = adapter.candidates(migrationEntry(1), "Entry 1", "target").single()
+
+        model.pick(later.copy(key = "slow"))
+        advanceUntilIdle()
+        model.pick(later)
+        advanceUntilIdle()
+        slowResolve.complete(Unit)
+        advanceUntilIdle()
+
+        model.state.value.dialogTarget shouldBe later
+    }
+
+    @Test
+    fun `a browsed pick with no chapters is refused before the dialog`() = runTest(dispatcher.scheduler) {
+        val handoff = MigrationPickHandoff().apply { offer(EntryId.Manga(1), targetRawId = 9L) }
+        val adapter = FakeMigrationFlowAdapter(
+            listOf(migrationEntry(1)),
+            suggestionLatestChapter = null,
+            storedIds = setOf(9L),
+        )
+        val model = model(adapter, pickHandoff = handoff)
+        advanceUntilIdle()
+
+        model.collectPendingPick()
+        advanceUntilIdle()
+
+        model.state.value.let { it.dialogTarget to it.pickOutcome } shouldBe (null to PickOutcome.NoChapters)
+    }
+
+    @Test
+    fun `the has-results filter opens as the user last left it`() = runTest(dispatcher.scheduler) {
+        sourcePreferences.globalSearchFilterState.set(true)
+
+        val model = model()
+        advanceUntilIdle()
+
+        model.state.value.onlyShowHasResults shouldBe true
+    }
+
+    @Test
+    fun `toggling the has-results filter writes the shared preference`() = runTest(dispatcher.scheduler) {
+        val model = model()
+        advanceUntilIdle()
+
+        model.toggleOnlyResults()
+
+        sourcePreferences.globalSearchFilterState.get() shouldBe true
+    }
+}

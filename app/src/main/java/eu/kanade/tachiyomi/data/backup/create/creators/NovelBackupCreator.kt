@@ -1,146 +1,131 @@
-// RK: novel backup (Roadmap 9). Net-new Reikai file: the light-novel twin of MangaBackupCreator,
-// plus the novel categories and the merge/unmerge groups (the latter re-keyed from preference IDs to
-// stable {url, source} refs so they survive restore). Gated by the same BackupOptions toggles as
-// manga (novels are first-class library content, no separate UI toggle).
+// Novel backup. Net-new Reikai file: the light-novel twin of MangaBackupCreator, pinned by
+// backupEntries (BackupEntryDriverTest, GroupMemberBackupConformanceTest), the driver both run through,
+// plus the novel categories and the merge groups (serialized from the merge_group tables as stable
+// {url, source} refs so they survive restore). Gated by the same BackupOptions toggles as manga
+// (novels are first-class library content, no separate UI toggle).
 package eu.kanade.tachiyomi.data.backup.create.creators
 
-import app.cash.sqldelight.async.coroutines.awaitAsList
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.backup.create.BackupOptions
-import eu.kanade.tachiyomi.data.backup.models.BackupCustomNovelInfo
 import eu.kanade.tachiyomi.data.backup.models.BackupNovel
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelChapter
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelHistory
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelMergeGroup
+import eu.kanade.tachiyomi.data.backup.models.BackupNovelSource
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelSourceRef
 import eu.kanade.tachiyomi.data.backup.models.BackupNovelTracking
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.yield
-import reikai.domain.library.ReikaiLibraryPreferences
-import reikai.domain.novel.NovelCategoryRepository
+import eu.kanade.tachiyomi.data.backup.models.customInfo
+import eu.kanade.tachiyomi.data.backup.models.toBackupCustomInfo
+import kotlinx.coroutines.flow.first
+import mihon.core.common.extensions.toEpochMillisOrZero
+import reikai.data.backup.BackupEntryParts
+import reikai.data.backup.mergeGroupRefs
+import reikai.domain.category.CategoryContentType
+import reikai.domain.chapter.ChapterNumberOverrideRepository
+import reikai.domain.library.ContentType
+import reikai.domain.merge.MergeGroupRepository
 import reikai.domain.novel.NovelChapterRepository
+import reikai.domain.novel.NovelHistoryRepository
 import reikai.domain.novel.NovelRepository
 import reikai.domain.novel.NovelTrackRepository
 import reikai.domain.novel.model.Novel
 import reikai.domain.novel.model.NovelChapter
 import reikai.domain.novel.model.NovelTrack
 import reikai.domain.novel.repository.CustomNovelInfoRepository
-import tachiyomi.data.Database
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
+import reikai.novel.source.NovelSourceManager
+import tachiyomi.domain.category.repository.CategoryRepository
 
+@Inject
 class NovelBackupCreator(
-    private val novelRepository: NovelRepository = Injekt.get(),
-    private val novelChapterRepository: NovelChapterRepository = Injekt.get(),
-    private val novelCategoryRepository: NovelCategoryRepository = Injekt.get(),
-    private val novelTrackRepository: NovelTrackRepository = Injekt.get(),
-    private val preferences: ReikaiLibraryPreferences = Injekt.get(),
-    private val customNovelInfoRepository: CustomNovelInfoRepository = Injekt.get(),
-    private val database: Database = Injekt.get(),
-) {
-
-    // Emit one BackupNovel at a time so the caller streams each straight to the backup, instead of
-    // materialising every novel and all its chapters at once (the novel twin of backupMangaStream).
-    fun streamNovels(options: BackupOptions): Flow<BackupNovel> = flow {
-        if (!options.libraryEntries) return@flow
-        for (novel in novelRepository.getFavorites()) {
-            emit(backupNovel(novel, options))
-            yield()
-        }
-    }
+    private val novelRepository: NovelRepository,
+    private val novelChapterRepository: NovelChapterRepository,
+    private val categoryRepository: CategoryRepository,
+    private val novelTrackRepository: NovelTrackRepository,
+    private val mergeGroupRepository: MergeGroupRepository,
+    private val customNovelInfoRepository: CustomNovelInfoRepository,
+    private val novelHistoryRepository: NovelHistoryRepository,
+    private val novelSourceManager: NovelSourceManager,
+    private val chapterNumberOverrides: ChapterNumberOverrideRepository,
+) : BackupEntryParts<Novel, BackupNovel> {
 
     suspend fun novelCategories(options: BackupOptions): List<BackupNovelCategory> =
         if (options.categories) backupNovelCategories() else emptyList()
 
     suspend fun novelMerges(options: BackupOptions): List<BackupNovelMergeGroup> =
-        if (options.libraryEntries) serializeGroups(preferences.novelManualMerges.get()) else emptyList()
+        if (options.libraryEntries) serializeGroups() else emptyList()
 
-    suspend fun novelUnmerges(options: BackupOptions): List<BackupNovelMergeGroup> =
-        if (options.libraryEntries) serializeGroups(preferences.novelManualUnmerges.get()) else emptyList()
+    /** Each source's name, as manga's source list carries it, so a restore can name one not installed. */
+    suspend fun sources(sourceIds: Set<String>): List<BackupNovelSource> =
+        sourceIds.map { BackupNovelSource(name = novelSourceManager.nameOf(it), sourceId = it) }
 
-    // Back up the novel custom-info overlay as {url, source}-keyed entries (re-keyed to fresh ids on
-    // restore). Resolves each row's novel by id (no favorites map needed, so it doesn't force the
-    // whole favorites list to stay resident during the streamed backup). A row whose novel is gone
-    // is dropped. The caller gates this on the include-novels + custom-info toggles.
-    suspend fun novelCustomInfo(): List<BackupCustomNovelInfo> {
-        return customNovelInfoRepository.getAll().mapNotNull { info ->
-            val novel = novelRepository.getById(info.novelId) ?: return@mapNotNull null
-            BackupCustomNovelInfo(
-                source = novel.source,
-                url = novel.url,
-                title = info.title,
-                author = info.author,
-                artist = info.artist,
-                description = info.description,
-                genre = info.genre.orEmpty(),
-                status = info.status,
-                thumbnailUrl = info.thumbnailUrl,
-            )
+    // The option gates and the choice of which novels to back up live in the driver shared with manga
+    // (reikai.data.backup.backupEntries), so this class answers one part at a time.
+    override suspend fun favorites(): List<Novel> = novelRepository.getFavorites()
+
+    override suspend fun readNotInLibrary(): List<Novel> = novelRepository.getReadNovelsNotInLibrary()
+
+    override suspend fun groupMembersOutsideLibrary(): List<Novel> =
+        mergeGroupRepository.getAllMemberships(ContentType.NOVELS).keys
+            .mapNotNull { novelRepository.getById(it) }
+            .filterNot { it.favorite }
+
+    override suspend fun base(entry: Novel): BackupNovel = entry.toBackupNovel()
+
+    override suspend fun chapters(entry: Novel, backup: BackupNovel) {
+        val overrides = chapterNumberOverrides.getByOwner(ContentType.NOVELS, entry.id)
+        novelChapterRepository.getByNovelId(entry.id)
+            .map { it.toBackupNovelChapter(sourceNumber = overrides[it.url]?.sourceNumber) }
+            .takeUnless(List<BackupNovelChapter>::isEmpty)
+            ?.let { backup.chapters = it }
+    }
+
+    override suspend fun categories(entry: Novel, backup: BackupNovel) {
+        val categoriesForNovel = categoryRepository.getCategoriesByNovelId(entry.id)
+        if (categoriesForNovel.isNotEmpty()) {
+            backup.categories = categoriesForNovel.map { it.order }
         }
     }
 
-    private suspend fun backupNovel(novel: Novel, options: BackupOptions): BackupNovel {
-        val novelObject = novel.toBackupNovel()
-
-        if (options.chapters) {
-            novelChapterRepository.getByNovelId(novel.id)
-                .map { it.toBackupNovelChapter() }
-                .takeUnless(List<BackupNovelChapter>::isEmpty)
-                ?.let { novelObject.chapters = it }
+    override suspend fun tracking(entry: Novel, backup: BackupNovel) {
+        val tracks = novelTrackRepository.getTracksByNovelId(entry.id).map { it.toBackupNovelTracking() }
+        if (tracks.isNotEmpty()) {
+            backup.tracking = tracks
         }
+    }
 
-        if (options.categories) {
-            val categoriesForNovel = novelCategoryRepository.getAllByNovelId(novel.id)
-            if (categoriesForNovel.isNotEmpty()) {
-                novelObject.categories = categoriesForNovel.map { it.order }
-            }
+    override suspend fun history(entry: Novel, backup: BackupNovel) {
+        val history = novelHistoryRepository.getUrlKeyedHistoryByNovelId(entry.id).map {
+            BackupNovelHistory(
+                url = it.chapterUrl,
+                lastRead = it.readAt.toEpochMillisOrZero(),
+                readDuration = it.readDuration,
+            )
         }
-
-        if (options.tracking) {
-            val tracks = novelTrackRepository.getTracksByNovelId(novel.id).map { it.toBackupNovelTracking() }
-            if (tracks.isNotEmpty()) {
-                novelObject.tracking = tracks
-            }
+        if (history.isNotEmpty()) {
+            backup.history = history
         }
+    }
 
-        if (options.history) {
-            val history = database.novel_historyQueries
-                .getByNovelId(novel.id) { url, lastRead, timeRead ->
-                    BackupNovelHistory(url = url, lastRead = lastRead ?: 0L, readDuration = timeRead)
-                }
-                .awaitAsList()
-            if (history.isNotEmpty()) {
-                novelObject.history = history
-            }
-        }
-
-        return novelObject
+    override suspend fun customInfo(entry: Novel, backup: BackupNovel) {
+        customNovelInfoRepository.getByNovelIdAsFlow(entry.id).first()
+            ?.let { backup.customInfo = it.toBackupCustomInfo() }
     }
 
     private suspend fun backupNovelCategories(): List<BackupNovelCategory> {
-        return novelCategoryRepository.getAll().map {
-            BackupNovelCategory(name = it.name, order = it.order, id = it.id, flags = it.flags)
-        }
+        // Skip the shared universal row 0 (the uncategorized sentinel), like the manga category backup.
+        return categoryRepository.getAll(CategoryContentType.NOVEL)
+            .filterNot { it.isSystemCategory }
+            .map {
+                BackupNovelCategory(name = it.name, order = it.order, id = it.id, flags = it.flags)
+            }
     }
 
-    /**
-     * Translate the preference's comma-joined ID groups into {url, source} refs. A group is dropped
-     * if fewer than two of its members resolve (a one-member group is no longer a merge). Each member
-     * is looked up by id: the streamed backup never holds the favorites list, so there is no map to
-     * resolve against, and a merge pref holds few enough ids for that to be cheap.
-     */
-    private suspend fun serializeGroups(groups: Set<String>): List<BackupNovelMergeGroup> {
-        if (groups.isEmpty()) return emptyList()
-        return groups.mapNotNull { group ->
-            val refs = group.split(",")
-                .mapNotNull { it.trim().toLongOrNull() }
-                .mapNotNull { id ->
-                    novelRepository.getById(id)?.let { BackupNovelSourceRef(url = it.url, source = it.source) }
-                }
-            refs.takeIf { it.size >= 2 }?.let { BackupNovelMergeGroup(refs = it) }
-        }
-    }
+    /** The persisted novel merge groups as {url, source} refs, read from the merge_group tables. */
+    private suspend fun serializeGroups(): List<BackupNovelMergeGroup> =
+        mergeGroupRefs(mergeGroupRepository.getAllMemberships(ContentType.NOVELS)) { id ->
+            novelRepository.getById(id)?.let { BackupNovelSourceRef(url = it.url, source = it.source) }
+        }.map { BackupNovelMergeGroup(refs = it) }
 }
 
 private fun Novel.toBackupNovel() = BackupNovel(
@@ -153,21 +138,20 @@ private fun Novel.toBackupNovel() = BackupNovel(
     genre = this.genre.orEmpty(),
     status = this.status,
     thumbnailUrl = this.thumbnailUrl,
-    dateAdded = this.dateAdded,
-    lastUpdate = this.lastUpdate,
+    dateAdded = this.favoriteAt.toEpochMillisOrZero(),
+    lastUpdate = this.lastUpdate.toEpochMillisOrZero(),
     initialized = this.initialized,
     chapterFlags = this.chapterFlags,
     updateStrategy = this.updateStrategy,
-    coverLastModified = this.coverLastModified,
+    coverLastModified = this.coverLastModified.toEpochMillisOrZero(),
     totalPages = this.totalPages,
-    lastReadAt = this.lastReadAt,
     favorite = this.favorite,
     notes = this.notes,
     viewerFlags = this.viewerFlags,
-    version = this.version,
+    nextUpdate = this.nextUpdate.toEpochMillisOrZero(),
 )
 
-private fun NovelChapter.toBackupNovelChapter() = BackupNovelChapter(
+private fun NovelChapter.toBackupNovelChapter(sourceNumber: Double?) = BackupNovelChapter(
     url = this.url,
     name = this.name,
     read = this.read,
@@ -175,9 +159,11 @@ private fun NovelChapter.toBackupNovelChapter() = BackupNovelChapter(
     lastTextProgress = this.lastTextProgress,
     chapterNumber = this.chapterNumber,
     sourceOrder = this.sourceOrder,
-    dateFetch = this.dateFetch,
-    dateUpload = this.dateUpload,
+    dateFetch = this.dateFetch.toEpochMilliseconds(),
+    dateUpload = this.dateUpload.toEpochMillisOrZero(),
     page = this.page,
+    scanlator = this.scanlator,
+    sourceChapterNumber = sourceNumber,
 )
 
 private fun NovelTrack.toBackupNovelTracking() = BackupNovelTracking(
@@ -190,7 +176,7 @@ private fun NovelTrack.toBackupNovelTracking() = BackupNovelTracking(
     status = this.status,
     score = this.score,
     remoteUrl = this.remoteUrl,
-    startDate = this.startDate,
-    finishDate = this.finishDate,
+    startDate = this.startDate.toEpochMillisOrZero(),
+    finishDate = this.finishDate.toEpochMillisOrZero(),
     private = this.private,
 )

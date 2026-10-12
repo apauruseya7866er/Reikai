@@ -1,32 +1,20 @@
 package eu.kanade.tachiyomi.data.backup.create.creators
 
-import eu.kanade.tachiyomi.data.backup.models.BackupManga
+import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.backup.models.BackupSource
 import eu.kanade.tachiyomi.source.Source
 import tachiyomi.domain.source.service.SourceManager
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
+@Inject
 class SourcesBackupCreator(
-    private val sourceManager: SourceManager = Injekt.get(),
+    private val sourceManager: SourceManager,
 ) {
-
-    operator fun invoke(mangas: List<BackupManga>): List<BackupSource> {
-        return mangas
-            .asSequence()
-            .map(BackupManga::source)
-            .distinct()
-            .map(sourceManager::getOrStub)
-            .map { it.toBackupSource() }
-            .toList()
-    }
 
     // RK: build the source list from ids collected during the streaming manga pass, so the whole
     // List<BackupManga> never has to be resident just to derive sources.
-    fun forSourceIds(sourceIds: Set<Long>): List<BackupSource> {
+    suspend fun forSourceIds(sourceIds: Set<Long>): List<BackupSource> {
         return sourceIds
-            .map(sourceManager::getOrStub)
-            .map { it.toBackupSource() }
+            .map { sourceManager.getOrStub(it).toBackupSource() }
     }
 }
 

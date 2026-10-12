@@ -1,0 +1,666 @@
+package reikai.data.merge
+
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
+import io.mockk.coEvery
+import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
+import reikai.domain.library.ContentType
+import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.domain.manga.MangaGroupStitcher
+import reikai.domain.manga.MangaMergeManager
+import reikai.domain.merge.MergedChapterUnitRepository.GroupStitch
+import reikai.domain.merge.MergedGroupStitcher
+import reikai.domain.merge.ReconcileMergedChapters
+import reikai.domain.novel.NovelChapterRepository
+import reikai.domain.novel.NovelGroupStitcher
+import reikai.domain.novel.NovelMergeManager
+import reikai.domain.novel.NovelRepository
+import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelChapter
+import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
+import tachiyomi.data.Database
+import tachiyomi.data.DatabaseBindings
+import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.repository.ChapterRepository
+import tachiyomi.domain.manga.interactor.GetMangaWithChapters
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.manga.repository.MangaRepository
+import tachiyomi.domain.source.service.SourceManager
+import kotlin.time.Instant
+
+/**
+ * When the stored stitch is rebuilt. Every surface reads it rather than stitching for itself, so a
+ * change that should reshape a group's list and is not seen as staleness leaves every screen on the
+ * old list. The ranking is one of those inputs: it picks the trunk, so a reorder or a new preferred
+ * source has to reach the stitch as surely as a new chapter does. Runs the real stitchers and SQL over
+ * both content types; only chapter and entry loading are stubbed, from the same rows the SQL sees.
+ */
+class MergedStitchReconcileTest {
+
+    private lateinit var driver: JdbcSqliteDriver
+    private lateinit var groups: MergeGroupRepositoryImpl
+    private lateinit var units: MergedChapterUnitRepositoryImpl
+
+    @BeforeEach
+    fun setUp() {
+        runTest {
+            driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+            Database.Schema.create(driver).await()
+            driver.execute(null, "PRAGMA foreign_keys=ON", 0).await()
+            val database = DatabaseBindings.providesDatabase(driver)
+            groups = MergeGroupRepositoryImpl(database)
+            units = MergedChapterUnitRepositoryImpl(database)
+        }
+    }
+
+    @AfterEach
+    fun tearDown() {
+        driver.close()
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `reordering a group's sources restitches it on the new trunk`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val group = fixture.twoSourceGroup()
+        val reconcile = fixture.reconcile()
+        reconcile.currentStitch(type, group)
+
+        groups.setSourceOrder(type, group, fixture.membersOf(group).reversed())
+        reconcile.currentStitch(type, group)
+
+        fixture.ownerOfFirstChapter(group) shouldBe SECOND
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `resetting a group's source order restitches it on the global ranking`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val group = fixture.twoSourceGroup()
+        groups.setSourceOrder(type, group, fixture.membersOf(group).reversed())
+        val reconcile = fixture.reconcile()
+        reconcile.currentStitch(type, group)
+
+        groups.clearSourceOrder(type, group)
+        reconcile.currentStitch(type, group)
+
+        fixture.ownerOfFirstChapter(group) shouldBe FIRST
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a changed preferred-source list restitches the group`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val group = fixture.twoSourceGroup()
+        fixture.reconcile().currentStitch(type, group)
+
+        // A preference store reads its values once, so the changed list is a new stitcher over it.
+        fixture.reconcile(preferredSources = listOf(SECOND_SOURCE)).await()
+
+        fixture.ownerOfFirstChapter(group) shouldBe SECOND
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a group nothing changed in is not stitched again`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val group = fixture.twoSourceGroup()
+        val counting = CountingStitcher(fixture.stitcher(emptyList()))
+        val reconcile = ReconcileMergedChapters(units, setOf(counting))
+        reconcile.currentStitch(type, group)
+
+        reconcile.currentStitch(type, group)
+
+        counting.stitched shouldBe listOf(group)
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a new chapter in one group leaves another group's stitch alone`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val settled = fixture.twoSourceGroup()
+        val changed = fixture.twoSourceGroup()
+        val counting = CountingStitcher(fixture.stitcher(emptyList()))
+        val reconcile = ReconcileMergedChapters(units, setOf(counting))
+        reconcile.await()
+        fixture.addChapter(owner = fixture.membersOf(changed).first(), name = "Chapter 3: Charlie", number = 3.0)
+
+        reconcile.currentStitch(type, settled)
+
+        counting.stitched.count { it == settled } shouldBe 1
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a reconcile restitches only the group a new chapter changed`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val settled = fixture.twoSourceGroup()
+        val changed = fixture.twoSourceGroup()
+        val counting = CountingStitcher(fixture.stitcher(emptyList()))
+        val reconcile = ReconcileMergedChapters(units, setOf(counting))
+        reconcile.await()
+        fixture.addChapter(owner = fixture.membersOf(changed).first(), name = "Chapter 3: Charlie", number = 3.0)
+
+        reconcile.await()
+
+        counting.stitched.groupingBy { it }.eachCount() shouldBe mapOf(settled to 1, changed to 2)
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a reconcile leaves no group listed`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        fixture.twoSourceGroup()
+
+        fixture.reconcile().await()
+
+        units.claimPendingGroups(type) shouldBe emptyList()
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a new chapter in a group restitches that group`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val group = fixture.twoSourceGroup()
+        val counting = CountingStitcher(fixture.stitcher(emptyList()))
+        val reconcile = ReconcileMergedChapters(units, setOf(counting))
+        reconcile.currentStitch(type, group)
+        fixture.addChapter(owner = fixture.membersOf(group).first(), name = "Chapter 3: Charlie", number = 3.0)
+
+        reconcile.currentStitch(type, group)
+
+        counting.stitched shouldBe listOf(group, group)
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a stale group's current stitch already holds its new chapter`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val group = fixture.twoSourceGroup()
+        val reconcile = fixture.reconcile()
+        reconcile.currentStitch(type, group)
+        val added = fixture.addChapter(owner = fixture.membersOf(group).first(), name = "Chapter 3", number = 3.0)
+
+        reconcile.currentStitch(type, group).map { it.chapterId } shouldContain added
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a rebuild that read before a new chapter cannot overwrite one that read after it`(type: ContentType) =
+        runTest {
+            val fixture = fixture(type)
+            val group = fixture.twoSourceGroup()
+            val gate = CompletableDeferred<Unit>()
+            val reconcile = ReconcileMergedChapters(units, setOf(GatedStitcher(fixture.stitcher(emptyList()), gate)))
+            val early = launch { reconcile.await() }
+            runCurrent()
+            val added = fixture.addChapter(owner = fixture.membersOf(group).first(), name = "Chapter 3", number = 3.0)
+            val late = launch { reconcile.currentStitch(type, group) }
+            runCurrent()
+
+            gate.complete(Unit)
+            joinAll(early, late)
+
+            units.getStitch(type, group).map { it.chapterId } shouldContain added
+        }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a pass that only renumbers a chapter restitches the group`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        // Untitled, so both types pair the two members' chapters on their numbers alone.
+        val group = fixture.group(listOf("" to 1.0, "" to 2.0), listOf("" to 1.0, "" to 2.0, "" to 5.0))
+        val reconcile = fixture.reconcile()
+        reconcile.await()
+        val renumbered = fixture.chapterIdsOf(fixture.membersOf(group).first()).first()
+        val newPartner = fixture.chapterIdsOf(fixture.membersOf(group).last()).last()
+
+        reconcile.afterPass { fixture.renumber(chapterId = renumbered, number = 5.0) }
+
+        unitOf(type, group, renumbered) shouldBe unitOf(type, group, newPartner)
+    }
+
+    // Manga pairs chapters on numbers alone, so only a novel's stitch reads a chapter's name.
+    @Test
+    fun `a pass that only renames a novel chapter restitches the group`() = runTest {
+        val fixture = NovelFixture()
+        val group = fixture.twoSourceGroup()
+        val reconcile = fixture.reconcile()
+        reconcile.await()
+        val (renamed, _) = fixture.chapterIdsOf(fixture.membersOf(group).first())
+        val (formerPartner, _) = fixture.chapterIdsOf(fixture.membersOf(group).last())
+
+        reconcile.afterPass { fixture.rename(chapterId = renamed, name = "Chapter 1: Zulu") }
+
+        unitOf(ContentType.NOVELS, group, renamed) shouldNotBe unitOf(ContentType.NOVELS, group, formerPartner)
+    }
+
+    private suspend fun unitOf(type: ContentType, group: Long, chapterId: Long) =
+        units.getStitch(type, group).single { it.chapterId == chapterId }.unit
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a pass that only reorders a source's chapters restitches the group`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val group = fixture.twoSourceGroup()
+        val reconcile = fixture.reconcile()
+        reconcile.await()
+        val (alpha, bravo) = fixture.chapterIdsOf(fixture.membersOf(group).first())
+
+        reconcile.afterPass {
+            fixture.reorder(chapterId = alpha, order = 20)
+            fixture.reorder(chapterId = bravo, order = 10)
+        }
+
+        units.getStitch(type, group).first().chapterId shouldBe bravo
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a pass that fails after writing still restitches what it wrote`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val group = fixture.twoSourceGroup()
+        val reconcile = fixture.reconcile()
+        reconcile.await()
+
+        shouldThrow<IllegalStateException> {
+            reconcile.afterPass {
+                fixture.addChapter(owner = fixture.membersOf(group).first(), name = "Chapter 3", number = 3.0)
+                error("the next entry failed")
+            }
+        }
+
+        units.isStale(type, group) shouldBe false
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a cancelled pass still restitches what it wrote`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val group = fixture.twoSourceGroup()
+        val reconcile = ReconcileMergedChapters(units, setOf(SuspendingStitcher(fixture.stitcher(emptyList()))))
+        reconcile.await()
+        val pass = launch {
+            reconcile.afterPass {
+                fixture.addChapter(owner = fixture.membersOf(group).first(), name = "Chapter 3", number = 3.0)
+                awaitCancellation()
+            }
+        }
+        runCurrent()
+
+        pass.cancelAndJoin()
+
+        units.isStale(type, group) shouldBe false
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a deletion that leaves another member with more chapters restitches on it`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val group = fixture.group(listOf(ALPHA, BRAVO, CHARLIE), listOf(ALPHA, BRAVO))
+        val reconcile = fixture.reconcile()
+        reconcile.await()
+
+        fixture.chapterIdsOf(fixture.membersOf(group).first()).drop(1).forEach { fixture.deleteChapter(it) }
+        reconcile.await()
+
+        fixture.ownerOfFirstChapter(group) shouldBe SECOND
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a chapterless member ranked first still leaves the group stitched`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        // The unnumbered chapter is one only a trunk keeps, so it is lost if the empty member leads.
+        val group = fixture.group(emptyList(), listOf(ALPHA, BRAVO, "Extra: Omake" to -1.0), listOf(ALPHA, BRAVO))
+        groups.setSourceOrder(type, group, fixture.membersOf(group))
+
+        fixture.reconcile().await()
+
+        units.getStitch(type, group).map { it.unit }.distinct().size shouldBe 3
+    }
+
+    /** Holds its first stitch, already read, until [gate] opens: a rebuild slower than one started after. */
+    private class GatedStitcher(
+        private val inner: MergedGroupStitcher,
+        private val gate: CompletableDeferred<Unit>,
+    ) : MergedGroupStitcher by inner {
+        private var held = false
+
+        override suspend fun stitch(groupId: Long): GroupStitch {
+            val stitched = inner.stitch(groupId)
+            if (!held) {
+                held = true
+                gate.await()
+            }
+            return stitched
+        }
+    }
+
+    /** Suspends before each stitch, as a real database read does, so a cancelled caller is noticed there. */
+    private class SuspendingStitcher(private val inner: MergedGroupStitcher) : MergedGroupStitcher by inner {
+        override suspend fun stitch(groupId: Long): GroupStitch {
+            yield()
+            return inner.stitch(groupId)
+        }
+    }
+
+    /** Records which groups were stitched, so a test can tell a rebuild from a read of what was stored. */
+    private class CountingStitcher(private val inner: MergedGroupStitcher) : MergedGroupStitcher by inner {
+        val stitched = mutableListOf<Long>()
+
+        override suspend fun stitch(groupId: Long): GroupStitch {
+            stitched += groupId
+            return inner.stitch(groupId)
+        }
+    }
+
+    private fun fixture(type: ContentType): Fixture = when (type) {
+        ContentType.NOVELS -> NovelFixture()
+        else -> MangaFixture()
+    }
+
+    /** One content type's rows and stitcher, over the shared database. */
+    private abstract inner class Fixture {
+        private var nextEntryId = 1L
+        private var nextChapterId = 1L
+        private val members = mutableMapOf<Long, List<Long>>()
+
+        abstract val type: ContentType
+
+        abstract suspend fun insertEntry(id: Long, source: Long)
+
+        abstract suspend fun insertChapter(id: Long, owner: Long, name: String, number: Double)
+
+        abstract fun stitcher(preferredSources: List<Long>): MergedGroupStitcher
+
+        fun reconcile(preferredSources: List<Long> = emptyList()) =
+            ReconcileMergedChapters(units, setOf(stitcher(preferredSources)))
+
+        /**
+         * A group of two members carrying the same two chapters, the first from [FIRST_SOURCE] and the
+         * second from [SECOND_SOURCE]. Nothing tells them apart, so with no ranking the lower id leads.
+         */
+        suspend fun twoSourceGroup(): Long = group(listOf(ALPHA, BRAVO), listOf(ALPHA, BRAVO))
+
+        /** One member per list, the first from [FIRST_SOURCE] and each next one a source further on. */
+        suspend fun group(vararg chapters: List<Pair<String, Double>>): Long {
+            val ids = chapters.mapIndexed { index, memberChapters ->
+                val id = nextEntryId++
+                insertEntry(id, FIRST_SOURCE + index * (SECOND_SOURCE - FIRST_SOURCE))
+                memberChapters.forEach { (name, number) -> addChapter(id, name, number) }
+                id
+            }
+            val group = groups.createGroup(type, ids)!!
+            members[group] = ids
+            return group
+        }
+
+        fun membersOf(group: Long) = members.getValue(group)
+
+        suspend fun addChapter(owner: Long, name: String, number: Double): Long {
+            val id = nextChapterId++
+            insertChapter(id, owner, name, number)
+            return id
+        }
+
+        /** What a source sync writes when a chapter is renumbered: the row changes, nothing is added. */
+        suspend fun renumber(chapterId: Long, number: Double) {
+            driver.execute(
+                null,
+                "UPDATE $chapterTable SET $numberColumn = $number WHERE $idColumn = $chapterId",
+                0,
+            ).await()
+            renumberLoaded(chapterId, number)
+        }
+
+        /** What a source sync writes when the source lists a chapter at another place: only its order changes. */
+        suspend fun reorder(chapterId: Long, order: Long) {
+            driver.execute(
+                null,
+                "UPDATE $chapterTable SET $orderColumn = $order WHERE $idColumn = $chapterId",
+                0,
+            ).await()
+            reorderLoaded(chapterId, order)
+        }
+
+        /** What a source sync does when the source stops listing a chapter: the row goes. */
+        suspend fun deleteChapter(chapterId: Long) {
+            driver.execute(null, "DELETE FROM $chapterTable WHERE $idColumn = $chapterId", 0).await()
+            forgetLoaded(chapterId)
+        }
+
+        abstract val chapterTable: String
+
+        abstract val idColumn: String
+
+        abstract val numberColumn: String
+
+        abstract val orderColumn: String
+
+        abstract fun chapterIdsOf(owner: Long): List<Long>
+
+        abstract fun forgetLoaded(chapterId: Long)
+
+        abstract fun renumberLoaded(chapterId: Long, number: Double)
+
+        abstract fun reorderLoaded(chapterId: Long, order: Long)
+
+        /** Which member's copy the stored stitch shows for the group's first chapter, as its position. */
+        suspend fun ownerOfFirstChapter(group: Long): Long {
+            val shown = units.getStitch(type, group).first { it.unit == 0 && it.copyOrder == 0 }
+            return membersOf(group).indexOf(ownerOf(shown.chapterId)).toLong()
+        }
+
+        abstract fun ownerOf(chapterId: Long): Long
+    }
+
+    private inner class MangaFixture : Fixture() {
+        private val mangas = mutableMapOf<Long, Manga>()
+        private val chapters = mutableListOf<Chapter>()
+
+        override val type = ContentType.MANGA
+
+        override suspend fun insertEntry(id: Long, source: Long) {
+            mangas[id] = Manga.create().copy(id = id, source = source, favoriteAt = Instant.fromEpochMilliseconds(0L))
+            driver.execute(
+                null,
+                "INSERT INTO manga(id, source_id, remote_url, remote_title, remote_status, " +
+                    "state_initialized, user_reader_flags, user_chapter_flags, " +
+                    "state_cover_last_modified, user_favorite_at, remote_update_strategy, " +
+                    "state_chapter_fetch_interval, user_notes, remote_memo) VALUES ($id, $source, " +
+                    "'m-url-$id', 'title', 0, 0, 0, 0, 0, 0, 0, 0, '', '{}')",
+                0,
+            ).await()
+        }
+
+        override suspend fun insertChapter(id: Long, owner: Long, name: String, number: Double) {
+            chapters += Chapter.create().copy(
+                id = id,
+                mangaId = owner,
+                url = "/$owner/$id",
+                name = name,
+                chapterNumber = number,
+                sourceOrder = id,
+            )
+            driver.execute(
+                null,
+                "INSERT INTO chapter(id, manga_id, remote_url, remote_name, remote_scanlator, " +
+                    "user_read, user_bookmark, user_last_page_read, remote_chapter_number, " +
+                    "remote_order, state_date_fetch, remote_date_upload, remote_memo) VALUES ($id, " +
+                    "$owner, '/$owner/$id', '$name', NULL, 0, 0, 0, $number, $id, 0, 0, '{}')",
+                0,
+            ).await()
+        }
+
+        override fun stitcher(preferredSources: List<Long>): MergedGroupStitcher {
+            val prefs = preferences(InMemoryPreference("preferred_manga_sources", preferredSources, emptyList()))
+            val mangaRepository = mockk<MangaRepository> {
+                coEvery { getMangaById(any()) } answers { mangas.getValue(firstArg()) }
+            }
+            val chapterRepository = mockk<ChapterRepository> {
+                coEvery { getChapterByMangaId(any(), any()) } answers {
+                    chapters.filter { it.mangaId == firstArg<Long>() }
+                }
+            }
+            val sourceManager = mockk<SourceManager>()
+            coEvery { sourceManager.get(any<Long>()) } returns null
+            return MangaGroupStitcher(
+                groups,
+                GetMangaWithChapters(mangaRepository, chapterRepository),
+                MangaMergeManager(groups, prefs, onMerged = {}) {},
+                sourceManager,
+                prefs,
+            )
+        }
+
+        override fun ownerOf(chapterId: Long) = chapters.first { it.id == chapterId }.mangaId
+
+        override val chapterTable = "chapter"
+
+        override val idColumn = "id"
+
+        override val numberColumn = "remote_chapter_number"
+
+        override val orderColumn = "remote_order"
+
+        override fun chapterIdsOf(owner: Long) = chapters.filter { it.mangaId == owner }.map { it.id }
+
+        override fun forgetLoaded(chapterId: Long) {
+            chapters.removeAll { it.id == chapterId }
+        }
+
+        override fun renumberLoaded(chapterId: Long, number: Double) {
+            chapters.replaceAll { if (it.id == chapterId) it.copy(chapterNumber = number) else it }
+        }
+
+        override fun reorderLoaded(chapterId: Long, order: Long) {
+            chapters.replaceAll { if (it.id == chapterId) it.copy(sourceOrder = order) else it }
+        }
+    }
+
+    private inner class NovelFixture : Fixture() {
+        private val novels = mutableMapOf<Long, Novel>()
+        private val chapters = mutableListOf<NovelChapter>()
+
+        override val type = ContentType.NOVELS
+
+        override suspend fun insertEntry(id: Long, source: Long) {
+            novels[id] =
+                Novel.create().copy(id = id, source = source.toString(), favoriteAt = Instant.fromEpochMilliseconds(0L))
+            driver.execute(
+                null,
+                "INSERT INTO novels(_id, source, url, title, status, initialized, chapter_flags, " +
+                    "favorite_at) VALUES ($id, '$source', 'n-url-$id', 'title', 0, 0, 0, 0)",
+                0,
+            ).await()
+        }
+
+        override suspend fun insertChapter(id: Long, owner: Long, name: String, number: Double) {
+            chapters += NovelChapter(
+                id = id,
+                novelId = owner,
+                url = "/$owner/$id",
+                name = name,
+                read = false,
+                bookmark = false,
+                lastTextProgress = 0,
+                chapterNumber = number,
+                sourceOrder = id,
+                dateFetch = Instant.fromEpochMilliseconds(0L),
+                dateUpload = null,
+                page = "",
+            )
+            driver.execute(
+                null,
+                "INSERT INTO novel_chapters(_id, novel_id, url, name, read, bookmark, chapter_number, " +
+                    "source_order, date_fetch, date_upload) " +
+                    "VALUES ($id, $owner, '/$owner/$id', '$name', 0, 0, $number, $id, 0, 0)",
+                0,
+            ).await()
+        }
+
+        override fun stitcher(preferredSources: List<Long>): MergedGroupStitcher {
+            val prefs = preferences(
+                InMemoryPreference("preferred_novel_sources", preferredSources.map(Long::toString), emptyList()),
+            )
+            val novelRepository = mockk<NovelRepository> {
+                coEvery { getById(any()) } answers { novels[firstArg()] }
+            }
+            // Ordered as the real query orders them (novel_chapters.sq), since the stitch walks that order.
+            val chapterRepository = mockk<NovelChapterRepository> {
+                coEvery { getByNovelId(any()) } answers {
+                    chapters.filter { it.novelId == firstArg<Long>() }.sortedBy { it.sourceOrder }
+                }
+            }
+            return NovelGroupStitcher(
+                groups,
+                novelRepository,
+                chapterRepository,
+                NovelMergeManager(groups, prefs, onMerged = {}) {},
+                prefs,
+            )
+        }
+
+        override fun ownerOf(chapterId: Long) = chapters.first { it.id == chapterId }.novelId
+
+        override val chapterTable = "novel_chapters"
+
+        override val idColumn = "_id"
+
+        override val numberColumn = "chapter_number"
+
+        override val orderColumn = "source_order"
+
+        override fun chapterIdsOf(owner: Long) = chapters.filter { it.novelId == owner }.map { it.id }
+
+        override fun forgetLoaded(chapterId: Long) {
+            chapters.removeAll { it.id == chapterId }
+        }
+
+        override fun renumberLoaded(chapterId: Long, number: Double) {
+            chapters.replaceAll { if (it.id == chapterId) it.copy(chapterNumber = number) else it }
+        }
+
+        override fun reorderLoaded(chapterId: Long, order: Long) {
+            chapters.replaceAll { if (it.id == chapterId) it.copy(sourceOrder = order) else it }
+        }
+
+        /** What a source sync writes when a chapter is retitled: the row changes, nothing is added. */
+        suspend fun rename(chapterId: Long, name: String) {
+            driver.execute(null, "UPDATE novel_chapters SET name = '$name' WHERE _id = $chapterId", 0).await()
+            chapters.replaceAll { if (it.id == chapterId) it.copy(name = name) else it }
+        }
+    }
+
+    private fun preferences(preferredSources: InMemoryPreference<*>) =
+        ReikaiLibraryPreferences(InMemoryPreferenceStore(sequenceOf(preferredSources)))
+
+    companion object {
+        // Positions in the group, which is what the ranking reorders.
+        private const val FIRST = 0L
+        private const val SECOND = 1L
+        private const val FIRST_SOURCE = 100L
+        private const val SECOND_SOURCE = 200L
+        private val ALPHA = "Chapter 1: Alpha" to 1.0
+        private val BRAVO = "Chapter 2: Bravo" to 2.0
+        private val CHARLIE = "Chapter 3: Charlie" to 3.0
+    }
+}

@@ -1,8 +1,11 @@
 package reikai.domain.recommendation.taste
 
+import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.data.track.bangumi.Bangumi
 import eu.kanade.tachiyomi.data.track.bangumi.dto.BGMCollectionItem
+import eu.kanade.tachiyomi.data.track.bangumi.toApiStatus
 import reikai.domain.recommendation.ReikaiRecommendationPreferences
+import tachiyomi.core.common.preference.Preference
 
 /**
  * Pulls the user's full Bangumi manga collection (`subject_type=1`, paged 50/entry) and normalizes
@@ -14,13 +17,12 @@ import reikai.domain.recommendation.ReikaiRecommendationPreferences
  */
 class BangumiLibraryFetcher(
     private val bangumi: Bangumi,
-    private val preferences: ReikaiRecommendationPreferences,
+    preferences: ReikaiRecommendationPreferences,
 ) : TrackerLibraryFetcher {
 
-    override val trackerId: Long = bangumi.id
+    override val tracker: Tracker get() = bangumi
 
-    override fun isEnabled(): Boolean =
-        preferences.pullLibraryFromBangumi.get() && bangumi.isLoggedIn
+    override val pullPreference: Preference<Boolean> = preferences.pullLibraryFromBangumi
 
     override suspend fun fetchLibrary(): List<TrackedEntry> =
         bangumi.getUserLibrary().map { it.toTrackedEntry() }
@@ -30,20 +32,7 @@ class BangumiLibraryFetcher(
         remoteId = subjectId,
         title = subject?.nameCn?.ifBlank { subject.name } ?: subject?.name.orEmpty(),
         score = normalizeTrackerScore(rate, 10),
-        status = mapStatus(type),
-        tags = subject?.tags
-            ?.map { it.name.toTagKey() }
-            ?.filter { it.isNotEmpty() }
-            ?.distinct()
-            .orEmpty(),
+        status = bangumi.trackStatusOfRemote(type) { it.toApiStatus() },
+        tags = subject?.tags.orEmpty().map { it.name }.toTagKeys(),
     )
-
-    private fun mapStatus(type: Int): TrackStatus = when (type) {
-        1 -> TrackStatus.PLAN_TO_READ
-        2 -> TrackStatus.COMPLETED
-        3 -> TrackStatus.READING
-        4 -> TrackStatus.ON_HOLD
-        5 -> TrackStatus.DROPPED
-        else -> TrackStatus.UNKNOWN
-    }
 }

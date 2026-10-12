@@ -4,7 +4,6 @@ import android.net.Uri
 import androidx.core.net.toUri
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.data.database.models.Track
-import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.data.track.mangabaka.dto.MangaBakaItem
 import eu.kanade.tachiyomi.data.track.mangabaka.dto.MangaBakaItemResult
 import eu.kanade.tachiyomi.data.track.mangabaka.dto.MangaBakaListResult
@@ -23,6 +22,11 @@ import eu.kanade.tachiyomi.network.awaitSuccess
 import eu.kanade.tachiyomi.network.parseAs
 import eu.kanade.tachiyomi.util.PkceUtil
 import eu.kanade.tachiyomi.util.lang.toLocalDate
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -31,17 +35,15 @@ import okhttp3.Headers.Companion.headersOf
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import tachiyomi.core.common.util.lang.withIOContext
-import tachiyomi.i18n.MR
 import uy.kohesive.injekt.injectLazy
 import java.math.RoundingMode
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.Locale
-import kotlin.time.Instant
 import tachiyomi.domain.track.model.Track as DomainTrack
 
 class MangaBakaApi(
-    private val trackId: Long,
+    private val trackerId: Long,
     baseClient: OkHttpClient,
     interceptor: MangaBakaInterceptor,
 ) {
@@ -53,7 +55,7 @@ class MangaBakaApi(
             .header(
                 "User-Agent",
                 buildString {
-                    append("Reikai/v${BuildConfig.VERSION_NAME} ")
+                    append("Reikai/v${BuildConfig.VERSION_NAME} ") // RK: identifies as Reikai
                     append("(${BuildConfig.APPLICATION_ID} ${BuildConfig.COMMIT_SHA}) ")
                     append("(Android) (https://github.com/mihonapp/mihon)")
                 },
@@ -88,7 +90,7 @@ class MangaBakaApi(
 
             authClient
                 .newCall(POST(url, body = body, headers = headersOf("Content-Type", APP_JSON)))
-                .awaitSuccess()
+                .awaitSuccess().close()
 
             // only returns 201 with the body { "status": 201, "data": true }, so no library ID for us
             track
@@ -101,7 +103,7 @@ class MangaBakaApi(
 
             authClient
                 .newCall(DELETE(url))
-                .awaitSuccess()
+                .awaitSuccess().close()
         }
     }
 
@@ -120,14 +122,13 @@ class MangaBakaApi(
                         .parseAs<MangaBakaItemResult>()
                         .data
 
-                    Track.create(TrackerManager.MANGABAKA).apply {
+                    Track.create(trackerId).apply {
                         remote_id = track.remote_id
                         title = additionalData.chooseBestTitle()
                         status = userData.getStatus()
                         score = userData.rating?.toDouble() ?: 0.0
-                        started_reading_date = userData.startDate?.let { Instant.parse(it).toEpochMilliseconds() } ?: 0
-                        finished_reading_date =
-                            userData.finishDate?.let { Instant.parse(it).toEpochMilliseconds() } ?: 0
+                        started_reading_date = parseIsoDateAsLocalStartOfDay(userData.startDate) ?: 0
+                        finished_reading_date = parseIsoDateAsLocalStartOfDay(userData.finishDate) ?: 0
                         last_chapter_read = userData.progressChapter ?: 0.0
                         private = userData.isPrivate
                     }
@@ -174,18 +175,17 @@ class MangaBakaApi(
 
             authClient
                 .newCall(PUT(url, body = body, headers = headersOf("Content-Type", APP_JSON)))
-                .awaitSuccess()
+                .awaitSuccess().close()
 
             track
         }
     }
 
+    // RK --> novel-aware search: one endpoint, manga excludes the novel series type (type_not=novel)
+    // and the novel search includes only it (type=novel).
     suspend fun search(search: String): List<TrackSearch> = searchByType(search, "type_not", "novel")
 
-    // RK --> novel-aware search (Active #8): same endpoint, include only the novel series type
-    // (the inverse of the manga search's type_not=novel exclusion).
     suspend fun searchNovel(search: String): List<TrackSearch> = searchByType(search, "type", "novel")
-    // RK <--
 
     private suspend fun searchByType(search: String, typeParam: String, typeValue: String): List<TrackSearch> {
         return withIOContext {
@@ -202,9 +202,10 @@ class MangaBakaApi(
             }
         }
     }
+    // RK <--
 
     private fun parseSearchItem(item: MangaBakaItem): TrackSearch {
-        return TrackSearch.create(trackId).apply {
+        return TrackSearch.create(trackerId).apply {
             remote_id = item.id
             title = item.chooseBestTitle()
             summary = item.description?.trim().orEmpty()
@@ -221,7 +222,7 @@ class MangaBakaApi(
         }
     }
 
-    suspend fun getMangaDetails(id: Int): TrackSearch? {
+    suspend fun getMangaDetails(id: Int, novel: Boolean = false): TrackSearch? { // RK: novel picks the series type
         return withIOContext {
             val url = "$API_BASE_URL/v1/series".toUri().buildUpon()
                 .appendPath(id.toString())
@@ -232,7 +233,9 @@ class MangaBakaApi(
                         .awaitSuccess()
                         .parseAs<MangaBakaItemResult>()
                         .data
-                        .let { parseSearchItem(it) }
+                        // RK: the series-type split the title search sends as a query parameter.
+                        .takeIf { it.type.equals("novel", ignoreCase = true) == novel }
+                        ?.let { parseSearchItem(it) }
                 } catch (e: HttpException) {
                     if (e.code == 404) {
                         return@with null
@@ -300,6 +303,16 @@ class MangaBakaApi(
     }
 
     fun verifyOAuthState(state: String): Boolean = state == oauthStateParam
+
+    private fun parseIsoDateAsLocalStartOfDay(isoDate: String?): Long? {
+        // The v1 API returns full ISO 8601 strings with a midnight-UTC-truncated time component, regardless of the
+        // actual time of the change made.
+        return isoDate
+            ?.substringBefore("T")
+            ?.let { LocalDate.parse(it) }
+            ?.atStartOfDayIn(TimeZone.currentSystemDefault())
+            ?.toEpochMilliseconds()
+    }
 
     companion object {
         private const val CLIENT_ID = "zEZYMHXLWsLsafgbvJHXqzGvqQNOdkpo"

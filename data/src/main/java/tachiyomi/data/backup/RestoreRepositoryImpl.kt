@@ -1,0 +1,332 @@
+package tachiyomi.data.backup
+
+import app.cash.sqldelight.async.coroutines.awaitAsList
+import app.cash.sqldelight.async.coroutines.awaitAsOne
+import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesBinding
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import exh.metadata.metadata.base.FlatMetadata
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.serialization.json.JsonObject
+import reikai.domain.backup.RestoredChapterHistory
+import reikai.domain.backup.RestoredChapterState
+import reikai.domain.backup.backupChapterReadAhead
+import reikai.domain.backup.backupDetailsWin
+import reikai.domain.backup.foldBackup
+import reikai.domain.backup.foldChapterCopies
+import reikai.domain.backup.foldHistoryCopies
+import reikai.domain.backup.mergedHistory
+import reikai.domain.backup.restoredFavoriteAt
+import reikai.domain.chapter.ChapterNumberOverrideRepository
+import reikai.domain.library.ContentType
+import tachiyomi.data.Database
+import tachiyomi.domain.backup.model.RestoredHistory
+import tachiyomi.domain.backup.model.RestoredManga
+import tachiyomi.domain.backup.repository.RestoreRepository
+import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.repository.ChapterRepository
+import tachiyomi.domain.manga.interactor.SetCustomMangaInfo
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.manga.model.MangaUpdate
+import tachiyomi.domain.manga.repository.MangaMetadataRepository
+import tachiyomi.domain.manga.repository.MangaRepository
+import tachiyomi.domain.track.model.Track
+import tachiyomi.domain.track.repository.TrackRepository
+import kotlin.time.Instant
+
+@Inject
+@SingleIn(AppScope::class)
+@ContributesBinding(AppScope::class)
+class RestoreRepositoryImpl(
+    private val database: Database,
+    private val mangaRepository: MangaRepository,
+    private val chapterRepository: ChapterRepository,
+    private val trackRepository: TrackRepository,
+    // RK --> the parts of an entry Mihon's backup does not carry
+    private val mangaMetadataRepository: MangaMetadataRepository,
+    private val setCustomMangaInfo: SetCustomMangaInfo,
+    private val chapterNumberOverrides: ChapterNumberOverrideRepository,
+    // RK <--
+) : RestoreRepository {
+
+    override suspend fun restoreManga(entries: List<RestoredManga>, update: suspend (Manga) -> MangaUpdate) {
+        database.transaction {
+            entries.forEach { entry ->
+                // A cancelled restore stops between entries and rolls the whole batch back
+                currentCoroutineContext().ensureActive()
+                mangaRepository.update(update(restore(entry)))
+            }
+        }
+    }
+
+    private suspend fun restore(entry: RestoredManga): Manga {
+        val dbManga = mangaRepository.getMangaByUrlAndSourceId(entry.manga.url, entry.manga.source)
+        val manga = if (dbManga == null) {
+            entry.manga.copy(id = insertManga(entry.manga))
+        } else {
+            updateManga(mergeManga(entry.manga, dbManga))
+        }
+
+        if (entry.categoryIds.isNotEmpty()) {
+            mangaRepository.setMangaCategories(manga.id, entry.categoryIds)
+        }
+        restoreChapters(manga, entry.chapters)
+        chapterNumberOverrides.restore(ContentType.MANGA, manga.id, entry.chapterNumberOverrides) // RK
+        restoreTracking(manga, entry.tracks)
+        restoreHistory(manga, entry.history)
+        restoreExcludedScanlators(manga, entry.excludedScanlators)
+        // RK --> an entry without either leaves the device's own alone, as the forks do
+        entry.searchMetadata?.let { mangaMetadataRepository.insertFlatMetadata(it.forManga(manga.id)) }
+        entry.customInfo?.let { setCustomMangaInfo.set(it.copy(mangaId = manga.id)) }
+        // RK <--
+        return manga
+    }
+
+    // RK: the metadata a backup carries is keyed to the id the entry had on the device that made it
+    private fun FlatMetadata.forManga(mangaId: Long) = FlatMetadata(
+        metadata = metadata.copy(mangaId = mangaId),
+        tags = tags.map { it.copy(id = null, mangaId = mangaId) },
+        titles = titles.map { it.copy(id = null, mangaId = mangaId) },
+    )
+
+    private fun mergeManga(manga: Manga, dbManga: Manga): Manga {
+        // RK: which copy's details win, and the library date, are kernels the novel restore shares
+        val details = if (backupDetailsWin(dbManga.initialized, manga.initialized)) manga else dbManga
+        return dbManga.copy(
+            favoriteAt = restoredFavoriteAt(dbManga.favoriteAt, manga.favoriteAt), // RK
+            title = details.title,
+            artist = details.artist,
+            author = details.author,
+            description = details.description,
+            genre = details.genre,
+            status = details.status,
+            thumbnailUrl = details.thumbnailUrl,
+            updateStrategy = details.updateStrategy,
+            initialized = dbManga.initialized || manga.initialized,
+            // Merge both backup and local data with local winning
+            memo = JsonObject(manga.memo + dbManga.memo),
+            nextUpdate = dbManga.nextUpdate ?: manga.nextUpdate,
+        )
+    }
+
+    private suspend fun updateManga(manga: Manga): Manga {
+        database.mangaQueries.updateFromBackup(
+            userFavoriteAt = manga.favoriteAt,
+            remoteArtist = manga.artist,
+            remoteAuthor = manga.author,
+            remoteDescription = manga.description,
+            remoteGenre = manga.genre,
+            remoteTitle = manga.title,
+            remoteStatus = manga.status,
+            remoteCover = manga.thumbnailUrl,
+            stateChapterLastUpdate = manga.lastUpdate,
+            stateInitialized = manga.initialized,
+            userReaderFlags = manga.viewerFlags,
+            userChapterFlags = manga.chapterFlags,
+            stateCoverLastModified = manga.coverLastModified,
+            id = manga.id,
+            remoteUpdateStrategy = manga.updateStrategy,
+            userNotes = manga.notes,
+            remoteMemo = manga.memo,
+        )
+        return manga
+    }
+
+    private suspend fun insertManga(manga: Manga): Long {
+        return database.mangaQueries.insertReturningId(
+            userFavoriteAt = manga.favoriteAt,
+            sourceId = manga.source,
+            remoteUrl = manga.url,
+            remoteArtist = manga.artist,
+            remoteAuthor = manga.author,
+            remoteDescription = manga.description,
+            remoteGenre = manga.genre,
+            remoteTitle = manga.title,
+            remoteStatus = manga.status,
+            remoteCover = manga.thumbnailUrl,
+            stateChapterLastUpdate = manga.lastUpdate,
+            stateChapterNextUpdate = null,
+            stateChapterFetchInterval = 0L,
+            stateInitialized = manga.initialized,
+            userReaderFlags = manga.viewerFlags,
+            userChapterFlags = manga.chapterFlags,
+            stateCoverLastModified = manga.coverLastModified,
+            remoteUpdateStrategy = manga.updateStrategy,
+            userNotes = manga.notes,
+            remoteMemo = manga.memo,
+        )
+            .awaitAsOne()
+    }
+
+    private suspend fun restoreChapters(manga: Manga, restoredChapters: List<Chapter>) {
+        val dbChaptersByUrl = chapterRepository.getChapterByMangaId(manga.id)
+            .associateBy { it.url }
+
+        val (existingChapters, newChapters) = restoredChapters
+            // RK: the copies fold through the kernel the novel restore calls too
+            .foldChapterCopies(
+                url = { it.url },
+                state = { RestoredChapterState(it.read, it.bookmark, it.lastPageRead.toLong()) },
+                withState = { kept, state ->
+                    kept.copy(read = state.read, bookmark = state.bookmark, lastPageRead = state.progress.toInt())
+                },
+            )
+            .mapNotNull {
+                val chapter = it.copy(mangaId = manga.id)
+
+                val dbChapter = dbChaptersByUrl[chapter.url]
+                    ?: // New chapter
+                    return@mapNotNull chapter
+
+                if (chapter.forComparison() == dbChapter.forComparison()) {
+                    // Same state; skip
+                    return@mapNotNull null
+                }
+
+                // RK: read state folds through the kernel novels share
+                val readState = RestoredChapterState(
+                    dbChapter.read,
+                    dbChapter.bookmark,
+                    dbChapter.lastPageRead.toLong(),
+                )
+                    .foldBackup(RestoredChapterState(chapter.read, chapter.bookmark, chapter.lastPageRead.toLong()))
+                chapter
+                    .copyFrom(dbChapter)
+                    .copy(
+                        id = dbChapter.id,
+                        read = readState.read, // RK
+                        bookmark = readState.bookmark, // RK
+                        lastPageRead = readState.progress.toInt(), // RK: the larger of two pages, so it fits
+                        dateFetch = dbChapter.dateFetch,
+                        sourceOrder = dbChapter.sourceOrder,
+                        // Merge both backup and local data with local winning
+                        memo = JsonObject(chapter.memo + dbChapter.memo),
+                        // RK: 0 means the reader never loaded the chapter, so whichever side knows the
+                        // count wins and a backup predating the column cannot erase one on the device.
+                        pageCount = maxOf(chapter.pageCount, dbChapter.pageCount),
+                    )
+            }
+            .partition { it.id > 0 }
+
+        newChapters.forEach { chapter ->
+            database.chapterQueries.insertReturningId(
+                mangaId = chapter.mangaId,
+                remoteUrl = chapter.url,
+                remoteName = chapter.name,
+                remoteScanlator = chapter.scanlator,
+                userRead = chapter.read,
+                userBookmark = chapter.bookmark,
+                userLastPageRead = chapter.lastPageRead,
+                remoteChapterNumber = chapter.chapterNumber,
+                remoteOrder = chapter.sourceOrder,
+                stateDateFetch = chapter.dateFetch,
+                remoteDateUpload = chapter.dateUpload,
+                remoteMemo = chapter.memo,
+                pageCount = chapter.pageCount, // RK: page count
+            )
+                .awaitAsOneOrNull()
+        }
+        existingChapters.forEach { chapter ->
+            database.chapterQueries.updateFromBackup(
+                userRead = chapter.read,
+                userBookmark = chapter.bookmark,
+                userLastPageRead = chapter.lastPageRead,
+                id = chapter.id,
+                remoteMemo = chapter.memo,
+                pageCount = chapter.pageCount, // RK: page count
+            )
+        }
+    }
+
+    // RK: pageCount is excluded because it is derived rather than user state. Comparing it would make
+    // every restore from a backup predating the column rewrite the whole chapter list to no effect.
+    private fun Chapter.forComparison() =
+        this.copy(id = 0L, mangaId = 0L, dateFetch = Instant.DISTANT_PAST, dateUpload = null, pageCount = 0)
+
+    private suspend fun restoreHistory(manga: Manga, restoredHistory: List<RestoredHistory>) {
+        if (restoredHistory.isEmpty()) return
+        val chapterIdsByUrl = chapterRepository.getChapterByMangaId(manga.id).associate { it.url to it.id }
+        val dbHistoryByChapterId = database.historyQueries
+            .getHistoryByMangaId(manga.id)
+            .awaitAsList()
+            .associateBy { it.chapter_id }
+
+        val toUpdate = restoredHistory
+            // RK --> the copies fold through the kernel the novel restore calls too, by URL, which names
+            // one chapter of a manga
+            .map { RestoredChapterHistory(it.chapterUrl, it.readAt, it.readDuration) }
+            .foldHistoryCopies()
+            // RK <--
+            // Chapter doesn't exist; skip
+            .filter { it.chapterUrl in chapterIdsByUrl }
+            // RK --> the later read and the longer time, by the kernel the migrate carries call too
+            .map { history ->
+                val chapterId = chapterIdsByUrl.getValue(history.chapterUrl)
+                val dbHistory = dbHistoryByChapterId[chapterId]
+                val (readAt, readDuration) = mergedHistory(
+                    history.readAt,
+                    history.readDuration,
+                    dbHistory?.read_at,
+                    dbHistory?.read_duration ?: 0L,
+                )
+                Triple(chapterId, readAt, readDuration)
+            }
+        // RK <--
+
+        toUpdate.forEach { (chapterId, readAt, readDuration) ->
+            database.historyQueries.upsert(chapterId = chapterId, readAt = readAt, readDuration = readDuration)
+        }
+    }
+
+    private suspend fun restoreTracking(manga: Manga, restoredTracks: List<Track>) {
+        val dbTrackByTrackerId = trackRepository.getTracksByMangaId(manga.id).associateBy { it.trackerId }
+
+        val (existingTracks, newTracks) = restoredTracks
+            .mapNotNull { track ->
+                val dbTrack = dbTrackByTrackerId[track.trackerId]
+                    ?: // New track
+                    return@mapNotNull track.copy(
+                        id = 0, // Let DB assign new ID
+                        mangaId = manga.id,
+                    )
+
+                // RK: the rule novels share (reikai.domain.backup.backupChapterReadAhead)
+                val lastChapterRead = backupChapterReadAhead(dbTrack.lastChapterRead, track.lastChapterRead)
+                    ?: return@mapNotNull null
+
+                // Update to an existing track
+                dbTrack.copy(lastChapterRead = lastChapterRead)
+            }
+            .partition { it.id > 0 }
+
+        if (newTracks.isNotEmpty()) {
+            trackRepository.upsertAll(newTracks)
+        }
+
+        existingTracks.forEach { track ->
+            database.manga_trackQueries.update(
+                mangaId = track.mangaId,
+                trackerId = track.trackerId,
+                remoteId = track.remoteId,
+                libraryId = track.libraryId,
+                title = track.title,
+                lastChapterRead = track.lastChapterRead,
+                totalChapters = track.totalChapters,
+                status = track.status,
+                score = track.score,
+                remoteUrl = track.remoteUrl,
+                startDate = track.startDate,
+                finishDate = track.finishDate,
+                `private` = track.private,
+                id = track.id,
+            )
+        }
+    }
+
+    private suspend fun restoreExcludedScanlators(manga: Manga, excludedScanlators: List<String>) {
+        excludedScanlators.forEach { database.excluded_scanlatorQueries.insert(manga.id, it) }
+    }
+}

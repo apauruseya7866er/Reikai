@@ -1,6 +1,14 @@
 package reikai.domain.source
 
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import eu.kanade.domain.source.service.SourcePreferences
+import mihon.domain.extension.model.ContentWarning
 import reikai.domain.library.ContentType
+import reikai.presentation.browse.globalsearch.SearchSourceFilter
+import reikai.presentation.recents.RecentsMode
+import reikai.util.getStringList
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
@@ -11,60 +19,112 @@ import tachiyomi.domain.library.model.LibraryDisplayMode
  * [eu.kanade.domain.source.service.SourcePreferences] so Mihon's class stays untouched and
  * upstream-mergeable.
  */
+@Inject
+@SingleIn(AppScope::class)
 class ReikaiSourcePreferences(
     private val preferenceStore: PreferenceStore,
 ) {
 
     /**
      * Sticky content-type filter on the Browse tabs (Sources + Extensions). Its own key, distinct
-     * from the Library filter (S6), so each surface remembers its last type independently.
+     * from the Library filter, so each surface remembers its last type independently.
      */
     val browseContentType: Preference<ContentType> =
         preferenceStore.getEnum("browse_content_type", ContentType.ALL)
 
-    /** Sticky content-type filter on the unified download queue (manga + novels), its own key. */
-    val downloadContentType: Preference<ContentType> =
-        preferenceStore.getEnum("download_content_type", ContentType.ALL)
+    /**
+     * Whether global search covers pinned sources or all of them, as last chosen. Pinned by default,
+     * which is where upstream always opens.
+     */
+    val globalSearchSourceFilter: Preference<SearchSourceFilter> =
+        preferenceStore.getEnum("global_search_source_filter", SearchSourceFilter.PinnedOnly)
 
-    /** User pause on the novel downloader, persisted so a paused queue stays paused across restart
-     *  (the manga side gets this free from WorkManager; the novel job auto-starts on init, so it needs
-     *  an explicit flag). */
+    /** The download queue's card order across manga and novels, as card keys joined by commas. */
+    val downloadQueueOrder: Preference<String> =
+        preferenceStore.getString("download_queue_order", "")
+
+    /** Leave the Latest button off Sources rows, since a catalogue's own chip switches to Latest. */
+    val hideSourceLatestButton: Preference<Boolean> =
+        preferenceStore.getBoolean("reikai_hide_source_latest_button", false)
+
+    // region Feed
+
+    /**
+     * Whether Browse carries a Feed tab at all. Off, so the feature is opt-in: the references this was
+     * ported from ship it on, which changes what Browse looks like for everyone who updates.
+     */
+    val showFeedTab: Preference<Boolean> = preferenceStore.getBoolean("reikai_show_feed_tab", false)
+
+    /** Feed sits first in Browse, which also makes it the tab Browse opens on. */
+    val feedTabInFront: Preference<Boolean> =
+        preferenceStore.getBoolean("reikai_feed_tab_in_front", false)
+
+    /**
+     * Leave entries already in the library out of feed rows. Feed-scoped on purpose: the same choice
+     * on a catalogue is Mihon's `hideInLibraryItems`, and a reader who hides them while browsing may
+     * still want to see at a glance that a feed row is nothing new.
+     */
+    val hideInLibraryFeedItems: Preference<Boolean> =
+        preferenceStore.getBoolean("reikai_feed_hide_in_library_items", false)
+
+    // endregion
+
+    /** User pause on the novel downloader: the stopped worker reads it to leave the paused
+     *  notification rather than none. */
     val novelDownloadsPaused: Preference<Boolean> =
         preferenceStore.getBoolean("novel_downloads_paused", false)
 
     /**
+     * The source opened most recently, whichever content type it belongs to. One value rather than one
+     * per type, because the Sources list has one "Last used" section and two stored answers cannot be
+     * ordered against each other. Written by whichever browse screen opens a source, skipped while
+     * incognito; null until a source has been opened.
+     */
+    val lastUsedSource: Preference<SourceKey?> = preferenceStore.getObjectFromString(
+        // App state, as Mihon's own last-used key is: it describes this device's session, so a
+        // backup restored on another device must not hand it a source it has never opened.
+        Preference.appStateKey("reikai_last_used_source"),
+        null,
+        { it?.serialize().orEmpty() },
+        SourceKey::parse,
+    )
+
+    /**
      * Pinned light-novel source ids. Novel twin of
-     * [eu.kanade.domain.source.service.SourcePreferences.pinnedSources]: pinned sources rise to a
-     * "Pinned" section on the Sources list and back the global-search Pinned filter.
+     * [eu.kanade.domain.source.service.SourcePreferences.pinnedSources], pinned by
+     * SourceListConformanceTest on the Sources list: pinned sources rise to a "Pinned" section there and
+     * back the global-search Pinned filter.
      */
     val pinnedNovelSources: Preference<Set<String>> =
         preferenceStore.getStringSet("ln_pinned_sources", emptySet())
 
     /**
      * Disabled (hidden) light-novel source ids. Novel twin of
-     * [eu.kanade.domain.source.service.SourcePreferences.disabledSources]: a disabled source is hidden
-     * from the Sources list and global search but stays installed and auto-updating.
+     * [eu.kanade.domain.source.service.SourcePreferences.disabledSources], pinned by
+     * SourceListConformanceTest on the Sources list: a disabled source is hidden from that list and global
+     * search but stays installed and auto-updating.
      */
     val disabledNovelSources: Preference<Set<String>> =
         preferenceStore.getStringSet("ln_disabled_sources", emptySet())
 
     /**
-     * Ordered novel source ids picked in the migration pre-step. Novel twin of
-     * [eu.kanade.domain.source.service.SourcePreferences.migrationSources]: the selection and its
-     * priority order drive which sources a migration searches (and so which match it suggests first).
-     * Order matters, so it is a List, stored newline-joined (source ids never contain newlines).
+     * Disabled light-novel source LANGUAGES. Novel twin of
+     * [eu.kanade.domain.source.service.SourcePreferences.enabledLanguages], pinned by SourceListConformanceTest
+     * on the Sources list. Inverted, because novel languages arrive with whatever plugins the user installs: a
+     * deny-list keeps every language on by default, a newly appearing one included, without a migration. A disabled
+     * language hides its sources from the Sources list and global search until re-enabled on the filter screen.
      */
-    val novelMigrationSources: Preference<List<String>> = preferenceStore.getObjectFromString(
-        "ln_migration_sources",
-        emptyList(),
-        { it.joinToString("\n") },
-        { if (it.isEmpty()) emptyList() else it.split("\n") },
-    )
+    val disabledNovelLanguages: Preference<Set<String>> =
+        preferenceStore.getStringSet("ln_disabled_languages", emptySet())
 
-    /** "Has results" toggle on the novel global search (hide sources that returned nothing). Persisted,
-     *  mirroring the manga global search's globalSearchFilterState. */
-    val novelGlobalSearchHasResults: Preference<Boolean> =
-        preferenceStore.getBoolean("ln_global_search_has_results", false)
+    /**
+     * Ordered novel source ids picked in the migration pre-step. Novel twin of
+     * [eu.kanade.domain.source.service.SourcePreferences.migrationSources], pinned by
+     * MigrationFlowAdapter.savedSelection, which both adapters answer for the shared migrate engine: the
+     * selection and its priority order drive which sources a migration searches (and so which match it
+     * suggests first). Order matters, so it is a string list.
+     */
+    val novelMigrationSources: Preference<List<String>> = preferenceStore.getStringList("ln_migration_sources")
 
     /** Sticky content-type filter on the Updates tab (manga + novels), its own key. */
     val updatesContentType: Preference<ContentType> =
@@ -73,6 +133,23 @@ class ReikaiSourcePreferences(
     /** Sticky content-type filter on the History tab (manga + novels), its own key. */
     val historyContentType: Preference<ContentType> =
         preferenceStore.getEnum("history_content_type", ContentType.ALL)
+
+    /**
+     * Sticky content-type filter on the combined Recents tab. Its own key rather than a shared one:
+     * with that tab off, Updates and History are two independent surfaces and linking their chips
+     * would move something for people who never opted in.
+     */
+    val recentsContentType: Preference<ContentType> =
+        preferenceStore.getEnum("recents_content_type", ContentType.ALL)
+
+    /**
+     * Which mode the combined Recents tab was last showing. One key rather than one per surface: the
+     * two single-mode surfaces have nothing to remember, and an engine ignores a stored mode it does
+     * not render. Stored by constant name, so [reikai.presentation.recents.RecentsMode]'s names are
+     * the on-disk format.
+     */
+    val recentsMode: Preference<RecentsMode> =
+        preferenceStore.getEnum("recents_mode", RecentsMode.FEED)
 
     /** Sticky content-type filter on the Stats screen (manga + novels), its own key. */
     val statsContentType: Preference<ContentType> =
@@ -90,26 +167,48 @@ class ReikaiSourcePreferences(
         LibraryDisplayMode.Serializer::deserialize,
     )
 
-    // region Updates category filter
+    // region Recents category filter
 
     /**
-     * Include/exclude category filter for the Updates tab. Mirrors the library's
-     * [reikai.domain.library.ReikaiLibraryPreferences.filterCategories] dim, but manga and novels
-     * have separate category systems (separate id spaces), so each type carries its own selections;
-     * the picker applies them per content-type chip. Empty sets = no constraint for that type.
+     * Include/exclude category filter for the recent-activity surface: one selection per rendered
+     * surface, not per content type. The category table has one id space (the unification offset
+     * novel ids so they cannot collide with manga ones), so a manga-only category simply matches no
+     * novel rather than needing a set of its own. One set per surface for the same reason the chips
+     * have one each: with the combined Recents tab off, Updates and History are independent. Resolved
+     * by surface in [RecentsCategoryFilter]; empty means no constraint.
      */
     val updatesFilterCategories: Preference<Boolean> =
-        preferenceStore.getBoolean("updates_filter_categories", false)
+        preferenceStore.getBoolean("updates_filter_categories_enabled", false)
 
-    val updatesFilterMangaCategoriesInclude: Preference<Set<String>> =
-        preferenceStore.getStringSet("updates_filter_manga_categories_include", emptySet())
-    val updatesFilterMangaCategoriesExclude: Preference<Set<String>> =
-        preferenceStore.getStringSet("updates_filter_manga_categories_exclude", emptySet())
+    val updatesFilterCategoriesInclude: Preference<Set<String>> =
+        preferenceStore.getStringSet("updates_filter_categories_include", emptySet())
+    val updatesFilterCategoriesExclude: Preference<Set<String>> =
+        preferenceStore.getStringSet("updates_filter_categories_exclude", emptySet())
 
-    val updatesFilterNovelCategoriesInclude: Preference<Set<String>> =
-        preferenceStore.getStringSet("updates_filter_novel_categories_include", emptySet())
-    val updatesFilterNovelCategoriesExclude: Preference<Set<String>> =
-        preferenceStore.getStringSet("updates_filter_novel_categories_exclude", emptySet())
+    val historyFilterCategories: Preference<Boolean> =
+        preferenceStore.getBoolean("history_filter_categories_enabled", false)
+
+    val historyFilterCategoriesInclude: Preference<Set<String>> =
+        preferenceStore.getStringSet("history_filter_categories_include", emptySet())
+    val historyFilterCategoriesExclude: Preference<Set<String>> =
+        preferenceStore.getStringSet("history_filter_categories_exclude", emptySet())
+
+    val recentsFilterCategories: Preference<Boolean> =
+        preferenceStore.getBoolean("recents_filter_categories_enabled", false)
+
+    val recentsFilterCategoriesInclude: Preference<Set<String>> =
+        preferenceStore.getStringSet("recents_filter_categories_include", emptySet())
+    val recentsFilterCategoriesExclude: Preference<Set<String>> =
+        preferenceStore.getStringSet("recents_filter_categories_exclude", emptySet())
+
+    /**
+     * Whether the combined modes keep a series with nothing left to read. Off by default, matching
+     * Yokai's `show_read_in_all_recents`: those modes answer "what do I read next", which a caught-up
+     * series has no answer to. The single-lane Updates and History modes ignore this, since they are
+     * a record of what happened rather than a suggestion.
+     */
+    val recentsShowRead: Preference<Boolean> =
+        preferenceStore.getBoolean("recents_show_read", false)
 
     /** Collapse a series' multiple same-date new chapters into one expandable row on the Updates tab. */
     val updatesGroupBySeries: Preference<Boolean> =
@@ -121,8 +220,8 @@ class ReikaiSourcePreferences(
 
     /**
      * Which enabled MangaDex language source the enhanced-source settings and sync actions target when
-     * several are enabled, stored as the source id string ("0" = first enabled). Reikai twin of
-     * Komikku's SourcePreferences.preferredMangaDexId.
+     * several are enabled, stored as the source id string ("0" = first enabled). Ported from Komikku's
+     * SourcePreferences.preferredMangaDexId.
      */
     val preferredMangaDexId: Preference<String> =
         preferenceStore.getString("preferred_mangadex_id", "0")
@@ -130,10 +229,36 @@ class ReikaiSourcePreferences(
     /**
      * Follow statuses the "Sync Follows to Library" action imports, stored as FollowStatus int values
      * (0..6). Defaults to reading + re-reading, matching Komikku's "only add reading or rereading"
-     * intent. Reikai twin of Komikku's SourcePreferences.mangadexSyncToLibraryIndexes.
+     * intent. Ported from Komikku's SourcePreferences.mangadexSyncToLibraryIndexes.
      */
     val mangadexSyncToLibraryIndexes: Preference<Set<String>> =
         preferenceStore.getStringSet("mangadex_sync_to_library_indexes", setOf("1", "6"))
 
     // endregion
+
+    companion object {
+        // Retired per-content-type Updates category-filter keys and their master switch: the filter
+        // became one selection per rendered surface over the shared category id space. Values dropped,
+        // not migrated (a filter is casually re-picked, and the switch defaults off); skipped on
+        // restore so an old backup can't resurrect them. This retirement is why the live master
+        // switches carry an `_enabled` suffix: the bare `updates_filter_categories` string is taken.
+        const val DEAD_UPDATES_FILTER_CATEGORIES_KEY = "updates_filter_categories"
+        const val DEAD_UPDATES_FILTER_CATEGORY_SET_PREFIX = "updates_filter_manga_categories_"
+        const val DEAD_UPDATES_FILTER_NOVEL_CATEGORY_SET_PREFIX = "updates_filter_novel_categories_"
+
+        /** The download queue's retired content-type filter, which the queue order replaced; skipped on restore. */
+        const val DEAD_DOWNLOAD_CONTENT_TYPE_KEY = "download_content_type"
+
+        /** Upstream's retired extension NSFW switch, which the allowed content warnings replaced. */
+        const val DEAD_SHOW_NSFW_SOURCE_KEY = "show_nsfw_source"
+    }
+}
+
+/**
+ * Carries the retired NSFW switch into the allowed content warnings: off leaves only safe extensions,
+ * on allows every warning again. Shared by the upgrade migration and the backup restorer, which lands
+ * an old backup's key over whatever the device had set, so both states have to write.
+ */
+fun SourcePreferences.carryShowNsfwSource(show: Boolean) {
+    if (show) enabledContentWarnings.delete() else enabledContentWarnings.set(setOf(ContentWarning.SAFE))
 }

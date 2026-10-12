@@ -103,23 +103,6 @@ data class ReadChapterDto(
 )
 
 @Serializable
-data class CoverListDto(
-    val data: List<CoverDto>,
-)
-
-@Serializable
-data class CoverDto(
-    val id: String,
-    val attributes: CoverAttributesDto,
-    val relationships: List<RelationshipDto>,
-)
-
-@Serializable
-data class CoverAttributesDto(
-    val fileName: String,
-)
-
-@Serializable
 data class AggregateDto(
     val result: String,
     val volumes: Map<String, AggregateVolume>,

@@ -28,6 +28,8 @@ class Hikka(id: Long) : BaseTracker(id, "Hikka"), DeletableTracker {
         private val SCORE_LIST = IntRange(0, 10)
             .map(Int::toString)
             .toImmutableList()
+
+        // RK: SEARCH_ID_PREFIX moved into BaseTracker's trackerSearchId, which manga and novel search share
     }
 
     private val json: Json by injectLazy()
@@ -119,13 +121,26 @@ class Hikka(id: Long) : BaseTracker(id, "Hikka"), DeletableTracker {
         }
     }
 
-    override suspend fun search(query: String): List<TrackSearch> = api.searchManga(query)
+    override suspend fun search(query: String): List<TrackSearch> {
+        // RK: the id: parse is BaseTracker's trackerSearchId, shared with searchNovel
+        query.trackerSearchId { it }?.let { slug ->
+            return api.getMangaDetails(slug)?.let { listOf(it) } ?: emptyList()
+        }
 
-    // RK --> novel-aware search (Active #8): searches Hikka's separate /novel content tree; the bind,
+        return api.searchManga(query)
+    }
+
+    // RK --> novel-aware search: searches Hikka's separate /novel content tree; the bind,
     // update and read paths follow the /novel content type carried by each result's tracking URL.
     override val supportsNovels = true
 
-    override suspend fun searchNovel(query: String): List<TrackSearch> = api.searchNovel(query)
+    override suspend fun searchNovel(query: String): List<TrackSearch> {
+        query.trackerSearchId { it }?.let { slug ->
+            return api.getNovelDetails(slug)?.let { listOf(it) } ?: emptyList()
+        }
+
+        return api.searchNovel(query)
+    }
     // RK <--
 
     override suspend fun refresh(track: Track): Track {
@@ -149,6 +164,11 @@ class Hikka(id: Long) : BaseTracker(id, "Hikka"), DeletableTracker {
         return api.getMangaMetadata(track)
     }
     // RK <--
+
+    override suspend fun updateUserConfig() {
+        val currentUser = api.getCurrentUser()
+        saveDisplayUsername(currentUser.username)
+    }
 
     override suspend fun login(username: String, password: String) = login(password)
 

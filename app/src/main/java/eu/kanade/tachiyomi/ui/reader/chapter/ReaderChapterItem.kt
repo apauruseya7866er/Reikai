@@ -1,18 +1,13 @@
 package eu.kanade.tachiyomi.ui.reader.chapter
 
 import tachiyomi.domain.chapter.model.Chapter
-import tachiyomi.domain.manga.model.Manga
-import java.time.format.DateTimeFormatter
 
 /**
- * Reikai (R-feature): a chapter row shown in the in-reader chapter list dialog. Ported from Komikku.
+ * Reikai: a chapter row shown in the in-reader chapter list dialog. Ported from Komikku.
  */
 data class ReaderChapterItem(
     val chapter: Chapter,
-    val manga: Manga,
-    val isCurrent: Boolean,
-    val dateFormat: DateTimeFormatter,
-    // RK: the chapter's source name for a merged group (null when not merged), shown as the row's
+    // The chapter's source name for a merged group (null when not merged), shown as the row's
     // subtitle so a unified list makes clear which source each chapter comes from.
     val sourceName: String? = null,
 )

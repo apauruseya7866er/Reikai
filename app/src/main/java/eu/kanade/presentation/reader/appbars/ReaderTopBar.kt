@@ -1,13 +1,13 @@
 package eu.kanade.presentation.reader.appbars
 
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Bookmark
-import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
+import mihon.icons.materialsymbols.MaterialSymbols
+import mihon.icons.materialsymbols.rounded.Bookmark
+import mihon.icons.materialsymbols.roundedfilled.Bookmark
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 
@@ -21,6 +21,10 @@ fun ReaderTopBar(
     onOpenInWebView: (() -> Unit)?,
     onOpenInBrowser: (() -> Unit)?,
     onShare: (() -> Unit)?,
+    // RK -->
+    onEditBottomButtons: () -> Unit,
+    onReloadChapter: (fromSource: Boolean) -> Unit,
+    // RK <--
     modifier: Modifier = Modifier,
 ) {
     AppBar(
@@ -42,9 +46,9 @@ fun ReaderTopBar(
                                 },
                             ),
                             icon = if (bookmarked) {
-                                Icons.Outlined.Bookmark
+                                MaterialSymbols.RoundedFilled.Bookmark
                             } else {
-                                Icons.Outlined.BookmarkBorder
+                                MaterialSymbols.Rounded.Bookmark
                             },
                             onClick = onToggleBookmarked,
                         ),
@@ -73,6 +77,26 @@ fun ReaderTopBar(
                             ),
                         )
                     }
+                    // RK -->
+                    add(
+                        AppBar.OverflowAction(
+                            title = stringResource(MR.strings.action_reload_chapter),
+                            onClick = { onReloadChapter(false) },
+                        ),
+                    )
+                    add(
+                        AppBar.OverflowAction(
+                            title = stringResource(MR.strings.action_reload_chapter_from_source),
+                            onClick = { onReloadChapter(true) },
+                        ),
+                    )
+                    add(
+                        AppBar.OverflowAction(
+                            title = stringResource(MR.strings.action_edit_bottom_buttons),
+                            onClick = onEditBottomButtons,
+                        ),
+                    )
+                    // RK <--
                 },
             )
         },

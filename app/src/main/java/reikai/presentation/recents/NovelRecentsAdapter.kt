@@ -1,0 +1,407 @@
+package reikai.presentation.recents
+
+import android.content.Context
+import android.content.Intent
+import cafe.adriel.voyager.core.screen.Screen
+import dev.zacsweers.metro.Assisted
+import dev.zacsweers.metro.AssistedFactory
+import dev.zacsweers.metro.AssistedInject
+import eu.kanade.tachiyomi.ui.reader.ReaderActivity
+import eu.kanade.tachiyomi.util.system.workManager
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
+import reikai.data.novel.update.NovelUpdateWorker
+import reikai.domain.category.RecentsSurface
+import reikai.domain.category.recentsCategoryFilterFlow
+import reikai.domain.entry.EntryId
+import reikai.domain.entry.withCustomInfo
+import reikai.domain.library.ContentType
+import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.domain.merge.ChapterCopyRow
+import reikai.domain.merge.MergeGroupRepository
+import reikai.domain.merge.MergedChapterUnitRepository
+import reikai.domain.novel.NovelMergeManager
+import reikai.domain.novel.NovelPreferences
+import reikai.domain.novel.NovelRepository
+import reikai.domain.novel.interactor.GetCustomNovelInfo
+import reikai.domain.novel.interactor.GetNextNovelChapter
+import reikai.domain.novel.model.CustomNovelInfo
+import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelChapter
+import reikai.domain.novel.model.NovelCover
+import reikai.domain.novel.model.NovelHistoryWithRelations
+import reikai.domain.novel.ownersOf
+import reikai.domain.reader.ChapterProgress
+import reikai.domain.recents.RecentlyAddedNovel
+import reikai.domain.recents.RecentlyAddedRepository
+import reikai.domain.recents.RecentsUnreadRepository
+import reikai.domain.source.ReikaiSourcePreferences
+import reikai.domain.source.isInstalled
+import reikai.novel.download.NovelDownloadCache
+import reikai.novel.download.NovelDownloadManager
+import reikai.novel.download.toDownloadState
+import reikai.novel.source.NovelSourceManager
+import reikai.presentation.browse.AddDecision
+import reikai.presentation.browse.AddFavoriteResult
+import reikai.presentation.browse.components.toDuplicateCard
+import reikai.presentation.browse.decideAdd
+import reikai.presentation.history.NovelHistoryViewModel
+import reikai.presentation.novel.browse.NovelLibraryAdder
+import reikai.presentation.novel.details.NovelScreen
+import reikai.presentation.updates.NovelUpdatesItem
+import reikai.presentation.updates.NovelUpdatesViewModel
+import kotlin.time.Instant
+
+/**
+ * The novel twin of [MangaRecentsAdapter], pinned by RecentsMappingTest and RecentsTargetRowTest, over
+ * Reikai's two novel models. Like the manga pair, both stay live behind this adapter as the feeds.
+ */
+@AssistedInject
+class NovelRecentsAdapter(
+    // Assisted: the models belong to the surface that is composing, so only the call site has them.
+    @Assisted private val updatesModel: NovelUpdatesViewModel?,
+    @Assisted private val historyModel: NovelHistoryViewModel?,
+    @Assisted private val surface: RecentsSurface,
+    private val sourcePreferences: ReikaiSourcePreferences,
+    private val recentlyAdded: RecentlyAddedRepository,
+    private val getCustomNovelInfo: GetCustomNovelInfo,
+    private val recentsUnread: RecentsUnreadRepository,
+    private val getNextNovelChapter: GetNextNovelChapter,
+    private val novelPreferences: NovelPreferences,
+    private val novelRepository: NovelRepository,
+    private val reikaiLibraryPreferences: ReikaiLibraryPreferences,
+    private val mergeManager: NovelMergeManager,
+    private val mergeGroups: MergeGroupRepository,
+    private val mergedChapterUnits: MergedChapterUnitRepository,
+    private val novelLibraryAdder: NovelLibraryAdder,
+    // Providers, so building the adapter still does not build the download manager: constructing it
+    // restores the persisted queue and can start the download worker. Both are only read when a row
+    // renders its download badge, which is where the previous lazy delegates built them too.
+    private val novelDownloadManagerProvider: () -> NovelDownloadManager,
+    private val novelDownloadCacheProvider: () -> NovelDownloadCache,
+    private val sourceManager: NovelSourceManager,
+    private val application: Context,
+    override val chapterActions: NovelRecentsChapterActions,
+) : RecentsProvider {
+
+    /** One entry point per surface, twin of [MangaRecentsAdapter]'s, type only. */
+    @AssistedFactory
+    interface Factory {
+        fun create(
+            updatesModel: NovelUpdatesViewModel?,
+            historyModel: NovelHistoryViewModel?,
+            surface: RecentsSurface,
+        ): NovelRecentsAdapter
+
+        fun forUpdates(updatesModel: NovelUpdatesViewModel) =
+            create(updatesModel, historyModel = null, surface = RecentsSurface.UPDATES)
+
+        fun forHistory(historyModel: NovelHistoryViewModel) =
+            create(updatesModel = null, historyModel = historyModel, surface = RecentsSurface.HISTORY)
+
+        fun forRecents(updatesModel: NovelUpdatesViewModel, historyModel: NovelHistoryViewModel) =
+            create(updatesModel, historyModel, surface = RecentsSurface.RECENTS)
+    }
+
+    override val contentType = ContentType.NOVELS
+
+    override val typeCapabilities = emptySet<RecentsTypeCapability>()
+
+    // Lazy so a surface that renders neither lane never touches the model it was not given.
+    override val readLane: Flow<RecentsLaneRows> by lazy {
+        val rows = historyRows().state.map { state ->
+            RecentsLaneRows(
+                items = state.list.orEmpty().map { it.toRecentsItem() },
+                loaded = state.list != null,
+            )
+        }
+        val ownSource = { item: RecentsItem -> (item.payload as? NovelHistoryWithRelations)?.source }
+        readCopies.lane(rows, membership, ownSource, ::missingSourcesAmong) { ids ->
+            mergedChapterUnits.getCopiesAsFlow(ContentType.NOVELS, ids)
+        }
+    }
+
+    /** The read lane's grouped rows' copies, which their download state is drawn over. */
+    private val readCopies = RecentsRowCopiesIndex()
+
+    override val updatedLane: Flow<RecentsLaneRows> by lazy {
+        updatesRows().state.map { state ->
+            RecentsLaneRows(items = state.items.map { it.toRecentsItem() }, loaded = !state.isLoading)
+        }
+    }
+
+    private fun historyRows() = requireNotNull(historyModel) { "$surface renders no read lane" }
+
+    private fun updatesRows() = requireNotNull(updatesModel) { "$surface renders no updated lane" }
+
+    override val addedLane: Flow<RecentsLaneRows> = recentsAddedLane(
+        sourcePreferences.recentsCategoryFilterFlow(surface),
+        recentlyAdded::subscribeNovels,
+        getCustomNovelInfo.subscribeAll(),
+        CustomNovelInfo::novelId,
+        RecentlyAddedNovel::novelId,
+        RecentlyAddedNovel::withCustomInfo,
+        RecentlyAddedNovel::toRecentsItem,
+    )
+
+    override val unreadEntries: Flow<Set<EntryId>> =
+        reikaiLibraryPreferences.seriesMergingEnabled.changes()
+            .flatMapLatest { recentsUnread.subscribeNovelIdsWithUnread(mergingEnabled = it) }
+            .map { ids -> ids.mapTo(HashSet(), EntryId::Novel) }
+
+    // The global sort is what a novel without its own sort orders its chapters by (readingOrderComparator).
+    override val targetInputs: Flow<Unit> = recentsTargetInputs(
+        recentsUnread.novelTargetWrites(),
+        novelPreferences.hiddenChapters(),
+        novelPreferences.defaultChapterSortOrder(),
+        reikaiLibraryPreferences.seriesMergingEnabled,
+    )
+
+    override val lastUpdated: Flow<Long> = novelPreferences.novelLibraryUpdateLastTimestamp().changes()
+
+    override val updating: Flow<Boolean> = NovelUpdateWorker.isRunningFlow(application)
+
+    override val membership: Flow<Map<EntryId, Long>> =
+        mergeManager.membershipFlow(reikaiLibraryPreferences.seriesMergingEnabled, EntryId::Novel)
+
+    override val memberCovers: Flow<List<RecentsMemberCover>> = mergeGroups.getNovelMemberCoversAsFlow().map { rows ->
+        rows.map {
+            val cover = NovelCover(it.url, it.sourceId, isNovelFavorite = true, it.lastModified, novelId = it.memberId)
+            RecentsMemberCover(EntryId.Novel(it.memberId), it.groupId, cover)
+        }
+    }
+
+    // Built on collection, which the engine does only while its chip shows novels, so a surface drawing
+    // no novel row never builds the download manager. The queue carries each download's state.
+    override val downloadChanges: Flow<Unit> = flow {
+        emitAll(
+            merge(
+                novelDownloadCacheProvider().changes,
+                novelDownloadManagerProvider().queueState.map { },
+                readCopies.changes,
+            ),
+        )
+    }
+
+    // The novel engine reports no byte progress, matching the `Unsupported` its download states declare.
+    override val progressChanges: Flow<Unit> = emptyFlow()
+
+    override suspend fun targetChapter(item: RecentsItem): ChapterRef? =
+        resolveTarget(item)?.let { ChapterRef(item.entryId, it.chapterId) }
+
+    override suspend fun targetRow(item: RecentsItem): RecentsTargetRow? {
+        val resolved = resolveTarget(item) ?: return null
+        val missing =
+            missingSourcesAmong(novelRepository.ownersOf(resolved.pooled).values.mapTo(HashSet()) { it.source })
+        return resolved.toTargetRow(id = { it.id }, project = { copies ->
+            val ownerOf = novelRepository.ownersOf(copies)
+            copies.mapNotNull { copy ->
+                val owner = ownerOf[copy.novelId] ?: return@mapNotNull null
+                copy.id to RecentsTargetCopy(
+                    owner = EntryId.Novel(owner.id),
+                    ownerTitle = owner.title,
+                    ownerSource = owner.source,
+                    name = copy.name,
+                    number = copy.chapterNumber,
+                    scanlator = null,
+                    url = copy.url,
+                    read = copy.read,
+                    bookmark = copy.bookmark,
+                    progress = ChapterProgress.Percent(copy.lastTextProgress),
+                )
+            }.toMap()
+        }) { chapterId, copies -> copiesDownloadUi(chapterId, copies) { it.ownerSource !in missing } }
+    }
+
+    /** Which of [sources] are not installed, which a lookup answers after the first plugin load. */
+    private suspend fun missingSourcesAmong(sources: Set<String>): Set<String> =
+        sources.filterNotTo(HashSet()) { sourceManager.isInstalled(it) }
+
+    /** Only the chapter reads are this type's; the lane rules are [resolveRecentsTarget]'s. */
+    private suspend fun resolveTarget(item: RecentsItem): RecentsTarget<NovelChapter>? {
+        val novelId = item.entryId.rawId
+        // Both lists come in the novel's own ascending reading order, which the rules read under; the
+        // stored rows arrive in whatever order the table hands them over.
+        val group = getNextNovelChapter.groupChapters(novelId)
+        return resolveRecentsTarget(
+            lane = item.lane,
+            group = group.chapters,
+            pooled = group.pooledChapters,
+            stitch = group.stitch,
+            ownSource = { getNextNovelChapter.ownSourceChapters(novelId) },
+            id = { it.id },
+            read = { it.read },
+            bookmark = { it.bookmark },
+            isHidden = getNextNovelChapter.hiddenAmong(group.pooledChapters),
+        )
+    }
+
+    override suspend fun latestRead(): RecentsItem? = historyModel?.getLast()?.toRecentsItem()
+
+    override fun removeFromHistory(entries: Set<EntryId>) {
+        entries.filterIsInstance<EntryId.Novel>().forEach { historyModel?.removeAllFromHistory(it.rawId) }
+    }
+
+    override fun removeHistoryRecord(item: RecentsItem) {
+        val record = item.payload as? NovelHistoryWithRelations ?: return
+        historyModel?.removeFromHistory(record)
+    }
+
+    private suspend fun novelOf(entry: EntryId): Novel? =
+        (entry as? EntryId.Novel)?.let { novelRepository.getById(it.rawId) }
+
+    override suspend fun addDecision(entry: EntryId): AddDecision<RecentsDuplicates>? {
+        val novel = novelOf(entry) ?: return null
+        return decideAdd(inLibrary = novel.favorite) {
+            novelLibraryAdder.findDuplicates(novel.id, novel.title)?.let { prompt ->
+                prompt.toRecentsDuplicates {
+                    RecentsDuplicate(EntryId.Novel(it.novel.id), it.toDuplicateCard(prompt.sourceLabels))
+                }
+            }
+        }
+    }
+
+    override suspend fun addToLibrary(entry: EntryId): AddFavoriteResult {
+        val novel = novelOf(entry) ?: return AddFavoriteResult.Failed
+        return novelLibraryAdder.addStoredToLibrary(novel.id)
+    }
+
+    override suspend fun applyAddCategories(entry: EntryId, categoryIds: List<Long>) {
+        val novel = novelOf(entry) ?: return
+        novelLibraryAdder.confirmAddCategories(novel.id, categoryIds)
+    }
+
+    override suspend fun addToGroup(entry: EntryId, duplicates: List<EntryId>): AddFavoriteResult {
+        val novel = novelOf(entry) ?: return AddFavoriteResult.Failed
+        return novelLibraryAdder.addToExistingGroup(novel.id, duplicates.map { it.rawId })
+    }
+
+    override suspend fun clearHistory(): Boolean = historyModel?.removeAllHistory() == true
+
+    // Straight to the job, as the manga adapter goes and for the same two reasons.
+    override suspend fun refresh(): Boolean = NovelUpdateWorker.startNow(application.workManager)
+
+    override suspend fun detailsScreen(entry: EntryId): Screen? {
+        val novelId = (entry as? EntryId.Novel)?.rawId ?: return null
+        return NovelScreen.forStored(novelId, novelRepository)
+    }
+
+    // No lookup, unlike detailsScreen: the novel reader is keyed by id, not by source and url.
+    override fun open(item: RecentsItem, chapter: ChapterRef): Intent = ReaderActivity.newNovelIntent(
+        application,
+        item.entryId.rawId,
+        chapter.chapterId,
+        sourceScoped = item.lane.sourceScoped,
+    )
+
+    override fun rowUi(item: RecentsItem): RecentsRowUi = novelRowUi(item)
+
+    override fun downloadUi(item: RecentsItem): RecentsDownloadUi? = when (val payload = item.payload) {
+        is NovelHistoryWithRelations -> historyDownloadUi(payload)
+        else -> novelDownloadUi(item)
+    }
+
+    /** Over the row's copies loaded with the lane ([readCopies]); the Downloaded filter asks this too. */
+    private fun historyDownloadUi(payload: NovelHistoryWithRelations) =
+        copiesDownloadUi(payload.chapterId, copies = {
+            with(payload) { readCopies.copiesOf(chapterId, storedTitle, source, chapterName, null, chapterUrl) }
+        }, isInstalled = readCopies::isInstalled)
+
+    private fun copiesDownloadUi(
+        chapterId: Long,
+        copies: () -> List<ChapterCopyRow>,
+        isInstalled: (ChapterCopyRow) -> Boolean,
+    ) = recentsCopiesDownloadUi(
+        chapterId,
+        copies,
+        queued = { id ->
+            novelDownloadManagerProvider().queueState.value.find { it.chapterId == id }?.state?.toDownloadState()
+        },
+        // Same declaration the updated lane makes: the novel downloader tracks no per-chapter
+        // progress, and a zero would read as a download that has genuinely stalled.
+        progress = null,
+        isInstalled = isInstalled,
+    ) { copy ->
+        novelDownloadCacheProvider().isChapterDownloaded(
+            copy.ownerSource,
+            copy.ownerTitle,
+            copy.chapterName,
+            copy.chapterUrl,
+        )
+    }
+}
+
+/**
+ * The novel row stores a state rather than a provider, and cannot answer byte progress at all, since
+ * the novel downloader tracks none per chapter. It declares that rather than reporting a zero the
+ * renderer could not tell from a download that has genuinely started.
+ */
+internal fun novelDownloadUi(item: RecentsItem): RecentsDownloadUi? = when (val payload = item.payload) {
+    is NovelUpdatesItem -> RecentsDownloadUi(
+        state = { payload.downloadState },
+        progress = RecentsDownloadProgress.Unsupported,
+    )
+    else -> null
+}
+
+/** Free for the same reason as its manga twin: an adapter cannot be built in a unit test. */
+internal fun novelRowUi(item: RecentsItem): RecentsRowUi = when (val payload = item.payload) {
+    is NovelUpdatesItem -> RecentsRowUi(
+        cover = payload.update.coverData,
+        title = payload.update.novelTitle,
+        // novelUpdatesView is favorite-gated, so a row on this lane is always in the library.
+        isFavorite = true,
+        chapter = RecentsChapterUi.Named(payload.update.chapterName),
+        state = chapterState(
+            read = payload.update.read,
+            bookmark = payload.update.bookmark,
+            progress = ChapterProgress.Percent(payload.update.lastTextProgress),
+        ),
+    )
+    is NovelHistoryWithRelations -> RecentsRowUi(
+        cover = payload.coverData,
+        title = payload.title,
+        // novelHistoryView is not favorite-gated: a read entry may never have been added.
+        isFavorite = payload.coverData.isNovelFavorite,
+        chapter = RecentsChapterUi.Number(payload.chapterNumber),
+        state = chapterState(
+            read = payload.read,
+            bookmark = payload.bookmark,
+            progress = ChapterProgress.Percent(payload.lastTextProgress),
+        ),
+    )
+    is RecentlyAddedNovel -> RecentsRowUi(
+        cover = payload.coverData,
+        title = payload.title,
+        isFavorite = true,
+        chapter = null,
+        state = null,
+    )
+    else -> EMPTY_RECENTS_ROW
+}
+
+internal fun NovelUpdatesItem.toRecentsItem(): RecentsItem = RecentsItem(
+    entryId = EntryId.Novel(update.novelId),
+    timestamp = update.dateFetch,
+    lane = RecentsLane.Updated(ChapterRef(EntryId.Novel(update.novelId), update.chapterId)),
+    payload = this,
+)
+
+internal fun NovelHistoryWithRelations.toRecentsItem(): RecentsItem = RecentsItem(
+    entryId = EntryId.Novel(novelId),
+    timestamp = readAt ?: Instant.fromEpochMilliseconds(0),
+    lane = RecentsLane.Read(ChapterRef(EntryId.Novel(novelId), chapterId)),
+    payload = this,
+)
+
+internal fun RecentlyAddedNovel.toRecentsItem(): RecentsItem = RecentsItem(
+    entryId = EntryId.Novel(novelId),
+    timestamp = dateAdded,
+    lane = RecentsLane.Added,
+    payload = this,
+)

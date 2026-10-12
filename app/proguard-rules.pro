@@ -1,23 +1,18 @@
 -dontobfuscate
 
--keep,allowoptimization class eu.kanade.**
--keep,allowoptimization class tachiyomi.**
--keep,allowoptimization class mihon.**
-# RK: net-new light-novel package. Without this, R8 strips the generic signatures Injekt's
-# FullTypeReference needs, so any Injekt.get<reikai.*>() crashes in minified builds (preview/release)
-# with "TypeReference constructed without actual type information" (hit on startup by the novel-update
-# migration: SetupNovelUpdateMigration -> NovelUpdateJob.setupTask -> Injekt.get<NovelPreferences>()).
--keep,allowoptimization class reikai.**
-# RK: ported adult/EXH subsystem (Komikku lineage). Same FullTypeReference issue as reikai.** above:
-# without this, toggling the E-Hentai gallery update checker (SettingsEhScreen -> EHentaiUpdateWorker
-# .setupTask -> Injekt.get<ExhPreferences>()) crashes minified builds with "TypeReference constructed
-# without actual type information". Debug builds aren't minified, so it is invisible there.
--keep,allowoptimization class exh.**
+# Injekt reads the injected type from the generic superclass of its type tokens
+-keepattributes Signature
+-keep,allowshrinking class * extends uy.kohesive.injekt.api.FullTypeReference
 
-# RK: keep @JavascriptInterface bridge methods. They are invoked only from JS (the novel reader's
-# core.js -> window.NativeReader), so R8's shrinker sees them as unreachable and strips them in minified
-# builds (preview/release), silently killing the whole bridge: tap-to-toggle-chrome, scroll-save, live
-# progress, and TTS all stop working. Debug builds aren't minified, so it is invisible in the dev loop.
+# RK: no app package is kept whole, so code only reflection, JS or another class loader reaches needs
+# a targeted keep like the ones below. See .claude/rules/architecture.md, Minification.
+# RK: the debug menu lists and calls these by reflection, so nothing else reaches them (as Komikku keeps them).
+-keep,allowoptimization class exh.debug.DebugFunctions { public *; }
+
+# RK: keep @JavascriptInterface bridge methods. They are invoked only from JS (the WebView novel
+# renderer's reader.js -> window.ReikaiWeb), so R8's shrinker sees them as unreachable and strips them in
+# minified builds (nightly/release), silently killing the whole bridge: taps, position, progress and
+# read-aloud all stop working. Debug builds aren't minified, so it is invisible in the dev loop.
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
@@ -36,18 +31,14 @@
 -keep,allowoptimization class uy.kohesive.injekt.** { public protected *; }
 -keep,allowoptimization class com.squareup.zstd.** { public protected *; }
 
-# From extensions-lib
--keep,allowoptimization class eu.kanade.tachiyomi.network.interceptor.RateLimitInterceptorKt { public protected *; }
--keep,allowoptimization class eu.kanade.tachiyomi.network.interceptor.SpecificHostRateLimitInterceptorKt { public protected *; }
--keep,allowoptimization class eu.kanade.tachiyomi.network.NetworkHelper { public protected *; }
--keep,allowoptimization class eu.kanade.tachiyomi.network.OkHttpExtensionsKt { public protected *; }
--keep,allowoptimization class eu.kanade.tachiyomi.network.RequestsKt { public protected *; }
--keep,allowoptimization class eu.kanade.tachiyomi.AppInfo { public protected *; }
-
 -keepclassmembers class * implements java.io.Serializable {
     java.lang.Object writeReplace();
     java.lang.Object readResolve();
 }
+
+# Provided by the OEM at runtime when supported
+-dontwarn androidx.window.extensions.**
+-dontwarn androidx.window.sidecar.**
 
 ##---------------Begin: proguard configuration for RxJava 1.x  ----------
 -dontwarn sun.misc.**
@@ -104,3 +95,25 @@
 # Firebase
 -keep class com.google.firebase.installations.** { *; }
 -keep interface com.google.firebase.installations.** { *; }
+
+# KotlinX Datetime
+-keep,allowoptimization class kotlinx.datetime.** { public protected *; }
+
+# RK: IReader novel extensions are compiled against IReader's API and the libraries it exposes, and
+#     call them by name from another class loader, so R8 must not rename or drop them. Koin is left
+#     out of the build, and only IReader's unused bypass module refers to it. The API itself is kept
+#     without allowoptimization, like source-api's extended types: extensions subclass HttpSource and
+#     ParsedHttpSource, and an optimized build makes methods nothing in the app overrides final, so
+#     every extension failed to load with a LinkageError.
+-keep class ireader.** { public protected *; }
+-keep,allowoptimization class io.ktor.** { public protected *; }
+-keep,allowoptimization class kotlinx.io.** { public protected *; }
+-keep,allowoptimization class com.fleeksoft.ksoup.** { public protected *; }
+-keep,allowoptimization class co.touchlab.kermit.** { public protected *; }
+-dontwarn org.koin.**
+
+# Methods called by Shizuku only
+-keepclassmembers class mihon.app.shizuku.ShellInterface {
+    public <init>();
+    public void destroy();
+}

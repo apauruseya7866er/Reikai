@@ -1,20 +1,25 @@
+import com.android.build.api.variant.ApplicationVariant
+import com.android.build.api.variant.BuildConfigField
+import com.google.firebase.crashlytics.buildtools.gradle.CrashlyticsExtension
 import mihon.gradle.Config
-import mihon.gradle.getBuildTime
+import mihon.gradle.getCurrentTime
 import mihon.gradle.getLatestCommitCount
 import mihon.gradle.getLatestCommitSha
+import mihon.gradle.getLatestCommitTime
 import mihon.gradle.tasks.ReplaceShortcutsPlaceholderTask
 import java.io.FileInputStream
 import java.util.Properties
-import kotlin.io.encoding.Base64
 
 plugins {
     alias(mihonx.plugins.android.application)
     alias(mihonx.plugins.compose)
     alias(mihonx.plugins.spotless)
 
+    alias(libs.plugins.metro)
     alias(libs.plugins.aboutLibraries)
     alias(libs.plugins.androidx.baselineProfile)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.apollo)
 }
 
 if (Config.includeTelemetry) {
@@ -27,7 +32,7 @@ if (Config.includeTelemetry) {
 // RK --> AGP-native release signing (adapted from Mihon "Sign APK with AGP", upstream 6552ffe31).
 // The release build is signed with the real key when it's available (CI secrets under unseensnick/*,
 // or a local keystore.properties); see the signingConfigs block in android {}.
-val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystorePropertiesFile = layout.settingsDirectory.file("keystore.properties").asFile
 // RK <--
 
 android {
@@ -42,13 +47,26 @@ android {
         // so later releases upgrade this one in place.
         applicationId = "app.reikai"
 
-        versionCode = 185
-        versionName = "0.3.2"
+        // versionCode climbs mid-cycle whenever a migration needs it, because a version-gated
+        // migration is a no-op until the shipped versionCode reaches its gate and cannot be exercised
+        // in dev builds otherwise. A deliberate exception to the bump-at-release-cut rule; see
+        // CLAUDE.md. 186 gates the novel custom-cover re-key; 187 the category schema unification's
+        // novel-category fold-in; 188 the category-preference content-type cleanup; 189 the
+        // merge-prefs-to-groups migration; 190 gated the chapter-match-key backfill, since deleted,
+        // and stays retired; 191 splits the novel reader's single padding into its four margins;
+        // 192 adds the read-aloud button to a
+        // customised novel reader bar; 193 deletes the keys only the retired novel reader wrote; 194 carries
+        // the novel tap-to-scroll switch into a tap layout; 195 carries the extension NSFW switch into the
+        // allowed content warnings; 196 moves bypass-server credentials out of the stored address; 197
+        // carries the novel auto-scroll switch into start-on-open; 198 carries the custom covers and
+        // downloads of duplicates the upgrade merged away; 199 keeps the hash suffix in chapter file names for
+        // upgraders; 200 files each merged series' sources in one set of categories. All sit above 0.3.2's
+        // 185, so a 0.3.2 install still runs them. 0.4.0 ships as 201, so further migrations take 202+.
+        // versionName tracks the last shipped release until the next cycle is cut.
+        versionCode = 201
+        versionName = "0.4.0"
         // RK <--
 
-        buildConfigField("String", "COMMIT_COUNT", "\"${getLatestCommitCount()}\"")
-        buildConfigField("String", "COMMIT_SHA", "\"${getLatestCommitSha()}\"")
-        buildConfigField("String", "BUILD_TIME", "\"${getBuildTime(useLatestCommitTime = false)}\"")
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
 
@@ -57,16 +75,13 @@ android {
 
     // RK --> sign release with the real key when available, reconfiguring the "debug" signing config
     // that the release buildType references. Gated on REIKAI_GITHUB_RELEASE (set only by release.yml /
-    // preview.yml, which also pass the keystore secrets), so the unsigned PR build (build_check.yml)
+    // nightly.yml, which also pass the keystore secrets), so the unsigned PR build (build_check.yml)
     // never reads a keystore that isn't there. Adapted from Mihon's MIHON_GITHUB_RELEASE gate (upstream
     // 50d0e8ae0). Locally a keystore.properties signs; with neither, "debug" stays the default debug key.
     if (System.getenv("REIKAI_GITHUB_RELEASE").toBoolean()) {
-        val tempStoreFile = file(System.getenv("RUNNER_TEMP")).resolve("reikai.keystore")
-        val storeFileBytes = System.getenv("storeFileBase64").let(Base64::decode)
-        tempStoreFile.outputStream().use { it.write(storeFileBytes) }
         signingConfigs {
             named("debug") {
-                storeFile = tempStoreFile
+                storeFile = file(System.getenv("storeFile"))
                 storePassword = System.getenv("storePassword")
                 keyAlias = System.getenv("keyAlias")
                 keyPassword = System.getenv("keyPassword")
@@ -88,7 +103,6 @@ android {
     buildTypes {
         val debug = getByName("debug") {
             applicationIdSuffix = ".dev" // RK: matches upstream, so this block stays diffable
-            versionNameSuffix = "-${getLatestCommitCount()}"
             isPseudoLocalesEnabled = true
         }
         val release = getByName("release") {
@@ -98,14 +112,12 @@ android {
             // RK --> signed with the real key when CI secrets or a local keystore.properties are
             // present (see the signingConfigs block above), else debug-signed. The release variant
             // carries no applicationIdSuffix, so it ships as plain app.reikai, matching upstream.
-            signingConfig = signingConfigs.getByName("debug")
             // RK <--
+            signingConfig = debug.signingConfig
 
             isProfileable = true
 
             proguardFiles("proguard-android-optimize.txt", "proguard-rules.pro")
-
-            buildConfigField("String", "BUILD_TIME", "\"${getBuildTime(useLatestCommitTime = true)}\"")
         }
 
         val commonMatchingFallbacks = listOf(release.name)
@@ -117,17 +129,12 @@ android {
 
             matchingFallbacks.addAll(commonMatchingFallbacks)
         }
-        create("preview") {
+        create("nightly") {
             initWith(release)
 
             applicationIdSuffix = ".debug"
 
-            versionNameSuffix = debug.versionNameSuffix
-            signingConfig = debug.signingConfig
-
             matchingFallbacks.addAll(commonMatchingFallbacks)
-
-            buildConfigField("String", "BUILD_TIME", "\"${getBuildTime(useLatestCommitTime = false)}\"")
         }
         create("benchmark") {
             initWith(release)
@@ -135,16 +142,22 @@ android {
             versionNameSuffix = "-benchmark"
             applicationIdSuffix = ".benchmark"
 
-            signingConfig = debug.signingConfig
-
             matchingFallbacks.addAll(commonMatchingFallbacks)
+        }
+
+        if (Config.includeTelemetry) {
+            configureEach {
+                configure<CrashlyticsExtension> {
+                    mappingFileUploadEnabled = Config.uploadCrashlyticsMapping
+                }
+            }
         }
     }
 
     sourceSets {
-        // RK: preview has its own launcher icon in src/preview/res (the nightly variant); benchmark
-        // (unpublished) still borrows the debug icon. Adding src/debug/res to preview too would
-        // duplicate every ic_launcher* resource and fail mergePreviewResources.
+        // RK: nightly has its own launcher icon in src/nightly/res; benchmark (unpublished) still
+        // borrows the debug icon. Adding src/debug/res to nightly too would duplicate every
+        // ic_launcher* resource and fail mergeNightlyResources.
         getByName("benchmark").res.directories.add("src/debug/res")
     }
 
@@ -159,6 +172,11 @@ android {
 
     packaging {
         jniLibs {
+            // RK --> compress native libraries in the APK. Stored uncompressed they are 35 MB of the
+            // arm64 APK against 14 MB compressed; an APK fetched from GitHub on every update is worth
+            // more small than the few MB Android saves by running them straight from the APK.
+            useLegacyPackaging = true
+            // RK <--
             keepDebugSymbols += listOf(
                 "libandroidx.graphics.path",
                 "libarchive-jni",
@@ -232,6 +250,7 @@ dependencies {
     implementation(projects.i18n)
     implementation(projects.core.archive)
     implementation(projects.core.common)
+    implementation(projects.core.metro)
     implementation(projects.coreMetadata)
     implementation(projects.sourceApi)
     implementation(projects.sourceLocal)
@@ -249,7 +268,11 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.materialIcons)
+    // RK --> icon modules moved from the top of the block into the Compose group
+    implementation(projects.icons.customMaterialSymbols)
+    implementation(projects.icons.materialSymbols)
+    implementation(projects.icons.simpleIcons)
+    // RK <--
     implementation(libs.androidx.compose.animation)
     implementation(libs.androidx.compose.animationGraphics)
     debugImplementation(libs.androidx.compose.uiTooling)
@@ -261,15 +284,26 @@ dependencies {
     implementation(libs.androidx.paging.runtime)
     implementation(libs.androidx.paging.compose)
 
-    implementation(libs.androidx.palette)
-
-    implementation(libs.androidx.sqlite.bundled)
+    implementation(libs.androidx.palette) // RK: cover seed colours for the details and reader theming
 
     implementation(libs.kotlin.reflect)
 
     implementation(libs.bundles.kotlinx.coroutines)
 
-    implementation(libs.sqldelight.async)
+    implementation(libs.kotlinx.datetime)
+
+    // RK --> IReader novel extensions compile against IReader's own API. Pinned: later versions add
+    // copies of eu.kanade.tachiyomi classes that clash with source-api. Koin is excluded, since
+    // Reikai uses Metro and only an unused IReader bypass module needs it.
+    implementation(libs.ireader.sourceApi) {
+        exclude(group = "io.insert-koin")
+    }
+    // The host builds IReader's clients with the Ktor that API was built against, decoding JSON with
+    // Gson as IReader's own client does.
+    implementation(libs.ireader.ktor.okhttp)
+    implementation(libs.ireader.ktor.contentNegotiation)
+    implementation(libs.ireader.ktor.gson)
+    // RK <--
 
     // AndroidX libraries
     implementation(libs.androidx.annotation)
@@ -312,6 +346,9 @@ dependencies {
 
     // Dependency injection
     implementation(libs.injekt)
+    implementation(libs.metro.runtime)
+    implementation(libs.metrox.viewmodel)
+    implementation(libs.metrox.viewmodel.compose)
 
     // RK: headless QuickJS (dokar3) for the LN plugin host (reikai.novel.host)
     implementation(libs.quickjs.kt)
@@ -323,9 +360,10 @@ dependencies {
     }
     implementation(libs.image.decoder)
 
+    implementation(libs.webgpuviewer)
+
     // UI libraries
     implementation(libs.material)
-    implementation(libs.flexibleAdapter)
     implementation(libs.photoView)
     implementation(libs.directionalViewPager) {
         exclude(group = "androidx.viewpager", module = "viewpager")
@@ -350,6 +388,10 @@ dependencies {
     // String similarity
     implementation(libs.stringSimilarity)
 
+    // GraphQL generation
+    implementation(libs.apollo)
+    implementation(libs.apollo.adapters)
+
     // Tests
     testImplementation(libs.bundles.test)
     testRuntimeOnly(libs.junit.platform.launcher)
@@ -364,9 +406,116 @@ dependencies {
     implementation(libs.leakCanary.plumber)
 
     testImplementation(libs.kotlinx.coroutines.test)
+
+    // RK: in-memory SQLite (pure-JVM) for the tests that need a real database and the app's own
+    // classes, such as the backup models. Test-only, never ships; the app reaches the database only
+    // through :data, so the SQLDelight runtime those tests compile against is test-only here too.
+    testImplementation(libs.sqldelight.sqliteDriver)
+    testImplementation(libs.bundles.sqldelight)
+}
+
+apollo {
+    val schemaBasePath = "src/main/graphql/mihon/graphql"
+    // RK: Reikai's own operations (novel variants, Fill from tracker) sit in a second source root so
+    // upstream's .graphql files stay verbatim.
+    val reikaiBasePath = "src/main/graphql/reikai/graphql"
+    service("anilist") {
+        packageName.set("mihon.graphql.anilist")
+        val srcDir = "$schemaBasePath/anilist"
+        srcDir(file(srcDir))
+        srcDir(file("$reikaiBasePath/anilist")) // RK
+
+        introspection {
+            endpointUrl.set("https://graphql.anilist.co")
+            schemaFile.set(file("$srcDir/anilist.graphqls"))
+        }
+
+        // ISO 3166-1 alpha-2 country code
+        mapScalarToKotlinString("CountryCode")
+    }
+
+    service("kitsu") {
+        packageName.set("mihon.graphql.kitsu")
+        val srcDir = "$schemaBasePath/kitsu"
+        srcDir(file(srcDir))
+        srcDir(file("$reikaiBasePath/kitsu")) // RK
+        android.defaultConfig.versionCode
+
+        introspection {
+            // Kitsu doesn't like requests without a UA
+            headers.put(
+                "User-Agent",
+                "Mihon v${android.defaultConfig.versionName} (${android.defaultConfig.applicationId})",
+            )
+            endpointUrl.set("https://kitsu.app/api/graphql")
+            schemaFile.set(file("$srcDir/kitsu.graphqls"))
+        }
+
+        // A date, expressed as an ISO8601 string
+        mapScalarToKotlinString("Date")
+        // An ISO 8601-encoded datetime
+        mapScalar("ISO8601DateTime", "kotlin.time.Instant", "com.apollographql.adapter.core.KotlinInstantAdapter")
+        // A loose key-value map in GraphQL
+        mapScalar(
+            "Map",
+            "kotlin.collections.Map<String, Any?>",
+            "mihon.graphql.kitsu.adapter.KitsuMapAdapter",
+        )
+    }
+
+    service("shikimori") {
+        packageName.set("mihon.graphql.shikimori")
+        val srcDir = "$schemaBasePath/shikimori"
+        srcDir(file(srcDir))
+        srcDir(file("$reikaiBasePath/shikimori")) // RK
+
+        introspection {
+            endpointUrl.set("https://shikimori.io/api/graphql")
+            schemaFile.set(file("$srcDir/shikimori.graphqls"))
+        }
+
+        // An ISO 8601-encoded date
+        mapScalarToKotlinString("ISO8601Date")
+    }
+
+    service("suwayomi") {
+        packageName.set("mihon.graphql.suwayomi")
+        val srcDir = "$schemaBasePath/suwayomi"
+        srcDir(file(srcDir))
+
+        introspection {
+            endpointUrl.set("http://localhost:4567/api/graphql")
+            schemaFile.set(file("$srcDir/suwayomi.graphqls"))
+        }
+    }
+}
+
+val latestCommitCount = getLatestCommitCount()
+val latestCommitSha = getLatestCommitSha()
+val latestCommitTime = getLatestCommitTime()
+val currentTime = getCurrentTime()
+
+fun ApplicationVariant.buildConfigField(type: String, name: String, value: Provider<String>) {
+    buildConfigFields?.put(name, value.map { BuildConfigField(type, it, null) })
 }
 
 androidComponents {
+    onVariants { variant ->
+        val isUnstableBuild = variant.buildType == "debug" || variant.buildType == "nightly"
+        val buildTime = if (isUnstableBuild) currentTime else latestCommitTime
+
+        variant.buildConfigField("String", "COMMIT_COUNT", latestCommitCount.map { "\"$it\"" })
+        variant.buildConfigField("String", "COMMIT_SHA", latestCommitSha.map { "\"$it\"" })
+        variant.buildConfigField("String", "BUILD_TIME", buildTime.map { "\"$it\"" })
+
+        if (isUnstableBuild) {
+            variant.outputs.forEach { output ->
+                val versionName = output.versionName.get()
+                output.versionName.set(latestCommitCount.map { "$versionName-$it" })
+            }
+        }
+    }
+
     onVariants { variant ->
         val resSource = variant.sources.res ?: return@onVariants
 

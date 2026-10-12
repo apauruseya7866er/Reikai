@@ -1,0 +1,580 @@
+package reikai.presentation.reader
+
+import android.content.Context
+import android.os.SystemClock
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewModelScope
+import eu.kanade.domain.base.BasePreferences
+import eu.kanade.domain.source.interactor.GetIncognitoState
+import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.domain.track.service.TrackPreferences
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.job
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestCoroutineScheduler
+import kotlinx.coroutines.withContext
+import mihon.domain.extension.model.ContentWarning
+import reikai.data.chapter.ChapterNumberOverrideRepositoryImpl
+import reikai.data.merge.MergeGroupRepositoryImpl
+import reikai.data.merge.MergedChapterUnitRepositoryImpl
+import reikai.data.novel.NovelChapterRepositoryImpl
+import reikai.data.novel.NovelHistoryRepositoryImpl
+import reikai.data.novel.NovelRepositoryImpl
+import reikai.domain.category.GetNovelCategories
+import reikai.domain.chapter.EditChapterNumber
+import reikai.domain.download.NovelRemovableDownloads
+import reikai.domain.library.ContentType
+import reikai.domain.library.ReikaiLibraryPreferences
+import reikai.domain.merge.ReconcileMergedChapters
+import reikai.domain.novel.NovelChapterRepository
+import reikai.domain.novel.NovelChapterSettings
+import reikai.domain.novel.NovelGroupStitcher
+import reikai.domain.novel.NovelMergeManager
+import reikai.domain.novel.NovelMergedChapterProvider
+import reikai.domain.novel.NovelPreferences
+import reikai.domain.novel.interactor.DeleteNovelChaptersAfterRead
+import reikai.domain.novel.interactor.DeleteNovelChaptersBehindReader
+import reikai.domain.novel.interactor.FilterNovelChaptersForDownload
+import reikai.domain.novel.interactor.GetNextNovelChapter
+import reikai.domain.novel.interactor.RemoveNovelsFromLibrary
+import reikai.domain.novel.interactor.SetNovelChapterFlags
+import reikai.domain.novel.interactor.SetNovelReadStatus
+import reikai.domain.novel.interactor.SetNovelViewerFlags
+import reikai.domain.novel.interactor.UpsertNovelHistory
+import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelChapter
+import reikai.domain.novel.model.NovelUpdate
+import reikai.domain.source.SourceKey
+import reikai.domain.track.ownChapterNumbers
+import reikai.novel.download.NovelDownloadCache
+import reikai.novel.download.NovelDownloadManager
+import reikai.novel.host.NovelItem
+import reikai.novel.host.SourceNovel
+import reikai.novel.install.LnPluginInstaller
+import reikai.novel.source.NovelExtensionFormat
+import reikai.novel.source.NovelFilterState
+import reikai.novel.source.NovelItemsPage
+import reikai.novel.source.NovelListing
+import reikai.novel.source.NovelSource
+import reikai.novel.source.NovelSourceManager
+import reikai.presentation.novel.details.NovelDetailsViewModel
+import reikai.presentation.recents.EmittingPreferenceStore
+import reikai.util.testAppScope
+import tachiyomi.core.common.preference.Preference
+import tachiyomi.data.Database
+import tachiyomi.data.DatabaseBindings
+import tachiyomi.data.category.CategoryRepositoryImpl
+import tachiyomi.domain.library.service.LibraryPreferences
+import java.io.IOException
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.time.Instant
+
+/**
+ * A real [NovelReaderViewModel] over an in-memory database, the real repositories, interactors and
+ * merge machinery, and preferences that emit when written. Faked only where the app leaves the
+ * process: the plugin host ([FakeNovelSource]), the download manager's disk, the tracker network and
+ * the clock. Every launch runs on [dispatcher], so `advanceUntilIdle` settles the whole session.
+ *
+ * [create] it with the test's scheduler and [use] it: seed rows, [open] a model and drive it.
+ */
+class NovelReaderViewModelHarness private constructor(
+    scheduler: TestCoroutineScheduler,
+    private val driver: SerialSqliteDriver,
+) {
+
+    companion object {
+        suspend fun create(scheduler: TestCoroutineScheduler): NovelReaderViewModelHarness {
+            val driver = SerialSqliteDriver()
+            Database.Schema.create(driver).await()
+            return NovelReaderViewModelHarness(scheduler, driver)
+        }
+    }
+
+    val dispatcher = StandardTestDispatcher(scheduler)
+
+    // The models' app scope, on the test's scheduler, so a write that outlives a model lands by advanceUntilIdle
+    private val appScope = CoroutineScope(SupervisorJob() + dispatcher)
+
+    private val store = EmittingPreferenceStore()
+    val novelPreferences = NovelPreferences(store)
+    val libraryPreferences = LibraryPreferences(store)
+    val reikaiLibraryPreferences = ReikaiLibraryPreferences(store)
+
+    private val database = DatabaseBindings.providesDatabase(driver)
+    private val novelRepo = NovelRepositoryImpl(database)
+    private val chapterRepo = NovelChapterRepositoryImpl(database)
+    private val groups = MergeGroupRepositoryImpl(database)
+    private val units = MergedChapterUnitRepositoryImpl(database)
+    val numberOverrides = ChapterNumberOverrideRepositoryImpl(database)
+
+    /** One permit per plugin host load, which a details screen asks for just before it names a group's chips. */
+    val pluginLoads = Semaphore(0)
+
+    /** Completed by a test to let plugin loads finish; already complete unless [holdPluginLoads] replaced it. */
+    @Volatile
+    private var pluginLoadGate = CompletableDeferred(Unit)
+
+    /** Holds every plugin load until the returned gate completes, as a slow plugin host does on a device. */
+    fun holdPluginLoads(): CompletableDeferred<Unit> = CompletableDeferred<Unit>().also { pluginLoadGate = it }
+
+    // Plugins are fetched and evaluated by the installer, which is the network; a registered fake
+    // source stands in for what it would have loaded.
+    private val installer = mockk<LnPluginInstaller>(relaxed = true) {
+        coEvery { ensureLoaded() } coAnswers {
+            pluginLoadGate.await()
+            pluginLoads.release()
+        }
+    }
+    private val sourceManager = NovelSourceManager(
+        scope = testAppScope(),
+        installer = { installer },
+        extensionManager = mockk { every { loadedNovelExtensionsFlow } returns flowOf(emptyList()) },
+        prefs = novelPreferences,
+    )
+
+    /** Chapter id to the text its downloaded copy holds. */
+    private val downloaded = mutableMapOf<Long, String>()
+
+    /** The global Downloaded only switch. */
+    val downloadedOnly = store.getBoolean(Preference.appStateKey("pref_downloaded_only"), false)
+    val incognito = store.getBoolean(Preference.appStateKey("incognito_mode"), false)
+    private val sourcePreferences = SourcePreferences(store)
+    private val history = NovelHistoryRepositoryImpl(database)
+
+    val downloadManager = mockk<NovelDownloadManager>(relaxed = true) {
+        every { queueState } returns MutableStateFlow(emptyList())
+        every { getChapterText(any(), any()) } answers { downloaded[secondArg<NovelChapter>().id] }
+    }
+
+    /** What a details page's remove from library runs. */
+    var removeNovelsFromLibrary = mockk<RemoveNovelsFromLibrary>(relaxed = true)
+
+    /** What a details refresh asks of the new chapters it would download. */
+    var filterChaptersForDownload = mockk<FilterNovelChaptersForDownload>(relaxed = true)
+
+    /** What the in-app browser reports as a chapter saved from its page. */
+    val pageSaves = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+
+    private val downloadCache = mockk<NovelDownloadCache> {
+        every { changes } returns MutableStateFlow(Unit)
+        every { isChapterDownloaded(any<Novel>(), any()) } answers { secondArg<NovelChapter>().id in downloaded }
+        every { downloadedChapterIds(any<Novel>(), any()) } answers {
+            diskProbeGate?.pass()
+            secondArg<List<NovelChapter>>().mapTo(HashSet()) { it.id }.filterTo(HashSet()) { it in downloaded }
+        }
+    }
+
+    @Volatile
+    private var diskProbeGate: DiskProbeGate? = null
+
+    /** Stops every later disk probe of a chapter list at the returned gate, freezing that list's rebuild. */
+    fun holdDiskProbes(): DiskProbeGate = DiskProbeGate().also { diskProbeGate = it }
+
+    private val viewModels = ViewModelStore()
+    private val modelJobs = mutableListOf<Job>()
+
+    init {
+        // The warm cooldown reads the uptime clock, which an Android stub cannot answer on the JVM.
+        mockkStatic(SystemClock::class)
+        every { SystemClock.elapsedRealtime() } answers { scheduler.currentTime }
+    }
+
+    /** A source the plugin host would have loaded, registered under [id]. */
+    fun source(id: String, name: String = id): FakeNovelSource =
+        FakeNovelSource(id, name).also(sourceManager::register)
+
+    suspend fun novel(
+        source: FakeNovelSource,
+        title: String = "Novel",
+        inLibrary: Boolean = true,
+        cover: String? = null,
+        totalPages: Long = 1L,
+    ): Long {
+        val url = "/novel/${source.id}/$title"
+        val favoriteAt = Instant.fromEpochMilliseconds(0L).takeIf { inLibrary }
+        return novelRepo.insert(
+            Novel.create().copy(
+                source = source.id,
+                url = url,
+                title = title,
+                favoriteAt = favoriteAt,
+                thumbnailUrl = cover,
+                totalPages = totalPages,
+            ),
+        )!!
+    }
+
+    /** The stored row of [url] on [sourceId], if opening it stored one. */
+    suspend fun storedNovel(sourceId: String, url: String): Novel? = novelRepo.getByUrlAndSource(url, sourceId)
+
+    /** Rewrites [novelId]'s stored row, as a refresh does. */
+    suspend fun updateNovel(novelId: Long, block: NovelUpdate.() -> Unit) {
+        novelRepo.update(NovelUpdate(novelId, block))
+    }
+
+    /**
+     * [progressPercent] is where the reader last was in it, stored as the reader stores it. A second copy
+     * of one [number] needs its own [url], and a [sourceOrder] to say which copy the source lists first.
+     * A [name] with a title is what the stitch pairs sources on; a bare number pairs nothing.
+     */
+    suspend fun chapter(
+        novelId: Long,
+        number: Double,
+        read: Boolean = false,
+        progressPercent: Int = 0,
+        bookmark: Boolean = false,
+        page: String = "",
+        url: String = "/chapter/$novelId/$number",
+        sourceOrder: Long = number.toLong(),
+        scanlator: String? = null,
+        name: String = "Chapter $number",
+    ): SeededChapter {
+        val chapter = NovelChapter(
+            id = -1L,
+            novelId = novelId,
+            url = url,
+            name = name,
+            read = read,
+            bookmark = bookmark,
+            lastTextProgress = progressPercent * 100L,
+            chapterNumber = number,
+            sourceOrder = sourceOrder,
+            dateFetch = Instant.fromEpochMilliseconds(0L),
+            dateUpload = null,
+            page = page,
+            scanlator = scanlator,
+        )
+        return SeededChapter(chapterRepo.insert(chapter)!!, url)
+    }
+
+    /** Turns incognito on for [source] alone, as its long-press in Browse does. */
+    fun incognito(source: FakeNovelSource) {
+        sourcePreferences.incognitoExtensions.set(setOf(SourceKey.Novel(source.id).serialize()))
+    }
+
+    /** The chapters of [novelId] reading has put in history. */
+    suspend fun historyOf(novelId: Long): List<Long> = history.getHistoryByNovelId(novelId).map { it.chapterId }
+
+    /** Where the reader stored its place in [chapter], in hundredths of a percent. */
+    suspend fun progressOf(chapter: SeededChapter): Long? = chapterRepo.getById(chapter.id)?.lastTextProgress
+
+    /** Whether [chapter] is marked read. */
+    suspend fun isRead(chapter: SeededChapter): Boolean? = chapterRepo.getById(chapter.id)?.read
+
+    /** Marks [chapter] read, or unread, as reading it elsewhere or the details screen does. */
+    suspend fun markRead(chapter: SeededChapter, read: Boolean = true) {
+        chapterRepo.setReadBulk(listOf(chapter.id), read)
+    }
+
+    /** Live collectors of the chapter queries details screens hold open while they are shown. */
+    val chapterQueries = AtomicInteger()
+
+    private val detailsChapters = object : NovelChapterRepository by chapterRepo {
+        override fun getByNovelIdAsFlow(novelId: Long) = chapterRepo.getByNovelIdAsFlow(novelId).counted()
+
+        override fun getByNovelIdAndPageAsFlow(novelId: Long, page: String) =
+            chapterRepo.getByNovelIdAndPageAsFlow(novelId, page).counted()
+
+        private fun <T> Flow<T>.counted() =
+            onStart { chapterQueries.incrementAndGet() }.onCompletion { chapterQueries.decrementAndGet() }
+    }
+
+    /** Groups [novelIds] into one merged novel, as the merge dialog does. */
+    suspend fun merge(vararg novelIds: Long) {
+        groups.createGroup(ContentType.NOVELS, novelIds.toList())
+    }
+
+    /** Puts a copy of [chapter] on disk, holding [text]. */
+    fun download(chapter: SeededChapter, text: String) {
+        downloaded[chapter.id] = text
+    }
+
+    /** What the reader's trim behind it queued for deletion on leaving. */
+    val pendingDeletes = mutableListOf<NovelChapter>()
+
+    private val removable =
+        NovelRemovableDownloads(novelPreferences, GetNovelCategories(CategoryRepositoryImpl(database)))
+
+    /** Marks read as the app does; only the source tracker and the unread push, both network, are faked. */
+    private fun setNovelReadStatus() = SetNovelReadStatus(
+        chapterRepo,
+        DeleteNovelChaptersAfterRead(novelPreferences, removable, { downloadManager }),
+        mockk(relaxed = true),
+        mockk(relaxed = true),
+    )
+
+    fun open(novelId: Long, chapterId: Long, sourceScoped: Boolean = false): NovelReaderViewModel {
+        val context = mockk<Context>(relaxed = true)
+        val reikaiLibraryPreferences = ReikaiLibraryPreferences(store)
+        val mergeManager = NovelMergeManager(groups, reikaiLibraryPreferences, onMerged = {}) {}
+        val stitcher = NovelGroupStitcher(groups, novelRepo, chapterRepo, mergeManager, reikaiLibraryPreferences)
+        val mergedChapterProvider = NovelMergedChapterProvider(
+            mergeManager,
+            ReconcileMergedChapters(units, setOf(stitcher)),
+        )
+        return NovelReaderViewModel(
+            appScope = appScope,
+            novelId = novelId,
+            initialChapterId = chapterId,
+            sourceScoped = sourceScoped,
+            savedState = SavedStateHandle(),
+            novelRepo = novelRepo,
+            chapterRepo = chapterRepo,
+            sourceManager = sourceManager,
+            installer = installer,
+            novelPreferences = novelPreferences,
+            downloadManagerProvider = { downloadManager },
+            upsertNovelHistory = UpsertNovelHistory(history),
+            setNovelReadStatus = setNovelReadStatus(),
+            libraryPreferences = libraryPreferences,
+            // The tracker network.
+            trackNovelChapter = mockk(relaxed = true),
+            trackedChapterNumber = ownChapterNumbers(),
+            trackPreferences = TrackPreferences(store),
+            // BasePreferences builds an extension-installer preference whose default calls into
+            // android.graphics, so only the incognito switch is carried over. The manga-extension
+            // lookup is never reached for a novel source.
+            getIncognitoState = GetIncognitoState(
+                mockk<BasePreferences> {
+                    every { incognitoMode } returns this@NovelReaderViewModelHarness.incognito
+                },
+                sourcePreferences,
+                mockk(),
+            ),
+            setNovelViewerFlags = SetNovelViewerFlags(novelRepo),
+            novelDownloadCache = downloadCache,
+            pageFetcher = mockk { every { chapterSaved } returns pageSaves },
+            deleteChaptersBehindReader = DeleteNovelChaptersBehindReader(
+                novelPreferences,
+                removable,
+                { downloadManager },
+                chapterRepo,
+                mockk(relaxed = true) {
+                    every { addChapters(any()) } answers { pendingDeletes += firstArg<List<NovelChapter>>() }
+                },
+                libraryPreferences,
+            ),
+            // Only the Downloaded only switch; BasePreferences itself cannot be built on the JVM.
+            basePreferences = mockk<BasePreferences> {
+                every { downloadedOnly } returns this@NovelReaderViewModelHarness.downloadedOnly
+            },
+            context = context,
+            adultChecker = mockk { coEvery { adultNovelIdsAmong(any()) } returns emptySet() },
+            getNextNovelChapter = GetNextNovelChapter(
+                chapterRepo,
+                novelRepo,
+                novelPreferences,
+                mergeManager,
+                mergedChapterProvider,
+                NovelChapterSettings(novelRepo),
+            ),
+            io = dispatcher,
+        ).also(::track)
+    }
+
+    /**
+     * The novel details screen of [novelId], over the same database and merge machinery. It launches on
+     * the real IO dispatcher rather than [dispatcher], so a test waits on its state in real time.
+     */
+    suspend fun openDetails(novelId: Long, shown: Boolean = true): NovelDetailsViewModel {
+        val novel = novelRepo.getById(novelId)!!
+        return openDetails(novel.source, novel.url, shown)
+    }
+
+    /**
+     * The details screen of [url] on [sourceId], which need not be stored yet, as when opened from Browse.
+     * While [shown], its state is collected for as long as the model lives, as a screen showing it collects it.
+     */
+    fun openDetails(sourceId: String, url: String, shown: Boolean = true): NovelDetailsViewModel {
+        val reikaiLibraryPreferences = ReikaiLibraryPreferences(store)
+        val mergeManager = NovelMergeManager(groups, reikaiLibraryPreferences, onMerged = {}) {}
+        val stitcher = NovelGroupStitcher(groups, novelRepo, chapterRepo, mergeManager, reikaiLibraryPreferences)
+        return NovelDetailsViewModel(
+            appScope = appScope,
+            sourceId = sourceId,
+            novelUrl = url,
+            listingCover = null,
+            isFromSource = false,
+            novelRepo = novelRepo,
+            coverCache = mockk(relaxed = true),
+            resetEntryInfo = mockk(relaxed = true),
+            setNovelChapterFlags = SetNovelChapterFlags(novelRepo, novelPreferences),
+            chapterSettings = NovelChapterSettings(novelRepo),
+            chapterRepo = detailsChapters,
+            downloadManagerProvider = { downloadManager },
+            novelDownloadCache = downloadCache,
+            sourceManager = sourceManager,
+            installer = installer,
+            filterChaptersForDownload = filterChaptersForDownload,
+            novelLibraryAdder = mockk(relaxed = true),
+            setNovelReadStatus = setNovelReadStatus(),
+            novelPreferences = novelPreferences,
+            uiPreferences = mockk(relaxed = true) {
+                every { themeCoverBased } returns store.getBoolean("theme_cover_based", false)
+            },
+            mergeManager = mergeManager,
+            mergedChapterProvider = NovelMergedChapterProvider(
+                mergeManager,
+                ReconcileMergedChapters(units, setOf(stitcher)),
+            ),
+            reikaiLibraryPreferences = reikaiLibraryPreferences,
+            libraryPreferences = LibraryPreferences(store),
+            chapterNumberOverrides = numberOverrides,
+            editChapterNumber = EditChapterNumber(numberOverrides, ReconcileMergedChapters(units, setOf(stitcher))),
+            context = mockk(relaxed = true),
+            getCustomNovelInfo = mockk(relaxed = true) { every { subscribe(any()) } returns flowOf(null) },
+            setCustomNovelInfo = mockk(relaxed = true),
+            getNovelTracks = mockk(relaxed = true),
+            refreshNovelTracks = mockk(relaxed = true),
+            trackNovelChapter = mockk(relaxed = true),
+            trackedChapterNumber = ownChapterNumbers(),
+            trackerManager = mockk(relaxed = true),
+            trackPreferences = TrackPreferences(store),
+            basePreferences = mockk<BasePreferences>(relaxed = true) {
+                every { downloadedOnly } returns this@NovelReaderViewModelHarness.downloadedOnly
+            },
+            removeNovelsFromLibrary = removeNovelsFromLibrary,
+            trackPorts = mockk(relaxed = true),
+            autoBindTrackers = mockk(relaxed = true),
+            downloadedTexts = mockk(relaxed = true),
+        ).also { model ->
+            track(model)
+            if (shown) model.viewModelScope.launch { model.state.collect {} }
+        }
+    }
+
+    private fun track(model: ViewModel) {
+        viewModels.put("model-${modelJobs.size}", model)
+        modelJobs += model.viewModelScope.coroutineContext.job
+    }
+
+    /** Runs [block] over this harness, then [close]s it. */
+    suspend inline fun <T> use(block: (NovelReaderViewModelHarness) -> T): T = try {
+        block(this)
+    } finally {
+        close()
+    }
+
+    /**
+     * Clears every model it opened, as leaving the screen does, and waits for their work to stop before
+     * releasing the database and clock. A details model works on the real IO dispatcher, and a query
+     * of its still running against a closed database throws into whichever test is running by then.
+     */
+    suspend fun close() {
+        diskProbeGate?.open()
+        pluginLoadGate.complete(Unit)
+        viewModels.clear()
+        withContext(NonCancellable) { (modelJobs + appScope.coroutineContext.job.children).joinAll() }
+        driver.close()
+        unmockkStatic(SystemClock::class)
+    }
+}
+
+data class SeededChapter(val id: Long, val url: String)
+
+/**
+ * A door the details list's disk probes queue at, so a test can hold one rebuild mid-flight while the
+ * screen's other inputs move on, the interleaving a busy machine produces by chance.
+ */
+class DiskProbeGate {
+    private val arrived = Semaphore(0)
+    private val admitted = Semaphore(0)
+
+    /** Called by a probe: reports in, then waits to be let through. Gives up rather than strand its thread. */
+    fun pass() {
+        arrived.release()
+        admitted.tryAcquire(WAIT_SECONDS, TimeUnit.SECONDS)
+    }
+
+    /** Waits until [count] more probes have reached the gate. */
+    fun awaitArrived(count: Int = 1) =
+        check(arrived.tryAcquire(count, WAIT_SECONDS, TimeUnit.SECONDS)) { "No disk probe reached the gate" }
+
+    fun admit(count: Int = 1) = admitted.release(count)
+
+    /** Lets every probe through from here on. */
+    fun open() = admitted.release(Int.MAX_VALUE / 2)
+
+    private companion object {
+        const val WAIT_SECONDS = 10L
+    }
+}
+
+/**
+ * The plugin host's side of a novel source: every chapter answers with text naming it, unless its
+ * url is in [failing], where it throws as a dropped connection does.
+ */
+class FakeNovelSource(override val id: String, override val name: String) : NovelSource {
+
+    val failing = mutableSetOf<String>()
+
+    /** What asking for a novel's details does; by default it throws, as for a source no test meant to ask. */
+    @Volatile
+    var details: () -> SourceNovel = { unused() }
+
+    val detailsAsked = AtomicInteger()
+
+    /** What asking for a path's web address does; by default the source defines no rule of its own. */
+    @Volatile
+    var resolve: suspend (String) -> String? = { null }
+
+    /** Every chapter path asked for, in order. */
+    val chaptersAsked: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+
+    /** Every page key asked for, in order. A page answers with no chapters. */
+    val pagesAsked: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+
+    override val version = "1.0.0"
+    override val site = "https://$id.example"
+    override val lang = "en"
+    override val iconUrl: String? = null
+    override val format = NovelExtensionFormat.JS
+    override val extensionName = name
+    override val contentWarning = ContentWarning.SAFE
+
+    override suspend fun parseChapter(chapterPath: String): String {
+        chaptersAsked += chapterPath
+        if (chapterPath in failing) throw IOException("no connection")
+        return "<p>From the source: $chapterPath</p>"
+    }
+
+    override suspend fun browse(listing: NovelListing, page: Int, filters: NovelFilterState?): NovelItemsPage =
+        unused()
+
+    override suspend fun search(query: String, page: Int, filters: NovelFilterState?): NovelItemsPage = unused()
+
+    override suspend fun parseNovel(novelPath: String): SourceNovel {
+        detailsAsked.incrementAndGet()
+        return details()
+    }
+
+    override suspend fun resolveUrl(path: String, isNovel: Boolean): String? = resolve(path)
+
+    override suspend fun parsePage(novelPath: String, page: String): SourceNovel? {
+        pagesAsked += page
+        return null
+    }
+
+    private fun unused(): Nothing = throw UnsupportedOperationException("Not part of reading a chapter")
+}

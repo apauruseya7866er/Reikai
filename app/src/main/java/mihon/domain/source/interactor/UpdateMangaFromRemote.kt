@@ -1,5 +1,6 @@
 package mihon.domain.source.interactor
 
+import dev.zacsweers.metro.Inject
 import eu.kanade.domain.chapter.interactor.SyncChaptersWithSource
 import eu.kanade.domain.chapter.model.toSChapter
 import eu.kanade.domain.manga.model.hasCustomCover
@@ -10,18 +11,26 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.SManga
 import logcat.LogPriority
 import mihon.domain.source.models.RemoteMangaUpdate
+import reikai.domain.source.keptCover
+import reikai.domain.source.keptDetail
+import reikai.domain.source.keptGenres
+import reikai.domain.source.keptStatus
+import reikai.domain.source.refreshedCover
+import reikai.domain.source.refreshedTitle
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.repository.ChapterRepository
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.manga.model.MangaUpdate
+import tachiyomi.domain.manga.model.MangaRemoteUpdate
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.isLocal
-import java.time.Instant
+import kotlin.time.Clock
+import kotlin.time.Instant
 
+@Inject
 class UpdateMangaFromRemote(
     private val sourceManager: SourceManager,
     private val chapterRepository: ChapterRepository,
@@ -36,7 +45,7 @@ class UpdateMangaFromRemote(
         fetchDetails: Boolean = false,
         fetchChapters: Boolean = false,
         manualFetch: Boolean = false,
-        fetchWindow: Pair<Long, Long> = Pair(0, 0),
+        fetchWindow: ClosedRange<Instant>? = null,
     ): Result<RemoteMangaUpdate> {
         val source = sourceManager.getOrStub(manga.source)
         return invoke(
@@ -54,20 +63,18 @@ class UpdateMangaFromRemote(
         fetchDetails: Boolean = false,
         fetchChapters: Boolean = false,
         manualFetch: Boolean = false,
-        fetchWindow: Pair<Long, Long> = Pair(0, 0),
-    ): Result<RemoteMangaUpdate> {
-        return try {
+        fetchWindow: ClosedRange<Instant>? = null,
+    ): Result<RemoteMangaUpdate> = withIOContext {
+        try {
             val chapters = chapterRepository.getChapterByMangaId(manga.id)
                 .sortedBy { it.sourceOrder }
-            val update = withIOContext {
-                source.getMangaUpdate(
-                    manga = manga.toSManga(),
-                    chapters = chapters.map(Chapter::toSChapter),
-                    fetchDetails = fetchDetails,
-                    fetchChapters = fetchChapters,
-                )
-            }
-            awaitUpdateFromSource(manga, update.manga, manualFetch)
+            val update = source.getMangaUpdate(
+                manga = manga.toSManga(),
+                chapters = chapters.map(Chapter::toSChapter),
+                fetchDetails = fetchDetails,
+                fetchChapters = fetchChapters,
+            )
+            awaitUpdateFromSource(manga, update.manga, fetchDetails, manualFetch)
             val newChapters = syncChaptersWithSource.await(
                 rawSourceChapters = update.chapters,
                 manga = manga,
@@ -81,12 +88,19 @@ class UpdateMangaFromRemote(
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)
             Result.failure(e)
+        } catch (e: LinkageError) { // RK
+            // RK: an extension built against a class or method the app no longer ships throws a
+            //     LinkageError, which the catch above misses. Wrapped as an Exception because every
+            //     caller handles failures that way, so a broken extension fails its series, not the app.
+            logcat(LogPriority.ERROR, e)
+            Result.failure(Exception(e.toString(), e))
         }
     }
 
     private suspend fun awaitUpdateFromSource(
         localManga: Manga,
         remoteManga: SManga,
+        fetchDetails: Boolean,
         manualFetch: Boolean,
     ): Boolean {
         val remoteTitle = try {
@@ -96,43 +110,34 @@ class UpdateMangaFromRemote(
         }
 
         // if the manga isn't a favorite (or 'update titles' preference is enabled), set its title from source and update in db
-        val title =
-            if (remoteTitle.isNotEmpty() && (!localManga.favorite || libraryPreferences.updateMangaTitles.get())) {
-                remoteTitle
-            } else {
-                null
-            }
+        // RK: the rule is shared with the novel refresh
+        val title = refreshedTitle(remoteTitle, localManga.favorite, libraryPreferences.updateMangaTitles.get())
 
-        val coverLastModified = when {
-            // Never refresh covers if the url is empty to avoid "losing" existing covers
-            remoteManga.thumbnail_url.isNullOrEmpty() -> null
-            !manualFetch && localManga.thumbnailUrl == remoteManga.thumbnail_url -> null
-            localManga.isLocal() -> Instant.now().toEpochMilli()
-            localManga.hasCustomCover(coverCache) -> {
-                coverCache.deleteFromCache(localManga, false)
-                null
-            }
-            else -> {
-                coverCache.deleteFromCache(localManga, false)
-                Instant.now().toEpochMilli()
-            }
+        val thumbnailUrl = keptCover(null, remoteManga.thumbnail_url) // RK: nor a placeholder
+
+        // RK --> the rule is shared with the novel refresh
+        val cover = refreshedCover(localManga.thumbnailUrl, thumbnailUrl, manualFetch, localManga.isLocal()) {
+            localManga.hasCustomCover(coverCache)
         }
+        if (cover.deletesCachedFile) coverCache.deleteFromCache(localManga, false)
+        val coverLastModified = Clock.System.now().takeIf { cover.stamps }
+        // RK <--
 
-        val thumbnailUrl = remoteManga.thumbnail_url?.takeIf { it.isNotEmpty() }
-
-        val success = mangaRepository.update(
-            MangaUpdate(
+        val success = mangaRepository.updateRemote(
+            MangaRemoteUpdate(
                 id = localManga.id,
                 title = title,
                 coverLastModified = coverLastModified,
-                author = remoteManga.author,
-                artist = remoteManga.artist,
-                description = remoteManga.description,
-                genre = remoteManga.getGenres(),
+                // RK --> a blank detail or an unknown status keeps the stored one, the rule novels follow
+                author = keptDetail(null, remoteManga.author),
+                artist = keptDetail(null, remoteManga.artist),
+                description = keptDetail(null, remoteManga.description),
+                genre = keptGenres(null, remoteManga.getGenres()),
                 thumbnailUrl = thumbnailUrl,
-                status = remoteManga.status.toLong(),
+                status = keptStatus(localManga.status, remoteManga.status.toLong()),
+                // RK <--
                 updateStrategy = remoteManga.update_strategy,
-                initialized = true,
+                initialized = localManga.initialized || fetchDetails,
                 memo = remoteManga.memo,
             ),
         )

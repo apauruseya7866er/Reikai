@@ -1,11 +1,13 @@
-// RK: novel backup (Roadmap 9). Net-new Reikai file: the light-novel twin of BackupManga, re-typed
+// Novel backup. Net-new Reikai file: the light-novel twin of BackupManga, type only, re-typed
 // to the novel domain model (String source id, text-reader fields, no viewer/scanlator fields).
 package eu.kanade.tachiyomi.data.backup.models
 
 import eu.kanade.tachiyomi.source.model.UpdateStrategy
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.protobuf.ProtoNumber
+import mihon.core.common.extensions.toInstantOrNull
 import reikai.domain.novel.model.Novel
+import tachiyomi.domain.manga.model.Manga
 
 @Serializable
 class BackupNovel(
@@ -25,10 +27,12 @@ class BackupNovel(
     @ProtoNumber(14) var updateStrategy: UpdateStrategy = UpdateStrategy.ALWAYS_UPDATE,
     @ProtoNumber(15) var coverLastModified: Long = 0,
     @ProtoNumber(16) var totalPages: Long = 1,
+    // Read only, from backups made before the Last read sort came from history: NovelRestorer seeds a
+    // history row from it for a novel that has none. Nothing writes it any more.
     @ProtoNumber(17) var lastReadAt: Long? = null,
-    // RK: retired lock bitmask, kept as a reserved proto slot for backup round-trip compatibility with
+    // Retired lock bitmask, kept as a reserved proto slot for backup round-trip compatibility with
     // older backups (and upstream Yokai). Novel edits now live in the custom_novel_info overlay
-    // (backed up separately as backupCustomNovelInfo); this field is written 0 and ignored on restore.
+    // (backed up in the custom fields below); this field is written 0 and ignored on restore.
     @ProtoNumber(18) var editedFlags: Long = 0,
     @ProtoNumber(19) var favorite: Boolean = true,
     @ProtoNumber(20) var chapters: List<BackupNovelChapter> = emptyList(),
@@ -37,8 +41,17 @@ class BackupNovel(
     @ProtoNumber(23) var history: List<BackupNovelHistory> = emptyList(),
     @ProtoNumber(24) var notes: String = "",
     @ProtoNumber(25) var viewerFlags: Long = 0,
-    @ProtoNumber(26) var version: Long = 0,
-) {
+    // @ProtoNumber(26) var version: Long, dropped with the manga edit count (mihon c67a33f3d)
+    @ProtoNumber(27) var nextUpdate: Long = 0,
+    // The user's custom info, on the same numbers BackupManga uses (see BackupCustomInfoFields).
+    @ProtoNumber(602) override var customStatus: Int = 0,
+    @ProtoNumber(603) override var customThumbnailUrl: String? = null,
+    @ProtoNumber(800) override var customTitle: String? = null,
+    @ProtoNumber(801) override var customArtist: String? = null,
+    @ProtoNumber(802) override var customAuthor: String? = null,
+    @ProtoNumber(804) override var customDescription: String? = null,
+    @ProtoNumber(805) override var customGenre: List<String>? = null,
+) : BackupCustomInfoFields {
     fun toNovelImpl(): Novel {
         return Novel.create().copy(
             source = this@BackupNovel.source,
@@ -50,18 +63,21 @@ class BackupNovel(
             genre = this@BackupNovel.genre.ifEmpty { null },
             status = this@BackupNovel.status,
             thumbnailUrl = this@BackupNovel.thumbnailUrl,
-            favorite = this@BackupNovel.favorite,
-            lastUpdate = this@BackupNovel.lastUpdate,
+            // A library entry the backup knows no date for keeps the unknown date manga's restore gives
+            favoriteAt = if (this@BackupNovel.favorite) {
+                this@BackupNovel.dateAdded.toInstantOrNull() ?: Manga.UNKNOWN_FAVORITE_AT
+            } else {
+                null
+            },
+            lastUpdate = this@BackupNovel.lastUpdate.toInstantOrNull(),
             initialized = this@BackupNovel.initialized,
             chapterFlags = this@BackupNovel.chapterFlags,
-            dateAdded = this@BackupNovel.dateAdded,
             updateStrategy = this@BackupNovel.updateStrategy,
-            coverLastModified = this@BackupNovel.coverLastModified,
+            coverLastModified = this@BackupNovel.coverLastModified.toInstantOrNull(),
             totalPages = this@BackupNovel.totalPages,
-            lastReadAt = this@BackupNovel.lastReadAt,
             notes = this@BackupNovel.notes,
             viewerFlags = this@BackupNovel.viewerFlags,
-            version = this@BackupNovel.version,
+            nextUpdate = this@BackupNovel.nextUpdate.toInstantOrNull(),
         )
     }
 }

@@ -61,7 +61,6 @@
     <string name="action_restore">पुनःस्थापन करे</string>
     <string name="loading">लोड हो रहा है…</string>
     <string name="app_not_available">ऐप उपलब्ध नहीं</string>
-    <string name="pref_category_general">सामान्य</string>
     <string name="pref_category_reader">पाठमाला</string>
     <string name="pref_category_downloads">डाउनलोड</string>
     <string name="pref_category_tracking">पदचिह्न</string>
@@ -198,7 +197,6 @@
     <string name="dialog_with_checkbox_reset">इस प्रविष्टि के लिए सभी अध्यायों को रीसेट करें</string>
     <string name="snack_add_to_library">पुस्तकालय में जोड़ें?</string>
     <string name="picture_saved">चित्र सहेजा गया</string>
-    <string name="custom_filter">इच्छा अनुसार फिल्टर</string>
     <string name="set_as_cover">कवर के रूप में सेट करें</string>
     <string name="cover_updated">कवर अपडेट किया गया</string>
     <string name="chapter_progress">पृष्ठ: %1$d</string>
@@ -213,9 +211,6 @@
     <string name="file_select_backup">बैकअप फ़ाइल का चयन करें</string>
     <string name="update_check_confirm">डाउनलोड</string>
     <string name="update_check_no_new_updates">कोई नया अद्यतन उपलब्ध नहीं है</string>
-    <string name="update_check_notification_download_in_progress">डाउनलोडिंग…</string>
-    <string name="update_check_notification_download_complete">अपडेट इंस्टॉल करने के लिए यहा टेप करें</string>
-    <string name="update_check_notification_download_error">डाउनलोड त्रुटि</string>
     <string name="update_check_notification_update_available">नया संस्करण उपलब्ध है!</string>
     <string name="information_no_downloads">कोई डाउनलोड नहीं है</string>
     <string name="information_no_recent">कोई हालिया अपडेट नहीं</string>
@@ -242,19 +237,14 @@
     <string name="ext_untrusted">अविश्वस्त</string>
     <string name="ext_uninstall">स्थापना रद्द करें</string>
     <string name="untrusted_extension">अविश्वस्त एक्सटेंशन</string>
-    <string name="untrusted_extension_message">यह एक्सटेंशन एक अविश्वस्त प्रमाणपत्र के साथ हस्ताक्षरित हुआ था और सक्रिय नहीं हुआ था।
-\n
-\nदुर्भावनापूर्ण विस्तार, किसी भी लॉगिन क्रेडेंशियल्स को ताचियोमी में संग्रहीत या मनमाना कोड निष्पादित कर सकता है
-\n
-\nइस प्रमाणपत्र पर विश्वास करके आप इन जोखिमों को स्वीकार करते हैं।</string>
+    <string name="untrusted_extension_message">यह एक्सटेंशन एक अविश्वस्त प्रमाणपत्र के साथ हस्ताक्षरित हुआ था और सक्रिय नहीं हुआ था। \n \nदुर्भावनापूर्ण विस्तार, किसी भी लॉगिन क्रेडेंशियल्स को ताचियोमी में संग्रहीत या मनमाना कोड निष्पादित कर सकता है \n \nइस प्रमाणपत्र पर विश्वास करके आप इन जोखिमों को स्वीकार करते हैं।</string>
     <string name="pref_double_tap_anim_speed">डबल टैप एनीमेशन गति</string>
     <string name="double_tap_anim_speed_0">कोई एनीमेशन नहीं</string>
     <string name="double_tap_anim_speed_normal">साधारण</string>
     <string name="double_tap_anim_speed_fast">तेज</string>
     <string name="manga_added_library">पुस्तकालय में जोड़ा गया</string>
     <string name="manga_removed_library">लाइब्रेरी से निकाला गया</string>
-    <string name="copied_to_clipboard">क्लिपबोर्ड पर नकल:
-\n%1$s</string>
+    <string name="copied_to_clipboard">क्लिपबोर्ड पर नकल: \n%1$s</string>
     <string name="migration_dialog_what_to_include">शामिल करने के लिए डेटा का चयन करें</string>
     <string name="migrate">प्रवास</string>
     <string name="copy">नकल</string>
@@ -287,8 +277,8 @@
     <string name="action_webview_forward">आगे की ओर</string>
     <string name="action_webview_refresh">रीफ़्रेश करें</string>
     <string name="pref_category_library">पुस्तकालय</string>
-    <string name="ext_obsolete">अप्रचलित</string>
-    <string name="obsolete_extension_message">यह एक्सटेंशन अब उपलब्ध नहीं है। यह अब शायद ठीक से काम न करे और मसला खड़ा करे। इसे अनइंस्टॉल करने की सलाह दी गई है।</string>
+    <string name="ext_obsolete">अनाथ</string>
+    <string name="obsolete_extension_message">यह एक्सटेंशन किसी भी स्टोर से संबद्ध नहीं है। इसे अपडेट नहीं मिलेंगे, यह ठीक से काम नहीं कर सकता और ऐप में समस्याएँ पैदा कर सकता है। इसे अनइंस्टॉल करने की सलाह दी जाती है।</string>
     <string name="pref_date_format">दिनांक स्वरूप</string>
     <string name="pref_category_library_update">वैश्विक अपडेट</string>
     <string name="logout_title">%1$s से लॉगआउट करें?</string>
@@ -408,9 +398,6 @@
     <string name="backup_restore_missing_trackers">ट्रैकर्स में लॉग इन नहीं किया गया:</string>
     <string name="pref_remove_bookmarked_chapters">बुकमार्क किए गए अध्यायों को हटाने की अनुमति दें</string>
     <string name="pref_category_delete_chapters">अध्यायों को हटाएं</string>
-    <string name="ext_nsfw_warning">इसमें NSFW (18+) सामग्री हो सकती है</string>
-    <string name="ext_nsfw_short">18+</string>
-    <string name="parental_controls_info">यह अनौपचारिक या संभावित रूप से फ़्लैग किए गए एक्सटेंशन को ऐप के भीतर NSFW (18+) सामग्री के सामने आने से नहीं रोकता है।</string>
     <string name="chapter_settings_updated">अपडेट किए गए डिफ़ॉल्ट अध्याय सेटिंग्स</string>
     <string name="no_chapters_error">कोई अध्याय नहीं मिला</string>
     <string name="set_chapter_settings_as_default">डिफ़ॉल्ट के रूप में सेट करें</string>
@@ -429,8 +416,6 @@
     <string name="spen_next_page">अगला पृष्ठ</string>
     <string name="spen_previous_page">पिछला पृष्ठ</string>
     <string name="migration_help_guide">स्रोत माइग्रेशन गाइड</string>
-    <string name="pref_show_nsfw_source">स्रोतों और एक्सटेंशन सूचियों में दिखाएं</string>
-    <string name="pref_category_nsfw_content">NSFW (18+) स्रोत</string>
     <string name="file_picker_error">कोई फ़ाइल पिकर ऐप नहीं मिला</string>
     <string name="myanimelist_relogin">कृपया फिर से MAL पर लॉगिन करें</string>
     <string name="track_finished_reading_date">समाप्ति की तिथि</string>
@@ -454,7 +439,6 @@
     <string name="pref_dual_page_split">चौड़े पृष्ठ को दो भागों में बांट दे</string>
     <string name="action_start_downloading_now">अभी डाउनलोड करना शुरू करें</string>
     <string name="action_show_errors">विवरण देखने के लिए टैप करें</string>
-    <string name="cancel_all_for_series">इस श्रृंखला के लिए सभी रद्द करें</string>
     <string name="action_display_local_badge">स्थानीय स्रोत</string>
     <string name="pref_dark_theme_pure_black">पूरा काला मोड़</string>
     <string name="theme_tako">टाको</string>
@@ -543,7 +527,6 @@
     <string name="backup_info">आपको अन्य स्थानों पर भी बैकअप की प्रतियाँ रखनी चाहिए।</string>
     <string name="download_queue_size_warning">चेतावनी: बड़े पैमाने पर डाउनलोड से स्रोत धीमे हो सकते हैं और/या %s को ब्लॉक कर सकते हैं। अधिक जानने के लिए टैप करें।</string>
     <string name="notification_size_warning">बड़े अपडेट स्रोतों को नुकसान पहुंचाते हैं और इससे धीमे अपडेट हो सकते हैं, और बैटरी का उपयोग भी बढ़ सकता है। अधिक जानने के लिए टैप करें ।</string>
-    <string name="channel_app_updates">ऐप अपडेट</string>
     <string name="update_72hour">हर 3 दिन</string>
     <string name="connected_to_wifi">केवल वाई-फ़ाई पर</string>
     <string name="clear_database_source_item_count">डेटाबेस में %1$d गैर-पुस्तकालय आइटम</string>
@@ -568,7 +551,6 @@
     <string name="rotation_reverse_portrait">रिवर्स पोर्ट्रेट</string>
     <string name="pref_navigate_pan">चौड़ी छवियां पैन करें</string>
     <string name="pref_landscape_zoom">ज़ूम लैंडस्केप इमेज</string>
-    <string name="action_move_to_top_all_for_series">श्रृंखला को शीर्ष पर ले जाएं</string>
     <string name="source_empty_screen">कोई स्रोत नहीं मिला</string>
     <string name="source_filter_empty_screen">कोई स्थापित स्रोत नहीं मिला</string>
     <string name="action_sort_last_manga_update">आखिरी आइटम अद्यतन</string>
@@ -584,7 +566,6 @@
     <string name="empty_backup_error">बैकअप करने के लिए कोई पुस्तकालय प्रविष्टि नहीं</string>
     <string name="ext_info_version">संस्करण</string>
     <string name="ext_info_language">भाषा</string>
-    <string name="ext_info_age_rating">आयु रेटिंग</string>
     <string name="reading_list">पठन सूची</string>
     <string name="wish_list">विश-लिस्ट</string>
     <string name="theme_lavender">लैवेंडर</string>
@@ -653,7 +634,7 @@
     <string name="pref_update_only_in_release_period">अपेक्षित रिलीज़ अवधि से बाहर</string>
     <string name="pref_chapter_swipe_start">अध्यााय: बाएँ स्वाइप करें</string>
     <string name="library_sync_complete">लाइब्रेरी सिंक पूरा</string>
-    <string name="download_cache_invalidated">डाउनलोड अनुक्रमणिका अमान्य</string>
+    <string name="download_cache_invalidated">डाउनलोड इंडेक्स को पुनः बनाया जा रहा है</string>
     <string name="action_ok">ठीक है</string>
     <string name="pref_invalidate_download_cache">डाउनलोड फिर से अनुक्रमित करें</string>
     <string name="copied_to_clipboard_plain">क्लिपबोर्ड पर कॉपी हो गया है</string>
@@ -672,7 +653,6 @@
     <string name="label_data_storage">डेटा और स्टोरेज</string>
     <string name="unlock_app_title">खोलना%s</string>
     <string name="action_apply">लागू करें</string>
-    <string name="action_move_to_bottom_all_for_series">सीरीज को नीचे ले जाएं</string>
     <string name="pref_onboarding_guide">ऑनबोर्डिंग मार्गदर्शक</string>
     <string name="onboarding_heading">नमस्ते!आपका स्वागत है!</string>
     <string name="label_upcoming">आगामी</string>
@@ -737,11 +717,6 @@
     <string name="pref_flash_style_black">काला</string>
     <string name="pref_flash_style_white">सफ़ेद</string>
     <string name="pref_flash_style_white_black">सफ़ेद और काला</string>
-    <string name="pref_hardware_bitmap_threshold">कस्टम हार्डवेयर बिटमैप सीमा</string>
-    <string name="pref_hardware_bitmap_threshold_default">डिफ़ॉल्ट (%d)</string>
-    <string name="pref_hardware_bitmap_threshold_summary">यदि रीडर खाली छवि लोड करता है तो सीमा धीरे-धीरे कम करें।\nचयनित: %s</string>
-    <string name="pref_always_decode_long_strip_with_ssiv_2">लॉन्ग स्ट्रिप रीडर के लिए पुराना डिकोडर उपयोग करें</string>
-    <string name="pref_always_decode_long_strip_with_ssiv_summary">प्रदर्शन को प्रभावित करता है। केवल तभी सक्षम करें जब बिटमैप सीमा कम करने से खाली छवि की समस्याएं ठीक न हों</string>
     <string name="pref_display_profile">कस्टम डिस्प्ले प्रोफ़ाइल</string>
     <string name="pref_webtoon_disable_zoom_out">ज़ूम आउट अक्षम करें</string>
     <string name="no_location_set">कोई स्टोरेज स्थान सेट नहीं किया गया है</string>
@@ -795,11 +770,9 @@
     <string name="exclude_scanlators">स्कैनलेटर को बाहर करें</string>
     <string name="no_scanlators_found">कोई स्कैनलेटर नहीं मिला</string>
     <string name="confirm_tracker_update">ट्रैकर्स को अध्याय %d तक अपडेट करें?</string>
-    <string name="trackers_updated_summary">ट्रैकर्स को अध्याय %d तक अपडेट किया गया</string>
     <string name="tracked_privately">निजी तौर पर ट्रैक किया गया</string>
     <string name="action_toggle_private_on">निजी रूप से ट्रैक करें</string>
     <string name="action_toggle_private_off">सार्वजनिक रूप से ट्रैक करें</string>
-    <string name="track_error">%1$s त्रुटि: %2$s</string>
     <string name="track_remove_date_conf_title">तारीख हटाएं?</string>
     <string name="track_remove_start_date_conf_text">यह आपके पहले चुने गए प्रारंभ तिथि %s को हटा देगा</string>
     <string name="track_remove_finish_date_conf_text">यह आपके पहले चुने गए समाप्ति तिथि %s को हटा देगा</string>
@@ -887,4 +860,45 @@
     <string name="pref_download_concurrent_sources">एक साथ स्रोत डाउनलोड</string>
     <string name="pref_download_concurrent_pages">एक साथ पेज डाउनलोड</string>
     <string name="pref_download_concurrent_pages_summary">प्रति स्रोत एक साथ डाउनलोड किए जाने वाले पृष्ठ</string>
+    <string name="transition_animation_flip_right">पेज फ्लिप (दाएँ)</string>
+    <string name="webgpu_viewer">वेबजीपीयू</string>
+    <string name="transition_animation_cube_inside">क्यूब (अंदर)</string>
+    <string name="transition_animation_cube_outside">क्यूब (बाहर)</string>
+    <string name="pref_vertical_navigator">वर्टिकल चैप्टर नेविगेटर का उपयोग करें</string>
+    <string name="downloading_with_progress">डाउनलोड हो रहा है… (%d%%)</string>
+    <string name="extensionStoresScreen.addStore.processing">प्रोसेसिंग…</string>
+    <string name="cutout_mode_avoid">बचें</string>
+    <string name="transition_animation_sphere">गोला</string>
+    <string name="considering">विचाराधीन</string>
+    <string name="transition_animation_stack_down">स्टैक (नीचे)</string>
+    <string name="extensionStores">एक्सटेंशन स्टोर्स</string>
+    <string name="pref_continuous_gap">अंतर</string>
+    <string name="transition_animation_basic">बेसिक</string>
+    <string name="download_bookmarked">बुकमार्क किया गया</string>
+    <string name="pref_continuous_minwidth">न्यूनतम चौड़ाई</string>
+    <string name="transition_animation_flip_left">पेज फ्लिप (बाएँ)</string>
+    <string name="cutout_mode_ignore">अनदेखा करें</string>
+    <string name="transition_animation_stack_right">स्टैक (दाएँ)</string>
+    <string name="transition_animation_fade">फेड</string>
+    <string name="transition_animation_none">कोई नहीं</string>
+    <string name="dual_page_view_never">कभी नहीं</string>
+    <string name="transition_animation_stack_up">स्टैक (ऊपर)</string>
+    <string name="pref_filter_upcoming_categories_details">बहिष्कृत श्रेणियों के शीर्षक नहीं दिखाए जाते, भले ही वे किसी शामिल श्रेणी में भी हों।</string>
+    <string name="dual_page_view_wide">चौड़ी स्क्रीन होने पर</string>
+    <string name="pref_transition_animation_dual">ट्रांज़िशन एनीमेशन (ड्युअल)</string>
+    <string name="transition_animation_flip">पेज फ्लिप</string>
+    <string name="dual_page_view_always">हमेशा</string>
+    <string name="action.addExtensionStore">एक्सटेंशन स्टोर जोड़ें</string>
+    <string name="action_filter_excluded_scanlators">बहिष्कृत स्कैनलेटर्स को फ़िल्टर करें</string>
+    <string name="pref_webtoon_vertical_navigator_on_left">वर्टिकल नेविगेटर को बाईं ओर रखें</string>
+    <string name="theme_tokyonight">टोक्यो नाइट</string>
+    <string name="transition_animation_fade_white">सफेद रंग में फेड</string>
+    <string name="pref_high_quality_renderer">उच्च गुणवत्ता वाले रेंडरर का उपयोग करें</string>
+    <string name="pref_dual_page_view">दो पृष्ठों का दृश्य</string>
+    <string name="pref_transition_animation">ट्रांज़िशन एनीमेशन</string>
+    <string name="pref_vertical_navigator_height">वर्टिकल नेविगेटर की ऊँचाई</string>
+    <string name="pref_cutout_mode">डिस्प्ले कटआउट मोड</string>
+    <string name="transition_animation_stack_left">स्टैक (बाएँ)</string>
+    <string name="pref_cutout_mode_dual">डिस्प्ले कटआउट मोड (ड्युअल)</string>
+    <string name="cutout_mode_shift">स्थानांतरित करें</string>
 </resources>

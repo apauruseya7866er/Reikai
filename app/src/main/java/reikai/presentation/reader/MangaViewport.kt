@@ -1,0 +1,91 @@
+package reikai.presentation.reader
+
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.View
+import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
+import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.webgpu.WebGpuViewer
+import eu.kanade.tachiyomi.ui.reader.viewer.webgpu.WebGpuViewerContinuous
+import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
+import kotlinx.coroutines.flow.Flow
+import reikai.domain.reader.ChapterProgress
+import reikai.domain.reader.pageIndex
+import tachiyomi.core.common.preference.Preference
+import kotlin.math.min
+
+/**
+ * The manga adapter under [ReaderViewport], over whatever `ReadingMode.toViewer` built; the novel
+ * viewports implement the contract directly. The image viewers carry only the divergences
+ * content-layer.md's Reader row names, so the rest is expressed from out here.
+ *
+ * [viewer] is public because the settings sheet asks which viewer implementation is running, a manga
+ * question rather than a neutral one, answered by unwrapping this rather than by widening the contract.
+ */
+class MangaViewport(
+    val viewer: Viewer,
+    /**
+     * The chapter the chrome is describing, which is not always the active one: the viewer crosses a
+     * boundary before the model swaps, and a scrub has to land inside the chapter the rail drew.
+     */
+    private val visibleChapter: () -> ReaderChapter?,
+    /** The chapter that has just become active, which is what a step or a pick lands inside. */
+    private val activeChapter: () -> ReaderChapter?,
+    private val interval: Preference<Int>,
+    private val speed: Preference<Float>,
+    private val shownPage: Flow<ShownPage>,
+) : ReaderViewport {
+
+    override val view: View
+        get() = viewer.getView()
+
+    override fun seekTo(progress: ChapterProgress) {
+        val page = progress.pageIndex?.let { visibleChapter()?.pages?.getOrNull(it) } ?: return
+        viewer.moveToPage(page)
+    }
+
+    // Upstream starts a stepped-to chapter at its first page rather than where it was last left, so a
+    // deliberate step lands somewhere predictable.
+    override fun onChapterStepped() {
+        activeChapter()?.pages?.firstOrNull()?.let(viewer::moveToPage)
+    }
+
+    // A picked chapter resumes where it was left, which is what the arriving chapter's requestedPage
+    // says. The pager and the webtoon recycler read that field only on their own first layout, and the
+    // WebGPU viewer only while its anchor page still belongs to the new chapter, so the seek is issued
+    // from out here rather than by diverging the three viewers.
+    override fun onChapterOpened() {
+        val chapter = activeChapter() ?: return
+        val pages = chapter.pages?.takeIf { it.isNotEmpty() } ?: return
+        viewer.moveToPage(pages[min(chapter.requestedPage, pages.lastIndex)])
+    }
+
+    // The two viewer families spell right-to-left differently, and this is the one place that knows.
+    override val isRtl: Boolean
+        get() = viewer is R2LPagerViewer || (viewer as? WebGpuViewer)?.isReversed == true
+
+    // A strip scrolls through its own viewer, the only thing that knows which pages are coming into
+    // view; everything else turns pages on the interval. Lazy, so a stand-in viewer never has to answer.
+    override val autoScroll: ViewportAutoScroll by lazy {
+        when (viewer) {
+            is WebtoonViewer -> continuous(viewer::autoScrollBy)
+            is WebGpuViewerContinuous -> continuous(viewer::autoScrollBy)
+            is PagerViewer -> ViewportAutoScroll.Stepped(interval, shownPage, viewer::moveToNext)
+            is WebGpuViewer -> ViewportAutoScroll.Stepped(interval, shownPage, viewer::moveToNext)
+            else -> error("No auto-scroll for ${viewer::class}")
+        }
+    }
+
+    private fun continuous(scrollBy: (Int) -> Boolean): ViewportAutoScroll {
+        val scroller = FrameScroller(viewer.getView().resources.displayMetrics.density, scrollBy)
+        return ViewportAutoScroll.Continuous(speed, scroller::run)
+    }
+
+    override fun destroy() = viewer.destroy()
+
+    override fun handleKeyEvent(event: KeyEvent): Boolean = viewer.handleKeyEvent(event)
+
+    override fun handleGenericMotionEvent(event: MotionEvent): Boolean = viewer.handleGenericMotionEvent(event)
+}

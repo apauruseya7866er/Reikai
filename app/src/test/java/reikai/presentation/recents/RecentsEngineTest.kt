@@ -1,0 +1,1916 @@
+package reikai.presentation.recents
+
+import android.content.Intent
+import androidx.compose.runtime.snapshots.Snapshot
+import cafe.adriel.voyager.core.screen.Screen
+import eu.kanade.presentation.manga.components.ChapterDownloadAction
+import eu.kanade.tachiyomi.data.download.model.Download
+import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
+import io.kotest.matchers.shouldBe
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.RegisterExtension
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
+import reikai.data.coil.GroupCover
+import reikai.domain.category.RecentsSurface
+import reikai.domain.entry.EntryId
+import reikai.domain.library.ContentType
+import reikai.domain.merge.MergeManager
+import reikai.domain.merge.MergeScope
+import reikai.domain.source.ReikaiSourcePreferences
+import reikai.presentation.MainDispatcherExtension
+import reikai.presentation.browse.AddDecision
+import reikai.presentation.browse.AddFavoriteResult
+import reikai.presentation.browse.components.EntryDuplicateCardUi
+import reikai.presentation.browse.components.EntrySourceLabel
+import tachiyomi.core.common.preference.CheckboxState
+import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import tachiyomi.core.common.preference.Preference
+import tachiyomi.core.common.preference.TriState
+import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.library.service.LibraryPreferences
+import tachiyomi.domain.updates.service.UpdatesPreferences
+import tachiyomi.i18n.MR
+import kotlin.coroutines.ContinuationInterceptor
+import kotlin.time.Instant
+
+/**
+ * The engine over hand-built providers. The real adapters need their surface's live models and cannot run
+ * here, so these fakes stand in for them; the chip is preset before construction because the in-memory
+ * preference store's `changes()` never emits, which makes a mid-test flip untestable rather than false.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class RecentsEngineTest {
+
+    private val store = InMemoryPreferenceStore()
+    private val sourcePreferences = ReikaiSourcePreferences(store)
+    private val updatesPreferences = UpdatesPreferences(store)
+    private val libraryPreferences = LibraryPreferences(store)
+
+    // Every engine is tracked: its stop timeouts and its off-main transforms otherwise outlive the test and
+    // resume on a Main that has been reset, failing whichever test runs next.
+    @JvmField
+    @RegisterExtension
+    val main = MainDispatcherExtension()
+
+    private fun engine(
+        providers: List<RecentsProvider>,
+        chip: ContentType = ContentType.ALL,
+        modes: Set<RecentsMode> = setOf(RecentsMode.UPDATES),
+    ): RecentsEngine {
+        sourcePreferences.updatesContentType.set(chip)
+        return main.track(
+            RecentsEngine(
+                providers = providers,
+                surface = RecentsSurface.UPDATES,
+                modes = modes,
+                sourcePreferences = sourcePreferences,
+                updatesPreferences = updatesPreferences,
+                libraryPreferences = libraryPreferences,
+            ),
+        )
+    }
+
+    /**
+     * An engine over a store whose preference flows emit, which the in-memory one's do not. Only the
+     * derivations that combine a preference with something else need it; everything above reads a
+     * value seeded from `get()` and is fine on the cheaper store.
+     */
+    private val emittingStore = EmittingPreferenceStore()
+    private val emittingUpdatesPreferences = UpdatesPreferences(emittingStore)
+
+    private fun multiModeEngine(modes: Set<RecentsMode>) = emittingEngine(provider(ContentType.MANGA), modes)
+
+    private fun emittingEngine(provider: RecentsProvider, modes: Set<RecentsMode>) = main.track(
+        RecentsEngine(
+            providers = listOf(provider),
+            surface = RecentsSurface.UPDATES,
+            modes = modes,
+            sourcePreferences = ReikaiSourcePreferences(emittingStore),
+            updatesPreferences = emittingUpdatesPreferences,
+            libraryPreferences = LibraryPreferences(emittingStore),
+        ),
+    )
+
+    private suspend fun RecentsEngine.firstAssembly(): RecentsAssembled = assembled.filterNotNull().first()
+
+    /**
+     * The drawn rows, which is also what prunes the selection. Collecting the assembly instead would
+     * miss it: the prune moved onto this flow precisely because the assembly is not what is on screen.
+     */
+    private suspend fun RecentsEngine.firstRendered(): RecentsRendered = rendered.filterNotNull().first()
+
+    /**
+     * The derived value once it has been computed. A flow shared while subscribed answers its seed
+     * until something collects it, so reading `value` straight out asserts the seed rather than the
+     * derivation, which is exactly how a false-expecting assertion here used to pass for free.
+     */
+    private fun <T> TestScope.settled(flow: StateFlow<T>): T {
+        backgroundScope.launch { flow.collect { } }
+        advanceUntilIdle()
+        return flow.value
+    }
+
+    private fun item(entryId: EntryId, at: Long, lane: RecentsLane = RecentsLane.Added) =
+        RecentsItem(entryId = entryId, timestamp = Instant.fromEpochMilliseconds(at), lane = lane, payload = Unit)
+
+    private val manga1 = EntryId.Manga(1)
+    private val manga2 = EntryId.Manga(2)
+    private val novel1 = EntryId.Novel(1)
+    private val category = Category(id = 3L, name = "Reading", order = 0L, flags = 0L)
+    private val scanlatorFilter = setOf(RecentsTypeCapability.SCANLATOR_FILTER)
+
+    private fun duplicates(entry: EntryId) = RecentsDuplicates(
+        duplicates = listOf(
+            RecentsDuplicate(
+                entry,
+                EntryDuplicateCardUi(
+                    id = entry.rawId,
+                    coverModel = Unit,
+                    title = "already there",
+                    author = null,
+                    artist = null,
+                    status = 0L,
+                    source = EntrySourceLabel.Installed("a source"),
+                    chapterCount = 0L,
+                ),
+            ),
+        ),
+        groupIdByRawId = emptyMap(),
+        suggestGroup = false,
+    )
+
+    @Test
+    fun `both content types assemble into one feed, newest first`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, updated = rows(item(manga1, at = 100))),
+                provider(ContentType.NOVELS, updated = rows(item(novel1, at = 200))),
+            ),
+        )
+
+        engine.firstAssembly().items.map { it.entryId } shouldContainExactly listOf(novel1, manga1)
+    }
+
+    @Test
+    fun `the chip selects whose rows assemble`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, updated = rows(item(manga1, at = 100))),
+                provider(ContentType.NOVELS, updated = rows(item(novel1, at = 200))),
+            ),
+            chip = ContentType.MANGA,
+        )
+
+        engine.firstAssembly().items.map { it.entryId } shouldContainExactly listOf(manga1)
+    }
+
+    @Test
+    fun `the assembly is tagged with the chip that selected it`() = runTest {
+        val engine = engine(listOf(provider(ContentType.NOVELS)), chip = ContentType.NOVELS)
+
+        engine.firstAssembly().chip shouldBe ContentType.NOVELS
+    }
+
+    @Test
+    fun `an unloaded lane on a hidden content type does not hold the visible one`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, updated = rows(item(manga1, at = 100))),
+                provider(ContentType.NOVELS, updated = RecentsLaneRows.Loading),
+            ),
+            chip = ContentType.MANGA,
+        )
+
+        engine.firstAssembly().loading shouldBe false
+    }
+
+    @Test
+    fun `an unloaded lane does hold a view that shows it`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, updated = rows(item(manga1, at = 100))),
+                provider(ContentType.NOVELS, updated = RecentsLaneRows.Loading),
+            ),
+        )
+
+        engine.firstAssembly().loading shouldBe true
+    }
+
+    @Test
+    fun `only the lanes this surface renders are collected`() = runTest {
+        val readRow = item(manga2, at = 300, lane = RecentsLane.Read(ChapterRef(manga2, chapterId = 1)))
+        val engine = engine(
+            listOf(provider(ContentType.MANGA, read = rows(readRow))),
+            modes = setOf(RecentsMode.UPDATES),
+        )
+
+        engine.firstAssembly().items shouldContainExactly emptyList()
+    }
+
+    @Test
+    fun `the last updated line is the newer library under All`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, updatedAt = 5),
+                provider(ContentType.NOVELS, updatedAt = 9),
+            ),
+        )
+
+        engine.lastUpdated.first { it != 0L } shouldBe 9
+    }
+
+    @Test
+    fun `a running update behind the chip shows as refreshing`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, updating = false),
+                provider(ContentType.NOVELS, updating = true),
+            ),
+        )
+
+        engine.refreshing.first { it } shouldBe true
+    }
+
+    @Test
+    fun `an update on the content type the chip hides is not this surface's refresh`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, updating = false),
+                provider(ContentType.NOVELS, updating = true),
+            ),
+            chip = ContentType.MANGA,
+        )
+
+        settled(engine.refreshing) shouldBe false
+    }
+
+    @Test
+    fun `the last updated line ignores the content type the chip hides`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, updatedAt = 5),
+                provider(ContentType.NOVELS, updatedAt = 9),
+            ),
+            chip = ContentType.MANGA,
+        )
+
+        engine.lastUpdated.first { it != 0L } shouldBe 5
+    }
+
+    @Test
+    fun `a provider flow is not opened until something collects what it feeds`() = runTest {
+        val provider = provider(ContentType.MANGA, updating = true)
+        val engine = engine(listOf(provider))
+
+        // Building a derived flow is not collecting it. Shared eagerly, this would open the provider's
+        // flow here and hold it for as long as the surface's engine lived. The other direction, that
+        // collecting does open it, is what every derived-value test above already reads. Pinned on
+        // refreshing rather than the assembly, whose upstream runs off the test scheduler.
+        engine.refreshing
+        advanceUntilIdle()
+
+        provider.updatingSubscriptions shouldBe 0
+    }
+
+    // Merge membership, pinned here rather than on the kernel: whether merging-off reaches the feed as
+    // an empty map is the clause that can actually break, and it lives on this side of the seam.
+
+    private fun mergeManager(memberships: Map<Long, Long>): MergeManager {
+        val manager = mockk<MergeManager>(relaxed = true)
+        every { manager.membershipChanges() } returns flowOf(memberships)
+        return manager
+    }
+
+    private fun mergingPreference(enabled: Boolean): Preference<Boolean> {
+        val preference = mockk<Preference<Boolean>>(relaxed = true)
+        every { preference.changes() } returns flowOf(enabled)
+        return preference
+    }
+
+    @Test
+    fun `memberships arrive keyed by entry so the two content types cannot cross`() = runTest {
+        val flow = mergeManager(mapOf(1L to 7L)).membershipFlow(mergingPreference(true), EntryId::Novel)
+
+        flow.first() shouldBe mapOf(EntryId.Novel(1) to 7L)
+    }
+
+    @Test
+    fun `with merging off the feed is handed no groups at all`() = runTest {
+        val flow = mergeManager(mapOf(1L to 7L)).membershipFlow(mergingPreference(false), EntryId::Manga)
+
+        flow.first() shouldBe emptyMap()
+    }
+
+    // A merged row's cover: its own, then its group's other library members' in member order.
+
+    private fun coverEngine(type: ContentType, grouped: Boolean): RecentsEngine {
+        val entry = { id: Long -> if (type == ContentType.MANGA) EntryId.Manga(id) else EntryId.Novel(id) }
+        val (own, second, third) = listOf(1L, 2L, 3L).map(entry)
+        val row = item(own, at = 1, lane = RecentsLane.Updated(ref(own, 1)))
+        val provider = provider(
+            type,
+            updated = rows(row),
+            membership = if (grouped) listOf(own, second, third).associateWith { 7L } else emptyMap(),
+            covers = mapOf(own to "own cover"),
+            // Member order puts the third entry ahead of the second, so the row's order cannot pass for it.
+            memberCovers = listOf(third, own, second).map { RecentsMemberCover(it, 7L, "cover ${it.rawId}") },
+        )
+        return engine(listOf(provider))
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("contentTypes")
+    fun `a merged row's cover falls back to its group's other members in member order`(type: ContentType) =
+        runTest {
+            val engine = coverEngine(type, grouped = true)
+
+            engine.rowUi(engine.firstAssembly().items.single()).cover shouldBe
+                GroupCover(listOf("own cover", "cover 3", "cover 2"))
+        }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("contentTypes")
+    fun `a row with merging off draws its own cover alone`(type: ContentType) = runTest {
+        val engine = coverEngine(type, grouped = false)
+
+        engine.rowUi(engine.firstAssembly().items.single()).cover shouldBe "own cover"
+    }
+
+    // Search, selection and the verbs: the values the two replaced screens each stored twice.
+
+    private fun ref(entryId: EntryId, chapterId: Long) = ChapterRef(entryId, chapterId)
+
+    @Test
+    fun `a search keeps only the rows whose displayed title matches`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(
+                    ContentType.MANGA,
+                    updated = rows(item(manga1, at = 100), item(manga2, at = 90)),
+                    titles = mapOf(manga1 to "Dandadan", manga2 to "Berserk"),
+                ),
+            ),
+        )
+        engine.search("dan")
+
+        engine.firstAssembly().items.map { it.entryId } shouldContainExactly listOf(manga1)
+    }
+
+    @Test
+    fun `an empty query leaves every row`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(
+                    ContentType.MANGA,
+                    updated = rows(item(manga1, at = 100), item(manga2, at = 90)),
+                    titles = mapOf(manga1 to "Dandadan", manga2 to "Berserk"),
+                ),
+            ),
+        )
+        engine.search("")
+
+        engine.firstAssembly().items.size shouldBe 2
+    }
+
+    @Test
+    fun `a range selection spans both content types in the rendered order`() {
+        val engine = engine(listOf(provider(ContentType.MANGA), provider(ContentType.NOVELS)))
+        val ordered = listOf(ref(manga1, 1), ref(novel1, 2), ref(manga2, 3))
+
+        engine.toggleSelection(ordered.first())
+        engine.toggleRangeSelection(ordered.last(), ordered)
+
+        engine.selection.value shouldContainExactlyInAnyOrder ordered
+    }
+
+    @Test
+    fun `a long press on an already-selected row drops it, as it does everywhere else`() {
+        val engine = engine(listOf(provider(ContentType.MANGA)))
+        val ordered = listOf(ref(manga1, 1), ref(manga2, 2))
+
+        engine.toggleSelection(ordered.first())
+        engine.toggleRangeSelection(ordered.last(), ordered)
+        engine.toggleRangeSelection(ordered.last(), ordered)
+
+        engine.selection.value shouldContainExactly listOf(ordered.first())
+    }
+
+    @Test
+    fun `a range with no anchor selects only the row that was pressed`() {
+        val engine = engine(listOf(provider(ContentType.MANGA)))
+        val ordered = listOf(ref(manga1, 1), ref(manga2, 2))
+
+        engine.toggleRangeSelection(ordered.last(), ordered)
+
+        engine.selection.value shouldContainExactly listOf(ordered.last())
+    }
+
+    @Test
+    fun `inverting swaps selected for unselected across the rendered order`() {
+        val engine = engine(listOf(provider(ContentType.MANGA), provider(ContentType.NOVELS)))
+        val ordered = listOf(ref(manga1, 1), ref(novel1, 2))
+
+        engine.toggleSelection(ordered.first())
+        engine.invertSelection(ordered)
+
+        engine.selection.value shouldContainExactly listOf(ordered.last())
+    }
+
+    @Test
+    fun `a selected chapter the feed no longer holds leaves the selection`() = runTest {
+        val chapter = ref(manga2, 3)
+        val engine = engine(
+            listOf(
+                provider(
+                    ContentType.MANGA,
+                    updated = rows(
+                        item(manga1, at = 100, lane = RecentsLane.Updated(ref(manga1, 1))),
+                        item(manga2, at = 90, lane = RecentsLane.Updated(chapter)),
+                    ),
+                    titles = mapOf(manga1 to "Dandadan", manga2 to "Berserk"),
+                ),
+            ),
+        )
+        engine.toggleSelection(chapter)
+        engine.search("dan")
+        engine.firstRendered()
+
+        engine.selection.value shouldBe emptySet()
+    }
+
+    /**
+     * The cap is the digest's whole shape, so a row can stop being drawn while nothing about it
+     * changed: an arriving update burst takes the read section's budget. Selected, it would have kept
+     * counting in the toolbar and kept being acted on, with nothing on screen to say so.
+     */
+    @Test
+    fun `a selected row a section cap dropped leaves the selection`() = runTest {
+        val items = (1..12).map { n ->
+            val entry = EntryId.Manga(n.toLong())
+            item(entry, at = 100L - n, lane = RecentsLane.Read(ChapterRef(entry, chapterId = n.toLong())))
+        }
+        val engine = engine(
+            listOf(provider(ContentType.MANGA, read = rows(*items.toTypedArray()))),
+            modes = setOf(RecentsMode.DIGEST),
+        )
+        val drawn = ref(items.first().entryId, chapterId = 1)
+        val capped = ref(items.last().entryId, chapterId = 12)
+        engine.toggleSelection(drawn)
+        engine.toggleSelection(capped)
+
+        engine.firstRendered()
+
+        engine.selection.value shouldContainExactly listOf(drawn)
+    }
+
+    @Test
+    fun `a row a section cap dropped stays out when another is picked`() = runTest {
+        val items = (1..12).map { n ->
+            val entry = EntryId.Manga(n.toLong())
+            item(entry, at = 100L - n, lane = RecentsLane.Read(ChapterRef(entry, chapterId = n.toLong())))
+        }
+        val engine = engine(
+            listOf(provider(ContentType.MANGA, read = rows(*items.toTypedArray()))),
+            modes = setOf(RecentsMode.DIGEST),
+        )
+        val drawn = ref(items.first().entryId, chapterId = 1)
+        val capped = ref(items.last().entryId, chapterId = 12)
+        val next = ref(items[1].entryId, chapterId = 2)
+        engine.toggleSelection(drawn)
+        engine.toggleSelection(capped)
+        engine.firstRendered()
+
+        engine.toggleSelection(next)
+
+        engine.selection.value shouldContainExactlyInAnyOrder listOf(drawn, next)
+    }
+
+    @Test
+    fun `a selected row the chapter filter hides leaves the selection`() = runTest {
+        emittingUpdatesPreferences.filterBookmarked.set(TriState.ENABLED_IS)
+        val kept = EntryId.Manga(1)
+        val hidden = EntryId.Manga(2)
+        val engine = emittingEngine(
+            provider(
+                ContentType.MANGA,
+                read = rows(
+                    item(kept, at = 20, lane = RecentsLane.Read(ChapterRef(kept, 1))),
+                    item(hidden, at = 10, lane = RecentsLane.Read(ChapterRef(hidden, 2))),
+                ),
+                states = mapOf(
+                    kept to RecentsChapterState(read = false, bookmark = true, progress = null),
+                    hidden to RecentsChapterState(read = false, bookmark = false, progress = null),
+                ),
+                // Both still have something to read, so the show-read gate stands aside and the
+                // chapter filter is what decides, which is what this test is about.
+                unreadEntries = setOf(kept, hidden),
+            ),
+            modes = setOf(RecentsMode.FEED),
+        )
+        engine.toggleSelection(ref(kept, 1))
+        engine.toggleSelection(ref(hidden, 2))
+
+        // The gate is seeded open, so the first draw can land before the filter does; the rendered
+        // flow runs on a real dispatcher, so which one comes first is the thread's call.
+        engine.rendered.filterNotNull().first { it.rows.orderedChapterRefs() == listOf(ref(kept, 1)) }
+
+        engine.selection.value shouldContainExactly listOf(ref(kept, 1))
+    }
+
+    @Test
+    fun `select all takes every row the surface draws`() {
+        val engine = engine(listOf(provider(ContentType.MANGA)))
+        val ordered = listOf(ref(manga1, 1), ref(novel1, 2))
+
+        engine.selectAll(ordered)
+
+        engine.selection.value shouldContainExactlyInAnyOrder ordered
+    }
+
+    @Test
+    fun `a bulk action reaches every content type on screen and clears the selection`() {
+        val manga = provider(ContentType.MANGA)
+        val novel = provider(ContentType.NOVELS)
+        val engine = engine(listOf(manga, novel))
+        val chapter = ref(manga1, 1)
+
+        engine.toggleSelection(chapter)
+        engine.markReadSelection(setOf(chapter), read = true)
+
+        manga.markedRead shouldBe setOf(chapter)
+        novel.markedRead shouldBe setOf(chapter)
+        engine.selection.value shouldBe emptySet()
+    }
+
+    @Test
+    fun `a bulk action on the History surface reaches every content type`() {
+        val manga = provider(ContentType.MANGA)
+        val novel = provider(ContentType.NOVELS)
+        val engine = engine(listOf(manga, novel), modes = setOf(RecentsMode.HISTORY))
+        val chapter = ref(manga1, 1)
+
+        engine.toggleSelection(chapter)
+        engine.markReadSelection(setOf(chapter), read = true)
+
+        listOf(manga.markedRead, novel.markedRead) shouldBe listOf(setOf(chapter), setOf(chapter))
+    }
+
+    @Test
+    fun `removing one read record reaches only the provider that owns the entry`() {
+        val manga = provider(ContentType.MANGA)
+        val novel = provider(ContentType.NOVELS)
+        val engine = engine(listOf(manga, novel))
+        val row = item(novel1, at = 1)
+
+        engine.removeHistoryRecord(row)
+
+        novel.removedRecord shouldBe row
+        manga.removedRecord shouldBe null
+    }
+
+    /**
+     * A merged History row stands for its whole group, so its "all" has to reach every source: clearing
+     * only the member the collapse picked let another source's record draw the row straight back.
+     */
+    @Test
+    fun `removing every record of a merged row reaches every source of its group`() {
+        val manga = provider(ContentType.MANGA)
+        val engine = engine(listOf(manga))
+
+        engine.removeFromHistory(setOf(manga1), membership = mapOf(manga1 to 7L, manga2 to 7L))
+
+        manga.removedEntries shouldBe setOf(manga1, manga2)
+    }
+
+    @Test
+    fun `removing every record of an unmerged row stays on that entry`() {
+        val manga = provider(ContentType.MANGA)
+        val engine = engine(listOf(manga))
+
+        engine.removeFromHistory(setOf(manga1), membership = mapOf(manga2 to 7L, EntryId.Manga(3) to 7L))
+
+        manga.removedEntries shouldBe setOf(manga1)
+    }
+
+    @Test
+    fun `switching mode drops a selection the new mode need not show`() {
+        val engine = engine(
+            listOf(provider(ContentType.MANGA)),
+            modes = setOf(RecentsMode.UPDATES, RecentsMode.HISTORY),
+        )
+        engine.toggleSelection(ref(manga1, 1))
+
+        engine.setMode(RecentsMode.HISTORY)
+
+        engine.selection.value shouldBe emptySet()
+    }
+
+    // The lane decides the reader's scope, and the pairing is what keeps a launch openable: only the
+    // updated lane resolves its target inside the row's own source.
+
+    @Test
+    fun `the updated lane opens inside the row's own source`() {
+        RecentsLane.Updated(ref(manga1, 1)).sourceScoped shouldBe true
+    }
+
+    @Test
+    fun `the lanes that resolve over the merge group do not open source-scoped`() {
+        listOf(RecentsLane.Read(ref(manga1, 1)), RecentsLane.Added)
+            .map { it.sourceScoped } shouldContainExactly listOf(false, false)
+    }
+
+    @Test
+    fun `each single-lane mode opens only its own feed`() {
+        RecentsMode.UPDATES.lanes shouldBe setOf(RecentsLaneKind.UPDATED)
+        RecentsMode.HISTORY.lanes shouldBe setOf(RecentsLaneKind.READ)
+    }
+
+    @Test
+    fun `a combined mode opens every feed`() {
+        RecentsMode.FEED.lanes shouldBe RecentsLaneKind.entries.toSet()
+    }
+
+    @Test
+    fun `a row's own download control carries its action and spares the selection`() {
+        val provider = provider(ContentType.MANGA)
+        val engine = engine(listOf(provider))
+        val selected = ref(manga2, 2)
+        val row = ref(manga1, 1)
+        engine.toggleSelection(selected)
+
+        engine.download(setOf(row), ChapterDownloadAction.START_NOW, RecentsLane.Updated(row))
+
+        provider.downloaded shouldBe (setOf(row) to ChapterDownloadAction.START_NOW)
+        engine.selection.value shouldContainExactly listOf(selected)
+    }
+
+    @Test
+    fun `flipping the chip drops a selection it may now hide`() {
+        val engine = engine(listOf(provider(ContentType.MANGA)))
+        engine.toggleSelection(ref(manga1, 1))
+
+        engine.setContentType(ContentType.NOVELS)
+
+        engine.selection.value shouldBe emptySet()
+    }
+
+    /** The tab row fires again on the chip already shown, which is not a flip. */
+    @Test
+    fun `re-selecting the chip shown keeps the selection`() {
+        val engine = emittingEngine(provider(ContentType.MANGA), setOf(RecentsMode.UPDATES))
+        engine.setContentType(ContentType.MANGA)
+        engine.toggleSelection(ref(manga1, 1))
+
+        engine.setContentType(ContentType.MANGA)
+
+        engine.selection.value shouldBe setOf(ref(manga1, 1))
+    }
+
+    /**
+     * History takes a selection because every verb behind one acts on the chapter a row names, which
+     * a history row has. It does not take grouping (no burst to group) or the chapter-state filters
+     * (those preferences are the Updates view's, and obeying them here would narrow this feed with
+     * nothing on screen saying so).
+     */
+    @Test
+    fun `History takes a selection and nothing aimed at an update burst`() {
+        RecentsMode.HISTORY.capabilities shouldBe setOf(RecentsCapability.SELECTION)
+    }
+
+    /**
+     * One line for every view is how History came to report itself as having no recent updates. The
+     * lanes answer it, so a view of one lane names that lane and a mixed one can only speak of activity.
+     */
+    @Test
+    fun `an empty view names the lanes it draws`() {
+        RECENTS_MODE_ORDER.map { it.emptyRes } shouldContainExactly listOf(
+            MR.strings.information_no_recent_activity,
+            MR.strings.information_no_recent_activity,
+            MR.strings.information_no_recent_manga,
+            MR.strings.information_no_recent,
+        )
+    }
+
+    @Test
+    fun `a refresh that starts one library reports a start, not an already-running`() = runTest {
+        val manga = provider(ContentType.MANGA, refreshStarts = false)
+        val novel = provider(ContentType.NOVELS, refreshStarts = true)
+
+        engine(listOf(manga, novel)).refresh() shouldBe true
+    }
+
+    @Test
+    fun `a refresh reaches the second library even when the first already started`() = runTest {
+        val manga = provider(ContentType.MANGA, refreshStarts = true)
+        val novel = provider(ContentType.NOVELS, refreshStarts = false)
+
+        engine(listOf(manga, novel)).refresh()
+
+        novel.refreshed shouldBe true
+    }
+
+    @Test
+    fun `a refresh under one chip leaves the other library alone`() = runTest {
+        val manga = provider(ContentType.MANGA)
+        val novel = provider(ContentType.NOVELS)
+
+        engine(listOf(manga, novel), chip = ContentType.MANGA).refresh()
+
+        novel.refreshed shouldBe false
+    }
+
+    @Test
+    fun `clearing history reaches both content types under All`() = runTest {
+        val manga = provider(ContentType.MANGA)
+        val novel = provider(ContentType.NOVELS)
+
+        engine(listOf(manga, novel)).clearHistory()
+
+        (manga.historyCleared to novel.historyCleared) shouldBe (true to true)
+    }
+
+    @Test
+    fun `clearing history under one chip spares the other content type`() = runTest {
+        val manga = provider(ContentType.MANGA)
+        val novel = provider(ContentType.NOVELS)
+
+        engine(listOf(manga, novel), chip = ContentType.MANGA).clearHistory()
+
+        novel.historyCleared shouldBe false
+    }
+
+    /**
+     * The shell announces the wipe, so it is owed the truth about it. A clear that reached nothing used
+     * to report itself as done, which is the one message about a wipe the user cannot check.
+     */
+    @Test
+    fun `a clear that nothing managed reports no clear`() = runTest {
+        val manga = provider(ContentType.MANGA, historyClears = false)
+        val novel = provider(ContentType.NOVELS, historyClears = false)
+
+        engine(listOf(manga, novel)).clearHistory() shouldBe false
+    }
+
+    @Test
+    fun `a clear one content type managed is a clear`() = runTest {
+        val manga = provider(ContentType.MANGA, historyClears = false)
+        val novel = provider(ContentType.NOVELS, historyClears = true)
+
+        engine(listOf(manga, novel)).clearHistory() shouldBe true
+    }
+
+    // The chapter-state filters over the lanes no query filters. The updated lane is filtered in SQL,
+    // so only the read lane is judged here, and only where the mode draws the controls.
+
+    private val unreadOnly = RecentsChapterFilters(unread = TriState.ENABLED_IS)
+
+    private fun readRow(entryId: EntryId) =
+        item(entryId, at = 100, lane = RecentsLane.Read(ChapterRef(entryId, chapterId = 1)))
+
+    private fun readState(read: Boolean = false, bookmark: Boolean = false) =
+        RecentsChapterState(read = read, bookmark = bookmark, progress = null)
+
+    @Test
+    fun `a read row failing a filter is not drawn`() {
+        val provider = provider(ContentType.MANGA, states = mapOf(manga1 to readState(read = true)))
+
+        engine(listOf(provider)).showsRow(readRow(manga1), gate(unreadOnly), RecentsMode.HISTORY) shouldBe false
+    }
+
+    @Test
+    fun `a read row matching a filter is drawn`() {
+        val provider = provider(ContentType.MANGA, states = mapOf(manga1 to readState()))
+
+        engine(listOf(provider)).showsRow(readRow(manga1), gate(unreadOnly), RecentsMode.HISTORY) shouldBe true
+    }
+
+    /**
+     * Judging it here would filter it twice, against a rule written twice: its own query already
+     * applied these, and the row that survived that is the row the feed is meant to show.
+     */
+    @Test
+    fun `an updated row is left to the query that already filtered it`() {
+        val row = item(manga1, at = 100, lane = RecentsLane.Updated(ChapterRef(manga1, 1)))
+        val provider = provider(ContentType.MANGA, states = mapOf(manga1 to readState(read = true)))
+
+        engine(listOf(provider)).showsRow(row, gate(unreadOnly), RecentsMode.HISTORY) shouldBe true
+    }
+
+    /**
+     * The lane is what spares it, which is why the row is given a chapter state here: without one it
+     * would survive for having nothing to answer with, and the rule this pins would go untested.
+     */
+    @Test
+    fun `a newly added row is not judged by a question about chapters`() {
+        val provider = provider(ContentType.MANGA, states = mapOf(manga1 to readState(read = true)))
+
+        engine(listOf(provider))
+            .showsRow(item(manga1, at = 100), gate(unreadOnly), RecentsMode.HISTORY) shouldBe true
+    }
+
+    @Test
+    fun `the downloaded filter reads the row's own download state`() {
+        val downloaded = RecentsChapterFilters(downloaded = TriState.ENABLED_IS)
+        val provider = provider(
+            ContentType.MANGA,
+            states = mapOf(manga1 to readState(), manga2 to readState()),
+            downloadedEntries = setOf(manga1),
+        )
+        val engine = engine(listOf(provider))
+
+        val show = { entry: EntryId ->
+            engine.showsRow(readRow(entry), gate(downloaded), RecentsMode.HISTORY)
+        }
+        (show(manga1) to show(manga2)) shouldBe (true to false)
+    }
+
+    /**
+     * The four preferences are shared with the Updates mode, so a mode drawing no control for them must
+     * filter by none: obeying a filter with nothing on screen saying so is a feed silently narrowed.
+     */
+    @Test
+    fun `a mode that offers no chapter filters is judged by none`() = runTest {
+        emittingUpdatesPreferences.filterUnread.set(TriState.ENABLED_IS)
+        val engine = multiModeEngine(setOf(RecentsMode.UPDATES, RecentsMode.HISTORY))
+
+        settled(engine.chapterFilters).isActive shouldBe true
+
+        engine.setMode(RecentsMode.HISTORY)
+
+        settled(engine.chapterFilters) shouldBe RecentsChapterFilters.NONE
+    }
+
+    /**
+     * The rule below is pinned as a pure function, but which lanes reach it is the engine's call, and
+     * a surface rendering several modes always has the updated lane in one of them. Asking about the
+     * surface rather than the mode on screen reports a history feed as filtered by a filter that
+     * cannot touch it.
+     */
+    @Test
+    fun `a chapter state filter marks only the mode whose lane it can reach`() = runTest {
+        emittingUpdatesPreferences.filterUnread.set(TriState.ENABLED_IS)
+        val engine = multiModeEngine(setOf(RecentsMode.UPDATES, RecentsMode.HISTORY))
+
+        settled(engine.filterActive) shouldBe true
+
+        engine.setMode(RecentsMode.HISTORY)
+
+        settled(engine.filterActive) shouldBe false
+    }
+
+    @Test
+    fun `a chapter state filter marks a view that offers those filters`() {
+        recentsFilterActive(
+            byCategory = false,
+            byChapterState = true,
+            byScanlator = false,
+            chipCapabilities = scanlatorFilter,
+            mode = RecentsMode.UPDATES,
+        ) shouldBe true
+    }
+
+    @Test
+    fun `a chapter state filter does not mark a view that offers none`() {
+        recentsFilterActive(
+            byCategory = false,
+            byChapterState = true,
+            byScanlator = false,
+            chipCapabilities = scanlatorFilter,
+            mode = RecentsMode.HISTORY,
+        ) shouldBe false
+    }
+
+    @Test
+    fun `a category filter marks every view`() {
+        recentsFilterActive(
+            byCategory = true,
+            byChapterState = false,
+            byScanlator = false,
+            chipCapabilities = scanlatorFilter,
+            mode = RecentsMode.HISTORY,
+        ) shouldBe true
+    }
+
+    @Test
+    fun `excluded scanlators mark a feed that answers for them and offers the chapter filters`() {
+        recentsFilterActive(
+            byCategory = false,
+            byChapterState = false,
+            byScanlator = true,
+            chipCapabilities = scanlatorFilter,
+            mode = RecentsMode.UPDATES,
+        ) shouldBe true
+    }
+
+    @Test
+    fun `excluded scanlators do not mark a feed nothing behind it answers for`() {
+        recentsFilterActive(
+            byCategory = false,
+            byChapterState = false,
+            byScanlator = true,
+            chipCapabilities = emptySet(),
+            mode = RecentsMode.UPDATES,
+        ) shouldBe false
+    }
+
+    // The toolbar and the filter sheet draw Upcoming and the scanlator switch off this, so each is
+    // hidden exactly where no provider behind the chip answers for it.
+
+    @Test
+    fun `a chip offers only what the providers behind it answer`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, typeCapabilities = RecentsTypeCapability.entries.toSet()),
+                provider(ContentType.NOVELS),
+            ),
+            chip = ContentType.NOVELS,
+        )
+
+        settled(engine.chipCapabilities) shouldBe emptySet()
+    }
+
+    @Test
+    fun `the All chip offers the union of both providers`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, typeCapabilities = setOf(RecentsTypeCapability.UPCOMING)),
+                provider(ContentType.NOVELS, typeCapabilities = scanlatorFilter),
+            ),
+        )
+
+        settled(engine.chipCapabilities) shouldBe RecentsTypeCapability.entries.toSet()
+    }
+
+    @Test
+    fun `a manga provider without the scanlator filter leaves All without it`() = runTest {
+        val engine = engine(
+            listOf(
+                provider(ContentType.MANGA, typeCapabilities = setOf(RecentsTypeCapability.UPCOMING)),
+                provider(ContentType.NOVELS),
+            ),
+        )
+
+        settled(engine.chipCapabilities) shouldBe setOf(RecentsTypeCapability.UPCOMING)
+    }
+
+    /**
+     * The rule and the filtering must ask one question. They agree on all four views today, so this
+     * is what would catch them diverging: a view that judged rows it reported as unfiltered would
+     * hide entries with nothing on screen saying why.
+     */
+    @Test
+    fun `every view that judges rows says it is filtered`() {
+        RecentsMode.entries.map {
+            recentsFilterActive(
+                byCategory = false,
+                byChapterState = true,
+                byScanlator = false,
+                chipCapabilities = scanlatorFilter,
+                mode = it,
+            )
+        } shouldContainExactly RecentsMode.entries.map { it.can(RecentsCapability.CHAPTER_FILTER) }
+    }
+
+    @Test
+    fun `an add runs through the provider that owns the entry's content type`() = runTest {
+        val manga = provider(ContentType.MANGA)
+        val novel = provider(ContentType.NOVELS)
+
+        engine(listOf(manga, novel)).startAdd(manga1)
+
+        (manga.addedEntry to novel.addedEntry) shouldBe (manga1 to null)
+    }
+
+    @Test
+    fun `an entry already in the library is not added again`() = runTest {
+        val manga = provider(ContentType.MANGA, decision = AddDecision.Remove)
+
+        engine(listOf(manga)).startAdd(manga1)
+
+        manga.addedEntry shouldBe null
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("contentTypes")
+    fun `an add confirmed past the duplicate prompt leaves an entry already in the library alone`(
+        type: ContentType,
+    ) = runTest {
+        val fake = provider(type, decision = AddDecision.Remove)
+
+        engine(listOf(fake)).runAdd(if (type == ContentType.MANGA) manga1 else novel1)
+
+        fake.addedEntry shouldBe null
+    }
+
+    @Test
+    fun `an entry that has gone is not added`() = runTest {
+        val manga = provider(ContentType.MANGA, decision = null)
+
+        engine(listOf(manga)).startAdd(manga1)
+
+        manga.addedEntry shouldBe null
+    }
+
+    @Test
+    fun `a possible duplicate is asked about instead of added`() = runTest {
+        val duplicates = duplicates(novel1)
+        val manga = provider(ContentType.MANGA, decision = AddDecision.ConfirmDuplicate(duplicates))
+        val engine = engine(listOf(manga))
+
+        engine.startAdd(manga1)
+
+        engine.dialog.value shouldBe RecentsDialog.Duplicate(manga1, duplicates)
+        manga.addedEntry shouldBe null
+    }
+
+    @Test
+    fun `an add with no usable default opens the picker the provider answered with`() = runTest {
+        val selection = listOf(CheckboxState.State.None(category))
+        val manga = provider(ContentType.MANGA, addResult = AddFavoriteResult.NeedsCategoryChoice(selection))
+        val engine = engine(listOf(manga))
+
+        engine.startAdd(manga1)
+
+        engine.dialog.value shouldBe RecentsDialog.ChangeCategory(manga1, selection)
+    }
+
+    @Test
+    fun `adding to a group hands the provider the picked duplicates`() = runTest {
+        val manga = provider(ContentType.MANGA)
+
+        engine(listOf(manga)).groupAdd(manga1, listOf(manga2))
+
+        manga.groupedWith shouldBe listOf(manga2)
+    }
+
+    @Test
+    fun `a surface comes back to the mode it was left on`() = runTest {
+        sourcePreferences.recentsMode.set(RecentsMode.HISTORY)
+
+        val engine = engine(
+            listOf(provider(ContentType.MANGA)),
+            modes = setOf(RecentsMode.UPDATES, RecentsMode.HISTORY),
+        )
+
+        engine.mode.value shouldBe RecentsMode.HISTORY
+    }
+
+    /**
+     * One key serves every surface, so a stored mode routinely names something the surface does not
+     * draw. Obeying it would leave a single-mode tab rendering nothing it has an engine for; the same
+     * filter is what absorbs a mode that has since been removed.
+     */
+    @Test
+    fun `a stored mode this surface does not render is ignored`() = runTest {
+        sourcePreferences.recentsMode.set(RecentsMode.DIGEST)
+
+        val engine = engine(listOf(provider(ContentType.MANGA)), modes = setOf(RecentsMode.UPDATES))
+
+        engine.mode.value shouldBe RecentsMode.UPDATES
+    }
+
+    @Test
+    fun `switching mode is remembered for next time`() = runTest {
+        val engine = engine(
+            listOf(provider(ContentType.MANGA)),
+            modes = setOf(RecentsMode.UPDATES, RecentsMode.HISTORY),
+        )
+
+        engine.setMode(RecentsMode.HISTORY)
+
+        sourcePreferences.recentsMode.get() shouldBe RecentsMode.HISTORY
+    }
+
+    /**
+     * Resume used to compare both types whatever the chip was, so the Novels chip could open a manga.
+     * The chip decides which providers are asked at all, which is why it cannot come back.
+     */
+    @Test
+    fun `resume opens the newest read of the type the chip is showing`() = runTest {
+        val mangaRead = item(manga1, at = 300, lane = RecentsLane.Read(ChapterRef(manga1, 11)))
+        val novelRead = item(novel1, at = 100, lane = RecentsLane.Read(ChapterRef(novel1, 22)))
+        val manga = provider(ContentType.MANGA, latestRead = mangaRead)
+        val novel = provider(ContentType.NOVELS, latestRead = novelRead)
+
+        engine(listOf(manga, novel), chip = ContentType.NOVELS).resumeLatest()
+
+        (manga.openedItem to novel.openedItem) shouldBe (null to novelRead)
+    }
+
+    @Test
+    fun `resume under All opens whichever type was read last`() = runTest {
+        val mangaRead = item(manga1, at = 300, lane = RecentsLane.Read(ChapterRef(manga1, 11)))
+        val novelRead = item(novel1, at = 100, lane = RecentsLane.Read(ChapterRef(novel1, 22)))
+        val manga = provider(ContentType.MANGA, latestRead = mangaRead)
+        val novel = provider(ContentType.NOVELS, latestRead = novelRead)
+
+        engine(listOf(manga, novel)).resumeLatest()
+
+        (manga.openedItem to novel.openedItem) shouldBe (mangaRead to null)
+    }
+
+    @Test
+    fun `resume with nothing read anywhere opens nothing`() = runTest {
+        val manga = provider(ContentType.MANGA)
+        val novel = provider(ContentType.NOVELS)
+
+        engine(listOf(manga, novel)).resumeLatest() shouldBe null
+
+        (manga.openedItem to novel.openedItem) shouldBe (null to null)
+    }
+
+    // What a tap opens, which is one decision with what the row names.
+
+    private fun updatedRow(entry: EntryId, chapterId: Long) =
+        item(entry, at = 100, lane = RecentsLane.Updated(ChapterRef(entry, chapterId)))
+
+    /**
+     * Chapters 10 to 15 from one update, all unread, the row naming 15. The fake resolves 15 to 10, so a
+     * view that moved an updated row onto another chapter would open 10.
+     */
+    private fun updatedProvider(type: ContentType, row: RecentsItem) = provider(
+        type,
+        updated = rows(row),
+        states = mapOf(row.entryId to readState()),
+        targetRows = mapOf(ref(row.entryId, 15) to targetRow(ref(row.entryId, 10), readState())),
+    )
+
+    @ParameterizedTest
+    @MethodSource("updatedRowViews")
+    fun `an updated row opens the chapter it names, in every view and for both types`(
+        type: ContentType,
+        mode: RecentsMode,
+    ) = runTest {
+        val entry = if (type == ContentType.MANGA) manga1 else novel1
+        val row = updatedRow(entry, chapterId = 15)
+        val fake = updatedProvider(type, row)
+        val engine = engine(listOf(fake), chip = type, modes = setOf(mode))
+
+        engine.open(row, mode, membership = emptyMap())
+
+        (fake.openedChapter to engine.resolvesTarget(row, mode, membership = emptyMap())) shouldBe
+            (ref(entry, 15) to false)
+    }
+
+    @Test
+    fun `a tap on a resolved row opens the chapter its label moved onto`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val fake = provider(
+            ContentType.MANGA,
+            read = rows(row),
+            states = mapOf(manga1 to readState(read = true)),
+            targetRows = mapOf(ref(manga1, 5) to targetRow(ref(manga1, 6), readState())),
+        )
+        val engine = feedEngine(fake)
+
+        engine.open(row, RecentsMode.FEED, membership = emptyMap())
+
+        (fake.openedChapter to engine.targets.value[row.lane]?.ref) shouldBe (ref(manga1, 6) to ref(manga1, 6))
+    }
+
+    @Test
+    fun `the picker's confirm files through the provider that owns the entry`() = runTest {
+        val manga = provider(ContentType.MANGA)
+        val novel = provider(ContentType.NOVELS)
+
+        engine(listOf(manga, novel)).fileAddCategories(novel1, listOf(3L))
+
+        (manga.filedCategories to novel.filedCategories) shouldBe (null to (novel1 to listOf(3L)))
+    }
+
+    // The continue-reading row: which rows pay for a target, and what the verbs then act on.
+
+    private fun readRow(entry: EntryId, chapterId: Long, at: Long = 100) =
+        item(entry, at = at, lane = RecentsLane.Read(ChapterRef(entry, chapterId)))
+
+    /** Feed, so the read lane renders and the row is combined-mode; the fake's rows carry the states. */
+    private fun feedEngine(provider: RecentsProvider) =
+        engine(listOf(provider), chip = ContentType.MANGA, modes = setOf(RecentsMode.FEED))
+
+    /**
+     * The row controls poll their download state during composition, so the engine has to hand out a
+     * poll that composition can be told to repeat. Without it a History row kept a deleted download's
+     * icon until something else happened to redraw it.
+     */
+    @Test
+    fun `a polled download state is invalidated when a download changes`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val provider = provider(ContentType.MANGA, read = rows(row), downloadedEntries = setOf(manga1))
+        val engine = engine(listOf(provider))
+        val poll = engine.downloadUi(row)!!.state
+        val reads = mutableSetOf<Any>()
+        Snapshot.observe(readObserver = { reads += it }) { poll() }
+        var invalidated = false
+        val observer = Snapshot.registerApplyObserver { changed, _ -> invalidated = changed.any { it in reads } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { engine.trackDownloads() }
+        provider.awaitDownloadWatcher()
+
+        provider.deleteDownload(manga1)
+        advanceUntilIdle()
+        Snapshot.sendApplyNotifications()
+        observer.dispose()
+
+        invalidated shouldBe true
+    }
+
+    /**
+     * A progress tick moves a percentage and nothing else, so it must not reach a state poll: the
+     * selection bar polls every selected row, and manga progress ticks several times a second.
+     */
+    @Test
+    fun `a progress tick does not invalidate a polled download state`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val provider = provider(ContentType.MANGA, read = rows(row), downloadedEntries = setOf(manga1))
+        val engine = engine(listOf(provider))
+        val poll = engine.downloadUi(row)!!.state
+        val reads = mutableSetOf<Any>()
+        Snapshot.observe(readObserver = { reads += it }) { poll() }
+        var invalidated = false
+        val observer = Snapshot.registerApplyObserver { changed, _ -> invalidated = changed.any { it in reads } }
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { engine.trackDownloads() }
+        provider.awaitProgressWatcher()
+
+        provider.tickProgress()
+        advanceUntilIdle()
+        Snapshot.sendApplyNotifications()
+        observer.dispose()
+
+        invalidated shouldBe false
+    }
+
+    /**
+     * Watching the novel downloads builds the novel download manager, which restores its queue and can
+     * start the worker, so a surface showing only manga must not watch them.
+     */
+    @Test
+    fun `a chip showing only manga does not watch novel downloads`() = runTest {
+        val manga = provider(ContentType.MANGA)
+        val novel = provider(ContentType.NOVELS)
+        val engine = engine(listOf(manga, novel), chip = ContentType.MANGA)
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { engine.trackDownloads() }
+        manga.awaitDownloadWatcher()
+        advanceUntilIdle()
+
+        novel.isDownloadWatched shouldBe false
+    }
+
+    /** The downloaded filter judges a row by its download, so a deleted download has to re-judge it. */
+    @Test
+    fun `a read row leaves the downloaded filter once its download is deleted`() = runTest {
+        emittingUpdatesPreferences.filterDownloaded.set(TriState.ENABLED_IS)
+        val row = readRow(manga1, chapterId = 5)
+        val provider = provider(
+            ContentType.MANGA,
+            read = rows(row),
+            states = mapOf(manga1 to readState()),
+            downloadedEntries = setOf(manga1),
+            unreadEntries = setOf(manga1),
+        )
+        val engine = emittingEngine(provider, setOf(RecentsMode.FEED))
+        backgroundScope.launch { engine.rendered.collect { } }
+        // Drawn first, so the empty list below is the delete's doing and not a row that never showed.
+        engine.rendered.filterNotNull().first { it.rows.isNotEmpty() }
+        // The row can draw before the engine watches downloads, and a delete reported then is lost.
+        provider.awaitDownloadWatcher()
+
+        provider.deleteDownload(manga1)
+
+        engine.rendered.filterNotNull().first { it.rows.isEmpty() }.rows shouldBe emptyList()
+    }
+
+    @Test
+    fun `a caught-up series leaves Feed once the unread set arrives`() = runTest {
+        val engine = emittingEngine(
+            provider(ContentType.MANGA, read = rows(readRow(manga1, chapterId = 5)), unreadEntries = emptySet()),
+            setOf(RecentsMode.FEED),
+        )
+        backgroundScope.launch { engine.rendered.collect { } }
+
+        engine.rendered.filterNotNull().first { it.rows.isEmpty() }.rows shouldBe emptyList()
+    }
+
+    // The unread set is two whole-table queries re-run on every chapter write, and the engine outlives
+    // a tab switch, so it is held open only while the show-read rule can read it. Each case opens it
+    // first, so the close it waits for is the rule's doing and not a subscription that never happened.
+
+    @Test
+    fun `turning show read on closes the unread query`() = runTest {
+        val fake = provider(ContentType.MANGA, read = rows(readRow(manga1, chapterId = 5)))
+        val engine = emittingEngine(fake, setOf(RecentsMode.FEED))
+        backgroundScope.launch { engine.rendered.collect { } }
+        fake.unreadQuery.subscriptionCount.first { it > 0 }
+
+        ReikaiSourcePreferences(emittingStore).recentsShowRead.set(true)
+
+        fake.unreadQuery.subscriptionCount.first { it == 0 } shouldBe 0
+    }
+
+    @Test
+    fun `a single-lane mode closes the unread query`() = runTest {
+        val fake = provider(ContentType.MANGA, read = rows(readRow(manga1, chapterId = 5)))
+        val engine = emittingEngine(fake, setOf(RecentsMode.FEED, RecentsMode.UPDATES))
+        engine.setMode(RecentsMode.FEED)
+        backgroundScope.launch { engine.rendered.collect { } }
+        fake.unreadQuery.subscriptionCount.first { it > 0 }
+
+        engine.setMode(RecentsMode.UPDATES)
+
+        fake.unreadQuery.subscriptionCount.first { it == 0 } shouldBe 0
+    }
+
+    @Test
+    fun `a read record still unread resolves nothing, since it resumes itself`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val engine = feedEngine(
+            provider(ContentType.MANGA, read = rows(row), states = mapOf(manga1 to readState(read = false))),
+        )
+
+        engine.resolvesTarget(row, RecentsMode.FEED, membership = emptyMap()) shouldBe false
+    }
+
+    @Test
+    fun `a merged entry resolves even where its own record reads as unread`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val engine = feedEngine(
+            provider(ContentType.MANGA, read = rows(row), states = mapOf(manga1 to readState(read = false))),
+        )
+
+        engine.resolvesTarget(row, RecentsMode.FEED, membership = mapOf(manga1 to 7L)) shouldBe true
+    }
+
+    @Test
+    fun `History resolves nothing, because its rows are about the record`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val engine = feedEngine(
+            provider(ContentType.MANGA, read = rows(row), states = mapOf(manga1 to readState(read = true))),
+        )
+
+        engine.resolvesTarget(row, RecentsMode.HISTORY, membership = emptyMap()) shouldBe false
+    }
+
+    @Test
+    fun `a drawn row's target resolves off the caller's dispatcher`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val fake = resolvingProvider(row, targetRow(ref(manga1, 2), readState(read = false)))
+
+        feedEngine(fake).targetRow(row)
+
+        fake.resolvedOn shouldContainExactly listOf(Dispatchers.IO)
+    }
+
+    @Test
+    fun `a tap on a History row resolves its chapter off the caller's dispatcher`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val fake = provider(ContentType.MANGA, read = rows(row))
+        val engine = engine(listOf(fake), chip = ContentType.MANGA, modes = setOf(RecentsMode.HISTORY))
+
+        engine.open(row, RecentsMode.HISTORY, membership = emptyMap())
+
+        fake.resolvedOn shouldContainExactly listOf(Dispatchers.IO)
+    }
+
+    @Test
+    fun `resume resolves its chapter off the caller's dispatcher`() = runTest {
+        val latest = readRow(manga1, chapterId = 5)
+        val fake = provider(ContentType.MANGA, latestRead = latest)
+
+        engine(listOf(fake)).resumeLatest()
+
+        fake.resolvedOn shouldContainExactly listOf(Dispatchers.IO)
+    }
+
+    @Test
+    fun `a resolved row is remembered, so a second reader pays nothing`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val target = targetRow(ref(manga1, 2), readState(read = false))
+        val fake = provider(
+            ContentType.MANGA,
+            read = rows(row),
+            states = mapOf(manga1 to readState(read = true)),
+            targetRows = mapOf(ref(manga1, 5) to target),
+        )
+        val engine = feedEngine(fake)
+
+        engine.targetRow(row)
+        engine.targetRow(row)
+
+        engine.targets.value shouldBe mapOf(row.lane to target)
+        fake.targetRowResolutions shouldBe 1
+    }
+
+    /**
+     * The memo hangs off the lane data, which only a live assembly runs. Without a collector the two
+     * tests below pass on a memo nothing ever reached, which is how a clear on the wrong flow would
+     * have gone unnoticed.
+     */
+    private suspend fun TestScope.resolvedFeed(
+        fake: FakeRecentsProvider,
+        row: RecentsItem,
+    ): RecentsEngine {
+        val engine = feedEngine(fake)
+        backgroundScope.launch { engine.rendered.collect { } }
+        // Awaited, not advanced: the first lane emission empties the memo on its own dispatcher, and
+        // resolving before it lands leaves the test asserting against a clear that has yet to happen.
+        engine.assembled.filterNotNull().first()
+        engine.targetRow(row)
+        return engine
+    }
+
+    private fun resolvingProvider(row: RecentsItem, target: RecentsTargetRow) = provider(
+        ContentType.MANGA,
+        read = rows(row),
+        states = mapOf(manga1 to readState(read = true)),
+        targetRows = mapOf(ref(manga1, 5) to target),
+    )
+
+    /**
+     * The assembly runs on its own dispatcher, so virtual time says nothing about whether an emission
+     * has been through it. Awaiting the emission itself is what makes an assertion about the memo land
+     * after the clear rather than racing it.
+     */
+    private suspend fun RecentsEngine.assemblyWhere(predicate: (RecentsAssembled) -> Boolean) {
+        assembled.filterNotNull().first(predicate)
+    }
+
+    @Test
+    fun `a search keystroke leaves the resolved rows alone`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val target = targetRow(ref(manga1, 2), readState(read = false))
+        val engine = resolvedFeed(resolvingProvider(row, target), row)
+
+        engine.search("nothing this row is called")
+        engine.assemblyWhere { it.items.isEmpty() }
+
+        engine.targets.value shouldBe mapOf(row.lane to target)
+    }
+
+    /**
+     * A lane re-emits on every download tick, which says nothing about whether a target was read, and
+     * clearing on it re-resolved every drawn row several times a second while a download ran.
+     */
+    @Test
+    fun `a lane re-emission with no chapter write keeps the resolved rows`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val target = targetRow(ref(manga1, 2), readState(read = false))
+        val fake = resolvingProvider(row, target)
+        val engine = resolvedFeed(fake, row)
+
+        fake.readLaneRows.value = rows(readRow(manga1, chapterId = 5, at = 200))
+        engine.assemblyWhere { assembly -> assembly.items.any { it.timestamp == Instant.fromEpochMilliseconds(200L) } }
+
+        engine.targets.value shouldBe mapOf(row.lane to target)
+    }
+
+    @Test
+    fun `a target input change drops the resolved rows, because the target may have moved`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val fake = resolvingProvider(row, targetRow(ref(manga1, 2), readState(read = false)))
+        val engine = resolvedFeed(fake, row)
+        fake.awaitTargetInputWatcher()
+
+        fake.changeTargetInput()
+
+        engine.targets.first { it.isEmpty() } shouldBe emptyMap()
+    }
+
+    /**
+     * A resolve reads the chapters before the change that cleared the memo, and answers after it. Storing
+     * that answer would pin a stale target, and nothing asks again: the row's target is still null to
+     * the screen, which is the value its resolve was already launched on.
+     */
+    @Test
+    fun `a resolve a target input change overtook is resolved again rather than stored`() = runTest {
+        val warm = readRow(manga1, chapterId = 5)
+        val held = readRow(manga2, chapterId = 7)
+        val fresh = targetRow(ref(manga2, 8), readState(read = false))
+        val fake = provider(
+            ContentType.MANGA,
+            read = rows(warm, held),
+            targetRows = mapOf(ref(manga1, 5) to targetRow(ref(manga1, 6), readState()), ref(manga2, 7) to fresh),
+        )
+        val engine = resolvedFeed(fake, warm)
+        fake.awaitTargetInputWatcher()
+        val stale = CompletableDeferred<RecentsTargetRow?>()
+        fake.heldResolves.addLast(stale)
+        val resolving = async { engine.targetRow(held) }
+        runCurrent()
+
+        fake.changeTargetInput()
+        engine.targets.first { it.isEmpty() }
+        stale.complete(targetRow(ref(manga2, 7), readState()))
+        resolving.await()
+
+        engine.targets.value shouldBe mapOf(held.lane to fresh)
+    }
+
+    @Test
+    fun `switching to History drops the resolved rows`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val engine = engine(
+            listOf(
+                provider(
+                    ContentType.MANGA,
+                    read = rows(row),
+                    states = mapOf(manga1 to readState(read = true)),
+                    targetRows = mapOf(ref(manga1, 5) to targetRow(ref(manga1, 2), readState())),
+                ),
+            ),
+            chip = ContentType.MANGA,
+            modes = setOf(RecentsMode.FEED, RecentsMode.HISTORY),
+        )
+        engine.setMode(RecentsMode.FEED)
+        engine.targetRow(row)
+
+        engine.setMode(RecentsMode.HISTORY)
+
+        engine.targets.value shouldBe emptyMap()
+    }
+
+    @Test
+    fun `a bulk verb acts on the chapter a continue-reading row names`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val engine = feedEngine(
+            provider(
+                ContentType.MANGA,
+                read = rows(row),
+                states = mapOf(manga1 to readState(read = true)),
+                targetRows = mapOf(ref(manga1, 5) to targetRow(ref(manga1, 2), readState())),
+            ),
+        )
+
+        engine.actingChapters(listOf(row), RecentsMode.FEED, membership = emptyMap()) shouldBe
+            setOf(ref(manga1, 2))
+    }
+
+    @Test
+    fun `a selection mixing lanes maps only the rows that name a target`() = runTest {
+        val read = readRow(manga1, chapterId = 5)
+        val stillUnread = readRow(manga2, chapterId = 9)
+        val engine = feedEngine(
+            provider(
+                ContentType.MANGA,
+                read = rows(read, stillUnread),
+                states = mapOf(manga1 to readState(read = true), manga2 to readState(read = false)),
+                targetRows = mapOf(
+                    ref(manga1, 5) to targetRow(ref(manga1, 2), readState()),
+                    ref(manga2, 9) to targetRow(ref(manga2, 3), readState()),
+                ),
+            ),
+        )
+
+        engine.actingChapters(listOf(read, stillUnread), RecentsMode.FEED, membership = emptyMap()) shouldBe
+            setOf(ref(manga1, 2), ref(manga2, 9))
+    }
+
+    @Test
+    fun `a row whose target is its own record acts on that record`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val engine = feedEngine(
+            provider(
+                ContentType.MANGA,
+                read = rows(row),
+                states = mapOf(manga1 to readState(read = true)),
+                targetRows = mapOf(ref(manga1, 5) to targetRow(ref(manga1, 5), readState())),
+            ),
+        )
+
+        engine.actingChapters(listOf(row), RecentsMode.FEED, membership = emptyMap()) shouldBe
+            setOf(ref(manga1, 5))
+    }
+
+    @Test
+    fun `a delete splits a selection by the scope each row was shown in`() = runTest {
+        val updated = updatedRow(manga1, chapterId = 7)
+        val read = readRow(manga2, chapterId = 5)
+        val engine = feedEngine(
+            provider(ContentType.MANGA, read = rows(read), states = mapOf(manga2 to readState(read = true))),
+        )
+
+        engine.actingChaptersByScope(listOf(updated, read), RecentsMode.FEED, membership = emptyMap()) shouldBe
+            mapOf(MergeScope.Source to setOf(ref(manga1, 7)), MergeScope.Group to setOf(ref(manga2, 5)))
+    }
+
+    @Test
+    fun `a row with nothing left to open still acts on its own record`() = runTest {
+        val row = readRow(manga1, chapterId = 5)
+        val engine = feedEngine(
+            provider(
+                ContentType.MANGA,
+                read = rows(row),
+                states = mapOf(manga1 to readState(read = true)),
+            ),
+        )
+
+        engine.actingChapters(listOf(row), RecentsMode.FEED, membership = emptyMap()) shouldBe
+            setOf(ref(manga1, 5))
+    }
+
+    companion object {
+        @JvmStatic
+        fun contentTypes() = listOf(ContentType.MANGA, ContentType.NOVELS)
+
+        /** Every view an updated row is drawn in, for both content types. */
+        @JvmStatic
+        fun updatedRowViews(): List<Arguments> =
+            listOf(ContentType.MANGA, ContentType.NOVELS).flatMap { type ->
+                listOf(RecentsMode.DIGEST, RecentsMode.FEED, RecentsMode.UPDATES).map { Arguments.of(type, it) }
+            }
+    }
+}
+
+private fun rows(vararg items: RecentsItem) = RecentsLaneRows(items.toList(), loaded = true)
+
+private fun provider(
+    type: ContentType,
+    read: RecentsLaneRows = rows(),
+    updated: RecentsLaneRows = rows(),
+    added: RecentsLaneRows = rows(),
+    updatedAt: Long = 0L,
+    titles: Map<EntryId, String> = emptyMap(),
+    refreshStarts: Boolean = true,
+    updating: Boolean = false,
+    decision: AddDecision<RecentsDuplicates>? = AddDecision.Add,
+    addResult: AddFavoriteResult = AddFavoriteResult.Added,
+    latestRead: RecentsItem? = null,
+    historyClears: Boolean = true,
+    states: Map<EntryId, RecentsChapterState> = emptyMap(),
+    downloadedEntries: Set<EntryId> = emptySet(),
+    unreadEntries: Set<EntryId> = emptySet(),
+    targetRows: Map<ChapterRef, RecentsTargetRow> = emptyMap(),
+    membership: Map<EntryId, Long> = emptyMap(),
+    typeCapabilities: Set<RecentsTypeCapability> = emptySet(),
+    covers: Map<EntryId, Any> = emptyMap(),
+    memberCovers: List<RecentsMemberCover> = emptyList(),
+) = FakeRecentsProvider(
+    type,
+    read,
+    updated,
+    added,
+    updatedAt,
+    titles,
+    refreshStarts,
+    updating,
+    decision,
+    addResult,
+    latestRead,
+    historyClears,
+    states,
+    downloadedEntries,
+    unreadEntries,
+    targetRows,
+    membership,
+    typeCapabilities,
+    covers,
+    memberCovers,
+)
+
+/** A resolved target row, carrying only what the engine and the bar read off one. */
+internal fun targetRow(ref: ChapterRef, state: RecentsChapterState, downloaded: Boolean = false) =
+    RecentsTargetRow(
+        ref = ref,
+        chapter = RecentsChapterUi.Number(ref.chapterId.toDouble()),
+        state = state,
+        download = RecentsDownloadUi(
+            state = { if (downloaded) Download.State.DOWNLOADED else Download.State.NOT_DOWNLOADED },
+            progress = RecentsDownloadProgress.Unsupported,
+        ),
+    )
+
+/** The chapter-state filters alone, with the show-read rule open so only the filters are judged. */
+private fun gate(filters: RecentsChapterFilters) =
+    RecentsRowGate(filters = filters, showRead = true, unread = emptySet())
+
+/** A provider with canned lanes, recording the verbs the engine dispatched to it. */
+private class FakeRecentsProvider(
+    override val contentType: ContentType,
+    readRows: RecentsLaneRows,
+    updatedRows: RecentsLaneRows,
+    addedRows: RecentsLaneRows,
+    updatedAt: Long,
+    private val titles: Map<EntryId, String>,
+    private val refreshStarts: Boolean,
+    updating: Boolean,
+    private val decision: AddDecision<RecentsDuplicates>?,
+    private val addResult: AddFavoriteResult,
+    private val latestRead: RecentsItem?,
+    private val historyClears: Boolean,
+    private val states: Map<EntryId, RecentsChapterState>,
+    downloadedEntries: Set<EntryId>,
+    unread: Set<EntryId>,
+    private val targetRows: Map<ChapterRef, RecentsTargetRow>,
+    memberships: Map<EntryId, Long>,
+    override val typeCapabilities: Set<RecentsTypeCapability>,
+    private val covers: Map<EntryId, Any>,
+    memberCovers: List<RecentsMemberCover>,
+) : RecentsProvider {
+
+    var historyCleared = false
+        private set
+    var markedRead: Set<ChapterRef>? = null
+        private set
+    var removedRecord: RecentsItem? = null
+        private set
+    var downloaded: Pair<Set<ChapterRef>, ChapterDownloadAction>? = null
+        private set
+    var refreshed = false
+        private set
+    var addedEntry: EntryId? = null
+        private set
+    var filedCategories: Pair<EntryId, List<Long>>? = null
+        private set
+    var groupedWith: List<EntryId>? = null
+        private set
+
+    /** How many times the engine has opened this provider's update signal, which it pays to render. */
+    var updatingSubscriptions = 0
+        private set
+
+    /** Mutable, so a test can re-emit the lane the way a chapter write does. */
+    val readLaneRows = MutableStateFlow(readRows)
+
+    override val readLane: Flow<RecentsLaneRows> = readLaneRows
+    override val updatedLane: Flow<RecentsLaneRows> = flowOf(updatedRows)
+    override val addedLane: Flow<RecentsLaneRows> = flowOf(addedRows)
+    override val lastUpdated: Flow<Long> = flowOf(updatedAt)
+    override val updating: Flow<Boolean> = flowOf(updating).onStart { updatingSubscriptions++ }
+    override val membership: Flow<Map<EntryId, Long>> = flowOf(memberships)
+    override val memberCovers: Flow<List<RecentsMemberCover>> = flowOf(memberCovers)
+
+    private val downloadedNow = downloadedEntries.toMutableSet()
+    private val downloadSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    override val downloadChanges: Flow<Unit> = downloadSignal
+
+    private val progressSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    override val progressChanges: Flow<Unit> = progressSignal
+
+    /** A change reported before anything watches is dropped, as a real cache's would be to nobody. */
+    suspend fun awaitDownloadWatcher() {
+        downloadSignal.subscriptionCount.first { it > 0 }
+    }
+
+    suspend fun awaitProgressWatcher() {
+        progressSignal.subscriptionCount.first { it > 0 }
+    }
+
+    val isDownloadWatched: Boolean get() = downloadSignal.subscriptionCount.value > 0
+
+    /** A queued download's byte progress moving, with nothing downloaded or deleted. */
+    fun tickProgress() {
+        progressSignal.tryEmit(Unit)
+    }
+
+    /** Deletes an entry's download and reports it, the way a cache change does. */
+    fun deleteDownload(entry: EntryId) {
+        downloadedNow -= entry
+        downloadSignal.tryEmit(Unit)
+    }
+
+    // Named apart from the property on purpose: a same-named constructor parameter reads back as the
+    // property here, which is null while the object is still being built.
+    // A state flow rather than flowOf, so a test can see whether the engine holds the query open.
+    val unreadQuery = MutableStateFlow(unread)
+    override val unreadEntries: Flow<Set<EntryId>> = unreadQuery
+
+    private val targetInputSignal = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    override val targetInputs: Flow<Unit> = targetInputSignal.onStart { emit(Unit) }
+
+    /** A change to a target input (a table write or a preference), reported the way the signal reports one. */
+    fun changeTargetInput() {
+        targetInputSignal.tryEmit(Unit)
+    }
+
+    suspend fun awaitTargetInputWatcher() {
+        targetInputSignal.subscriptionCount.first { it > 0 }
+    }
+
+    override fun rowUi(item: RecentsItem): RecentsRowUi =
+        EMPTY_RECENTS_ROW.copy(
+            cover = covers[item.entryId],
+            title = titles[item.entryId].orEmpty(),
+            state = states[item.entryId],
+        )
+
+    override fun downloadUi(item: RecentsItem): RecentsDownloadUi = RecentsDownloadUi(
+        state = { if (item.entryId in downloadedNow) Download.State.DOWNLOADED else Download.State.NOT_DOWNLOADED },
+        progress = RecentsDownloadProgress.Unsupported,
+    )
+
+    // The same answer [targetRow] gives, since both adapters resolve the two through one lane rule; a
+    // row with no canned target resumes its own record.
+    override suspend fun targetChapter(item: RecentsItem): ChapterRef? {
+        resolvedOn += currentCoroutineContext()[ContinuationInterceptor]
+        return targetRows[item.lane.chapterRef]?.ref ?: item.lane.chapterRef
+    }
+
+    /** The dispatcher each target resolve ran on, since a real one loads a whole chapter list. */
+    val resolvedOn = mutableListOf<ContinuationInterceptor?>()
+
+    /** How many times the engine paid for a resolution, which is what the memo is meant to bound. */
+    var targetRowResolutions = 0
+        private set
+
+    /** Each resolve takes the next of these and answers with it once completed, the way a slow read does. */
+    val heldResolves = ArrayDeque<CompletableDeferred<RecentsTargetRow?>>()
+
+    override suspend fun targetRow(item: RecentsItem): RecentsTargetRow? {
+        resolvedOn += currentCoroutineContext()[ContinuationInterceptor]
+        targetRowResolutions++
+        heldResolves.removeFirstOrNull()?.let { return it.await() }
+        return targetRows[item.lane.chapterRef]
+    }
+
+    /** What the engine asked this provider to open, which is how a resume test says who answered. */
+    var openedItem: RecentsItem? = null
+        private set
+    var openedChapter: ChapterRef? = null
+        private set
+
+    override fun open(item: RecentsItem, chapter: ChapterRef): Intent {
+        openedItem = item
+        openedChapter = chapter
+        return mockk()
+    }
+
+    override suspend fun latestRead(): RecentsItem? = latestRead
+
+    override val chapterActions: RecentsChapterActions = object : RecentsChapterActions {
+        override suspend fun markRead(chapters: Set<ChapterRef>, read: Boolean) {
+            markedRead = chapters
+        }
+
+        override suspend fun setBookmark(chapters: Set<ChapterRef>, bookmarked: Boolean) = Unit
+
+        override suspend fun download(
+            chapters: Set<ChapterRef>,
+            action: ChapterDownloadAction,
+            scope: MergeScope,
+        ) {
+            downloaded = chapters to action
+        }
+
+        override suspend fun deleteDownloads(chapters: Set<ChapterRef>, scope: MergeScope) = Unit
+    }
+
+    var removedEntries: Set<EntryId>? = null
+        private set
+
+    override fun removeFromHistory(entries: Set<EntryId>) {
+        removedEntries = entries
+    }
+
+    override fun removeHistoryRecord(item: RecentsItem) {
+        removedRecord = item
+    }
+
+    override suspend fun addDecision(entry: EntryId): AddDecision<RecentsDuplicates>? = decision
+
+    override suspend fun addToLibrary(entry: EntryId): AddFavoriteResult {
+        addedEntry = entry
+        return addResult
+    }
+
+    override suspend fun applyAddCategories(entry: EntryId, categoryIds: List<Long>) {
+        filedCategories = entry to categoryIds
+    }
+
+    override suspend fun addToGroup(entry: EntryId, duplicates: List<EntryId>): AddFavoriteResult {
+        groupedWith = duplicates
+        return addResult
+    }
+
+    override suspend fun clearHistory(): Boolean {
+        historyCleared = true
+        return historyClears
+    }
+
+    override suspend fun refresh(): Boolean {
+        refreshed = true
+        return refreshStarts
+    }
+
+    override suspend fun detailsScreen(entry: EntryId): Screen? = null
+}

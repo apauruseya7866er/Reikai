@@ -1,23 +1,103 @@
 package reikai.novel.source
 
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.SingleIn
+import eu.kanade.tachiyomi.extension.ExtensionManager
+import eu.kanade.tachiyomi.extension.model.Extension
+import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.Source
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import logcat.LogPriority
+import mihon.core.metro.AppCoroutineScope
+import reikai.domain.novel.LnSourceIdentity
+import reikai.domain.novel.NovelPreferences
+import reikai.domain.novel.identity
+import reikai.domain.novel.resolveSourceIdentity
+import reikai.novel.install.LnPluginInstaller
+import reikai.novel.source.ireader.IReaderNovelSource
+import reikai.novel.source.ireader.IReaderSourceHolder
+import reikai.util.runCatchingCancellable
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.source.model.SourceNotInstalledException
 
 /**
- * In-memory registry of installed [NovelSource]s, keyed by `source.id`. Mirrors the structural
- * shape of [eu.kanade.tachiyomi.source.SourceManager] but drops the extension-manager and
- * stub-source machinery: lnreader plugins are JS files loaded directly, not APKs class-loaded, so
- * there is no "source installed but binary not loaded yet" state to model.
+ * In-memory registry of installed [NovelSource]s, keyed by `source.id`, over both kinds: LNReader
+ * plugins and the catalogues of novel extension apps.
  *
- * In-memory only: the installer (S2c) registers sources here on app start.
+ * The apps it follows itself, as the manga registry follows its extensions. The plugins it cannot,
+ * because they have to be fetched and evaluated, so nothing loads them until something asks.
+ * [ensureLoaded] is that ask.
  */
-class NovelSourceManager {
+@Inject
+@SingleIn(AppScope::class)
+class NovelSourceManager(
+    @AppCoroutineScope private val scope: CoroutineScope,
+    // Deferred because the installer registers back into this map, so the two are a cycle; Metro cuts
+    // it at the deferred parameter, the same way ReikaiBindings cuts the merge managers' propagator edge.
+    private val installer: () -> LnPluginInstaller,
+    extensionManager: ExtensionManager,
+    private val prefs: NovelPreferences,
+) {
 
     private val sourcesFlow = MutableStateFlow<Map<String, NovelSource>>(emptyMap())
 
     val sources: Flow<List<NovelSource>> = sourcesFlow.map { it.values.toList() }
+
+    /**
+     * [sources] from after a first [ensureLoaded], for a screen that shows whether a source is installed:
+     * the registry starts empty, which reads as every plugin missing. A failed load still emits what loaded.
+     */
+    fun loadedSources(): Flow<List<NovelSource>> = flow {
+        runCatchingCancellable { ensureLoaded() }
+        emitAll(sources)
+    }
+
+    /** Completes once the installed apps have been registered for the first time. */
+    private val appsRegistered = CompletableDeferred<Unit>()
+
+    private val seenMutex = Mutex()
+
+    init {
+        scope.launch {
+            extensionManager.loadedNovelExtensionsFlow.collect { extensions ->
+                try {
+                    registerApps(extensions)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    logcat(LogPriority.ERROR, e) { "Could not register the novel extension apps" }
+                } finally {
+                    // Released whatever happened, or every source lookup would wait on it forever.
+                    appsRegistered.complete(Unit)
+                }
+            }
+        }
+    }
+
+    /** Load every installed plugin that is not registered yet, retrying any that failed, and wait for
+     *  the app sources. Retries happen only where a screen opens or a run starts, through this or the
+     *  installer's own `ensureLoaded` (a lookup awaits the apps either way); a lookup never retries. */
+    suspend fun ensureLoaded() {
+        installer().ensureLoaded()
+        appsRegistered.await()
+    }
+
+    private suspend fun awaitFirstLoad() {
+        installer().awaitFirstLoad()
+        appsRegistered.await()
+    }
 
     fun register(source: NovelSource) {
         sourcesFlow.update { it + (source.id to source) }
@@ -27,7 +107,107 @@ class NovelSourceManager {
         sourcesFlow.update { it - id }
     }
 
-    fun get(id: String): NovelSource? = sourcesFlow.value[id]
+    /**
+     * Awaits the first plugin load before answering, so a read before any load gets a slow answer
+     * rather than a wrong one, and never retries a failed plugin, as the manga registry awaits its
+     * first extension scan once (mihonapp/mihon#3869). Runs once per novel of an update and per
+     * chapter of a download, so a retry here would cost a plugin load each time.
+     */
+    suspend fun get(id: String): NovelSource? {
+        awaitFirstLoad()
+        return sourcesFlow.value[id]
+    }
 
-    fun getAll(): List<NovelSource> = sourcesFlow.value.values.toList()
+    /** Twin of manga's `getOrStub`, pinned by NovelSourceManagerTest: both throw SourceNotInstalledException. */
+    suspend fun getOrThrow(id: String): NovelSource = get(id) ?: throw SourceNotInstalledException()
+
+    /**
+     * A source's name: its own, else the one it had when last seen installed, else its id, as a manga
+     * stub keeps the name it was stored with. Never loads the plugins: every install and load records the
+     * name, so a caller wanting only that (a backup, a library search) does not evaluate them all.
+     */
+    suspend fun nameOf(id: String): String = identityOf(id).name
+
+    /** A source's language by the same rule, blank when neither it nor its seen record names one, as a
+     *  manga stub keeps the language it was stored with. */
+    suspend fun langOf(id: String): String = identityOf(id).lang.orEmpty()
+
+    /**
+     * A source's name, icon and language by [resolveSourceIdentity], without loading the plugins. The seen
+     * record is a JSON preference decoded on every read, and the library names every row's source, so it
+     * is read only for a source that is not installed, the one case it can decide.
+     */
+    suspend fun identityOf(id: String): LnSourceIdentity {
+        val installed = getWithoutPlugins(id)?.identity()
+        val seen = if (installed == null) prefs.seenNovelSources().get()[id] else null
+        return resolveSourceIdentity(id, installed, seen)
+    }
+
+    /** A registered source without loading the plugins first: for a caller only an app's source or an
+     *  already loaded plugin serves, as [nameOf] is. */
+    suspend fun getWithoutPlugins(id: String): NovelSource? {
+        appsRegistered.await()
+        return sourcesFlow.value[id]
+    }
+
+    suspend fun getAll(): List<NovelSource> {
+        awaitFirstLoad()
+        return sourcesFlow.value.values.toList()
+    }
+
+    /**
+     * Merges each source's identity into the record kept after it is removed, which is how a novel whose
+     * source was uninstalled still shows a name. One lock for both kinds, since each rewrites the map.
+     */
+    suspend fun rememberSeen(identities: Map<String, LnSourceIdentity>) {
+        if (identities.isEmpty()) return
+        seenMutex.withLock {
+            val current = prefs.seenNovelSources().get()
+            val updated = current + identities
+            if (updated != current) prefs.seenNovelSources().set(updated)
+        }
+    }
+
+    /**
+     * The names a restored backup recorded, for sources this device has no record of, so a novel whose
+     * source is not installed shows that name, as a restored manga's stub source does. A record already
+     * here is left alone, since it carries more than a name.
+     */
+    suspend fun rememberBackedUpNames(names: Map<String, String>) {
+        seenMutex.withLock {
+            val current = prefs.seenNovelSources().get()
+            val absent = names.filter { (id, name) -> name.isNotBlank() && id !in current }
+            if (absent.isNotEmpty()) {
+                prefs.seenNovelSources().set(current + absent.mapValues { LnSourceIdentity(it.value) })
+            }
+        }
+    }
+
+    /** The loaded apps' catalogues replace the ones registered before, keeping any that did not change. */
+    private suspend fun registerApps(extensions: List<Extension.Loaded>) {
+        val registered = sourcesFlow.value.values.filterIsInstance<AppNovelSource>().associateBy { it.id }
+        val adapters = extensions.flatMap { extension ->
+            extension.sources.mapNotNull { source ->
+                val id = extension.kind.novelSourceId(source.id) ?: return@mapNotNull null
+                val catalogue = (source as? IReaderSourceHolder)?.source ?: source
+                registered[id]?.takeIf { it.appSource === catalogue }
+                    // One catalogue failing to build must not keep the app's others out.
+                    ?: runCatching { adapterFor(source, extension) }
+                        .onFailure { logcat(LogPriority.ERROR, it) { "Could not load ${extension.pkgName}" } }
+                        .getOrNull()
+            }
+        }
+        sourcesFlow.update { current ->
+            current.filterValues { it !is AppNovelSource } + adapters.associateBy { it.id }
+        }
+        // The icon is left out: its address names the app, and dies with it.
+        rememberSeen(adapters.associate { it.id to LnSourceIdentity(name = it.name, lang = it.lang, site = it.site) })
+    }
+
+    // Each app kind's catalogue in its own adapter; anything else in an app's list is not a novel catalogue.
+    private fun adapterFor(source: Source, extension: Extension.Loaded): AppNovelSource? = when (source) {
+        is IReaderSourceHolder -> IReaderNovelSource(source.source, extension)
+        is CatalogueSource -> TachiyomiNovelSource(source, extension)
+        else -> null
+    }
 }

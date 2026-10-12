@@ -1,23 +1,16 @@
 package reikai.util
 
-import tachiyomi.domain.manga.model.Manga
-
 /**
- * Heuristic "is this adult content?" check for the library lewd filter.
- *
- * Ported from Komikku's `exh.util.LewdMangaChecker` (`Manga.isLewd`), re-typed onto Mihon's
- * immutable [Manga]. The E-Hentai/nHentai/delegated-source branches of the original are
- * deliberately omitted: they hang off Komikku's EXH subsystem, which Reikai does not have. The
- * precise adult-source handling is deferred to a later sprint; this keeps the portable core
- * (genre-tag + source-name heuristics), which already recognizes the common adult sources by
- * name when installed as third-party extensions.
- *
- * Pure function: the caller resolves [sourceName] (no Injekt here) so this stays unit-testable.
+ * The "is this adult content?" rule both the library's Lewd filter and the notification check run, on manga
+ * and novels: a source known to be adult ([adultSource], whose warning tiers differ per caller, see
+ * AdultWarnings), an adult source name, or an adult genre tag. The name and tag heuristic is ported from
+ * Komikku's `LewdMangaChecker`, without its delegated-source branches or its "mature" tag, which
+ * mainstream sources put on series that are not adult. The name list is manga sites, so novels pass null.
  */
-fun Manga.isLewd(sourceName: String?): Boolean {
-    return (sourceName != null && isHentaiSource(sourceName)) ||
-        genre.orEmpty().any { tag -> isHentaiTag(tag) }
-}
+fun isAdultEntry(adultSource: Boolean, sourceName: String?, genres: List<String>?): Boolean =
+    adultSource || (sourceName != null && isHentaiSource(sourceName)) || hasLewdGenre(genres)
+
+private fun hasLewdGenre(genres: List<String>?): Boolean = genres.orEmpty().any(::isHentaiTag)
 
 private fun isHentaiTag(tag: String): Boolean {
     return tag.contains("hentai", true) ||
@@ -27,7 +20,6 @@ private fun isHentaiTag(tag: String): Boolean {
         tag.contains("nsfw", true) ||
         tag.contains("erotica", true) ||
         tag.contains("pornographic", true) ||
-        tag.contains("mature", true) ||
         tag.contains("18+", true)
 }
 

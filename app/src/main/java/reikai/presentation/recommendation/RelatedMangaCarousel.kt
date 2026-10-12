@@ -25,12 +25,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
-import eu.kanade.presentation.browse.components.InLibraryBadge
-import eu.kanade.presentation.library.components.CommonMangaItemDefaults
-import eu.kanade.presentation.library.components.MangaComfortableGridItem
-import eu.kanade.tachiyomi.ui.manga.MangaScreenModel
+import eu.kanade.presentation.manga.components.MangaCover
+import eu.kanade.tachiyomi.ui.manga.MangaViewModel
 import reikai.domain.recommendation.RelatedMangaCandidate
-import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
@@ -42,7 +39,7 @@ import tachiyomi.presentation.core.i18n.stringResource
  */
 @Composable
 fun RelatedMangaCarousel(
-    items: List<MangaScreenModel.RelatedMangaItem>,
+    items: List<MangaViewModel.RelatedMangaItem>,
     loading: Boolean,
     totalCount: Int,
     onClick: (RelatedMangaCandidate) -> Unit,
@@ -100,25 +97,15 @@ fun RelatedMangaCarousel(
                 horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
             ) {
                 items(items, key = { it.candidate.manga.url }) { item ->
-                    Box(modifier = Modifier.width(CardWidth)) {
-                        MangaComfortableGridItem(
-                            title = item.candidate.manga.title,
-                            // Default 2 lines, matching every other grid: the cell's title is already
-                            // min 2 lines, so allowing a 3rd made cards different heights and the row
-                            // visibly resize as they scrolled in.
-                            coverData = MangaCover(
-                                mangaId = 0L,
-                                sourceId = item.candidate.sourceId,
-                                isMangaFavorite = item.inLibrary,
-                                url = item.candidate.manga.thumbnail_url,
-                                lastModified = 0L,
-                            ),
-                            coverBadgeStart = { InLibraryBadge(enabled = item.inLibrary) },
-                            coverAlpha = if (item.inLibrary) CommonMangaItemDefaults.BrowseFavoriteCoverAlpha else 1f,
-                            onClick = { onClick(item.candidate) },
-                            onLongClick = { onClick(item.candidate) },
-                        )
-                    }
+                    // The origin eyebrow (this source, a tracker, or a taste match) makes the mixed,
+                    // ranked carousel explainable at a glance.
+                    RecommendationGridItem(
+                        modifier = Modifier.width(CardWidth),
+                        candidate = item.candidate,
+                        inLibrary = item.inLibrary,
+                        onClick = { onClick(item.candidate) },
+                        onLongClick = { onClick(item.candidate) },
+                    )
                 }
             }
         }
@@ -135,11 +122,10 @@ private fun SkeletonCard() {
         modifier = Modifier
             .width(CardWidth)
             .padding(4.dp)
-            .aspectRatio(MANGA_COVER_ASPECT_RATIO)
+            .aspectRatio(MangaCover.Book.ratio)
             .clip(RoundedCornerShape(4.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
     )
 }
 
-private const val MANGA_COVER_ASPECT_RATIO = 2f / 3f
 private val CardWidth = 120.dp

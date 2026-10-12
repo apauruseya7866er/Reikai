@@ -2,26 +2,28 @@ package tachiyomi.domain.chapter.model
 
 import kotlinx.serialization.json.JsonObject
 import mihon.core.common.extensions.EMPTY
+import reikai.domain.chapter.isRecognizedChapterNumber
+import kotlin.time.Instant
 
 data class Chapter(
     val id: Long,
     val mangaId: Long,
     val read: Boolean,
     val bookmark: Boolean,
-    val lastPageRead: Long,
-    val dateFetch: Long,
+    val lastPageRead: Int,
+    val dateFetch: Instant,
     val sourceOrder: Long,
     val url: String,
     val name: String,
-    val dateUpload: Long,
+    val dateUpload: Instant?,
     val chapterNumber: Double,
     val scanlator: String?,
-    val lastModifiedAt: Long,
-    val version: Long,
     val memo: JsonObject,
+    // RK: pages in the chapter, 0 where the reader has never loaded it. Unknown, not empty.
+    val pageCount: Int,
 ) {
     val isRecognizedNumber: Boolean
-        get() = chapterNumber >= 0f
+        get() = isRecognizedChapterNumber(chapterNumber) // RK: the one rule novels read too
 
     fun copyFrom(other: Chapter): Chapter {
         return copy(
@@ -40,16 +42,15 @@ data class Chapter(
             read = false,
             bookmark = false,
             lastPageRead = 0,
-            dateFetch = 0,
+            dateFetch = Instant.fromEpochMilliseconds(0),
             sourceOrder = 0,
             url = "",
             name = "",
-            dateUpload = -1,
+            dateUpload = null,
             chapterNumber = -1.0,
             scanlator = null,
-            lastModifiedAt = 0,
-            version = 1,
             memo = JsonObject.EMPTY,
+            pageCount = 0, // RK: unknown until the reader loads it
         )
     }
 }

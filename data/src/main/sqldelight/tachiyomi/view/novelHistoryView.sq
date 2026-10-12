@@ -1,7 +1,6 @@
 -- Novel twin of historyView: one row per novel (its most-recently-read chapter), newest first, for
 -- the History tab's novel feed. Mirrors historyView's max_last_read subquery (SQLite returns the
 -- chapter_id of the MAX(last_read) row per novel) so the feed shows a single entry per series.
--- `readAt` is plain epoch-millis (no Date adapter), matching novel_history.last_read.
 CREATE VIEW novelHistoryView AS
 SELECT
     novel_history._id AS id,
@@ -9,9 +8,18 @@ SELECT
     novel_chapters._id AS chapterId,
     novels.title,
     novels.thumbnail_url AS thumbnailUrl,
-    novels.favorite,
+    novels.source,
+    novels.favorite_at IS NOT NULL AS favorite,
     novels.cover_last_modified,
     novel_chapters.chapter_number AS chapterNumber,
+-- Twin of historyView's block: the read lane acts on the chapter it names, so the row carries that
+-- chapter's own state and the values its download state is looked up by. A novel's download name has no
+-- scanlator, and progress is a hundredths scroll percent rather than a page count.
+    novel_chapters.name AS chapterName,
+    novel_chapters.url AS chapterUrl,
+    novel_chapters.read,
+    novel_chapters.bookmark,
+    novel_chapters.last_text_progress AS lastTextProgress,
     novel_history.last_read AS readAt,
     novel_history.time_read AS readDuration,
     max_last_read.last_read AS maxReadAt,
@@ -36,15 +44,49 @@ novelId,
 chapterId,
 title,
 thumbnailUrl,
+source,
 favorite,
 cover_last_modified,
 chapterNumber,
+chapterName,
+chapterUrl,
+read,
+bookmark,
+lastTextProgress,
 readAt,
 readDuration
 FROM novelHistoryView
-WHERE novelHistoryView.readAt > 0
+WHERE novelHistoryView.readAt IS NOT NULL
 AND maxReadAtChapterId = novelHistoryView.chapterId
 AND lower(novelHistoryView.title) LIKE ('%' || :query || '%')
+-- Same category blocks as the manga twin, so the two history feeds filter identically. Like it, this
+-- view has no favorite gate, so a novel read but never added has no membership rows and reads as
+-- uncategorized: an include set without 0 hides it.
+AND (
+    :includedEmpty
+    OR EXISTS (
+        SELECT 1 FROM novels_categories
+        WHERE novels_categories.novel_id = novelId
+        AND COALESCE(novels_categories.category_id, 0) IN :includedCategories
+    )
+    OR (0 IN :includedCategories AND NOT EXISTS (
+        SELECT 1 FROM novels_categories nc WHERE nc.novel_id = novelId)
+    )
+)
+AND (
+    :excludedEmpty
+    OR (
+        NOT EXISTS (
+            SELECT 1 FROM novels_categories
+            WHERE novels_categories.novel_id = novelId
+            AND COALESCE(novels_categories.category_id, 0) IN :excludedCategories
+        )
+        AND (
+            0 NOT IN :excludedCategories
+            OR EXISTS (SELECT 1 FROM novels_categories WHERE novels_categories.novel_id = novelId)
+        )
+    )
+)
 ORDER BY readAt DESC;
 
 getLatestNovelHistory:
@@ -54,12 +96,18 @@ novelId,
 chapterId,
 title,
 thumbnailUrl,
+source,
 favorite,
 cover_last_modified,
 chapterNumber,
+chapterName,
+chapterUrl,
+read,
+bookmark,
+lastTextProgress,
 readAt,
 readDuration
 FROM novelHistoryView
-WHERE novelHistoryView.readAt > 0
+WHERE novelHistoryView.readAt IS NOT NULL
 ORDER BY readAt DESC
 LIMIT 1;

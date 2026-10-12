@@ -1,0 +1,118 @@
+package reikai.presentation.reader.text
+
+import android.content.Context
+import android.graphics.drawable.Drawable
+import android.text.Selection
+import android.text.Spannable
+import android.text.Spanned
+import android.text.style.ImageSpan
+import android.widget.LinearLayout
+import android.widget.TextView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
+
+/**
+ * A chapter's text as a column of chunk TextViews rather than one long view.
+ *
+ * One view makes layout, span lookup and selection hit-testing cost O(chapter); tsundoku measured
+ * constant garbage collection and multi-second touch handling on large chapters before chunking.
+ * Ported from tsundoku (`textview/ChapterTextBlock.kt`) without its selection, placeholder and
+ * chunk-offset members; read-aloud addresses a paragraph by chunk and offset (`ReadAloudText.kt`).
+ */
+class ChapterTextBlock(
+    context: Context,
+    private val createChunkView: () -> TextView,
+) {
+
+    val container = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+        )
+    }
+
+    val chunkViews = mutableListOf<TextView>()
+
+    /**
+     * Bumped when a render of this block starts. A render coroutine captures the value and bails if
+     * it changes, so an overlapping re-render never races view mutations against a stale one.
+     */
+    var renderToken: Int = 0
+
+    /** True until every network image of the current render has loaded and its chunk been re-measured,
+     *  which is when the chapter's height stops being the placeholders' and becomes its own. */
+    var imagesLoading: Boolean = false
+
+    /**
+     * Set when the viewport drops this chapter, which is what stops an in-flight render. Attachment
+     * cannot stand in for it: a chapter queued below the reader is not attached until it has a
+     * height, and it only gets a height by rendering.
+     */
+    var discarded: Boolean = false
+
+    fun ensureChunkCount(count: Int) {
+        while (chunkViews.size < count) {
+            val view = createChunkView()
+            chunkViews.add(view)
+            container.addView(view)
+        }
+        while (chunkViews.size > count) {
+            val view = chunkViews.removeAt(chunkViews.size - 1)
+            container.removeView(view)
+        }
+    }
+
+    /**
+     * The tall pictures in this chapter's text, which the viewport tells what of them is on screen so they
+     * hold only the slices they are drawing. Collected from the text rather than kept as they are made,
+     * since a re-measure sets a copy of it, and a picture landing or a restyle makes one.
+     */
+    internal val tiledPictures = mutableListOf<TiledAnchor>()
+
+    internal fun collectTiledPictures() {
+        tiledPictures.clear()
+        chunkViews.forEach { view ->
+            val text = view.text as? Spanned ?: return@forEach
+            text.getSpans(0, text.length, ChapterImageSpan::class.java).forEach { span ->
+                val picture = (span.drawable as? DrawableWrapper)?.innerDrawable as? TiledPicture ?: return@forEach
+                tiledPictures += TiledAnchor(view, text.getSpanStart(span), span.topPx, picture)
+            }
+        }
+    }
+
+    /**
+     * The current render's picture loads and slice reads. Each render gets its own, ended by [releasePictures],
+     * so a chapter that leaves the window takes its pictures and its text with it.
+     */
+    internal var pictureScope: CoroutineScope? = null
+
+    /** Lets every picture's loads, slices and open source go, for a new render or a chapter leaving the window. */
+    internal fun releasePictures() {
+        pictureScope?.cancel()
+        pictureScope = null
+        tiledPictures.forEach { it.picture.close() }
+        tiledPictures.clear()
+    }
+
+    /** The chunk whose text holds the span backed by [drawable], so a finished image knows which
+     *  view to re-measure. */
+    fun chunkViewFor(drawable: Drawable): TextView? = chunkViews.firstOrNull { view ->
+        (view.text as? Spanned)
+            ?.getSpans(0, view.text.length, ImageSpan::class.java)
+            ?.any { it.drawable === drawable } == true
+    }
+
+    /** Whether any chunk holds a picture, loading, drawn or failed. */
+    fun holdsPictures(): Boolean = chunkViews.any { view ->
+        (view.text as? Spanned)?.let { it.getSpans(0, it.length, ImageSpan::class.java).isNotEmpty() } == true
+    }
+
+    fun clearSelections() = chunkViews.forEach { view ->
+        val text = view.text
+        if (text is Spannable && text.isNotEmpty() && Selection.getSelectionStart(text) >= 0) {
+            Selection.removeSelection(text)
+        }
+        if (view.isFocused) view.clearFocus()
+    }
+}

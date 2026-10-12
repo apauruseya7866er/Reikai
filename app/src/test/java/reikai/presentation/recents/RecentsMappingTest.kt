@@ -1,0 +1,438 @@
+package reikai.presentation.recents
+
+import dev.icerock.moko.resources.StringResource
+import eu.kanade.tachiyomi.data.download.model.Download
+import eu.kanade.tachiyomi.ui.updates.UpdatesItem
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.Arguments
+import org.junit.jupiter.params.provider.MethodSource
+import reikai.domain.entry.EntryId
+import reikai.domain.entry.withCustomInfo
+import reikai.domain.library.ContentType
+import reikai.domain.novel.model.CustomNovelInfo
+import reikai.domain.novel.model.NovelCover
+import reikai.domain.novel.model.NovelHistoryWithRelations
+import reikai.domain.novel.model.NovelUpdateWithRelations
+import reikai.domain.reader.ChapterProgress
+import reikai.domain.recents.RecentlyAddedManga
+import reikai.domain.recents.RecentlyAddedNovel
+import reikai.presentation.components.pageProgressLabel
+import reikai.presentation.components.percentProgressLabel
+import reikai.presentation.updates.NovelUpdatesItem
+import tachiyomi.domain.history.model.HistoryWithRelations
+import tachiyomi.domain.manga.model.CustomMangaInfo
+import tachiyomi.domain.manga.model.MangaCover
+import tachiyomi.domain.updates.model.UpdatesWithRelations
+import tachiyomi.i18n.MR
+import kotlin.time.Instant
+
+/**
+ * The adapters' row mapping and display projection, pinned once for both content types rather than as
+ * a twin pair. Three things it pins that nothing else can: the two engines hand over timestamps in
+ * different types and must leave as one, a raw row id must never become an identity a mixed feed could
+ * confuse with the other type's, and progress shows only where reading stopped short.
+ */
+class RecentsMappingTest {
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `an updated row is keyed by its own content type`(probe: RecentsMappingProbe) {
+        val mapped = probe.update()
+
+        (mapped.entryId.contentType to mapped.entryId.rawId) shouldBe (probe.contentType to 7L)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a read time arrives as the same instant whatever the engine stores`(probe: RecentsMappingProbe) {
+        probe.history(readAt = 4321L).timestamp shouldBe Instant.fromEpochMilliseconds(4321L)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `an entry never read carries no timestamp rather than a null one`(probe: RecentsMappingProbe) {
+        probe.history(readAt = null).timestamp shouldBe Instant.fromEpochMilliseconds(0L)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a recently added row has no chapter to open`(probe: RecentsMappingProbe) {
+        probe.added().lane shouldBe RecentsLane.Added
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `an updated row is labelled by the chapter's name`(probe: RecentsMappingProbe) {
+        val chapter = probe.rowUi(probe.update(bookmark = true)).chapter
+            .shouldBeInstanceOf<RecentsChapterUi.Named>()
+
+        chapter.name shouldBe "c"
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `an updated row answers for its chapter's flags`(probe: RecentsMappingProbe) {
+        probe.rowUi(probe.update(bookmark = true)).state?.bookmark shouldBe true
+    }
+
+    // The read lane's own state. It carried none until the feed could act on one of its rows, which
+    // is what left every chapter verb aimed at a read row silently doing nothing.
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a read row answers for its chapter's flags`(probe: RecentsMappingProbe) {
+        probe.rowUi(probe.history(readAt = 1L, bookmark = true)).state?.bookmark shouldBe true
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a read row whose chapter was marked unread does not claim to be read`(probe: RecentsMappingProbe) {
+        probe.rowUi(probe.history(readAt = 1L, read = false)).state?.read shouldBe false
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a chapter left unfinished keeps its progress`(probe: RecentsMappingProbe) {
+        val row = probe.rowUi(probe.update(read = false, started = true))
+
+        row.state?.progress shouldBe probe.startedProgress()
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a chapter already read shows no progress`(probe: RecentsMappingProbe) {
+        val row = probe.rowUi(probe.update(read = true, started = true))
+
+        row.state?.progress shouldBe null
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `the unfinished-progress rule reaches the read lane too`(probe: RecentsMappingProbe) {
+        val row = probe.rowUi(probe.history(readAt = 1L, read = false, started = true))
+
+        row.state?.progress shouldBe probe.startedProgress()
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a recently added row answers for no chapter state`(probe: RecentsMappingProbe) {
+        probe.rowUi(probe.added()).state shouldBe null
+    }
+
+    // What that progress reads as on the row. Taken off the shared rules directly rather than through
+    // a probe: the point is that one pair of rules writes out both engines' units, for the details
+    // chapter list as much as for a row here.
+
+    @Test
+    fun `a page count reads one-based, because it is stored zero-based`() {
+        pageProgressLabel(lastPageRead = 5, pageCount = 0).pageArgs() shouldBe listOf(6)
+    }
+
+    @Test
+    fun `a chapter open at its first page claims no progress`() {
+        pageProgressLabel(lastPageRead = 0, pageCount = 38) shouldBe null
+    }
+
+    @Test
+    fun `a known length is written out alongside the page`() {
+        pageProgressLabel(lastPageRead = 5, pageCount = 38).pageArgs() shouldBe listOf(6, 38)
+    }
+
+    @Test
+    fun `a chapter the reader has never loaded is written without a total`() {
+        pageProgressLabel(lastPageRead = 5, pageCount = 0)?.first shouldBe MR.strings.chapter_progress
+    }
+
+    @Test
+    fun `a known length picks the string that has somewhere to put it`() {
+        pageProgressLabel(lastPageRead = 5, pageCount = 38)
+            ?.first shouldBe MR.strings.chapter_progress_of_total
+    }
+
+    @Test
+    fun `hundredths of a percent round down to a whole percent`() {
+        percentProgressLabel(hundredths = 4999) shouldBe "49%"
+    }
+
+    @Test
+    fun `a fraction of a percent claims no progress rather than rounding up to one`() {
+        percentProgressLabel(hundredths = 99) shouldBe null
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a read row projects a chapter number rather than a name`(probe: RecentsMappingProbe) {
+        probe.rowUi(probe.history(readAt = 4321L)).chapter shouldBe RecentsChapterUi.Number(1.0)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a recently added row projects no chapter at all`(probe: RecentsMappingProbe) {
+        probe.rowUi(probe.added()).chapter shouldBe null
+    }
+
+    // Search matches the row's title, so a lane without the overlay cannot be found by the name every
+    // other lane shows.
+
+    @ParameterizedTest(name = "{0} {1}")
+    @MethodSource("probesByLane")
+    fun `a row shows the user's custom title`(probe: RecentsMappingProbe, lane: OverlaidLane) {
+        probe.rowUi(probe.withCustomInfo(lane, title = "custom", thumbnailUrl = "cover")).title shouldBe "custom"
+    }
+
+    @ParameterizedTest(name = "{0} {1}")
+    @MethodSource("probesByLane")
+    fun `a row shows the user's custom cover`(probe: RecentsMappingProbe, lane: OverlaidLane) {
+        val row = probe.rowUi(probe.withCustomInfo(lane, title = "custom", thumbnailUrl = "cover"))
+
+        probe.coverUrl(row) shouldBe "cover"
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a row on a favorite-gated lane reports itself in the library`(probe: RecentsMappingProbe) {
+        probe.rowUi(probe.update()).isFavorite shouldBe true
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("probes")
+    fun `a title is read out of the row the feed emitted`(probe: RecentsMappingProbe) {
+        probe.rowUi(probe.update()).title shouldBe "t"
+    }
+
+    @Test
+    fun `a manga and a novel sharing a row id are not the same entry`() {
+        val manga = MangaRecentsMappingProbe().update()
+        val novel = NovelRecentsMappingProbe().update()
+
+        (manga.entryId == novel.entryId) shouldBe false
+    }
+
+    @Test
+    fun `a manga and a novel sharing a chapter row id are not the same chapter`() {
+        val chapters = setOf(
+            (MangaRecentsMappingProbe().update().lane as RecentsLane.Updated).chapter,
+            (NovelRecentsMappingProbe().update().lane as RecentsLane.Updated).chapter,
+        )
+
+        chapters.size shouldBe 2
+    }
+
+    private fun Pair<StringResource, Array<Any>>?.pageArgs(): List<Any>? = this?.second?.toList()
+
+    companion object {
+        @JvmStatic
+        fun probes() = listOf(MangaRecentsMappingProbe(), NovelRecentsMappingProbe())
+
+        @JvmStatic
+        fun probesByLane() = probes().flatMap { probe -> OverlaidLane.entries.map { Arguments.of(probe, it) } }
+    }
+}
+
+/** The three lanes whose rows carry an entry's own title and cover, which the user's overrides replace. */
+enum class OverlaidLane { UPDATED, READ, ADDED }
+
+/**
+ * One content type's rows, normalized so both answer in the same shape. Every row uses id 7 and
+ * chapter id 70, which is what lets the two cross-type cases above prove the id spaces stay apart.
+ */
+interface RecentsMappingProbe {
+    val contentType: ContentType
+
+    fun update(read: Boolean = false, bookmark: Boolean = false, started: Boolean = false): RecentsItem
+
+    /** Takes the same chapter flags as [update]: a read row names a real chapter, with real state. */
+    fun history(
+        readAt: Long?,
+        read: Boolean = true,
+        bookmark: Boolean = false,
+        started: Boolean = false,
+    ): RecentsItem
+
+    fun added(): RecentsItem
+
+    /** A [lane] row with the user's overrides laid over it, the way that lane's feed does. */
+    fun withCustomInfo(lane: OverlaidLane, title: String, thumbnailUrl: String): RecentsItem
+
+    fun rowUi(item: RecentsItem): RecentsRowUi
+
+    fun coverUrl(row: RecentsRowUi): String?
+
+    /** What a started chapter reports, in this engine's own unit. */
+    fun startedProgress(): ChapterProgress
+}
+
+class MangaRecentsMappingProbe : RecentsMappingProbe {
+
+    override val contentType = ContentType.MANGA
+
+    override fun toString() = "manga"
+
+    private val cover = MangaCover(mangaId = 7, sourceId = 1, isMangaFavorite = true, url = null, lastModified = null)
+
+    override fun update(read: Boolean, bookmark: Boolean, started: Boolean) =
+        updateItem(updateRow(read, bookmark, started))
+
+    private fun updateItem(row: UpdatesWithRelations) = UpdatesItem(
+        update = row,
+        downloadStateProvider = { Download.State.NOT_DOWNLOADED },
+        downloadProgressProvider = { 0 },
+    ).toRecentsItem()
+
+    private fun updateRow(read: Boolean = false, bookmark: Boolean = false, started: Boolean = false) =
+        UpdatesWithRelations(
+            mangaId = 7,
+            mangaTitle = "t",
+            chapterId = 70,
+            chapterName = "c",
+            scanlator = null,
+            chapterUrl = "u",
+            read = read,
+            bookmark = bookmark,
+            lastPageRead = if (started) 5 else 0,
+            pageCount = 38,
+            sourceId = 1,
+            dateFetch = Instant.fromEpochMilliseconds(1000),
+            coverData = cover,
+        )
+
+    override fun history(readAt: Long?, read: Boolean, bookmark: Boolean, started: Boolean) =
+        historyRow(readAt, read, bookmark, started).toRecentsItem()
+
+    private fun historyRow(
+        readAt: Long? = 1L,
+        read: Boolean = true,
+        bookmark: Boolean = false,
+        started: Boolean = false,
+    ) =
+        HistoryWithRelations(
+            id = 1,
+            chapterId = 70,
+            mangaId = 7,
+            title = "t",
+            chapterNumber = 1.0,
+            readAt = readAt?.let(Instant::fromEpochMilliseconds),
+            readDuration = 0,
+            coverData = cover,
+            chapterName = "c",
+            scanlator = null,
+            chapterUrl = "u",
+            read = read,
+            bookmark = bookmark,
+            lastPageRead = if (started) 5 else 0,
+            pageCount = 38,
+            sourceId = 1,
+            storedTitle = "t",
+        )
+
+    private fun addedRow() = RecentlyAddedManga(
+        mangaId = 7,
+        title = "t",
+        dateAdded = Instant.fromEpochMilliseconds(99),
+        coverData = cover,
+    )
+
+    override fun added() = addedRow().toRecentsItem()
+
+    override fun withCustomInfo(lane: OverlaidLane, title: String, thumbnailUrl: String): RecentsItem {
+        val custom = CustomMangaInfo(mangaId = 7, title = title, thumbnailUrl = thumbnailUrl)
+        return when (lane) {
+            OverlaidLane.UPDATED -> updateItem(updateRow().withCustomInfo(custom))
+            OverlaidLane.READ -> historyRow().withCustomInfo(custom).toRecentsItem()
+            OverlaidLane.ADDED -> addedRow().withCustomInfo(custom).toRecentsItem()
+        }
+    }
+
+    override fun rowUi(item: RecentsItem) = mangaRowUi(item)
+
+    override fun coverUrl(row: RecentsRowUi) = (row.cover as MangaCover).url
+
+    override fun startedProgress() = ChapterProgress.Pages(5, 38)
+}
+
+class NovelRecentsMappingProbe : RecentsMappingProbe {
+
+    override val contentType = ContentType.NOVELS
+
+    override fun toString() = "novel"
+
+    private val cover =
+        NovelCover(url = null, sourceId = null, isNovelFavorite = true, lastModified = null, novelId = 7)
+
+    override fun update(read: Boolean, bookmark: Boolean, started: Boolean) =
+        updateItem(updateRow(read, bookmark, started))
+
+    private fun updateItem(row: NovelUpdateWithRelations) =
+        NovelUpdatesItem(update = row, downloadState = Download.State.NOT_DOWNLOADED).toRecentsItem()
+
+    private fun updateRow(read: Boolean = false, bookmark: Boolean = false, started: Boolean = false) =
+        NovelUpdateWithRelations(
+            novelId = 7,
+            novelTitle = "t",
+            chapterId = 70,
+            chapterName = "c",
+            chapterUrl = "u",
+            read = read,
+            bookmark = bookmark,
+            lastTextProgress = if (started) 5000L else 0L,
+            source = "s",
+            dateFetch = Instant.fromEpochMilliseconds(1000),
+            coverData = cover,
+            novelUrl = "nu",
+        )
+
+    override fun history(readAt: Long?, read: Boolean, bookmark: Boolean, started: Boolean) =
+        historyRow(readAt, read, bookmark, started).toRecentsItem()
+
+    private fun historyRow(
+        readAt: Long? = 1L,
+        read: Boolean = true,
+        bookmark: Boolean = false,
+        started: Boolean = false,
+    ) =
+        NovelHistoryWithRelations(
+            id = 1,
+            chapterId = 70,
+            novelId = 7,
+            title = "t",
+            chapterNumber = 1.0,
+            readAt = readAt?.let(Instant::fromEpochMilliseconds),
+            readDuration = 0,
+            coverData = cover,
+            chapterName = "c",
+            chapterUrl = "u",
+            read = read,
+            bookmark = bookmark,
+            lastTextProgress = if (started) 5000L else 0L,
+            source = "s",
+            storedTitle = "t",
+        )
+
+    private fun addedRow() = RecentlyAddedNovel(
+        novelId = 7,
+        title = "t",
+        dateAdded = Instant.fromEpochMilliseconds(99),
+        coverData = cover,
+    )
+
+    override fun added() = addedRow().toRecentsItem()
+
+    override fun withCustomInfo(lane: OverlaidLane, title: String, thumbnailUrl: String): RecentsItem {
+        val custom = CustomNovelInfo(novelId = 7, title = title, thumbnailUrl = thumbnailUrl)
+        return when (lane) {
+            OverlaidLane.UPDATED -> updateItem(updateRow().withCustomInfo(custom))
+            OverlaidLane.READ -> historyRow().withCustomInfo(custom).toRecentsItem()
+            OverlaidLane.ADDED -> addedRow().withCustomInfo(custom).toRecentsItem()
+        }
+    }
+
+    override fun rowUi(item: RecentsItem) = novelRowUi(item)
+
+    override fun coverUrl(row: RecentsRowUi) = (row.cover as NovelCover).url
+
+    override fun startedProgress() = ChapterProgress.Percent(5000L)
+}

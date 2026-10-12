@@ -1,0 +1,360 @@
+package eu.kanade.tachiyomi.data.backup
+
+import android.net.Uri
+import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.data.backup.create.BackupCreator
+import eu.kanade.tachiyomi.data.backup.create.BackupOptions
+import eu.kanade.tachiyomi.data.backup.create.creators.MangaBackupCreator
+import eu.kanade.tachiyomi.data.backup.create.creators.NovelBackupCreator
+import eu.kanade.tachiyomi.data.backup.models.Backup
+import eu.kanade.tachiyomi.data.backup.models.BackupCustomInfo
+import eu.kanade.tachiyomi.data.backup.models.BackupCustomMangaInfo
+import eu.kanade.tachiyomi.data.backup.models.BackupCustomNovelInfo
+import eu.kanade.tachiyomi.data.backup.models.BackupManga
+import eu.kanade.tachiyomi.data.backup.models.BackupNovel
+import eu.kanade.tachiyomi.data.backup.models.BackupNovelSource
+import eu.kanade.tachiyomi.data.backup.models.customInfo
+import eu.kanade.tachiyomi.data.backup.models.toBackupCustomInfo
+import eu.kanade.tachiyomi.data.backup.restore.RestoreOptions
+import eu.kanade.tachiyomi.data.backup.restore.restorers.NovelRestorer
+import io.kotest.matchers.nulls.shouldNotBeNull
+import io.kotest.matchers.shouldBe
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.protobuf.ProtoBuf
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.MethodSource
+import reikai.domain.chapter.NoChapterNumberOverrides
+import reikai.domain.db.PassThroughTransactions
+import reikai.domain.merge.RestoreMergeGroups
+import reikai.domain.novel.LnSourceIdentity
+import reikai.domain.novel.NovelRepository
+import reikai.domain.novel.interactor.SetCustomNovelInfo
+import reikai.domain.novel.model.CustomNovelInfo
+import reikai.domain.novel.model.Novel
+import reikai.domain.novel.repository.CustomNovelInfoRepository
+import reikai.novel.source.NovelSourceManager
+import reikai.util.testAppScope
+import tachiyomi.domain.manga.interactor.SetCustomMangaInfo
+import tachiyomi.domain.manga.model.CustomMangaInfo
+import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.manga.repository.CustomMangaInfoRepository
+import java.io.ByteArrayOutputStream
+import java.util.zip.GZIPInputStream
+import kotlin.time.Instant
+
+/**
+ * Custom info rides on each backed-up entry for both content types, and restore reads it only from
+ * there: an older Reikai backup's root list is folded onto its entries first. Runs each type's real
+ * restorer and, for the write side, the real creators behind one BackupCreator.
+ */
+class BackupCustomInfoConformanceTest {
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("restorers")
+    fun `custom info carried on an entry restores onto it`(restorer: CustomInfoRestorer) = runTest {
+        restorer.restore(onEntry = EVERY_FIELD) shouldBe listOf(LOCAL_ID to EVERY_FIELD)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("restorers")
+    fun `an older Reikai backup's root list restores its custom info`(restorer: CustomInfoRestorer) = runTest {
+        restorer.restore(inRootList = EVERY_FIELD) shouldBe listOf(LOCAL_ID to EVERY_FIELD)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("restorers")
+    fun `an entry's own custom info wins over the root list`(restorer: CustomInfoRestorer) = runTest {
+        restorer.restore(onEntry = EVERY_FIELD, inRootList = BackupCustomInfo(title = "Older")) shouldBe
+            listOf(LOCAL_ID to EVERY_FIELD)
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("restorers")
+    fun `an older Reikai backup's root list reaches an entry the backup does not list`(restorer: CustomInfoRestorer) =
+        runTest {
+            restorer.restore(inRootList = EVERY_FIELD, listed = false) shouldBe listOf(LOCAL_ID to EVERY_FIELD)
+        }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("restorers")
+    fun `an entry without custom info leaves the device's own untouched`(restorer: CustomInfoRestorer) = runTest {
+        restorer.restore() shouldBe emptyList()
+    }
+
+    @Test
+    fun `a backup written now carries custom info on each entry and no root list`() = runTest {
+        val backup = writeBackup()
+
+        listOf(
+            backup.backupManga.single().customInfo,
+            backup.backupNovels.single().customInfo,
+            backup.backupCustomMangaInfo.size + backup.backupCustomNovelInfo.size,
+        ) shouldBe listOf(EVERY_FIELD, EVERY_FIELD, 0)
+    }
+
+    @Test
+    fun `a backup written with custom info off leaves it off every entry`() = runTest {
+        val backup = writeBackup(BACKUP_OPTIONS.copy(customInfo = false))
+
+        listOf(backup.backupManga.single().customInfo, backup.backupNovels.single().customInfo) shouldBe
+            listOf(null, null)
+    }
+
+    @Test
+    fun `a backup written now marks its merge groups as stored whole`() = runTest {
+        // Without the marker a restore takes it for a 0.3.x backup and groups same-title series by itself.
+        writeBackup().backupMergeGroupsStored.shouldNotBeNull()
+    }
+
+    @Test
+    fun `a backup written now marks its category flags as carrying the sort-override bit`() = runTest {
+        // Without the marker a restore takes the flags for Mihon's and marks every sort apart from the global.
+        writeBackup().backupSortOverridesStored.shouldNotBeNull()
+    }
+
+    @Test
+    fun `a backup written now marks its Kitsu scores as on Kitsu's own scale`() = runTest {
+        // Without the marker a restore may take its Kitsu scores for the old out-of-10 ones and double them.
+        writeBackup().backupKitsuNativeScale.shouldNotBeNull()
+    }
+
+    @Test
+    fun `a backup names the source of each novel it carries without loading the plugins`() = runTest {
+        writeBackup().backupNovelSources shouldBe listOf(BackupNovelSource(name = "Novel source", sourceId = "src"))
+    }
+
+    /** One favorite manga and one favorite novel, each id 7 with [EVERY_FIELD] stored, through BackupCreator. */
+    private suspend fun writeBackup(options: BackupOptions = BACKUP_OPTIONS): Backup {
+        val out = ByteArrayOutputStream()
+        val uri = mockk<Uri>()
+        mockkStatic(UniFile::class)
+        try {
+            every { UniFile.fromUri(any(), any()) } returns mockk {
+                every { isFile } returns true
+                every { openOutputStream() } returns out
+                every { this@mockk.uri } returns uri
+            }
+            val mangaCustomInfo = mockk<CustomMangaInfoRepository> {
+                every { getByMangaIdAsFlow(7) } returns flowOf(EVERY_FIELD.toManga(7))
+            }
+            val novelCustomInfo = mockk<CustomNovelInfoRepository> {
+                every { getByNovelIdAsFlow(7) } returns flowOf(EVERY_FIELD.toNovel(7))
+            }
+            val creator = BackupCreator(
+                isAutoBackup = false,
+                context = mockk(relaxed = true),
+                parser = ProtoBuf,
+                backupPreferences = mockk(relaxed = true),
+                mangaRepository = mockk(relaxed = true),
+                mergeGroupRepository = mockk { coEvery { getAllMemberships(any()) } returns emptyMap() },
+                categoriesBackupCreator = mockk(relaxed = true),
+                mangaBackupCreator = MangaBackupCreator(
+                    mangaRepository = mockk { coEvery { getExcludedScanlators(7) } returns emptySet() },
+                    chapterRepository = mockk(),
+                    trackRepository = mockk(),
+                    getCategories = mockk(relaxed = true),
+                    getHistory = mockk(relaxed = true),
+                    mangaMetadataRepository = mockk { coEvery { getMetadataById(7) } returns null },
+                    customMangaInfoRepository = mangaCustomInfo,
+                    getFavorites = mockk {
+                        coEvery { await() } returns listOf(Manga.create().copy(id = 7, url = "/7", source = 1L))
+                    },
+                    getManga = mockk(),
+                    mergeGroupRepository = mockk { coEvery { getAllMemberships(any()) } returns emptyMap() },
+                    chapterNumberOverrides = NoChapterNumberOverrides,
+                ),
+                preferenceBackupCreator = mockk(relaxed = true),
+                extensionStoresBackupCreator = mockk(relaxed = true),
+                sourcesBackupCreator = mockk { coEvery { forSourceIds(any()) } returns emptyList() },
+                backupFileValidator = mockk(relaxed = true),
+                novelBackupCreator = NovelBackupCreator(
+                    novelRepository = mockk {
+                        coEvery { getFavorites() } returns
+                            listOf(
+                                Novel.create().copy(
+                                    id = 7,
+                                    url = "/7",
+                                    source = "src",
+                                    favoriteAt = Instant.fromEpochMilliseconds(0L),
+                                ),
+                            )
+                    },
+                    novelChapterRepository = mockk(),
+                    categoryRepository = mockk(),
+                    novelTrackRepository = mockk(),
+                    mergeGroupRepository = mockk { coEvery { getAllMemberships(any()) } returns emptyMap() },
+                    customNovelInfoRepository = novelCustomInfo,
+                    novelHistoryRepository = mockk(),
+                    // Its installer fails the backup if anything loads the plugins.
+                    novelSourceManager = NovelSourceManager(
+                        scope = testAppScope(),
+                        installer = { error("loaded the plugins") },
+                        extensionManager = mockk { every { loadedNovelExtensionsFlow } returns flowOf(emptyList()) },
+                        prefs = mockk {
+                            every { seenNovelSources() } returns mockk {
+                                every { get() } returns mapOf("src" to LnSourceIdentity(name = "Novel source"))
+                            }
+                        },
+                    ),
+                    chapterNumberOverrides = NoChapterNumberOverrides,
+                ),
+                extensionBackupCreator = mockk(relaxed = true),
+                feedBackupCreator = mockk(relaxed = true),
+            )
+
+            creator.backup(uri, options)
+        } finally {
+            unmockkStatic(UniFile::class)
+        }
+        val bytes = GZIPInputStream(out.toByteArray().inputStream()).readBytes()
+        return ProtoBuf.decodeFromByteArray(Backup.serializer(), bytes)
+    }
+
+    companion object {
+        const val LOCAL_ID = 10L
+
+        val EVERY_FIELD = BackupCustomInfo(
+            title = "My title",
+            author = "My author",
+            artist = "My artist",
+            description = "My description",
+            genre = listOf("Action", "Drama"),
+            status = 2L,
+            thumbnailUrl = "https://example.org/cover.jpg",
+        )
+
+        // Library entries plus custom info, everything else off so only the two entries are read.
+        val BACKUP_OPTIONS = BackupOptions(
+            categories = false,
+            chapters = false,
+            tracking = false,
+            history = false,
+            readEntries = false,
+            appSettings = false,
+            extensionStores = false,
+            sourceSettings = false,
+            savedSearches = false,
+        )
+
+        @JvmStatic
+        fun restorers() = listOf(MangaCustomInfoRestorer(), NovelCustomInfoRestorer())
+    }
+}
+
+fun BackupCustomInfo.toManga(id: Long) =
+    CustomMangaInfo(id, title, author, artist, description, genre, status, thumbnailUrl)
+
+fun BackupCustomInfo.toNovel(id: Long) =
+    CustomNovelInfo(id, title, author, artist, description, genre, status, thumbnailUrl)
+
+/** Entries only, so the restore runs no category or settings pass these do not wire. */
+private val ENTRIES_ONLY = RestoreOptions(libraryEntries = true, categories = false, appSettings = false)
+
+/** One type's restore of a single entry already on the device under [BackupCustomInfoConformanceTest.LOCAL_ID]. */
+interface CustomInfoRestorer {
+
+    /**
+     * Restores the entry with [onEntry] on its own fields and [inRootList] in an older backup's root list,
+     * through the real BackupRestorer over the encoded file, and returns what was written as (local id,
+     * custom info). An entry not [listed] in the backup is only on the device, as a 0.3.x novel out of the
+     * library was.
+     */
+    suspend fun restore(
+        onEntry: BackupCustomInfo? = null,
+        inRootList: BackupCustomInfo? = null,
+        listed: Boolean = true,
+    ): List<Pair<Long, BackupCustomInfo>>
+}
+
+class MangaCustomInfoRestorer : CustomInfoRestorer {
+
+    override fun toString() = "manga"
+
+    override suspend fun restore(
+        onEntry: BackupCustomInfo?,
+        inRootList: BackupCustomInfo?,
+        listed: Boolean,
+    ): List<Pair<Long, BackupCustomInfo>> {
+        val backup = Backup(
+            backupManga = listOf(
+                BackupManga(source = 1L, url = "u").apply {
+                    customInfo = onEntry
+                },
+            ).filter { listed },
+            backupCustomMangaInfo = listOfNotNull(inRootList?.let { it.toRootEntry() }),
+        )
+
+        val written = mutableListOf<Pair<Long, BackupCustomInfo>>()
+        val repository = mockk<CustomMangaInfoRepository> {
+            coEvery { set(any()) } answers {
+                val info = firstArg<CustomMangaInfo>()
+                written += info.mangaId to info.toBackupCustomInfo()
+            }
+        }
+        MangaRestoreHarness.create().use { harness ->
+            harness.insertBare(BackupCustomInfoConformanceTest.LOCAL_ID, url = "u", source = 1L)
+            restoreEncoded(backup, ENTRIES_ONLY, mangaRestorer = harness.restorer(customInfo = repository))
+        }
+        return written
+    }
+
+    private fun BackupCustomInfo.toRootEntry() =
+        BackupCustomMangaInfo(1L, "u", title, author, artist, description, genre.orEmpty(), status, thumbnailUrl)
+}
+
+class NovelCustomInfoRestorer : CustomInfoRestorer {
+
+    override fun toString() = "novel"
+
+    override suspend fun restore(
+        onEntry: BackupCustomInfo?,
+        inRootList: BackupCustomInfo?,
+        listed: Boolean,
+    ): List<Pair<Long, BackupCustomInfo>> {
+        val backup = Backup(
+            backupManga = emptyList(),
+            backupNovels = listOf(
+                BackupNovel(source = "s", url = "u").apply {
+                    customInfo = onEntry
+                },
+            ).filter { listed },
+            backupCustomNovelInfo = listOfNotNull(inRootList?.let { it.toRootEntry() }),
+        )
+
+        val written = mutableListOf<Pair<Long, BackupCustomInfo>>()
+        val repository = mockk<CustomNovelInfoRepository> {
+            coEvery { set(any()) } answers {
+                val info = firstArg<CustomNovelInfo>()
+                written += info.novelId to info.toBackupCustomInfo()
+            }
+        }
+        val novels = mockk<NovelRepository>(relaxed = true) {
+            coEvery { getByUrlAndSource("u", "s") } returns
+                Novel.create().copy(id = BackupCustomInfoConformanceTest.LOCAL_ID, url = "u", source = "s")
+            coEvery { getById(BackupCustomInfoConformanceTest.LOCAL_ID) } returns null
+            coEvery { update(any<Novel>()) } returns true
+        }
+        val restorer = NovelRestorer(
+            novelRepository = novels,
+            novelChapterRepository = mockk(relaxed = true),
+            categoryRepository = mockk(relaxed = true),
+            novelTrackRepository = mockk(relaxed = true),
+            restoreMergeGroups = RestoreMergeGroups(mockk(relaxed = true), PassThroughTransactions),
+            setCustomNovelInfo = SetCustomNovelInfo(repository),
+            novelHistoryRepository = mockk(relaxed = true),
+            chapterNumberOverrides = NoChapterNumberOverrides,
+        )
+        restoreEncoded(backup, ENTRIES_ONLY, novelRestorer = restorer)
+        return written
+    }
+
+    private fun BackupCustomInfo.toRootEntry() =
+        BackupCustomNovelInfo("s", "u", title, author, artist, description, genre.orEmpty(), status, thumbnailUrl)
+}

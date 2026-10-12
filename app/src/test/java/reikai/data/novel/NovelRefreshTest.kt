@@ -1,0 +1,465 @@
+package reikai.data.novel
+
+import android.content.Context
+import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
+import eu.kanade.tachiyomi.data.cache.CoverCache
+import io.kotest.assertions.throwables.shouldThrow
+import io.kotest.matchers.shouldBe
+import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.daysUntil
+import kotlinx.datetime.toLocalDateTime
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import reikai.domain.chapter.NoChapterNumberOverrides
+import reikai.domain.novel.NovelRepository
+import reikai.domain.novel.model.Novel
+import reikai.domain.novel.model.NovelChapter
+import reikai.domain.novel.model.NovelUpdate
+import reikai.novel.download.NovelDownloadManager
+import reikai.novel.host.ChapterItem
+import reikai.novel.host.NovelItem
+import reikai.novel.source.NovelSource
+import reikai.util.idleAppScope
+import tachiyomi.core.common.preference.InMemoryPreferenceStore
+import tachiyomi.core.common.preference.InMemoryPreferenceStore.InMemoryPreference
+import tachiyomi.data.Database
+import tachiyomi.data.DatabaseBindings
+import tachiyomi.domain.chapter.model.NoChaptersException
+import tachiyomi.domain.library.service.LibraryPreferences
+import java.io.File
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Instant
+
+/** A library refresh over the real SQL, with the plugin host faked by [PagedSource]. */
+class NovelRefreshTest {
+
+    private lateinit var driver: JdbcSqliteDriver
+    private lateinit var database: Database
+    private lateinit var novels: RecordingNovelRepository
+    private lateinit var chapters: NovelChapterRepositoryImpl
+    private lateinit var coverCache: CoverCache
+
+    @TempDir
+    lateinit var cacheRoot: File
+
+    private val libraryPreferences = LibraryPreferences(
+        InMemoryPreferenceStore(
+            sequenceOf(
+                InMemoryPreference(
+                    "mark_duplicate_read_chapter_read",
+                    setOf(LibraryPreferences.MARK_DUPLICATE_CHAPTER_READ_NEW),
+                    emptySet(),
+                ),
+            ),
+        ),
+    )
+
+    @BeforeEach
+    fun setUp() {
+        runTest {
+            driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+            Database.Schema.create(driver).await()
+            database = DatabaseBindings.providesDatabase(driver)
+            novels = RecordingNovelRepository(NovelRepositoryImpl(database))
+            chapters = NovelChapterRepositoryImpl(database)
+            val context = mockk<Context> {
+                every { getExternalFilesDir(any()) } answers { File(cacheRoot, firstArg<String>()).apply { mkdirs() } }
+            }
+            coverCache = CoverCache(idleAppScope(), context)
+        }
+    }
+
+    @AfterEach
+    fun tearDown() {
+        driver.close()
+    }
+
+    private suspend fun storedNovel(nextUpdate: Instant? = null, totalPages: Long = 1L, cover: String? = null): Novel {
+        val id = novels.insert(
+            Novel.create().copy(
+                source = "src",
+                url = "/novel",
+                title = "Novel",
+                favoriteAt = Instant.fromEpochMilliseconds(0L),
+                nextUpdate = nextUpdate,
+                totalPages = totalPages,
+                thumbnailUrl = cover,
+            ),
+        )!!
+        return novels.getById(id)!!
+    }
+
+    private suspend fun storedChapter(novel: Novel, url: String, number: Double, read: Boolean, page: String = "") {
+        chapters.insert(
+            NovelChapter(
+                id = -1L, novelId = novel.id, url = url, name = "Chapter $number", read = read, bookmark = false,
+                lastTextProgress = 0L, chapterNumber = number, sourceOrder = 0L,
+                dateFetch = Instant.fromEpochMilliseconds(0L), dateUpload = null,
+                page = page,
+            ),
+        )
+    }
+
+    private suspend fun refresh(
+        novel: Novel,
+        source: NovelSource,
+        manualFetch: Boolean = false,
+        preferences: LibraryPreferences = libraryPreferences,
+        downloadManager: NovelDownloadManager = mockk(relaxed = true),
+    ) = refreshNovelFromSource(
+        novel,
+        source,
+        chapters,
+        novels,
+        preferences,
+        NoChapterNumberOverrides,
+        coverCache,
+        novelDownloadManager = downloadManager,
+        manualFetch = manualFetch,
+        fetchWindow = Instant.fromEpochMilliseconds(1_000L)..Instant.fromEpochMilliseconds(2_000L),
+    )
+
+    /** A refresh writes only what the source owns, so a change made to the novel since the job read it stays. */
+    @Test
+    fun `a library change made while a refresh runs survives it`() = runTest {
+        val novel = storedNovel()
+        novels.update(
+            NovelUpdate(novel.id) {
+                favoriteAt = null
+                notes = "x"
+            },
+        )
+
+        refresh(novel, PagedSource(oneChapter, summary = "New description"))
+
+        novels.getById(novel.id)!!.let { it.favorite to it.notes } shouldBe (false to "x")
+    }
+
+    @Test
+    fun `a refresh stores the source's new genres`() = runTest {
+        val novel = storedNovel()
+
+        refresh(novel, PagedSource(oneChapter, genres = "Fantasy, Drama"))
+
+        novels.getById(novel.id)!!.genre shouldBe listOf("Fantasy", "Drama")
+    }
+
+    @Test
+    fun `a library novel keeps its title while titles are not updated to match the source`() = runTest {
+        val novel = storedNovel()
+
+        refresh(novel, PagedSource(oneChapter, title = "Renamed"))
+
+        novels.getById(novel.id)!!.title shouldBe "Novel"
+    }
+
+    @Test
+    fun `a library novel's downloads follow a title updated to match the source`() = runTest {
+        val novel = storedNovel()
+        val downloads = mockk<NovelDownloadManager>(relaxed = true)
+
+        refresh(
+            novel,
+            PagedSource(oneChapter, title = "Renamed"),
+            preferences = updatingTitles,
+            downloadManager = downloads,
+        )
+
+        coVerify { downloads.renameNovel(match { it.title == "Novel" }, "Renamed") }
+    }
+
+    // A plugin fills a name its page lacks with a placeholder (webnovel.ts `'No Title Found'`).
+    @Test
+    fun `a refresh whose source sends only a placeholder name keeps the novel's title`() = runTest {
+        val novel = storedNovel()
+
+        refresh(novel, PagedSource(oneChapter, title = "No Title Found"), preferences = updatingTitles)
+
+        novels.getById(novel.id)!!.title shouldBe "Novel"
+    }
+
+    /** Manga's sync raises the same exception, which both details screens and both update jobs word as "No chapters found". */
+    @Test
+    fun `a refresh that finds no chapters fails with NoChaptersException`() = runTest {
+        shouldThrow<NoChaptersException> { refresh(storedNovel(), PagedSource(emptyList())) }
+    }
+
+    @Test
+    fun `a refresh that finds no chapters still stores the source's details`() = runTest {
+        val novel = storedNovel()
+
+        runCatching { refresh(novel, PagedSource(emptyList(), summary = "New description")) }
+
+        novels.getById(novel.id)!!.description shouldBe "New description"
+    }
+
+    /** A cover the details refresh reloads, as manga's does; the rule itself is pinned by `RefreshedCoverTest`. */
+    @Test
+    fun `a refresh asked for by hand reloads a cover whose address did not change`() = runTest {
+        val novel = storedNovel(cover = COVER)
+        val cached = coverCache.getCoverFile(COVER)!!.apply { writeText("stale") }
+
+        refresh(novel, PagedSource(oneChapter, cover = COVER), manualFetch = true)
+
+        (cached.exists() to (novels.getById(novel.id)!!.coverLastModified != null)) shouldBe (false to true)
+    }
+
+    @Test
+    fun `a background refresh leaves a cover whose address did not change`() = runTest {
+        val novel = storedNovel(cover = COVER)
+        val cached = coverCache.getCoverFile(COVER)!!.apply { writeText("kept") }
+
+        refresh(novel, PagedSource(oneChapter, cover = COVER))
+
+        (cached.exists() to novels.getById(novel.id)!!.coverLastModified) shouldBe (true to null)
+    }
+
+    private val oneChapter get() = listOf(chapter("/c/1", 1.0))
+
+    private val updatingTitles = LibraryPreferences(
+        InMemoryPreferenceStore(sequenceOf(InMemoryPreference("pref_update_library_manga_titles", true, false))),
+    )
+
+    @Test
+    fun `a new copy of a read chapter is not reported as new`() = runTest {
+        val novel = storedNovel()
+        storedChapter(novel, "/c/12-a", 12.0, read = true)
+        val source = PagedSource(listOf(chapter("/c/12-a", 12.0), chapter("/c/12-b", 12.0)))
+
+        refresh(novel, source).newChapters shouldBe emptyList()
+    }
+
+    @Test
+    fun `a chapter re-listed at a new address is not reported as new`() = runTest {
+        val novel = storedNovel()
+        // Unread, so the duplicate-read rule cannot be what holds it back.
+        storedChapter(novel, "/c/12-a", 12.0, read = false)
+        // A later row, so the re-listed one cannot take the removed row's id back.
+        storedChapter(novel, "/c/13", 13.0, read = false)
+        val source = PagedSource(listOf(chapter("/c/13", 13.0), chapter("/c/12-b", 12.0)))
+
+        refresh(novel, source).newChapters shouldBe emptyList()
+    }
+
+    @Test
+    fun `a new copy of a chapter read on another page is not reported as new`() = runTest {
+        val novel = storedNovel()
+        storedChapter(novel, "/c/12-a", 12.0, read = true, page = "1")
+        val source = PagedSource(listOf(chapter("/c/12-a", 12.0)), mapOf("2" to listOf(chapter("/c/12-b", 12.0))))
+
+        refresh(novel, source).newChapters shouldBe emptyList()
+    }
+
+    @Test
+    fun `new chapters on every walked page are reported`() = runTest {
+        val source = PagedSource(
+            listOf(chapter("/c/1", 1.0)),
+            mapOf("2" to listOf(chapter("/c/2", 2.0)), "3" to listOf(chapter("/c/3", 3.0))),
+        )
+
+        refresh(storedNovel(), source).newChapters.map { it.url } shouldBe listOf("/c/1", "/c/2", "/c/3")
+    }
+
+    @Test
+    fun `a refreshed paged novel's first page is stored as page one`() = runTest {
+        val novel = storedNovel()
+
+        refresh(novel, PagedSource(oneChapter, mapOf("2" to listOf(chapter("/c/2", 2.0)))))
+
+        rowsFor(novel, "/c/1").map { it.page } shouldBe listOf("1")
+    }
+
+    @Test
+    fun `a paged refresh predicts the next update once`() = runTest {
+        val source = PagedSource(
+            listOf(chapter("/c/1", 1.0)),
+            mapOf("2" to listOf(chapter("/c/2", 2.0)), "3" to listOf(chapter("/c/3", 3.0))),
+        )
+
+        refresh(storedNovel(nextUpdate = Instant.fromEpochMilliseconds(1L)), source, manualFetch = true)
+
+        novels.predictions shouldBe 1
+    }
+
+    /**
+     * A weekly interval the user set, last updated three days ago: due in four days, unless the refresh
+     * found a release, which the next check then counts a whole week from.
+     */
+    private suspend fun weeklyNovelUpdatedThreeDaysAgo(): Novel {
+        val novel = storedNovel()
+        novels.update(
+            NovelUpdate(novel.id) {
+                fetchInterval = -7
+                lastUpdate = Clock.System.now() - 3.days
+            },
+        )
+        return novels.getById(novel.id)!!
+    }
+
+    private suspend fun daysUntilNextUpdate(novel: Novel): Int {
+        val zone = TimeZone.currentSystemDefault()
+        val today = Clock.System.now().toLocalDateTime(zone).date
+        return today.daysUntil(novels.getById(novel.id)!!.nextUpdate!!.toLocalDateTime(zone).date)
+    }
+
+    private val twoPages get() = PagedSource(listOf(chapter("/c/2", 2.0)), mapOf("2" to listOf(chapter("/c/1", 1.0))))
+
+    // Page 2 syncs after the page 1 this refresh just stored, so the novel already has chapters by then.
+    @Test
+    fun `a paged novel's first fetch is not counted as a release`() = runTest {
+        val novel = weeklyNovelUpdatedThreeDaysAgo()
+
+        refresh(novel, twoPages)
+
+        daysUntilNextUpdate(novel) shouldBe 4
+    }
+
+    // An opened novel stored only page 1, so page 2 fills in the back catalogue.
+    @Test
+    fun `chapters on a page the novel never stored are not counted as a release`() = runTest {
+        val novel = weeklyNovelUpdatedThreeDaysAgo()
+        storedChapter(novel, "/c/2", 2.0, read = false, page = "1")
+
+        refresh(novel, twoPages)
+
+        daysUntilNextUpdate(novel) shouldBe 4
+    }
+
+    @Test
+    fun `a new chapter on a page the novel stored is counted as a release`() = runTest {
+        val novel = weeklyNovelUpdatedThreeDaysAgo()
+        storedChapter(novel, "/c/2", 2.0, read = false, page = "1")
+        storedChapter(novel, "/c/1", 1.0, read = false, page = "2")
+        val source = PagedSource(
+            listOf(chapter("/c/3", 3.0), chapter("/c/2", 2.0)),
+            mapOf("2" to listOf(chapter("/c/1", 1.0))),
+        )
+
+        refresh(novel, source)
+
+        daysUntilNextUpdate(novel) shouldBe 7
+    }
+
+    /**
+     * A newest-first paged source after one release: page 1 was 100..76 and page 2 75..51, and chapter 101
+     * pushed 76 onto page 2. The third page keeps page 2 out of this refresh's walk, as it is for any middle
+     * page, so 76 reaches page 2 only through a later page sync.
+     */
+    private suspend fun novelAfterARelease(): Pair<Novel, PagedSource> {
+        val novel = storedNovel(totalPages = 3L)
+        (100 downTo 76).forEach { storedChapter(novel, "/c/$it", it.toDouble(), read = it == 76, page = "1") }
+        (75 downTo 51).forEach { storedChapter(novel, "/c/$it", it.toDouble(), read = false, page = "2") }
+        val source = PagedSource(
+            (101 downTo 77).map { chapter("/c/$it", it.toDouble()) },
+            mapOf("2" to (76 downTo 52).map { chapter("/c/$it", it.toDouble()) }, "3" to emptyList()),
+        )
+        return novel to source
+    }
+
+    private suspend fun rowsFor(novel: Novel, url: String) = chapters.getByNovelId(novel.id).filter { it.url == url }
+
+    private suspend fun syncPage(novel: Novel, source: PagedSource, page: String) =
+        syncPage(novel, source.parsePage(novel.url, page).chapters!!, page)
+
+    private suspend fun syncPage(novel: Novel, items: List<ChapterItem>, page: String) = syncChaptersWithNovelSource(
+        items,
+        novels.getById(novel.id)!!,
+        chapters,
+        novels,
+        libraryPreferences,
+        NoChapterNumberOverrides,
+        page = page,
+    )
+
+    @Test
+    fun `a chapter pushed off the first page keeps its row and read state`() = runTest {
+        val (novel, source) = novelAfterARelease()
+        val before = rowsFor(novel, "/c/76").map { it.id to it.read }
+
+        refresh(novel, source)
+
+        rowsFor(novel, "/c/76").map { it.id to it.read } shouldBe before
+    }
+
+    @Test
+    fun `a chapter pushed onto the next page is not reported as new there`() = runTest {
+        val (novel, source) = novelAfterARelease()
+        refresh(novel, source)
+
+        syncPage(novel, source, "2").newChapters shouldBe emptyList()
+    }
+
+    @Test
+    fun `a chapter pushed onto the next page moves there once and stays read`() = runTest {
+        val (novel, source) = novelAfterARelease()
+        val id = rowsFor(novel, "/c/76").single().id
+        refresh(novel, source)
+
+        syncPage(novel, source, "2")
+
+        rowsFor(novel, "/c/76").map { Triple(it.id, it.read, it.page) } shouldBe listOf(Triple(id, true, "2"))
+    }
+
+    private suspend fun open(source: PagedSource, path: String = "/opened") =
+        insertOpenedNovel(
+            source.parseNovel(path),
+            source.id,
+            novels,
+            chapters,
+            libraryPreferences,
+            NoChapterNumberOverrides,
+        )!!
+
+    @Test
+    fun `an opened novel is stored outside the library`() = runTest {
+        novels.getById(open(PagedSource(oneChapter)).id)!!.favorite shouldBe false
+    }
+
+    @Test
+    fun `an opened novel is stored with its chapters`() = runTest {
+        val novel = open(PagedSource(oneChapter))
+
+        chapters.getByNovelId(novel.id).map { it.url } shouldBe listOf("/c/1")
+    }
+
+    @Test
+    fun `an opened paged novel's first page is stored as page one`() = runTest {
+        val novel = open(PagedSource(oneChapter, mapOf("2" to listOf(chapter("/c/2", 2.0)))))
+
+        chapters.getByNovelId(novel.id).map { it.page } shouldBe listOf("1")
+    }
+
+    @Test
+    fun `opening a novel twice reuses its row`() = runTest {
+        val first = open(PagedSource(oneChapter))
+
+        open(PagedSource(oneChapter)).id shouldBe first.id
+    }
+
+    private companion object {
+        const val COVER = "https://src.example/cover.jpg"
+    }
+
+    private fun chapter(path: String, number: Double) = ChapterItem(
+        name = "Chapter $number",
+        path = path,
+        chapterNumber = number,
+    )
+
+    /** Counts the writes that store a next-update prediction. */
+    private class RecordingNovelRepository(private val real: NovelRepository) : NovelRepository by real {
+        var predictions = 0
+
+        override suspend fun update(update: NovelUpdate): Boolean {
+            if (update.nextUpdate != null) predictions++
+            return real.update(update)
+        }
+    }
+}
