@@ -10,10 +10,16 @@ import reikai.domain.library.ContentType
  */
 interface MergedChapterUnitRepository {
 
-    /** Groups of [contentType] whose stored stitch no longer matches the chapters behind them. */
-    suspend fun getStaleGroups(contentType: ContentType): List<Long>
+    /**
+     * Claims every group of [contentType] a write may have left stale since the last claim, plus any a
+     * claim before left unfinished. A superset of the stale groups: each still needs [isStale].
+     */
+    suspend fun claimPendingGroups(contentType: ContentType): List<Long>
 
-    /** [getStaleGroups] for one group, at the cost of that group's chapters rather than the library's. */
+    /** Drops [groupId]'s claim once its exact check ran; a write since keeps it listed. */
+    suspend fun releaseClaim(groupId: Long)
+
+    /** Whether [groupId]'s stored stitch no longer matches the chapters behind it, at that group's cost. */
     suspend fun isStale(contentType: ContentType, groupId: Long): Boolean
 
     /** The ranking stamp each group was last stitched under, keyed by group; see [rankingStamps]. */

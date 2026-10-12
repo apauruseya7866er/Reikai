@@ -149,6 +149,33 @@ class MergedStitchReconcileTest {
 
     @ParameterizedTest
     @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a reconcile restitches only the group a new chapter changed`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        val settled = fixture.twoSourceGroup()
+        val changed = fixture.twoSourceGroup()
+        val counting = CountingStitcher(fixture.stitcher(emptyList()))
+        val reconcile = ReconcileMergedChapters(units, setOf(counting))
+        reconcile.await()
+        fixture.addChapter(owner = fixture.membersOf(changed).first(), name = "Chapter 3: Charlie", number = 3.0)
+
+        reconcile.await()
+
+        counting.stitched.groupingBy { it }.eachCount() shouldBe mapOf(settled to 1, changed to 2)
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
+    fun `a reconcile leaves no group listed`(type: ContentType) = runTest {
+        val fixture = fixture(type)
+        fixture.twoSourceGroup()
+
+        fixture.reconcile().await()
+
+        units.claimPendingGroups(type) shouldBe emptyList()
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = ContentType::class, names = ["MANGA", "NOVELS"])
     fun `a new chapter in a group restitches that group`(type: ContentType) = runTest {
         val fixture = fixture(type)
         val group = fixture.twoSourceGroup()

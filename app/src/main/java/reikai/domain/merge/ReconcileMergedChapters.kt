@@ -16,8 +16,8 @@ import tachiyomi.core.common.util.system.logcat
  * its source ranking. Written once over both content types; how a group's chapters are loaded and
  * stitched is each [MergedGroupStitcher]'s.
  *
- * Three indexed queries per content type when nothing changed, so any path that may have written can
- * call it. [awaitGroup] reads one group's chapters; its ranking check reads every group's member rows.
+ * When nothing changed it reads the pending list, which triggers fill on every stitch input, and every
+ * group's member rows for the ranking check, so any path that may have written can call it.
  */
 @Inject
 @SingleIn(AppScope::class)
@@ -36,7 +36,7 @@ class ReconcileMergedChapters(
             // Only this type's groups are compared: the stored stamps cover both types, and a group
             // checked against the other type's stitcher would be cleared by it.
             val reranked = rankings.filter { (groupId, ranking) -> stored[groupId] != ranking }.keys
-            (repository.getStaleGroups(stitcher.contentType) + reranked).distinct().forEach { groupId ->
+            (repository.claimPendingGroups(stitcher.contentType) + reranked).distinct().forEach { groupId ->
                 rebuildIfStale(stitcher, groupId, rankings[groupId])
             }
         }
@@ -86,5 +86,6 @@ class ReconcileMergedChapters(
             if (repository.isStale(contentType, groupId) || repository.getRankings()[groupId] != ranking) {
                 repository.replaceGroup(contentType, groupId, stitcher.stitch(groupId), ranking)
             }
+            repository.releaseClaim(groupId)
         }
 }

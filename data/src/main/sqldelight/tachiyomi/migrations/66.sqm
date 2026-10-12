@@ -1,0 +1,144 @@
+-- Reconcile reads the groups a write may have left stale from merged_group_pending, filled by triggers on
+-- every stitch input, instead of scanning every group through the stale views.
+
+-- The groups a write may have left stale, so a reconcile checks those instead of scanning every group
+-- through the stale views. The triggers below fill it from every stitch input the views compare: a
+-- member chapter's insert, delete, number, order or owner (and name, for novels), a membership change,
+-- and a member entering or leaving the library. A group is listed more often than it goes stale, never
+-- less; the reconcile still runs the exact one-group check. claimed is 1 once a reconcile has taken the
+-- row, so a write landing while it runs adds a fresh row rather than being lost with the claimed one.
+-- Triggers on Mihon's chapter and manga tables: a migration rebuilding either must create them again.
+CREATE TABLE merged_group_pending (
+    group_id INTEGER NOT NULL,
+    claimed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(group_id, claimed),
+    FOREIGN KEY(group_id) REFERENCES merge_group (_id)
+    ON DELETE CASCADE
+);
+
+CREATE TRIGGER merged_pending_chapter_insert AFTER INSERT ON chapter
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_manga
+    WHERE manga_id = new.manga_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_chapter_delete AFTER DELETE ON chapter
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_manga
+    WHERE manga_id = old.manga_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_chapter_update
+AFTER UPDATE OF remote_chapter_number, remote_order, manga_id ON chapter
+WHEN old.remote_chapter_number IS NOT new.remote_chapter_number
+OR old.remote_order IS NOT new.remote_order
+OR old.manga_id IS NOT new.manga_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT DISTINCT group_id FROM merge_group_manga
+    WHERE manga_id IN (old.manga_id, new.manga_id)
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_manga_favorite AFTER UPDATE OF user_favorite_at ON manga
+WHEN (old.user_favorite_at IS NULL) != (new.user_favorite_at IS NULL)
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_manga
+    WHERE manga_id = new.id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_member_insert AFTER INSERT ON merge_group_manga
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT new.group_id
+    WHERE new.group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+-- A member leaving with its whole group finds the group already gone, and lists nothing.
+CREATE TRIGGER merged_pending_member_delete AFTER DELETE ON merge_group_manga
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id = old.group_id
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_member_update AFTER UPDATE OF group_id, manga_id ON merge_group_manga
+WHEN old.group_id IS NOT new.group_id OR old.manga_id IS NOT new.manga_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id IN (old.group_id, new.group_id)
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_chapter_insert AFTER INSERT ON novel_chapters
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_novel
+    WHERE novel_id = new.novel_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_chapter_delete AFTER DELETE ON novel_chapters
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_novel
+    WHERE novel_id = old.novel_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_chapter_update
+AFTER UPDATE OF name, chapter_number, source_order, novel_id ON novel_chapters
+WHEN old.name IS NOT new.name
+OR old.chapter_number IS NOT new.chapter_number
+OR old.source_order IS NOT new.source_order
+OR old.novel_id IS NOT new.novel_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT DISTINCT group_id FROM merge_group_novel
+    WHERE novel_id IN (old.novel_id, new.novel_id)
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_favorite AFTER UPDATE OF favorite_at ON novels
+WHEN (old.favorite_at IS NULL) != (new.favorite_at IS NULL)
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_novel
+    WHERE novel_id = new._id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_member_insert AFTER INSERT ON merge_group_novel
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT new.group_id
+    WHERE new.group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_member_delete AFTER DELETE ON merge_group_novel
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id = old.group_id
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_member_update AFTER UPDATE OF group_id, novel_id ON merge_group_novel
+WHEN old.group_id IS NOT new.group_id OR old.novel_id IS NOT new.novel_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id IN (old.group_id, new.group_id)
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+-- Every existing group is checked once, since no trigger saw the writes made before this.
+INSERT INTO merged_group_pending(group_id) SELECT _id FROM merge_group;

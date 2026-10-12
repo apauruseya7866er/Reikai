@@ -5,12 +5,14 @@
 --
 -- A CACHE, NEVER TRUTH. Nothing here cannot be rebuilt from the chapter rows, so a change to the
 -- stitch rules is a DELETE in a migration and the next reconciliation pass, not a data conversion.
+-- That migration must also put every group in merged_group_pending, or nothing checks them.
 --
--- MAINTAINED BY RECONCILIATION, NOT BY WRITE HOOKS. Chapter rows are created from several places (the
--- source sync, the gallery-chain reconciler, backup restore, the novel chapter sync), so hooking each
--- one means every future write path has to remember, and a forgotten one is a silently wrong badge.
--- Each row records the values its unit was derived from, and the queries below find every group whose
--- chapters no longer match what was stitched. That covers write paths that do not exist yet.
+-- MAINTAINED BY RECONCILIATION, NOT BY WRITE HOOKS IN CODE. Chapter rows are created from several
+-- places (the source sync, the gallery-chain reconciler, backup restore, the novel chapter sync), so
+-- hooking each one means every future write path has to remember, and a forgotten one is a silently
+-- wrong badge. Each row records the values its unit was derived from, and the stale views below find
+-- every group whose chapters no longer match what was stitched. Triggers on the tables themselves only
+-- name the groups worth that check (merged_group_pending), which covers write paths that do not exist yet.
 --
 -- derived_order is the chapter's place in its own source's list, which the stitch walks each source
 -- in, so a source reordering chapters it already listed restitches like a renumber. It defaults to -1,
@@ -91,6 +93,145 @@ CREATE TABLE merged_member_count (
     FOREIGN KEY(group_id) REFERENCES merge_group (_id)
     ON DELETE CASCADE
 );
+
+-- The groups a write may have left stale, so a reconcile checks those instead of scanning every group
+-- through the stale views. The triggers below fill it from every stitch input the views compare: a
+-- member chapter's insert, delete, number, order or owner (and name, for novels), a membership change,
+-- and a member entering or leaving the library. A group is listed more often than it goes stale, never
+-- less; the reconcile still runs the exact one-group check. claimed is 1 once a reconcile has taken the
+-- row, so a write landing while it runs adds a fresh row rather than being lost with the claimed one.
+-- Triggers on Mihon's chapter and manga tables: a migration rebuilding either must create them again.
+CREATE TABLE merged_group_pending (
+    group_id INTEGER NOT NULL,
+    claimed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(group_id, claimed),
+    FOREIGN KEY(group_id) REFERENCES merge_group (_id)
+    ON DELETE CASCADE
+);
+
+CREATE TRIGGER merged_pending_chapter_insert AFTER INSERT ON chapter
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_manga
+    WHERE manga_id = new.manga_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_chapter_delete AFTER DELETE ON chapter
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_manga
+    WHERE manga_id = old.manga_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_chapter_update
+AFTER UPDATE OF remote_chapter_number, remote_order, manga_id ON chapter
+WHEN old.remote_chapter_number IS NOT new.remote_chapter_number
+OR old.remote_order IS NOT new.remote_order
+OR old.manga_id IS NOT new.manga_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT DISTINCT group_id FROM merge_group_manga
+    WHERE manga_id IN (old.manga_id, new.manga_id)
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_manga_favorite AFTER UPDATE OF user_favorite_at ON manga
+WHEN (old.user_favorite_at IS NULL) != (new.user_favorite_at IS NULL)
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_manga
+    WHERE manga_id = new.id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_member_insert AFTER INSERT ON merge_group_manga
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT new.group_id
+    WHERE new.group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+-- A member leaving with its whole group finds the group already gone, and lists nothing.
+CREATE TRIGGER merged_pending_member_delete AFTER DELETE ON merge_group_manga
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id = old.group_id
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_member_update AFTER UPDATE OF group_id, manga_id ON merge_group_manga
+WHEN old.group_id IS NOT new.group_id OR old.manga_id IS NOT new.manga_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id IN (old.group_id, new.group_id)
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_chapter_insert AFTER INSERT ON novel_chapters
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_novel
+    WHERE novel_id = new.novel_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_chapter_delete AFTER DELETE ON novel_chapters
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_novel
+    WHERE novel_id = old.novel_id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_chapter_update
+AFTER UPDATE OF name, chapter_number, source_order, novel_id ON novel_chapters
+WHEN old.name IS NOT new.name
+OR old.chapter_number IS NOT new.chapter_number
+OR old.source_order IS NOT new.source_order
+OR old.novel_id IS NOT new.novel_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT DISTINCT group_id FROM merge_group_novel
+    WHERE novel_id IN (old.novel_id, new.novel_id)
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_favorite AFTER UPDATE OF favorite_at ON novels
+WHEN (old.favorite_at IS NULL) != (new.favorite_at IS NULL)
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT group_id FROM merge_group_novel
+    WHERE novel_id = new._id
+    AND group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_member_insert AFTER INSERT ON merge_group_novel
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT new.group_id
+    WHERE new.group_id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_member_delete AFTER DELETE ON merge_group_novel
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id = old.group_id
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
+
+CREATE TRIGGER merged_pending_novel_member_update AFTER UPDATE OF group_id, novel_id ON merge_group_novel
+WHEN old.group_id IS NOT new.group_id OR old.novel_id IS NOT new.novel_id
+BEGIN
+    INSERT INTO merged_group_pending(group_id)
+    SELECT _id FROM merge_group
+    WHERE _id IN (old.group_id, new.group_id)
+    AND _id NOT IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0);
+END;
 
 -- Every group whose stored stitch no longer describes the chapters behind it, once per stale row: a
 -- member chapter with no row or with changed inputs, a row for a chapter that is no longer a library
@@ -211,18 +352,37 @@ SELECT groupId, unit,
 FROM mergedNovelCountedUnitView
 GROUP BY groupId, unit;
 
-staleMergedGroups:
-SELECT DISTINCT groupId FROM mergedChapterStaleView;
-
 staleMergedGroup:
 SELECT groupId FROM mergedChapterStaleView WHERE groupId = :groupId LIMIT 1;
-
-staleMergedNovelGroups:
-SELECT DISTINCT groupId FROM mergedNovelChapterStaleView;
 
 staleMergedNovelGroup:
 SELECT groupId FROM mergedNovelChapterStaleView WHERE groupId = :groupId LIMIT 1;
 
+-- A reconcile's claim on its type's pending groups, in one transaction. A claimed row still there is
+-- one a reconcile has not finished: dropped where a write has listed its group again since, and claimed
+-- again otherwise, so a run that failed midway leaves nothing unchecked.
+dropSupersededClaims:
+DELETE FROM merged_group_pending
+WHERE claimed = 1
+AND group_id IN (SELECT group_id FROM merged_group_pending WHERE claimed = 0)
+AND group_id IN (SELECT _id FROM merge_group WHERE content_type = :contentType);
+
+claimPending:
+UPDATE merged_group_pending SET claimed = 1
+WHERE claimed = 0
+AND group_id IN (SELECT _id FROM merge_group WHERE content_type = :contentType);
+
+claimedGroups:
+SELECT group_id FROM merged_group_pending
+WHERE claimed = 1
+AND group_id IN (SELECT _id FROM merge_group WHERE content_type = :contentType);
+
+-- After the group's exact check, which covered every write made before the claim. A write since has
+-- listed the group again as unclaimed, which this leaves.
+deleteClaim:
+DELETE FROM merged_group_pending
+WHERE group_id = :groupId
+AND claimed = 1;
 storedRankings:
 SELECT group_id, ranking FROM merged_group_ranking;
 

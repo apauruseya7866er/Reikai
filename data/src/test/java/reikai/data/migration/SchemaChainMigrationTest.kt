@@ -230,6 +230,25 @@ class SchemaChainMigrationTest {
         longs("SELECT chapter_flags FROM novels ORDER BY _id") shouldBe listOf(16777216L or 67108864L, 256L)
     }
 
+    // A later migration that rebuilds chapter, manga or novels drops their triggers with the table.
+    @Test
+    fun `every trigger that lists a group for the reconcile survives the chain`() = runTest {
+        migrate()
+
+        longs("SELECT count(*) FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'merged_pending_%'") shouldBe
+            listOf(14L)
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `every group is listed for the reconcile after the upgrade`(type: Type) = runTest {
+        stitchedGroup(type)
+
+        migrate()
+
+        longs("SELECT group_id FROM merged_group_pending WHERE claimed = 0") shouldBe listOf(1L)
+    }
+
     @Test
     fun `the system category still refuses deletion`() = runTest {
         migrate()

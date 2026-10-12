@@ -38,13 +38,17 @@ A schema change runs off the database's own `user_version`, not off `versionCode
 
 1. Change the table in `data/src/main/sqldelight/tachiyomi/data/*.sq` (views are in `.../view/*.sq`).
 2. Add the next-numbered file in `data/src/main/sqldelight/tachiyomi/migrations/` (the highest is
-   `65.sqm`, so the next is `66.sqm`) with the same change. Never copy Mihon's `.sqm` number, never edit
+   `66.sqm`, so the next is `67.sqm`) with the same change. Never copy Mihon's `.sqm` number, never edit
    the SQL of an existing `.sqm`, and put an index change in a migration of its own.
 3. If the migration rebuilds or renames a table, `DROP VIEW` every view over it and recreate each view
    with its current `view/*.sq` text; a table rename rewrites dependent views to read the dropped table.
    Rename the old table aside under `PRAGMA legacy_alter_table = 1`, so the tables referencing it keep
    their foreign keys on the rebuilt one. `62.sqm` is the worked example.
-4. If it moves or merges rows, add a data test in the shape of
+4. If it rebuilds `chapter`, `manga`, `novel_chapters`, `novels`, `merge_group_manga` or
+   `merge_group_novel`, create their `merged_pending_*` triggers again (`merged_chapter_unit.sq`). If it
+   changes how chapters are stitched, also list every group for the reconcile as `66.sqm` does
+   (`INSERT INTO merged_group_pending(group_id) SELECT _id FROM merge_group`), or none is checked.
+5. If it moves or merges rows, add a data test in the shape of
    `data/src/test/java/reikai/data/migration/SchemaChainMigrationTest.kt`, which starts from the `43.db`
    snapshot and runs the real chain.
 

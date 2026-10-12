@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import reikai.data.toDbValue
 import reikai.domain.library.ContentType
 import reikai.domain.manga.ChapterAggregation
 import reikai.domain.merge.ChapterCopyRow
@@ -33,11 +34,17 @@ class MergedChapterUnitRepositoryImpl(
 
     private val queries = database.merged_chapter_unitQueries
 
-    override suspend fun getStaleGroups(contentType: ContentType): List<Long> =
-        when (contentType) {
-            ContentType.NOVELS -> queries.staleMergedNovelGroups().awaitAsList()
-            else -> queries.staleMergedGroups().awaitAsList()
+    override suspend fun claimPendingGroups(contentType: ContentType): List<Long> =
+        database.transactionWithResult {
+            val type = contentType.toDbValue()
+            queries.dropSupersededClaims(type)
+            queries.claimPending(type)
+            queries.claimedGroups(type).awaitAsList()
         }
+
+    override suspend fun releaseClaim(groupId: Long) {
+        queries.deleteClaim(groupId)
+    }
 
     override suspend fun isStale(contentType: ContentType, groupId: Long): Boolean =
         when (contentType) {
