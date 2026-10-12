@@ -24,8 +24,8 @@ WHERE novels.favorite_at IS NOT NULL
 AND novel_chapters.date_fetch > novels.favorite_at
 ORDER BY novel_chapters.date_fetch DESC;
 
--- Novel twin of updatesView's getRecentUpdatesWithFilters, same predicate shapes so the two feeds
--- cannot drift: read/started/bookmarked, then the include/exclude category blocks with sentinel id 0
+-- Novel twin of updatesView's getRecentUpdatesWithFilters, pinned by UpdatesFeedFilterConformanceTest:
+-- read/started/bookmarked, then the include/exclude category blocks with sentinel id 0
 -- for uncategorized. "Started" is progress without completion, measured in lastTextProgress rather
 -- than pages. Downloaded is not here on either side: download state is on disk, not in the database.
 getRecentNovelUpdatesWithFilters:
