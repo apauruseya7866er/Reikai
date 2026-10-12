@@ -1,5 +1,6 @@
 package reikai.presentation.category
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,7 +10,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -117,7 +117,12 @@ private fun CategoryFilterDialog(
                 Column(
                     modifier = Modifier
                         .heightIn(max = 420.dp)
-                        .verticalScroll(rememberScrollState()),
+                        // Starts at the top when the chip shows the other type's categories.
+                        .verticalScroll(
+                            rememberSaveable(chipContentType, saver = ScrollState.Saver) {
+                                ScrollState(0)
+                            },
+                        ),
                 ) {
                     CategoryTriStateRows(
                         categories = categoriesForContentType(categories, chipContentType),

@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -34,6 +33,7 @@ import mihon.icons.materialsymbols.rounded.SelectAll
 import reikai.domain.library.CategorySortOrder
 import reikai.domain.library.ContentType
 import reikai.presentation.components.ContentTypeFilterChips
+import reikai.presentation.components.rememberChipListState
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import tachiyomi.domain.category.model.Category
@@ -66,7 +66,7 @@ fun CategoryScreen(
     onDeleteSelected: () -> Unit,
     // RK <--
 ) {
-    val lazyListState = rememberLazyListState()
+    val lazyListState = rememberChipListState(state.contentType) // RK: starts at the top on a chip change
     // RK: in selection mode the drag handle is hidden (selection-tap shouldn't fight a drag-grab), and
     // so is it under a content-type chip: a drop index comes from the list on screen while the reorder
     // renumbers the whole table, so dragging inside a narrowed list would land the row elsewhere.
