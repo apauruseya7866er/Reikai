@@ -14,10 +14,10 @@ Two settings in <nav to="downloads"> control this for manga, and both start cons
 
 Raise the second one only for a source you know tolerates it. A source that starts returning errors or blank pages under load is telling you to put it back.
 
-Light novels ignore both settings: their queue downloads one chapter at a time, with a pause between chapters that you set under **Pacing**.
+Light novels ignore both settings: their queue downloads one chapter at a time, with a pause between chapters that you set under **Pacing · Novels**.
 
 ## How do I slow novel downloads down?
-Novel sources do not limit their own request rate the way manga extensions do, so a fast queue can get you blocked. The **Pacing** group in <nav to="downloads"> sets the wait between novel chapter downloads. It has no effect on manga.
+Novel sources do not limit their own request rate the way manga extensions do, so a fast queue can get you blocked. The **Pacing · Novels** group in <nav to="downloads"> sets the wait between novel chapter downloads. It has no effect on manga.
 
 * **Delay between chapters** applies to every novel source. It defaults to 0.5 s, and goes up to 10 s.
 * **Delay per source** lists your novel sources so you can give one its own delay. A source that declares a minimum shows **Needs at least** that much, and its choices never go below it.
@@ -75,7 +75,7 @@ However, in some cases, this might not function as intended.
 A quick solution is to create the `.nomedia` file yourself, name it as such, and place it in your downloads folder. If the issue pertains to local source, put the `.nomedia` file in the respective local folder.
 
 ## How are downloads organized on the filesystem?
-They are stored as `downloads/Source Name/Manga Name/Chapter Name_abcdef.cbz`, where the six characters after the underscore are a hash of the chapter's address.
+They are stored as `downloads/Source Name (LANG)/Manga Name/Chapter Name_abcdef.cbz`, where the six characters after the underscore are a hash of the chapter's address.
 Light novels use a folder of their own, `novel_downloads/Source id/Novel Name/`, with each chapter saved as `Chapter Name_abcdef.html`. The source folder is named after the source's id, not its display name: a [plugin](/docs/faq/browse/extensions#extension-apps-and-plugins)'s id, or for a novel extension app `tachiyomi_` or `ireader_` followed by the source's number.
 The `abcdef` string is the first 6 hexadecimal digits of the MD5 hash of the URL of the chapter, so that if two chapters have the same name, they won't try to write to the same filename.
 **Enable chapter name hash suffix** in <nav to="advanced"> decides whether chapter names carry it, for manga and novels alike. It is off on a fresh install and stays on for an install that had it before. With it off, only the first of two chapters that share a name can be downloaded; the other counts as downloaded and opens that one's copy.

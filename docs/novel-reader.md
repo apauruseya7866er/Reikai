@@ -29,7 +29,7 @@ A marker names each boundary between chapters.
 **Add the next chapter at** sets how far into a chapter you have to be before the next one is added, 95% by default.
 
 Turn it off to read one chapter at a time.
-**Swipe between chapters** then lets you swipe sideways to move to the previous or next chapter.
+Either way, **Swipe between chapters** lets you swipe sideways to move to the previous or next chapter.
 
 ## Read aloud
 

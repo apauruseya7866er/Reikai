@@ -64,7 +64,7 @@ These errors indicate personal connection issues. Possible causes include:
 Try these solutions:
 
 * Switch between networks (WiFi, mobile data) and try connecting with a VPN.
-* Enable **DNS over HTTPS** under <nav to="advanced">.
+* Enable **DNS over HTTPS (DoH)** under <nav to="advanced">.
   * If this is already enabled, change to a different option, or disable the setting for now.
   * Remember to restart the application after changing this setting.
 * Check the router's protection settings if possible, otherwise, reboot your router.

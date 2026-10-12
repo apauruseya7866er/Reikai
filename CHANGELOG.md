@@ -338,7 +338,7 @@ another novel's title and cover and re-fetches them in one pass; refresh any it 
 
 #### Added
 
-- **The previous novel reader is gone: novels now open in the same reader manga uses, drawn as real text or as a web page under Settings -> Novel reader -> Rendering mode (partly from Tsundoku).** A mode change applies the next time you open a chapter.
+- **The previous novel reader is gone: novels now open in the same reader manga uses, drawn as real text or as a web page under Settings -> Novel reader -> Rendering mode (partly from Tsundoku).** A mode change redraws an open chapter where you are.
 - **The novel reader now has the manga reader's tap zones plus top and bottom, center and bottom-only layouts, in its Controls tab and Settings -> Novel reader (partly from Tsundoku).** Zones can be inverted and shown on the page, and Tap edges to scroll carries over as Top and bottom.
 - **Novel read-aloud now pauses for calls, other apps' audio and unplugged headphones, and answers headset buttons, in every rendering mode.** It resumes by itself only after a short interruption, and never starts over a call.
 - **Settings -> Novel reader -> Text display now sets your page margins, paragraph indent up to 10em and paragraph spacing.** Each of the four margins moves on its own, and a page padding you had already set becomes your left and right margins.

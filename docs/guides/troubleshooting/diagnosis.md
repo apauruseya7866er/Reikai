@@ -25,7 +25,7 @@ Follow these steps to troubleshoot and find solutions.
    - Clear cookies
    - Clear WebView data
    - Clear database
-   - DNS over HTTPS
+   - DNS over HTTPS (DoH)
 1. **Download Issues**: Delete the queue and retry downloads.
 1. **Restart Reikai**: Force close and reopen the app.
 

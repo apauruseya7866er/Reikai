@@ -161,6 +161,9 @@ Inverts what the volume keys do.
 ### Volume key scroll amount <Badge type="info" text="75%" />
 How much of the screen one press moves.
 
+### Sensitivity for hiding menu on scroll <Badge type="info" text="Low" />
+How quickly you have to scroll before the menu hides: **Highest** hides it on the slightest scroll, **Lowest** only on a fast one. A change applies the next time the reader opens.
+
 ### Show chapter navigator <Badge type="info" text="On" />
 Shows the progress slider or the vertical navigator. With it off, neither is drawn, the previous and next chapter buttons move to the two ends of the button bar, and the settings below it are hidden.
 
@@ -172,9 +175,6 @@ Moves that slider to the left edge, for left-handed reading.
 
 ### Vertical navigator height <Badge type="info" text="65" />
 How tall the slider is, as a percentage of the screen.
-
-### Sensitivity for hiding menu on scroll <Badge type="info" text="Low" />
-How quickly you have to scroll before the menu hides: **Highest** hides it on the slightest scroll, **Lowest** only on a fast one. A change applies the next time the reader opens.
 
 ## Read aloud
 

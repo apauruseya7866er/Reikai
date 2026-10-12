@@ -130,7 +130,7 @@ How long each flash lasts.
 How many pages pass between flashes. Higher is less distracting and lets more ghosting build up.
 
 ### Flash with <Badge type="info" text="Black" />
-Whether the flash is black, white, or white then black.
+Whether the flash is **Black**, **White**, or **White and Black**.
 
 ## Reading
 
