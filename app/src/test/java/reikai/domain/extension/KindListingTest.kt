@@ -116,6 +116,28 @@ class KindListingTest {
         apk.kindListing(available, oneFailed, keyed, KEYS).hasUpdate(apk, available, KEYS) shouldBe true
     }
 
+    @ParameterizedTest
+    @EnumSource(Extension.Kind::class)
+    fun `a badge kept through a store outage has no pending update`(kind: Extension.Kind) {
+        installed(kind, signedBy = KEY_B).pendingUpdate(emptyList(), KEYS) shouldBe null
+    }
+
+    @ParameterizedTest
+    @EnumSource(Extension.Kind::class)
+    fun `a badge with a newer listing has that listing pending`(kind: Extension.Kind) {
+        val apk = installed(kind, signedBy = KEY_B)
+        val newer = listing(kind, STORE_B, pkgName = apk.pkgName, versionCode = 2)
+
+        apk.pendingUpdate(listOf(newer), KEYS) shouldBe newer
+    }
+
+    @Test
+    fun `a newer listing with no badge shown is not pending`() {
+        val apk = installed(MANGA, signedBy = KEY_B).copy(hasUpdate = false)
+
+        apk.pendingUpdate(listOf(listing(MANGA, STORE_B, pkgName = apk.pkgName, versionCode = 2)), KEYS) shouldBe null
+    }
+
     private val keyed = listOf(STORE_A, STORE_B)
     private val oneFailed = mapOf(STORE_A.indexUrl to REACHED, STORE_B.indexUrl to FAILED)
 

@@ -24,7 +24,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -39,9 +38,12 @@ import mihon.domain.extension.model.ExtensionStore
 import mihon.domain.extension.repository.ExtensionStoreRepository
 import reikai.domain.extension.KindListing
 import reikai.domain.extension.RepoStatus
+import reikai.domain.extension.SharedRefresh
 import reikai.domain.extension.hasSigningKey
 import reikai.domain.extension.hasUpdate
+import reikai.domain.extension.installUpdate
 import reikai.domain.extension.kindListing
+import reikai.domain.extension.pendingUpdate
 import reikai.domain.extension.signingKeys
 import reikai.domain.extension.toRepoStatus
 import reikai.domain.novel.NovelPreferences
@@ -50,6 +52,7 @@ import reikai.domain.source.contentWarningScan
 import reikai.domain.source.contentWarningScanChanges
 import reikai.domain.source.reloadWhenScanStale
 import reikai.novel.source.novelSourceId
+import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
@@ -329,7 +332,8 @@ class ExtensionManager(
         val names = (loadedExtensionMapFlow.value.values + notLoadedExtensionMapFlow.value.values)
             // RK: novel apks share the notice, since one store index lists both
             .plus(loadedNovelExtensionMapFlow.value.values + notLoadedNovelExtensionMapFlow.value.values)
-            .filter { it.hasUpdate }
+            // RK: a badge a store outage kept has nothing to install, so it is left out of the notice
+            .filter { it.pendingUpdate(extensions, storeKeys) != null }
             .map { it.name }
         if (names.isNotEmpty()) {
             extensionUpdateNotifier.promptUpdates(names)
@@ -412,12 +416,30 @@ class ExtensionManager(
      * @param extension The extension to be updated.
      */
     fun updateExtension(extension: Extension.Installed): Flow<InstallStep> {
-        val update = extension.findUpdate(
-            availableExtensionListFlow.value + availableNovelExtensionListFlow.value, // RK: either kind's listings
-            storeKeys, // RK
-        ) ?: return emptyFlow()
-        val isUpdateForPrivatelyInstalled = !extension.isShared
-        return installer.downloadAndInstall(update, isUpdateForPrivatelyInstalled)
+        // RK --> either kind's listings, fetched again once when they have none, see installUpdate
+        return installUpdate(
+            findUpdate = {
+                extension.findUpdate(
+                    availableExtensionListFlow.value + availableNovelExtensionListFlow.value,
+                    storeKeys,
+                )
+            },
+            refetch = listingRefetch::invoke,
+            unreachable = { InstallStep.Error(context.stringResource(MR.strings.ext_update_store_unreachable)) },
+        ) { update ->
+            // RK <--
+            val isUpdateForPrivatelyInstalled = !extension.isShared
+            installer.downloadAndInstall(update, isUpdateForPrivatelyInstalled)
+        }
+    }
+
+    // RK: shared, so Update all over the rows a store outage left without a listing fetches once
+    private val listingRefetch = SharedRefresh {
+        try {
+            setAvailableExtensions(fetchExtensions())
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e)
+        }
     }
 
     fun cancelInstallUpdateExtension(extension: Extension) {

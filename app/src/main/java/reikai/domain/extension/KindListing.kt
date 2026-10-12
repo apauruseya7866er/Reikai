@@ -44,3 +44,10 @@ fun KindListing.hasUpdate(apk: Extension.Installed, available: List<Extension.Av
         KindListing.Unlisted -> false
         KindListing.Listed -> apk.findUpdate(available, storeKeys) != null
     }
+
+/**
+ * The listing [Extension.Installed.hasUpdate]'s badge would update to, null when the badge has nothing
+ * behind it: [KindListing.Unknown] keeps a badge through a store outage with no listing to install.
+ */
+fun Extension.Installed.pendingUpdate(available: Collection<Extension.Available>, storeKeys: Set<String>) =
+    if (hasUpdate) findUpdate(available, storeKeys) else null
