@@ -54,6 +54,7 @@ import reikai.domain.merge.AlignGroupCategories
 import reikai.domain.merge.MergeGroupReconstruction
 import reikai.domain.merge.PrefEraGrouping
 import reikai.domain.merge.ReconcileMergedChapters
+import reikai.domain.novel.model.withDisplayBitFromSort
 import reikai.novel.download.NovelDownloadCache
 import reikai.novel.source.NovelSourceManager
 import reikai.util.runCatchingCancellable
@@ -310,6 +311,7 @@ class BackupRestorer(
             novelSourceNames = novelSourceNames,
             mergeGroupsStored = mergeGroupsStored,
             sortOverridesStored = sortOverridesStored,
+            novelDisplayBitStored = sortOverridesStored || novelSourceNames.isNotEmpty(),
             kitsuScoreScale = KitsuBackupScoreScale.of(kitsuNativeScale, trackScores),
             backupMangaUnmerges = backupMangaUnmerges,
             backupNovelUnmerges = backupNovelUnmerges,
@@ -337,6 +339,9 @@ class BackupRestorer(
         val mergeGroupsStored: Boolean,
         // False for a backup written before the sort-override bit, whose flags alone hold each category's sort.
         val sortOverridesStored: Boolean,
+        // False for a backup written before a novel's title display had its own local bit (46.sqm). The
+        // sort-override marker and the novel source names both postdate that bit, so either one proves it.
+        val novelDisplayBitStored: Boolean,
         // Decided over both types' tracks before either stream restores one.
         val kitsuScoreScale: KitsuBackupScoreScale,
         val backupMangaUnmerges: List<BackupMangaMergeGroup>,
@@ -378,7 +383,9 @@ class BackupRestorer(
                 uri,
                 fieldNumber = BackupFields.NOVELS,
                 decode = {
-                    summary.legacyCustomInfo.decodeNovel(parser, it).rescaleKitsu(kitsuScale).also { novel ->
+                    summary.legacyCustomInfo.decodeNovel(parser, it).rescaleKitsu(kitsuScale).apply {
+                        if (!summary.novelDisplayBitStored) chapterFlags = withDisplayBitFromSort(chapterFlags)
+                    }.also { novel ->
                         if (!summary.mergeGroupsStored && novel.favorite) {
                             favorites += PrefEraGrouping.Favorite(
                                 BackupNovelSourceRef(novel.url, novel.source),

@@ -217,6 +217,19 @@ class SchemaChainMigrationTest {
         )
     }
 
+    // The literals NovelDisplayBitRestoreTest pins the restore's copy of this remap with.
+    @Test
+    fun `a novel's local sort also becomes its local display`() = runTest {
+        exec(Type.NOVEL.entry(id = 1, url = "/n/1", favorite = true))
+        exec(Type.NOVEL.entry(id = 2, url = "/n/2", favorite = true))
+        exec("UPDATE novels SET chapter_flags = 16777216 WHERE _id = 1")
+        exec("UPDATE novels SET chapter_flags = 256 WHERE _id = 2")
+
+        migrate()
+
+        longs("SELECT chapter_flags FROM novels ORDER BY _id") shouldBe listOf(16777216L or 67108864L, 256L)
+    }
+
     @Test
     fun `the system category still refuses deletion`() = runTest {
         migrate()

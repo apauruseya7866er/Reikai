@@ -87,6 +87,14 @@ fun Novel.effectiveDownloadedFilter(prefs: NovelPreferences): Long =
 fun Novel.effectiveHideChapterTitles(prefs: NovelPreferences): Boolean =
     if (usesLocalDisplay) hideChapterTitles else prefs.defaultChapterHideTitles().get()
 
+/**
+ * [flags] written before [NovelChapterFlags.DISPLAY_LOCAL] existed, when the sort's local bit also chose
+ * the title display, given the display bit so the titles read as they did. Twin of 46.sqm, pinned by
+ * SchemaChainMigrationTest and NovelDisplayBitRestoreTest over the same literals.
+ */
+fun withDisplayBitFromSort(flags: Long): Long =
+    if (flags and NovelChapterFlags.SORT_LOCAL != 0L) flags or NovelChapterFlags.DISPLAY_LOCAL else flags
+
 /** Replace the [mask] bits of [flags] with [flag]. */
 fun setNovelFlag(flags: Long, flag: Long, mask: Long): Long = (flags and mask.inv()) or (flag and mask)
 
