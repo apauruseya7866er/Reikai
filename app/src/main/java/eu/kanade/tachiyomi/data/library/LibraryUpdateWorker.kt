@@ -344,7 +344,7 @@ class LibraryUpdateWorker(private val context: Context, workerParams: WorkerPara
         val update = updateMangaFromRemote(
             source = source,
             manga = manga,
-            fetchDetails = !manga.initialized || libraryPreferences.autoUpdateMetadata.get(),
+            fetchDetails = libraryPreferences.autoUpdateMetadata.get(),
             fetchChapters = true,
             fetchWindow = fetchWindow,
         )
