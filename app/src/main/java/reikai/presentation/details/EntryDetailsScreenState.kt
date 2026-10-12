@@ -151,8 +151,6 @@ sealed interface EntryChapterListItem {
         override val progress: ChapterProgress?,
         /** Resolved download state (queue state, else disk membership); the adapter does the resolution. */
         val downloadState: Download.State,
-        /** Live download percent for the spinner; 0 for novels (no per-chapter progress). */
-        val downloadProgress: Int,
         /** The number is out of line with its source's list ([reikai.domain.chapter.ChapterNumberHint]). */
         val numberHinted: Boolean,
     ) : EntryChapterListItem, ChapterMarks

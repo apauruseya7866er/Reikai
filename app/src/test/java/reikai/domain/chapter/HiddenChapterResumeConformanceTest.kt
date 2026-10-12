@@ -144,7 +144,7 @@ class HiddenChapterResumeConformanceTest {
             val hiddenKeys = mangaKeys(hiddenUrls)
             val manga = manga(bookmarkedOnly)
             mangaChapters.map {
-                ChapterList.Item(it, Download.State.NOT_DOWNLOADED, 0, isRead = false, isBookmarked = it.bookmark)
+                ChapterList.Item(it, Download.State.NOT_DOWNLOADED, isRead = false, isBookmarked = it.bookmark)
             }
                 .getNextUnread(manga) { it.chapter.hiddenKey(manga) in hiddenKeys }?.id
         }

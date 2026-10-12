@@ -10,6 +10,19 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.track.model.Track
 
 /**
+ * How far a chapter's download has got, where the engine can say. A typed slot rather than a number, as
+ * recents' RecentsDownloadProgress is: novels cannot answer, and a zero there reads as a stalled download.
+ */
+sealed interface EntryDownloadProgress {
+    fun interface Live : EntryDownloadProgress {
+        fun percentOf(chapterId: Long): Int
+    }
+
+    /** The novel downloader, which tracks no per-chapter progress. */
+    data object Unsupported : EntryDownloadProgress
+}
+
+/**
  * The neutral behaviour both content types expose to the shared details UI: the state stream plus the
  * action set the shared toolbar, action row, info column and chapter rows call, so a body change
  * reaches manga and novels at once. Only genuinely shared actions live here; novel-only actions and
@@ -19,6 +32,9 @@ import tachiyomi.domain.track.model.Track
  */
 interface EntryDetailsBehavior {
     val state: StateFlow<EntryDetailsScreenState>
+
+    /** Read by each row's indicator alone, so a progress tick redraws the ring rather than the list. */
+    val downloadProgress: EntryDownloadProgress
 
     // Chapter selection.
     fun toggleSelection(chapterId: Long, fromLongPress: Boolean)

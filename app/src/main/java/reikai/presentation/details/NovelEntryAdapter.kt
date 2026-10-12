@@ -48,8 +48,6 @@ internal fun NovelChapter.toEntryChapter(
         chapterNumber = chapterNumber,
         progress = progressWhileUnread(ChapterProgress.Percent(lastTextProgress), shownRead),
         downloadState = downloadState,
-        // A novel chapter is one request, so there is no percentage to report while it runs.
-        downloadProgress = 0,
         numberHinted = numberHinted,
     )
 }
@@ -74,6 +72,9 @@ class NovelEntryAdapter(
             // entry while its sharing coroutine lives in the model's scope, so an eager start left
             // one orphaned mapper running per re-entry (rotation, reader round-trips).
             .stateIn(model.viewModelScope, SharingStarted.WhileSubscribed(), model.state.value.toNeutral())
+
+    // A novel chapter is one request, so there is no percentage to report while it runs.
+    override val downloadProgress = EntryDownloadProgress.Unsupported
 
     private fun NovelDetailsState.toNeutral(): EntryDetailsScreenState = when (this) {
         NovelDetailsState.Loading -> EntryDetailsScreenState.Loading

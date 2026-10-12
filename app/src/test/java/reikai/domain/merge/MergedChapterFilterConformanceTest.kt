@@ -94,7 +94,6 @@ class MergedChapterFilterConformanceTest {
             val item = ChapterList.Item(
                 chapter = shown,
                 downloadState = Download.State.NOT_DOWNLOADED,
-                downloadProgress = 0,
                 isRead = flags.isRead(shown),
                 isBookmarked = flags.isBookmarked(shown),
             )

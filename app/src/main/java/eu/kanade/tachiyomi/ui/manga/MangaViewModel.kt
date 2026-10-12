@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.util.fastAny
 import androidx.lifecycle.ViewModel
@@ -357,7 +358,11 @@ class MangaViewModel(
 
     private val isRefreshingData = MutableStateFlow(false)
 
-    private val downloadStates = MutableStateFlow(emptyMap<Long, DownloadProgress>())
+    private val downloadStates = MutableStateFlow(emptyMap<Long, Download.State>())
+
+    // Progress ticks often, so only the download indicators that read it recompose instead of every tick rebuilding
+    // the chapter list
+    private val downloadProgress = mutableStateMapOf<Long, Int>()
 
     // A finished chapter leaves the queue, and its last status change can be lost with it, so its state is left to
     // the queried item once it's no longer queued
@@ -534,7 +539,7 @@ class MangaViewModel(
         val withDownloads = view.hidden.chapters.map { item ->
             // A row whose download fetches another source's copy follows that copy through the queue.
             val download = mc.downloadTargets.queuedFor(item.id, downloads::get) ?: return@map item
-            item.copy(downloadState = download.status, downloadProgress = download.progress)
+            item.copy(downloadState = download)
         }
         val selectedIds = if (selection.isEmpty) {
             emptySet()
@@ -591,7 +596,7 @@ class MangaViewModel(
             // RK <--
         )
     }
-        // Composition would otherwise build these on first read, on the main thread, for every download progress tick
+        // Composition would otherwise build these on first read, on the main thread, for every new state
         .onEach {
             it.processedChapters
             it.chapterListItems
@@ -623,13 +628,18 @@ class MangaViewModel(
     // RK <--
 
     init {
-        // Progress ticks often, and each one copies the map of download states
         viewModelScope.launch(Dispatchers.Default) {
             // RK: a merged series lists every grouped source's chapters, so their downloads are followed too
-            merge(downloadManager.statusFlow(), downloadManager.progressFlow())
+            downloadManager.statusFlow()
                 .filter { it.manga.id in mergeGroup.relatedIds }
                 .catch { logcat(LogPriority.ERROR, it) }
                 .collect(::updateDownloadState)
+        }
+        viewModelScope.launch(Dispatchers.Default) {
+            downloadManager.progressFlow()
+                .filter { it.manga.id in mergeGroup.relatedIds } // RK
+                .catch { logcat(LogPriority.ERROR, it) }
+                .collect { downloadProgress[it.chapter.id] = it.progress }
         }
 
         // RK --> the host's membership observer stays eager: the merge verbs read its group synchronously.
@@ -959,9 +969,20 @@ class MangaViewModel(
             if (download.status == Download.State.NOT_DOWNLOADED || download.status == Download.State.DOWNLOADED) {
                 it - chapterId
             } else {
-                it + (chapterId to DownloadProgress(download.status, download.progress))
+                it + (chapterId to download.status)
             }
         }
+        if (download.status == Download.State.DOWNLOADING) {
+            downloadProgress[chapterId] = download.progress
+        } else {
+            downloadProgress.remove(chapterId)
+        }
+    }
+
+    // RK: a merged row whose download fetches another source's copy reads that copy's progress
+    fun getDownloadProgress(chapterId: Long): Int {
+        val targets = successState?.downloadTargets ?: DownloadTargets.OWN
+        return targets.queuedFor(chapterId, downloadProgress::get) ?: 0
     }
 
     // RK --> merged groups: each row resolves its own source's manga and the group's cross-source state
@@ -990,7 +1011,6 @@ class MangaViewModel(
             ChapterList.Item(
                 chapter = chapter,
                 downloadState = downloadState,
-                downloadProgress = activeDownload?.progress ?: 0,
                 isRead = flags.isRead(chapter), // RK
                 isBookmarked = flags.isBookmarked(chapter), // RK
             )
@@ -1031,8 +1051,6 @@ class MangaViewModel(
         val relatedTotalCount: Int = 0,
         val relatedLoading: Boolean = false,
     )
-
-    private data class DownloadProgress(val status: Download.State, val progress: Int)
 
     /** What the first open fetches, decided by the seed. */
     private data class FirstFetch(val details: Boolean, val chapters: Boolean)
@@ -2108,7 +2126,6 @@ sealed class ChapterList {
     data class Item(
         val chapter: Chapter,
         val downloadState: Download.State,
-        val downloadProgress: Int,
         val selected: Boolean = false,
         // RK: read and bookmarked as the user sees them, the merge group's answer (GroupMarks), so a
         // chapter read on any source reads as read here, matching the library's unread count. Kept apart
@@ -2116,8 +2133,8 @@ sealed class ChapterList {
         // and mark-unread act on the real row.
         val isRead: Boolean,
         val isBookmarked: Boolean, // RK
-        // RK: read from the name once, when the row is built, since a download's progress copies the row
-        // many times a second and the missing-chapter markers ask every row on each copy.
+        // RK: read from the name once, when the row is built, since a download's status copies the row
+        // on every change and the missing-chapter markers ask every row on each copy.
         val gapNeighbour: ChapterGap.Neighbour = chapter.toGapNeighbour(),
     ) : ChapterList() {
         val id = chapter.id

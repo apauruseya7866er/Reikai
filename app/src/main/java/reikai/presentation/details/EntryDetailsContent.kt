@@ -43,6 +43,7 @@ import reikai.presentation.components.readProgressLabel
 import reikai.presentation.novel.details.novelPageText
 import reikai.presentation.reader.chapterRowTitle
 import reikai.presentation.reader.chapterTitleWords
+import reikai.presentation.recents.NO_PROGRESS
 import reikai.presentation.recommendation.RelatedMangaCarousel
 import tachiyomi.domain.library.service.LibraryPreferences
 
@@ -470,7 +471,12 @@ private fun LazyListScope.entryChapterItems(
                     selected = isSelected,
                     downloadIndicatorEnabled = !selectionMode && chaptersDownloadable,
                     downloadStateProvider = { chapter.downloadState },
-                    downloadProgressProvider = { chapter.downloadProgress },
+                    downloadProgressProvider = when (val progress = behavior.downloadProgress) {
+                        is EntryDownloadProgress.Live -> {
+                            { progress.percentOf(chapter.id) }
+                        }
+                        EntryDownloadProgress.Unsupported -> NO_PROGRESS
+                    },
                     chapterSwipeStartAction = chapterSwipeStartAction.whereDownloadOffered(offersDownload),
                     chapterSwipeEndAction = chapterSwipeEndAction.whereDownloadOffered(offersDownload),
                     onLongClick = {

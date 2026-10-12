@@ -66,7 +66,6 @@ object MangaDetailsRowProbe : DetailsRowProbe {
         return ChapterList.Item(
             chapter = chapter,
             downloadState = Download.State.NOT_DOWNLOADED,
-            downloadProgress = 0,
             isRead = readHere || readElsewhere,
             isBookmarked = false,
         ).toEntryChapter(sourceName = null, numberHinted = false)

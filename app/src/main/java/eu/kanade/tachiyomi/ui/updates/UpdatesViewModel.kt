@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.updates
 
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.util.fastFilter
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -24,7 +25,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -82,11 +82,15 @@ class UpdatesViewModel(
     // RK <--
 
     /**
-     * Live download progress, held beside the feed rather than patched into it. The feed is derived
+     * Live download states, held beside the feed rather than patched into it. The feed is derived
      * now, so a status tick has nowhere to write; keeping it separate also drops an override once the
      * download reaches a terminal state, instead of letting it outlive the row it described.
      */
-    private val downloadStates = MutableStateFlow(emptyMap</* Chapter */ Long, DownloadProgress>())
+    private val downloadStates = MutableStateFlow(emptyMap</* Chapter */ Long, Download.State>())
+
+    // Progress ticks often, so only the download indicators that read it recompose instead of every tick rebuilding
+    // the list
+    private val downloadProgress = mutableStateMapOf<Long, Int>()
 
     // A finished chapter leaves the queue, and its last status change can be lost with it, so its state is left to
     // the queried item once it's no longer queued
@@ -158,9 +162,14 @@ class UpdatesViewModel(
     // RK: init and updateDownloadState sit below the feed here, upstream has them above it
     init {
         viewModelScope.launch {
-            merge(downloadManager.statusFlow(), downloadManager.progressFlow())
+            downloadManager.statusFlow()
                 .catch { logcat(LogPriority.ERROR, it) }
                 .collect(this@UpdatesViewModel::updateDownloadState)
+        }
+        viewModelScope.launch {
+            downloadManager.progressFlow()
+                .catch { logcat(LogPriority.ERROR, it) }
+                .collect { downloadProgress[it.chapter.id] = it.progress }
         }
     }
 
@@ -180,20 +189,17 @@ class UpdatesViewModel(
         }
     }
 
-    // RK --> overlay live queue progress onto the queried rows, which only know what the disk index
+    // RK --> overlay live queue states onto the queried rows, which only know what the disk index
     // said. Upstream merges this inline in its state combine, where it also stamps each row's
     // `selected`; selection lives on the recents engine here, so the merge is the whole job and reads
-    // better beside the other row overlay. The empty guard matters: progress ticks are frequent.
+    // better beside the other row overlay.
     private fun List<UpdatesItem>.applyDownloadOverrides(
-        downloads: Map<Long, DownloadProgress>,
+        downloads: Map<Long, Download.State>,
     ): List<UpdatesItem> {
         if (downloads.isEmpty()) return this
         return map { item ->
-            val download = downloads[item.update.chapterId] ?: return@map item
-            item.copy(
-                downloadStateProvider = { download.status },
-                downloadProgressProvider = { download.progress },
-            )
+            val downloadState = downloads[item.update.chapterId] ?: return@map item
+            item.copy(downloadStateProvider = { downloadState })
         }
     }
     // RK <--
@@ -218,7 +224,7 @@ class UpdatesViewModel(
                 UpdatesItem(
                     update = update,
                     downloadStateProvider = { downloadState },
-                    downloadProgressProvider = { activeDownload?.progress ?: 0 },
+                    downloadProgressProvider = { downloadProgress[update.chapterId] ?: 0 },
                 )
             }
     }
@@ -238,8 +244,13 @@ class UpdatesViewModel(
             if (download.status == Download.State.NOT_DOWNLOADED || download.status == Download.State.DOWNLOADED) {
                 it - chapterId
             } else {
-                it + (chapterId to DownloadProgress(download.status, download.progress))
+                it + (chapterId to download.status)
             }
+        }
+        if (download.status == Download.State.DOWNLOADING) {
+            downloadProgress[chapterId] = download.progress
+        } else {
+            downloadProgress.remove(chapterId)
         }
     }
     // RK <--
@@ -276,8 +287,6 @@ class UpdatesViewModel(
         val filterBookmarked: TriState,
         val filterExcludedScanlators: Boolean,
     )
-
-    private data class DownloadProgress(val status: Download.State, val progress: Int)
 
     // RK: the state is down to the feed itself. Selection, the dialogs, the active-filter flag and the
     // last-updated line moved to the recents engine, which owns them for both content types; upstream's

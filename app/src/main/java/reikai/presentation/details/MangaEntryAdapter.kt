@@ -55,6 +55,8 @@ class MangaEntryAdapter(
             // one orphaned mapper running per re-entry (rotation, reader round-trips).
             .stateIn(model.viewModelScope, SharingStarted.WhileSubscribed(), model.state.value.toNeutral())
 
+    override val downloadProgress = EntryDownloadProgress.Live(model::getDownloadProgress)
+
     private fun MangaViewModel.State.toNeutral(): EntryDetailsScreenState = when (this) {
         MangaViewModel.State.Loading -> EntryDetailsScreenState.Loading
         is MangaViewModel.State.Success -> toNeutralLoaded()
@@ -374,6 +376,5 @@ internal fun ChapterList.Item.toEntryChapter(sourceName: String?, numberHinted: 
     chapterNumber = chapter.chapterNumber,
     progress = progressWhileUnread(ChapterProgress.Pages(chapter.lastPageRead, chapter.pageCount), isRead),
     downloadState = downloadState,
-    downloadProgress = downloadProgress,
     numberHinted = numberHinted,
 )

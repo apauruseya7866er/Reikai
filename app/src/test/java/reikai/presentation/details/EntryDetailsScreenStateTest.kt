@@ -130,7 +130,6 @@ class EntryDetailsScreenStateTest {
         chapterNumber = 1.0,
         progress = null,
         downloadState = downloadState,
-        downloadProgress = 0,
         numberHinted = false,
     )
 
