@@ -8,6 +8,52 @@ Reikai uses its own [Semantic Versioning](https://semver.org/) from the Mihon-ba
 
 ## [Unreleased]
 
+### Reader
+
+#### Fixed
+
+- **With wide-page splitting on, the second half of a split page no longer lands in the wrong chapter (from Mihon).** Upstream: mihon 3156b4a1c.
+- **Tapping the long strip reader as it closes no longer crashes the app (from Mihon).** Upstream: mihon c371d6331.
+
+### Browse & sources
+
+#### Fixed
+
+- **Several requests to a Cloudflare-protected site at once now wait for one challenge instead of each opening a WebView (from Mihon).** A request made from inside another one no longer stalls the site either. Upstream: mihonapp/mihon#3858.
+- **Logins and searches that post to a Cloudflare-protected site now get past its challenge, and if it can't be cleared, Open in WebView shows the site's home page (partly from Mihon).** Upstream: mihonapp/mihon#3909.
+- **Opening the filters of a manga extension or novel plugin with an invalid filter no longer crashes the app (from Mihon).** Upstream: mihon c9e1b6e96.
+
+### Tracking
+
+#### Fixed
+
+- **The start date sent when binding a tracker to a manga or novel is no longer shifted by your time zone, which could move it a day (from Mihon).** Upstream: mihonapp/mihon#4049.
+- **Comick tracker progress no longer shows long decimals like 35.019996643066406 (from Mihon).** Upstream: mihonapp/mihon#4090.
+
+### Downloads & extensions
+
+#### Fixed
+
+- **Some manga chapters downloaded before 0.4.0 show as downloaded again (from Mihon).** These are chapters whose name starts with a space or dot, runs long, or names its group with letters outside basic English. Upstream: mihon f0f1e4de5.
+- **Installing an extension on a device with no install confirmation screen now fails with a message instead of crashing the app (from Mihon).** Upstream: mihon 2df48e19a.
+
+### Backup & restore
+
+#### Fixed
+
+- **A backup file that was cut short now reads as invalid instead of failing with a raw error (from Mihon).** Leaving the restore screen while it checks a file no longer reports the file as unreadable. Upstream: mihonapp/mihon#3850.
+
+### App
+
+#### Fixed
+
+- **Updating from 0.3.2 or earlier no longer fails when the database holds duplicate manga or novel history, tracking, update-error or merge-group rows, or a damaged index (partly from Mihon).** Upstream: mihon ea2b73ad7.
+- **A back gesture on a screen that has already closed no longer crashes the app (from Mihon).** Upstream: mihon 43de88c71.
+
+### Other
+
+- Paging updated to 3.5.3 (from Mihon). Upstream: mihonapp/mihon#4099.
+
 ## [0.4.0]
 
 ### Highlights
