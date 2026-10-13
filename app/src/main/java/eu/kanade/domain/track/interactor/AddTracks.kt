@@ -6,7 +6,6 @@ import eu.kanade.domain.track.model.toDomainTrack
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.Tracker
 import eu.kanade.tachiyomi.source.Source
-import kotlinx.datetime.TimeZone
 import reikai.domain.track.BindChapter
 import reikai.domain.track.autobind.AutoBindEntry // RK
 import reikai.domain.track.autobind.AutoBindTrackers // RK
@@ -44,7 +43,6 @@ class AddTracks(
             allChapters.map { BindChapter(it.chapterNumber, it.read) },
             track.lastChapterRead,
             track.startDate,
-            TimeZone.currentSystemDefault(),
         ) { getHistory.await(mangaId).map { it.readAt } }
         backfill.lastChapterRead?.let {
             track = track.copy(lastChapterRead = it)

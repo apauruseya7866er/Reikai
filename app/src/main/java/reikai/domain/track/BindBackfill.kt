@@ -1,7 +1,5 @@
 package reikai.domain.track
 
-import eu.kanade.tachiyomi.util.lang.convertEpochMillisZone
-import kotlinx.datetime.TimeZone
 import kotlin.time.Instant
 
 /** One chapter as binding a tracker reads it. */
@@ -20,16 +18,12 @@ suspend fun bindBackfill(
     chapters: List<BindChapter>,
     trackLastChapterRead: Double,
     trackStartDate: Instant?,
-    localZone: TimeZone,
     readAts: suspend () -> List<Instant?>,
 ): BindBackfill {
     if (chapters.none { it.read }) return BindBackfill(lastChapterRead = null, startDate = null)
     val latestRead = chapters.sortedBy { it.number }.takeWhile { it.read }.lastOrNull()?.number ?: -1.0
     val startDate = if (trackStartDate == null) {
         readAts().filterNotNull().minOrNull()
-            ?.let {
-                Instant.fromEpochMilliseconds(it.toEpochMilliseconds().convertEpochMillisZone(localZone, TimeZone.UTC))
-            }
     } else {
         null
     }
