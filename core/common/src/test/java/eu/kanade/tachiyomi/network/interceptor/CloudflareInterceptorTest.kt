@@ -19,6 +19,7 @@ import okhttp3.HttpUrl
 import okhttp3.Interceptor
 import okhttp3.Protocol
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.jupiter.api.AfterEach
@@ -34,7 +35,7 @@ import kotlin.concurrent.thread
 
 /**
  * [CloudflareInterceptor.intercept] driven through the real method, with the WebView half faked
- * by name, since it needs a device.
+ * by name, since it needs a device: the per-host lock, and the page a failed solve offers to open.
  */
 class CloudflareInterceptorTest {
 
@@ -162,5 +163,39 @@ class CloudflareInterceptorTest {
         runCatching { interceptor.intercept(chain("https://site.example/a")) }
 
         runBounded { interceptor.intercept(chain("https://site.example/b")) }?.code shouldBe 200
+    }
+
+    private fun blockedUrl(request: Request): String? {
+        // Neither route answers: the WebView solve fails and the WebView fetch is challenged too.
+        val fetcher = mockk<WebViewFetcher> {
+            every { serves(any()) } returns false
+            every { fetch(any(), any()) } returns WebViewFetcher.Outcome.Challenged
+        }
+        CloudflareInterceptor::class.java.getDeclaredField("webViewFetcher").apply { isAccessible = true }
+            .set(interceptor, fetcher)
+        val bypassFailure = Class.forName("eu.kanade.tachiyomi.network.interceptor.CloudflareBypassException")
+            .getDeclaredConstructor(HttpUrl::class.java).apply { isAccessible = true }
+        every { interceptor["resolveWithWebView"](any<Request>(), any<HttpUrl>(), any<String>()) } answers {
+            throw bypassFailure.newInstance(null) as Throwable
+        }
+        val chain = mockk<Interceptor.Chain> {
+            every { request() } returns request
+            every { proceed(any()) } answers { server(firstArg()) }
+        }
+        return runCatching { interceptor.intercept(chain) }.exceptionOrNull()?.cloudflareBlockedUrl()
+    }
+
+    @Test
+    fun `a challenged POST that cannot be solved offers the site root to open`() {
+        val search = Request.Builder().url("https://site.example/api/search?q=x").post("q=x".toRequestBody()).build()
+
+        blockedUrl(search) shouldBe "https://site.example/"
+    }
+
+    @Test
+    fun `a challenged GET that cannot be solved offers the page itself to open`() {
+        val page = Request.Builder().url("https://site.example/series/1?page=2").build()
+
+        blockedUrl(page) shouldBe "https://site.example/series/1?page=2"
     }
 }

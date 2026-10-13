@@ -110,21 +110,21 @@ class CloudflareInterceptor(
     // RK: returns null for "solved, retry the request"; the bypass server and the WebView fetch answer
     //     it themselves, which the retry must not repeat.
     private fun solve(chain: Interceptor.Chain, request: Request, response: Response): Response? {
+        // RK: the challenge may be served after a redirect, and this is an application
+        //     interceptor, so chain.request() holds the URL from before it. Everything the
+        //     WebView does has to key off the page the challenge is actually on, or the probe
+        //     is scoped to an origin the document never has and the solve watches nothing.
+        //     The method is read there too, since a 303 turns a POST into a GET.
+        val challenged = response.request
+        // A WebView can only load a page with GET, and loading the url of another method usually reaches an
+        // endpoint that answers GET without a challenge to solve. The clearance covers the whole site, so it's
+        // earned on the site's root page instead.
+        val challengeUrl = if (challenged.method == "GET") {
+            challenged.url
+        } else {
+            challenged.url.newBuilder().encodedPath("/").query(null).fragment(null).build()
+        }
         try {
-            // RK: the challenge may be served after a redirect, and this is an application
-            //     interceptor, so chain.request() holds the URL from before it. Everything the
-            //     WebView does has to key off the page the challenge is actually on, or the probe
-            //     is scoped to an origin the document never has and the solve watches nothing.
-            //     The method is read there too, since a 303 turns a POST into a GET.
-            val challenged = response.request
-            // A WebView can only load a page with GET, and loading the url of another method usually reaches an
-            // endpoint that answers GET without a challenge to solve. The clearance covers the whole site, so it's
-            // earned on the site's root page instead.
-            val challengeUrl = if (challenged.method == "GET") {
-                challenged.url
-            } else {
-                challenged.url.newBuilder().encodedPath("/").query(null).fragment(null).build()
-            }
             response.close()
             clearClearance(request.url, challengeUrl)
             val oldClearance = clearance(challengeUrl)
@@ -188,11 +188,12 @@ class CloudflareInterceptor(
         // Because OkHttp's enqueue only handles IOExceptions, wrap the exception so that
         // we don't crash the entire app
         catch (e: CloudflareBypassException) {
-            // RK: carry the blocked URL so the caller can open that page for the user to solve. The
-            //     site root often is not challenged at all, which leaves nothing to clear.
+            // RK: carry the blocked URL so the caller can open that page for the user to solve. A GET
+            //     opens the page asked for, since the root often is not challenged at all; any other
+            //     method opens the root the solve ran on, as its URL loaded with GET shows no challenge.
             throw CloudflareBypassIOException(
                 context.stringResource(MR.strings.information_cloudflare_bypass_failure),
-                (e.blockedUrl ?: request.url).toString(),
+                (e.blockedUrl ?: if (challenged.method == "GET") request.url else challengeUrl).toString(),
                 e,
             )
         } catch (e: Exception) {
@@ -357,7 +358,7 @@ class CloudflareInterceptor(
                         latch.countDown()
                     }
 
-                    if (url == origRequestUrl) {
+                    if (url == origRequestUrl) { // RK: challengeUrl is the HttpUrl here
                         if (!challengeFound) {
                             // The first request didn't return the challenge, abort.
                             latch.countDown()
@@ -396,7 +397,7 @@ class CloudflareInterceptor(
                 }
             }
 
-            webview.loadUrl(origRequestUrl, headers)
+            webview.loadUrl(origRequestUrl, headers) // RK
         }
 
         // RK: the wait is wrapped so the WebView is torn down even if this thread is interrupted
@@ -458,6 +459,8 @@ class CloudflareInterceptor(
         }
     }
 }
+
+// RK: origin() is webViewFetchOrigin in WebViewFetch.kt, shared with the WebView fetch
 
 private val SERVER_CHECK = arrayOf("cloudflare-nginx", "cloudflare")
 private val COOKIE_NAMES = listOf("cf_clearance")

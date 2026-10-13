@@ -23,7 +23,7 @@ A response is a challenge when `isCloudflareChallenge` holds: `cf-mitigated: cha
 3. **The WebView solve** (`resolveWithWebView`). Success returns null and the retry rides on the new clearance.
 4. **After a failed solve**: with the server not in use, the WebView fetch is tried once and, if served, the origin is remembered (`markServed`); with it in use, the host is marked WebView-unsolvable (`markWebViewUnsolvable`) and the server answers.
 
-A failed bypass throws `CloudflareBypassIOException`, whose `url` is the blocked page; `cloudflareBlockedUrl` walks the cause chain for it and `EntryBrowseCatalogue` hands it to Open in WebView. A bypass-server failure is a plain `IOException`, not this one.
+A failed bypass throws `CloudflareBypassIOException`, whose `url` is the blocked page: the requested URL for a GET, the site root the solve ran on for any other method, and the challenged hop for a WebView fetch redirect; `cloudflareBlockedUrl` walks the cause chain for it and `EntryBrowseCatalogue` hands it to Open in WebView. A bypass-server failure is a plain `IOException`, not this one.
 
 ### The WebView solve
 
@@ -101,6 +101,7 @@ Settings live at the end of Advanced's Network group (`bypassPreferenceItems`): 
 - **The solver is off by default, with a separate switch for solving with no app screen.** A user who never opens the setting gets upstream's behaviour, and reaching a challenged host with nothing on screen is the user's call.
 - **The press is Tab then Space at the WebView.** Real key events carry a true `isTrusted` and need no coordinate or DOM patching, so a widget restyle cannot move the target. Void if Cloudflare starts refusing keyboard activation.
 - **The probe runs in an isolated world, and an old WebView gets an events-only solve rather than none.** The events a solve turns on reach the `mihon` bridge anyway; only the markup fallback is lost.
+- **A non-GET request that cannot be cleared offers the site root to open, where Mihon offers the request URL.** Loaded with GET, a POST endpoint answers with the API's own response (Kitsu's token endpoint returns a JSON 404), so the user has no challenge to pass there, while the root is the page the solve itself found challenged. Void if Cloudflare starts serving the challenge on GET to such endpoints.
 - **The per-host lock stays inline in `intercept`, in upstream's shape.** `CloudflareInterceptorTest` drives the real method with only the solve faked, so a Reikai-owned lock helper would cover nothing more and only add hunks to a Mihon file.
 - **`complete` is the primary acceptance signal.** A site that embeds Turnstile on its own pages never reads clear to the markup test, and the token is never filled on an interstitial.
 - **Press cadence is ported from Byparr and Solverr**: a 4-second cooldown and no press while a token is present, which both measured as restarting verification.
@@ -126,7 +127,7 @@ The per-host lock, the isolated-world bridge, the `fail` abort and the failed so
 
 ## Tests
 
-`CloudflareInterceptorTest` (the per-host lock: a nested same-host challenge, concurrent challenges solved once, a failed solve releasing the host), `CloudflareClearanceTest`, `AndroidCookieJarTest`, `SolveMachineTest`, `WebViewFetchTest`, `FlareSolverrAuthTest`, `FlareSolverrCommandTest`, `FlareSolverrCookieTest`, `FlareSolverrEndpointTest`, `FlareSolverrJsonViewerTest`, `FlareSolverrRedirectTest`, `FlareSolverrTestFailureTest`, `FlareSolverrUserAgentPinTest` (all under `:core:common`), plus `FlareSolverrCredentialsMigrationTest` and `PreferenceRestorerTest` in `:app`. The WebView halves (arming, the probe, key delivery, the fetch page) need a live challenge and are verified on device only.
+`CloudflareInterceptorTest` (the per-host lock: a nested same-host challenge, concurrent challenges solved once, a failed solve releasing the host; the page a failed bypass offers to open), `CloudflareClearanceTest`, `AndroidCookieJarTest`, `SolveMachineTest`, `WebViewFetchTest`, `FlareSolverrAuthTest`, `FlareSolverrCommandTest`, `FlareSolverrCookieTest`, `FlareSolverrEndpointTest`, `FlareSolverrJsonViewerTest`, `FlareSolverrRedirectTest`, `FlareSolverrTestFailureTest`, `FlareSolverrUserAgentPinTest` (all under `:core:common`), plus `FlareSolverrCredentialsMigrationTest` and `PreferenceRestorerTest` in `:app`. The WebView halves (arming, the probe, key delivery, the fetch page) need a live challenge and are verified on device only.
 
 Run one class with `./gradlew :core:common:testDebugUnitTest --tests "<FullyQualifiedClassName>"`, or `:app:testDebugUnitTest` for the app classes.
 
