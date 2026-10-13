@@ -10,6 +10,15 @@ Reikai uses its own [Semantic Versioning](https://semver.org/) from the Mihon-ba
 
 ## [0.4.1]
 
+### Highlights
+
+A fix release carrying Mihon v0.21.2's fixes, applied to novels too where they fit. The most important
+one lets an update from 0.3.2 or earlier finish on a library holding duplicate rows or a damaged
+index, where it could fail before. Sites behind Cloudflare also cope better: several requests at
+once wait for one challenge, and logins and searches that post to a site get past it.
+
+Changes marked (from Mihon) come from upstream Mihon, which Reikai is built on.
+
 ### Reader
 
 #### Fixed
