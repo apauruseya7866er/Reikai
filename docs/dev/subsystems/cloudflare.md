@@ -12,11 +12,11 @@ Every source request, manga extensions, novel APKs and LN plugins alike (`LnPlug
 
 A response is a challenge when `isCloudflareChallenge` holds: `cf-mitigated: challenge` and a `Server` of `cloudflare` or `cloudflare-nginx`. That one rule is read by `shouldIntercept`, by the WebView fetch, and by the redirect capture.
 
-`WebViewInterceptor.intercept` (the base class) holds one `ReentrantReadWriteLock` per host. Ordinary requests run under the read lock, so they do not queue behind each other but do wait out a solve. A challenged request takes the write lock, and first checks `isBypassed`: if the host's `cf_clearance` (the nonce, `getNonce`) changed while it queued, a sibling solved it, so it closes its challenge response and retries. Otherwise it calls the subclass. The subclass returns null for "solved, retry normally", and the base class runs that retry outside the lock.
+`CloudflareInterceptor.intercept(chain)` holds one `ReentrantReadWriteLock` per host (`hostLocks`), as upstream does. Ordinary requests run under the read lock, so they do not queue behind each other but do wait out a solve. A challenged request takes the write lock with `kotlin.concurrent.write`, which first releases this thread's read holds: a request made from inside another to the same host (an extension refreshing a token) would otherwise wait on itself, since a read lock cannot be upgraded. Under the write lock it first checks `isCleared`: if the host's `cf_clearance` changed while it queued, a sibling solved it, so it closes its challenge response and retries. Otherwise `solve` runs, returning a response when a route answered the request itself and null for "solved, retry normally"; the retry runs outside the lock.
 
 ### The order of attempts
 
-`CloudflareInterceptor.intercept` takes `response.request.url` as the challenge URL (the page after any redirect, since `chain.request()` predates it), deletes `cf_clearance` on both hosts, then:
+`CloudflareInterceptor.solve` takes `response.request.url` as the challenge URL (the page after any redirect, since `chain.request()` predates it), or that site's root when the request after redirects is not a GET: a WebView can only load with GET, and a POST endpoint loaded that way answers without a challenge, while the clearance covers the whole site. It deletes `cf_clearance` on both hosts, then:
 
 1. **Bypass server first, for a known host.** With the server in use (`FlareSolverrClient.isActive`: switched on and an address saved) and the host already marked (`shouldSkipWebView`), the request goes straight to the server.
 2. **WebView fetch first, for a known origin.** With the server not in use and the origin remembered (`WebViewFetcher.serves`), the WebView fetch answers. Served returns; a fetch that comes back challenged forgets the origin and falls through to the solve.
@@ -27,9 +27,9 @@ A failed bypass throws `CloudflareBypassIOException`, whose `url` is the blocked
 
 ### The WebView solve
 
-`resolveWithWebView` builds a WebView with the request's User-Agent, loads the challenge URL and blocks the OkHttp thread on a 30-second latch. A page-world listener injected at page finish forwards Cloudflare's `cloudflare-challenge` messages to the `mihon` JavaScript bridge: `interactiveDetected` (upstream's abort), `challengeFailed`, and `challengeEvent`, which logs every event and feeds an armed solve that has no probe. Without the solver, the latch is released by a fresh `cf_clearance` at page finish, an `interactiveBegin`, a `fail`, a dead renderer, a main-frame HTTP error that is not a challenge, or the page finishing with no challenge seen.
+`resolveWithWebView` builds a WebView with the request's User-Agent, loads the challenge URL and blocks the OkHttp thread on a 30-second latch. A listener script forwards Cloudflare's `cloudflare-challenge` events to the `mihon` bridge, as upstream does: where the WebView supports `JS_INJECTION_IN_FRAME_AND_WORLD` it runs at document start in an isolated `mihon` world and posts over `addWebMessageListener`, both scoped to the challenge page's origin (`webViewFetchOrigin`, custom port included) and the main frame; otherwise it is a page-world `addJavascriptInterface` injected at page finish. Every event reaches `onChallengeEvent`, which logs it, feeds an armed solve that has no probe (`Solve.report`), and handles the two that end a wait. Without the solver, the latch is released by a fresh `cf_clearance` at page finish (not after a `fail`), an `interactiveBegin`, a `fail`, a dead renderer, a main-frame HTTP error that is not a challenge, or the page finishing with no challenge seen.
 
-A failed solve deletes `cf_clearance` on the requested and challenge hosts (`AndroidCookieJar.remove` expires it on every parent domain at `/`, where Cloudflare stores it), so a queued sibling does not trust a refused round. The WebView is torn down on the main thread in a `finally`, solve timers first. These Reikai additions run whether or not the solver is on.
+A failed solve deletes `cf_clearance` on the requested and challenge hosts (`AndroidCookieJar.remove` expires it on every parent domain at `/`, where Cloudflare stores it), so a queued sibling does not trust a refused round. The WebView is torn down on the main thread in a `finally`: solve timers first, then the bridge and its script, then the page.
 
 ### The Turnstile solver
 
@@ -59,8 +59,8 @@ Settings live at the end of Advanced's Network group (`bypassPreferenceItems`): 
 
 ## Key files
 
-- `core/common/src/main/kotlin/eu/kanade/tachiyomi/network/interceptor/CloudflareInterceptor.kt`: `intercept`, `resolveWithWebView`, `served`, `isCloudflareChallenge`, `CloudflareBypassIOException`, `cloudflareBlockedUrl`.
-- `core/common/src/main/kotlin/eu/kanade/tachiyomi/network/interceptor/WebViewInterceptor.kt`: `locksByHost`, `getNonce`, `isBypassed`.
+- `core/common/src/main/kotlin/eu/kanade/tachiyomi/network/interceptor/CloudflareInterceptor.kt`: `intercept`, `hostLocks`, `isCleared`, `solve`, `resolveWithWebView`, `listenerScript`, `served`, `isCloudflareChallenge`, `CloudflareBypassIOException`, `cloudflareBlockedUrl`.
+- `core/common/src/main/kotlin/eu/kanade/tachiyomi/network/interceptor/WebViewInterceptor.kt`: `prepareWebView`.
 - `core/common/src/main/kotlin/eu/kanade/tachiyomi/network/interceptor/CloudflareClearance.kt`: `clearanceFor`.
 - `core/common/src/main/kotlin/eu/kanade/tachiyomi/network/interceptor/TurnstileSolver.kt`: `attach`, `Solve`, `pressKeys`, `WATCH`, `forceHeadless`, `forceNoWatch`.
 - `core/common/src/main/kotlin/eu/kanade/tachiyomi/network/interceptor/SolveMachine.kt`: `SolveMachine`, `SOLVE_BUDGET_MS`, `PRESS_COOLDOWN_MS`.
@@ -81,8 +81,9 @@ Settings live at the end of Advanced's Network group (`bypassPreferenceItems`): 
 - **No solver timer may use `View.postDelayed`.** A view never attached to a window parks its posts until attach, so on the no-window path every key after the first Tab silently never fired; use the solve's main-looper `post`.
 - **Everything keys off the challenge URL, not the requested one.** Scoping the probe or the page-finish check to the pre-redirect origin leaves the solve watching a document the page never has, and a working host stalls for 30 seconds.
 - **A fresh `cf_clearance` alone is not proof while the solver is armed.** Cloudflare hands one out on a round it refused, and the retry gets a 403. Accept only with `Verified`.
-- **A failed solve must really delete the clearance.** The sibling shortcut in `isBypassed` trusts a changed clearance, which is safe only because `AndroidCookieJar.remove` expires every parent-domain scope first.
-- **The sibling shortcut closes the challenge response itself.** It returns before the subclass, which is what closes it elsewhere; left open, OkHttp refuses the retry on the same call.
+- **A failed solve must really delete the clearance.** The sibling shortcut in `isCleared` trusts a changed clearance, which is safe only because `AndroidCookieJar.remove` expires every parent-domain scope first.
+- **The sibling shortcut closes the challenge response itself.** It skips `solve`, which is what closes it elsewhere; left open, OkHttp refuses the retry on the same call.
+- **The write lock is taken with `kotlin.concurrent.write`, never `writeLock().withLock`.** The second cannot upgrade a read hold, so a nested same-host request deadlocks its own thread and every later request to the host queues behind it.
 - **The per-host lock is the only per-host dedup for the bypass server too.** Removing it means restoring a guard around `FlareSolverrClient.resolve`, or concurrent requests each start a server solve.
 - **Only the first press extends the deadline.** The cooldown is shorter than the budget, so extending on every press lets a pressing solve outrun its give-up forever.
 - **Nothing from a request is ever script text in the WebView fetch.** Method, headers and body travel as JSON data, the method is on a fixed list, and the page drops itself if a second page load ever starts.
@@ -99,7 +100,8 @@ Settings live at the end of Advanced's Network group (`bypassPreferenceItems`): 
 - **The WebView fetch runs only where a request would otherwise fail, with no setting.** It needs no clearance, which is the case the solve cannot cover. It is skipped while the server is in use.
 - **The solver is off by default, with a separate switch for solving with no app screen.** A user who never opens the setting gets upstream's behaviour, and reaching a challenged host with nothing on screen is the user's call.
 - **The press is Tab then Space at the WebView.** Real key events carry a true `isTrusted` and need no coordinate or DOM patching, so a widget restyle cannot move the target. Void if Cloudflare starts refusing keyboard activation.
-- **The probe runs in an isolated world, and an old WebView gets an events-only solve rather than none.** The events a solve turns on reach the page-world bridge anyway; only the markup fallback is lost.
+- **The probe runs in an isolated world, and an old WebView gets an events-only solve rather than none.** The events a solve turns on reach the `mihon` bridge anyway; only the markup fallback is lost.
+- **The per-host lock stays inline in `intercept`, in upstream's shape.** `CloudflareInterceptorTest` drives the real method with only the solve faked, so a Reikai-owned lock helper would cover nothing more and only add hunks to a Mihon file.
 - **`complete` is the primary acceptance signal.** A site that embeds Turnstile on its own pages never reads clear to the markup test, and the token is never filled on an interstitial.
 - **Press cadence is ported from Byparr and Solverr**: a 4-second cooldown and no press while a token is present, which both measured as restarting verification.
 - **`ForegroundActivity` still returns a backgrounded activity.** The windowed path cleared challenges with the app backgrounded where the no-window path cleared none without a foreground service.
@@ -107,15 +109,13 @@ Settings live at the end of Advanced's Network group (`bypassPreferenceItems`): 
 - **Credentials typed into the address are refused, and old ones are moved.** The upgrade migration runs `carryFlareSolverrUserInfo`.
 - **A restore never touches the FlareSolverr setup.** `AppPreferenceCarry` skips the switch, the address and the sign-in, because a backup may be someone else's and the solver it names would receive the sites' cookies.
 - **The debug rows are permanent.** `forceHeadless`, `forceNoWatch` and `startDelayed` reach paths a current device cannot otherwise enter.
-- Open: on a WebView with no isolated world the event listener is injected at page finish, so an `interactiveBegin` posted before that is lost and the solve runs to its deadline. Injecting at document start changes the solver-off path too.
+- Open: on a WebView with no isolated world the event listener is injected at page finish, so an `interactiveBegin` posted before that is lost and the solve runs to its deadline. Upstream accepts the same gap.
 
 ## Upstream divergences
 
-`// RK` islands in Mihon's files: `CloudflareInterceptor` (the whole bypass order, the solver hooks, the extra bridge methods, clearance deletion, the blocked URL), `WebViewInterceptor` (the per-host lock), `NetworkHelper` (the server client and the User-Agent pin), `NetworkPreferences`, `AndroidCookieJar` (`remove` scopes, `saveCookieString`), `WebViewUtil.setUserAgent` (a second call rewrites the Chrome brand too), `App` (`ForegroundActivity.register`), `LibraryUpdateWorker.startDelayed` and `SettingsAdvancedScreen` (the bypass rows). `ForegroundActivity.kt` is not in Mihon.
+`// RK` islands in Mihon's files: `CloudflareInterceptor` (the whole bypass order inside `solve`, its nullable retry signal, the solver hooks in `onChallengeEvent`, the challenge-page origin for the bridge, clearance deletion on both hosts, the blocked URL), `NetworkHelper` (the server client and the User-Agent pin), `NetworkPreferences`, `AndroidCookieJar` (`remove` scopes, `saveCookieString`), `WebViewUtil.setUserAgent` (a second call rewrites the Chrome brand too), `App` (`ForegroundActivity.register`), `LibraryUpdateWorker.startDelayed` and `SettingsAdvancedScreen` (the bypass rows). `WebViewInterceptor` is upstream's apart from `launchUI`. `ForegroundActivity.kt` is not in Mihon.
 
-The lock, `getNonce`, `isBypassed`, the `fail` abort, the dead-renderer abort and the clearance deletion come from mihonapp/mihon#3858, which is unmerged and recorded under "Pending, needs planning" in [upstream-sync.md](../upstream-sync.md). When it lands, take its shape but keep ours where it differs: its `isBypassed` accepts a changed clearance as proof of a solve, and it carries no preference, so the solver would be on for everyone. It also presses on `interactiveBegin` with no token check or cooldown, and uses a fixed `__SOLVER__` token where ours is randomized per injection.
-
-**Removal recipe for the per-host lock.** The lock is the one piece taken on an unmeasured benefit: solve times were indistinguishable with and without it, and its advantage is confined to a failed solve's siblings. If it is judged not worth the divergence (for instance if mihonapp/mihon#3858 is abandoned), remove it by hand rather than by revert: delete `locksByHost` and the read/write wrapping in `WebViewInterceptor.intercept`, drop `getNonce`, `isBypassed` and the `nonce` parameter, return `Response` instead of `Response?`, and restore a one-solve-per-host guard (a `ConcurrentHashMap` of `CompletableFuture`) around `resolveWithWebView`. In the same change restore the equivalent guard around `FlareSolverrClient.resolve`, whose own per-host dedup was deleted once the lock made it unreachable.
+The per-host lock, the isolated-world bridge, the `fail` abort and the failed solve's clearance deletion are upstream's. Where Reikai differs: an armed solver suppresses the `interactiveBegin` abort and, past `Watching`, the `fail` one, and the solver, not a fresh clearance, decides acceptance while armed.
 
 ## Extending
 
@@ -126,7 +126,7 @@ The lock, `getNonce`, `isBypassed`, the `fail` abort, the dead-renderer abort an
 
 ## Tests
 
-`CloudflareClearanceTest`, `AndroidCookieJarTest`, `SolveMachineTest`, `WebViewFetchTest`, `FlareSolverrAuthTest`, `FlareSolverrCommandTest`, `FlareSolverrCookieTest`, `FlareSolverrEndpointTest`, `FlareSolverrJsonViewerTest`, `FlareSolverrRedirectTest`, `FlareSolverrTestFailureTest`, `FlareSolverrUserAgentPinTest` (all under `:core:common`), plus `FlareSolverrCredentialsMigrationTest` and `PreferenceRestorerTest` in `:app`. The WebView halves (arming, the probe, key delivery, the fetch page) need a live challenge and are verified on device only.
+`CloudflareInterceptorTest` (the per-host lock: a nested same-host challenge, concurrent challenges solved once, a failed solve releasing the host), `CloudflareClearanceTest`, `AndroidCookieJarTest`, `SolveMachineTest`, `WebViewFetchTest`, `FlareSolverrAuthTest`, `FlareSolverrCommandTest`, `FlareSolverrCookieTest`, `FlareSolverrEndpointTest`, `FlareSolverrJsonViewerTest`, `FlareSolverrRedirectTest`, `FlareSolverrTestFailureTest`, `FlareSolverrUserAgentPinTest` (all under `:core:common`), plus `FlareSolverrCredentialsMigrationTest` and `PreferenceRestorerTest` in `:app`. The WebView halves (arming, the probe, key delivery, the fetch page) need a live challenge and are verified on device only.
 
 Run one class with `./gradlew :core:common:testDebugUnitTest --tests "<FullyQualifiedClassName>"`, or `:app:testDebugUnitTest` for the app classes.
 

@@ -49,7 +49,7 @@ import java.util.concurrent.TimeUnit
  * Kept apart so the patch on Mihon's interceptor stays a small island: this class owns all
  * FlareSolverr internals (DTOs, the FS HTTP client, the shared session, cookie install, and
  * User-Agent pinning), while [CloudflareInterceptor] keeps the challenge detection and decides when
- * to delegate here. One solve per host is [WebViewInterceptor]'s per-host lock.
+ * to delegate here. One solve per host is [CloudflareInterceptor]'s per-host lock.
  */
 class FlareSolverrClient(
     private val cookieManager: AndroidCookieJar,
@@ -144,7 +144,7 @@ class FlareSolverrClient(
 
     /**
      * Solve the challenge for [request] through the FlareSolverr server at [flareSolverrUrl] and
-     * return its fully-fetched response. One solve per host at a time is [WebViewInterceptor]'s
+     * return its fully-fetched response. One solve per host at a time is [CloudflareInterceptor]'s
      * per-host lock, which every caller holds.
      */
     fun resolve(flareSolverrUrl: String, request: Request): Response {
