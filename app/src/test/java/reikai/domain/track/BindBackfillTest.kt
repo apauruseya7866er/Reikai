@@ -19,13 +19,11 @@ class BindBackfillTest {
         lastChapterRead: Double = 0.0,
         startDate: Instant? = null,
         readAts: List<Instant?> = listOf(firstReadAt),
-    ) = bindBackfill(chapters, lastChapterRead, startDate, zone) { readAts }
+    ) = bindBackfill(chapters, lastChapterRead, startDate) { readAts }
 
     @Test
-    fun `a first read at 23 30 local sends that wall-clock time as UTC`() = runTest {
-        val expected = LocalDateTime(2024, 3, 1, 23, 30).toInstant(TimeZone.UTC)
-
-        backfill(listOf(BindChapter(1.0, read = true))).startDate shouldBe expected
+    fun `the first read is sent as the instant it happened, not shifted by the local offset`() = runTest {
+        backfill(listOf(BindChapter(1.0, read = true))).startDate shouldBe firstReadAt
     }
 
     @Test
@@ -41,10 +39,8 @@ class BindBackfillTest {
 
     @Test
     fun `removed history is not taken as the day reading began`() = runTest {
-        val expected = LocalDateTime(2024, 3, 1, 23, 30).toInstant(TimeZone.UTC)
-
         backfill(listOf(BindChapter(1.0, read = true)), readAts = listOf(null, firstReadAt)).startDate shouldBe
-            expected
+            firstReadAt
     }
 
     @Test

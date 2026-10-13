@@ -1,6 +1,6 @@
 ---
 name: deep-audit
-description: Read-only, many-agent audit of a whole range of work (default the current branch against main) for bugs, misconfiguration, missing wiring, dead code, rule violations and manga/novel drift. Runs a Workflow that slices the range, points thirteen lenses at it (including two-ends tracing, where independent agents start at the write side and the read side of one value and a third compares them), refutes high and medium findings before they count, and reports. A --quick mode reads the same range with far fewer agents and verifies only high findings. Never edits code; it reports, and fixing is a separate step. Use when the user asks for a broad audit, a pre-release audit, or "check that all the changes work together". NOT for one diff (/pr-review) or parity with the Yōkai branch (/port-audit).
+description: Read-only, many-agent audit of a whole range of work (default the current branch against main) for bugs, misconfiguration, missing wiring, dead code, duplicated code, rule violations and manga/novel drift. Runs a Workflow that slices the range, points fourteen lenses at it (including two-ends tracing, where independent agents start at the write side and the read side of one value and a third compares them), refutes high and medium findings before they count, and reports. A --quick mode reads the same range with far fewer agents and verifies only high findings. Never edits code; it reports, and fixing is a separate step. Use when the user asks for a broad audit, a pre-release audit, or "check that all the changes work together". NOT for one diff (/pr-review) or parity with the Yōkai branch (/port-audit).
 argument-hint: "[<rev>..<rev> | <path> | <surface>] [--quick] [--lenses a,b] [--mutate] [--yes]"
 disable-model-invocation: false
 allowed-tools:
@@ -36,7 +36,7 @@ raised to match, it is "Dynamic workflow size" in the app's config.
   doc in `docs/dev/subsystems/` and the seam-depth table in `.claude/rules/content-layer.md`, then
   treat it as a path scope. If it resolves to nothing, ask.
 - **`--quick`**: every agent on Opus. One map agent at medium effort; one sweep per code slice covering correctness,
-  async, security, dead code and the slice's own wiring; one agent each for wiring, all rule files,
+  async, security, dead code and the slice's own wiring; one agent each for wiring, duplication, all rule files,
   parity with sibling sites, tests, docs and replaced behaviour; one agent per traced value, at most five.
   Only high findings are verified, by one Opus skeptic each; medium findings are listed unverified. No
   critic round. It still reads the whole range.
@@ -59,6 +59,7 @@ raised to match, it is "Dynamic workflow size" in the app's config.
 | `performance` | code slices the map tags `hotpath` (`performance-reviewer`) | Main-thread I/O, recomposition, per-entry work at library scale |
 | `async` | each code slice, in the `correctness` agent | Sent-before-ready, dismiss-before-confirm, detached `postDelayed`, windows that never close, init order |
 | `dead` | each code slice | Unused code, prefs, strings and islands, with a mandatory whole-tree re-search behind every "unused" |
+| `dry` | the range once, plus each code slice (quick: one agent for all of it) | Duplication per `code-quality.md` "DRY, with a receipt": `dup-check.ps1` clones touching the range (executed), clones the range added to `dup-baseline.txt`, `Reuse: none` footers whose search finds an equivalent, and new declarations restating an existing one by name stem, signature or the rule they encode |
 | `rules` | `code-quality`, `content-layer` and `architecture` over the range; the other three only over slices tagged `screens`, `tests` or `sql` | `code-quality`, `content-layer`, `screen-conventions`, `architecture`, `testing`, `database`, checked line by line |
 | `docs` | each docs slice (`doc-reviewer`) | Claims in docs, rules and plan docs that current code contradicts, with counts re-derived |
 | `tests` | each tests slice | Tests that cannot fail, over-claiming names, twin tests that should be one conformance test, a reasoned mutation of up to five |

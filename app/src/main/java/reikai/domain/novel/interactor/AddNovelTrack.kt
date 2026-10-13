@@ -2,7 +2,6 @@ package reikai.domain.novel.interactor
 
 import dev.zacsweers.metro.Inject
 import eu.kanade.tachiyomi.data.track.Tracker
-import kotlinx.datetime.TimeZone
 import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.NovelHistoryRepository
 import reikai.domain.novel.track.NovelTrackUpdater
@@ -40,7 +39,6 @@ class AddNovelTrack(
             allChapters.map { BindChapter(it.chapterNumber, it.read) },
             track.lastChapterRead,
             track.startDate,
-            TimeZone.currentSystemDefault(),
         ) { novelHistoryRepository.getHistoryByNovelId(novelId).map { it.readAt } }
         backfill.lastChapterRead?.let {
             track = track.copy(lastChapterRead = it)

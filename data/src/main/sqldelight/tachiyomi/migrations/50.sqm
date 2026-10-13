@@ -4,11 +4,151 @@ import kotlin.String;
 import kotlin.collections.List;
 import kotlinx.serialization.json.JsonObject;
 
--- Ported from Mihon mihonapp/mihon#3805 (mihon 93cc07511), Reikai-numbered (50, not Mihon's 17). On top of
+-- Ported from Mihon mihonapp/mihon#3805 (mihon 93cc07511) with its guard against duplicates and damaged
+-- indexes (mihon ea2b73ad7), Reikai-numbered (50, not Mihon's 17). On top of
 -- upstream: chapters keep page_count as their last column, categories keep content_type, and every
 -- Reikai table with a foreign key to a rebuilt table is rebuilt against the new name in the same pass,
 -- since foreign keys are off while this runs and the check that follows it rejects any row left
 -- pointing at a dropped table. Duplicate novels are merged separately, by 51.sqm.
+
+-- Every view reads `mangas`, so they are dropped here and recreated against the new tables at the end
+DROP VIEW historyView;
+DROP VIEW libraryView;
+DROP VIEW updatesView;
+-- Reikai's views over a table this migration renames or rebuilds. A table rename also rewrites every view
+-- that names it, so one left in place would end up reading a *_temp table that is then dropped. The novel
+-- views over novels_categories go too, since it is rebuilt below; the rest read only novel tables and stay.
+DROP VIEW library_update_error_view;
+DROP VIEW mergedChapterStaleView;
+DROP VIEW novelLibraryView;
+DROP VIEW novelHistoryView;
+DROP VIEW novelUpdatesView;
+
+-- ---------------------------------------------------------------------------------------------------------
+-- damaged indexes
+-- ---------------------------------------------------------------------------------------------------------
+
+-- Some databases hold rows their unique constraints should have rejected, which a damaged index explains. A
+-- write to a table also writes its indexes and fails on a damaged one, and a read through one can miss rows,
+-- so each table changed in place below is first copied from its rows alone, leaving its indexes behind.
+CREATE TABLE mangas_copy AS
+SELECT
+    _id, source, url, artist, author, description, genre, title, status, thumbnail_url, last_update, next_update,
+    initialized, viewer, chapter_flags, cover_last_modified, update_strategy, calculate_interval, notes, memo,
+    favorite_at
+FROM mangas NOT INDEXED;
+DROP TABLE mangas;
+ALTER TABLE mangas_copy RENAME TO mangas;
+
+CREATE TABLE chapters_copy AS
+SELECT
+    _id, manga_id, url, name, scanlator, read, bookmark, last_page_read, chapter_number, source_order, date_fetch,
+    date_upload, memo, page_count
+FROM chapters NOT INDEXED;
+DROP TABLE chapters;
+ALTER TABLE chapters_copy RENAME TO chapters;
+
+CREATE TABLE history_copy AS
+SELECT _id, chapter_id, last_read, time_read
+FROM history NOT INDEXED;
+DROP TABLE history;
+ALTER TABLE history_copy RENAME TO history;
+
+CREATE TABLE mangas_categories_copy AS
+SELECT _id, manga_id, category_id
+FROM mangas_categories NOT INDEXED;
+DROP TABLE mangas_categories;
+ALTER TABLE mangas_categories_copy RENAME TO mangas_categories;
+
+CREATE TABLE manga_sync_copy AS
+SELECT
+    _id, manga_id, sync_id, remote_id, library_id, title, last_chapter_read, total_chapters, status, score,
+    remote_url, start_date, finish_date, private
+FROM manga_sync NOT INDEXED;
+DROP TABLE manga_sync;
+ALTER TABLE manga_sync_copy RENAME TO manga_sync;
+
+CREATE TABLE excluded_scanlators_copy AS
+SELECT manga_id, scanlator
+FROM excluded_scanlators NOT INDEXED;
+DROP TABLE excluded_scanlators;
+ALTER TABLE excluded_scanlators_copy RENAME TO excluded_scanlators;
+
+-- Merging duplicate chapters looks their history up by chapter
+CREATE INDEX history_chapter_id_index ON history(chapter_id);
+
+-- Reikai: every other table this migration or 51.sqm writes before rebuilding it, or keeps, gets the same
+-- guard without leaving its shape. One whose indexes are all plain has them rebuilt from its rows. One with
+-- a unique constraint may hold rows that constraint should have rejected, which a rebuilt index would refuse
+-- too, so its rows are copied out, the table emptied, which clears its indexes without reading them, and the
+-- rows written back one per key: a chapter's history merges the way the history of duplicate chapters does
+-- below, a track keeps the one furthest read, an update error the latest, and a merge membership the oldest.
+REINDEX novels;
+REINDEX novel_chapters;
+REINDEX novels_categories;
+REINDEX search_metadata;
+REINDEX search_tags;
+REINDEX search_titles;
+REINDEX merged_chapter_unit;
+REINDEX merged_novel_chapter_unit;
+REINDEX feed_saved_search;
+
+CREATE TEMP TABLE novel_history_copy AS SELECT * FROM novel_history NOT INDEXED;
+DELETE FROM novel_history;
+INSERT INTO novel_history(_id, chapter_id, last_read, time_read)
+SELECT min(_id), chapter_id, max(last_read), sum(time_read)
+FROM novel_history_copy
+GROUP BY chapter_id;
+DROP TABLE novel_history_copy;
+
+CREATE TEMP TABLE novel_tracks_copy AS SELECT * FROM novel_tracks NOT INDEXED;
+DELETE FROM novel_tracks;
+INSERT INTO novel_tracks
+SELECT *
+FROM novel_tracks_copy
+WHERE _id IN (
+    SELECT first_value(_id) OVER (PARTITION BY novel_id, sync_id ORDER BY last_chapter_read DESC, _id ASC)
+    FROM novel_tracks_copy
+);
+DROP TABLE novel_tracks_copy;
+
+CREATE TEMP TABLE library_update_errors_copy AS SELECT * FROM library_update_errors NOT INDEXED;
+DELETE FROM library_update_errors;
+INSERT INTO library_update_errors
+SELECT *
+FROM library_update_errors_copy
+WHERE _id IN (
+    SELECT first_value(_id) OVER (PARTITION BY manga_id ORDER BY last_update DESC, _id DESC)
+    FROM library_update_errors_copy
+);
+DROP TABLE library_update_errors_copy;
+
+CREATE TEMP TABLE novel_update_errors_copy AS SELECT * FROM novel_update_errors NOT INDEXED;
+DELETE FROM novel_update_errors;
+INSERT INTO novel_update_errors
+SELECT *
+FROM novel_update_errors_copy
+WHERE _id IN (
+    SELECT first_value(_id) OVER (PARTITION BY novel_id ORDER BY last_update DESC, _id DESC)
+    FROM novel_update_errors_copy
+);
+DROP TABLE novel_update_errors_copy;
+
+CREATE TEMP TABLE merge_group_manga_copy AS SELECT * FROM merge_group_manga NOT INDEXED;
+DELETE FROM merge_group_manga;
+INSERT INTO merge_group_manga
+SELECT *
+FROM merge_group_manga_copy
+WHERE _id IN (SELECT min(_id) FROM merge_group_manga_copy GROUP BY manga_id);
+DROP TABLE merge_group_manga_copy;
+
+CREATE TEMP TABLE merge_group_novel_copy AS SELECT * FROM merge_group_novel NOT INDEXED;
+DELETE FROM merge_group_novel;
+INSERT INTO merge_group_novel
+SELECT *
+FROM merge_group_novel_copy
+WHERE _id IN (SELECT min(_id) FROM merge_group_novel_copy GROUP BY novel_id);
+DROP TABLE merge_group_novel_copy;
 
 -- ---------------------------------------------------------------------------------------------------------
 -- orphans
@@ -51,19 +191,6 @@ DELETE FROM feed_saved_search WHERE saved_search NOT IN (SELECT _id FROM saved_s
 -- ---------------------------------------------------------------------------------------------------------
 -- table - manga
 -- ---------------------------------------------------------------------------------------------------------
-
--- Every view reads `mangas`, so they are dropped here and recreated against the new table below
-DROP VIEW historyView;
-DROP VIEW libraryView;
-DROP VIEW updatesView;
--- Reikai's views over a table this migration renames or rebuilds. A table rename also rewrites every view
--- that names it, so one left in place would end up reading a *_temp table that is then dropped. The novel
--- views over novels_categories go too, since it is rebuilt below; the rest read only novel tables and stay.
-DROP VIEW library_update_error_view;
-DROP VIEW mergedChapterStaleView;
-DROP VIEW novelLibraryView;
-DROP VIEW novelHistoryView;
-DROP VIEW novelUpdatesView;
 
 -- Entries sharing a source and url are merged into one, since the new table won't hold both. The copies are
 -- ranked with the ones in the library first, since that is the entry the user has, then by age. The first
@@ -396,8 +523,7 @@ CREATE INDEX manga_category_category_id_index ON manga_category(category_id);
 -- ---------------------------------------------------------------------------------------------------------
 
 -- `last_read` is when the chapter was last read and `time_read` is how long it has been read for, so
--- both are renamed to say so. The chapter it belongs to is already unique, which leaves
--- `history_history_chapter_id_index` a prefix of that constraint.
+-- both are renamed to say so. The chapter it belongs to is already unique, so the constraint indexes it.
 -- The table keeps its name, so the original is renamed aside and the new one built under
 -- the real name; renaming a table into place makes SQLite rewrite its stored definition,
 -- leaving it spelled differently from the same table on a fresh install. The views were
@@ -419,11 +545,14 @@ CREATE TABLE history(
 -- Reaching the entry a row belongs to meant going through its chapter; it names the entry
 -- itself now, taken from that same chapter. A row whose chapter is already gone cannot name
 -- one and is dropped, which is what the foreign key would do to it once it is enforced again.
+-- Some databases hold more than one row for a chapter despite the old unique constraint, and the new one
+-- rejects them, so they merge the way the history of duplicate chapters does above.
 INSERT INTO history(id, manga_id, chapter_id, read_at, read_duration)
-SELECT H._id, C.manga_id, H.chapter_id, H.last_read, H.time_read
+SELECT min(H._id), C.manga_id, H.chapter_id, max(H.last_read), sum(H.time_read)
 FROM history_temp H
 JOIN chapter C
-ON C.id = H.chapter_id;
+ON C.id = H.chapter_id
+GROUP BY H.chapter_id;
 
 DROP TABLE history_temp;
 
@@ -734,19 +863,20 @@ CREATE INDEX idx_novels_categories_category_id ON novels_categories(category_id)
 -- ---------------------------------------------------------------------------------------------------------
 
 -- `manga_sync` is what tracking was called when it was still called syncing; `sync_id` is the tracker.
--- An entry that merged can leave two rows for the same tracker on the survivor, which the unique constraint
--- rejects, so the one to keep is chosen first: one on a copy in the library, then the one furthest read, then
--- the one on the copy ranked first, then the oldest. A track is taken whole rather than merged field by field,
--- because two rows on the same tracker can point at different remote entries.
+-- An entry that merged can leave two rows for the same tracker on the survivor, and an entry that didn't can
+-- still hold two despite the old unique constraint. The new one rejects both, so the one to keep is chosen
+-- first: one on a copy in the library, then the one furthest read, then the one on the copy ranked first, then
+-- the oldest. A track is taken whole rather than merged field by field, because two rows on the same tracker
+-- can point at different remote entries.
 CREATE TEMP TABLE duplicate_tracks AS
 SELECT
     T._id,
     first_value(T._id) OVER (
-        PARTITION BY D.keep_id, T.sync_id
+        PARTITION BY coalesce(D.keep_id, T.manga_id), T.sync_id
         ORDER BY D.favorite DESC, T.last_chapter_read DESC, D.precedence ASC, T._id ASC
     ) AS keep_track_id
 FROM manga_sync T
-JOIN duplicate_mangas D
+LEFT JOIN duplicate_mangas D
 ON D._id = T.manga_id;
 
 DELETE FROM manga_sync

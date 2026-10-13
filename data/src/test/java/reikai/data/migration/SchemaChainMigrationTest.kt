@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
+import org.junit.jupiter.params.provider.MethodSource
 import reikai.data.dedupe.MergedDuplicateRepositoryImpl
 import reikai.domain.dedupe.MergedDuplicate
 import reikai.domain.dedupe.MergedDuplicateChapter
@@ -20,6 +21,7 @@ import reikai.domain.library.ContentType
 import tachiyomi.data.Database
 import tachiyomi.data.DatabaseBindings
 import java.io.File
+import java.sql.DriverManager
 
 /**
  * The real migrations run over rows written into the committed 43.db snapshot, the schema before
@@ -273,6 +275,88 @@ class SchemaChainMigrationTest {
         shouldThrowAny { exec("DELETE FROM category WHERE id = 0") }
     }
 
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `a chapter with two history rows upgrades to one holding the latest read and the summed duration`(
+        type: Type,
+    ) = runTest {
+        exec(type.entry(id = 1, url = "/g/1", favorite = true))
+        exec(type.chapter(id = 10, entryId = 1, url = "/c/1", read = true))
+        exec("INSERT INTO ${type.historyTable}(_id, chapter_id, last_read, time_read) VALUES (1, 10, 500, 60)")
+        damageUniqueIndex(type.historyTable, "chapter_id")
+        exec("INSERT INTO ${type.historyTable}(_id, chapter_id, last_read, time_read) VALUES (2, 10, 700, 40)")
+
+        (migrate() to pairs(type.historyNow)) shouldBe (emptyList<Long>() to listOf(700L to 100L))
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `two tracks on one tracker of an entry that did not merge keep the one furthest read`(type: Type) = runTest {
+        exec(type.entry(id = 1, url = "/g/1", favorite = true))
+        exec(track(type, id = 1, read = 5))
+        damageUniqueIndex(type.trackTable, "${type.ownerColumn}, sync_id")
+        exec(track(type, id = 2, read = 3))
+
+        migrate()
+
+        longs(type.trackIdsNow) shouldBe listOf(1L)
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `tracks of two entries on the same tracker both survive`(type: Type) = runTest {
+        exec(type.entry(id = 1, url = "/g/1", favorite = true))
+        exec(type.entry(id = 2, url = "/g/2", favorite = true))
+        exec(track(type, id = 1, read = 5))
+        exec(track(type, id = 2, read = 3, entryId = 2))
+
+        migrate()
+
+        longs(type.trackIdsNow) shouldBe listOf(1L, 2L)
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `two update errors on one entry upgrade to the latest`(type: Type) = runTest {
+        exec(type.entry(id = 1, url = "/g/1", favorite = true))
+        exec("INSERT INTO ${type.errorTable}(_id, ${type.ownerColumn}, message, last_update) VALUES (1, 1, 'a', 2)")
+        damageUniqueIndex(type.errorTable, type.ownerColumn)
+        exec("INSERT INTO ${type.errorTable}(_id, ${type.ownerColumn}, message, last_update) VALUES (2, 1, 'b', 1)")
+
+        migrate()
+
+        longs("SELECT _id FROM ${type.errorTable}") shouldBe listOf(1L)
+    }
+
+    @ParameterizedTest
+    @EnumSource(Type::class)
+    fun `an entry in two merge groups upgrades to the membership it had first`(type: Type) = runTest {
+        exec(type.entry(id = 1, url = "/a", favorite = true))
+        exec(type.entry(id = 2, url = "/b", favorite = true))
+        exec("INSERT INTO merge_group(_id, content_type) VALUES (1, ${type.contentType}), (2, ${type.contentType})")
+        exec("INSERT INTO ${type.memberTable}(group_id, ${type.ownerColumn}) VALUES (1, 1), (1, 2)")
+        damageUniqueIndex(type.memberTable, type.ownerColumn)
+        exec("INSERT INTO ${type.memberTable}(group_id, ${type.ownerColumn}) VALUES (2, 1)")
+
+        migrate()
+
+        longs("SELECT group_id FROM ${type.memberTable} WHERE ${type.ownerColumn} = 1") shouldBe listOf(1L)
+    }
+
+    // Each case writes a row the upgrade deletes or merges, then empties an index on its table.
+    @ParameterizedTest
+    @MethodSource("damagedIndexes")
+    fun `an index missing rows does not fail the upgrade`(case: DamagedIndex) = runTest {
+        case.rows.forEach { exec(it) }
+        damageIndex(case.index)
+
+        migrate().shouldBeEmpty()
+    }
+
+    class DamagedIndex(val index: String, val rows: List<String>) {
+        override fun toString() = index
+    }
+
     /** Each type's tables in the 43.db shape, and the reads that answer each case once migrated. */
     enum class Type(
         val domainType: ContentType,
@@ -290,6 +374,9 @@ class SchemaChainMigrationTest {
         val entryIds: String,
         val readOfEntry2: String,
         val historyOwners: String,
+        val historyNow: String,
+        val trackIdsNow: String,
+        val errorTable: String,
     ) {
         MANGA(
             domainType = ContentType.MANGA,
@@ -307,6 +394,9 @@ class SchemaChainMigrationTest {
             entryIds = "SELECT id FROM manga ORDER BY id",
             readOfEntry2 = "SELECT user_read FROM chapter WHERE manga_id = 2",
             historyOwners = "SELECT manga_id FROM history",
+            historyNow = "SELECT read_at, read_duration FROM history",
+            trackIdsNow = "SELECT id FROM manga_track",
+            errorTable = "library_update_errors",
         ) {
             override fun entry(id: Long, url: String, favorite: Boolean) =
                 "INSERT INTO mangas(_id, source, url, title, status, favorite, initialized, viewer, chapter_flags, " +
@@ -338,6 +428,9 @@ class SchemaChainMigrationTest {
             entryIds = "SELECT _id FROM novels ORDER BY _id",
             readOfEntry2 = "SELECT read FROM novel_chapters WHERE novel_id = 2",
             historyOwners = "SELECT C.novel_id FROM novel_history H JOIN novel_chapters C ON C._id = H.chapter_id",
+            historyNow = "SELECT last_read, time_read FROM novel_history",
+            trackIdsNow = "SELECT _id FROM novel_tracks",
+            errorTable = "novel_update_errors",
         ) {
             override fun entry(id: Long, url: String, favorite: Boolean) =
                 "INSERT INTO novels(_id, source, url, title, status, favorite, initialized, chapter_flags, " +
@@ -386,6 +479,43 @@ class SchemaChainMigrationTest {
         longs("SELECT rowid FROM pragma_foreign_key_check")
     }
 
+    private fun track(type: Type, id: Long, read: Int, entryId: Long = 1) =
+        "INSERT INTO ${type.trackTable}(_id, ${type.ownerColumn}, sync_id, remote_id, title, last_chapter_read, " +
+            "total_chapters, status, score, remote_url, start_date, finish_date) " +
+            "VALUES ($id, $entryId, 1, 7, 't', $read, 0, 0, 0, 'u', 0, 0)"
+
+    /**
+     * Swaps the index behind [table]'s unique constraint on [columns] for one holding no rows, the damage
+     * that lets in a row the constraint should have refused.
+     */
+    private fun damageUniqueIndex(table: String, columns: String) = rewriteSchema(
+        "CREATE UNIQUE INDEX damaged ON $table($columns) WHERE 0",
+        "PRAGMA writable_schema = ON",
+        "DELETE FROM sqlite_master WHERE name = 'sqlite_autoindex_${table}_1'",
+        "UPDATE sqlite_master SET name = 'sqlite_autoindex_${table}_1', sql = NULL WHERE name = 'damaged'",
+    )
+
+    /** Empties [index] while its definition still claims every row of its table. */
+    private suspend fun damageIndex(index: String) {
+        val sql = strings("SELECT sql FROM sqlite_master WHERE name = '$index'").single()
+        rewriteSchema(
+            "DROP INDEX $index",
+            "$sql WHERE 0",
+            "PRAGMA writable_schema = ON",
+            "UPDATE sqlite_master SET sql = '$sql' WHERE name = '$index'",
+        )
+    }
+
+    /**
+     * On one connection of its own, since writable_schema holds only for the connection that set it and
+     * the driver does not keep one between statements outside a transaction.
+     */
+    private fun rewriteSchema(vararg sql: String) {
+        DriverManager.getConnection("jdbc:sqlite:${file.absolutePath}").use { connection ->
+            connection.createStatement().use { statement -> sql.forEach(statement::execute) }
+        }
+    }
+
     private fun novelChapter(id: Long, novelId: Long, read: Boolean, progress: Long, number: Int) =
         "INSERT INTO novel_chapters(_id, novel_id, url, name, read, bookmark, last_text_progress, " +
             "chapter_number, source_order, date_fetch, date_upload) VALUES ($id, $novelId, '/c/$id', 'c', " +
@@ -420,4 +550,92 @@ class SchemaChainMigrationTest {
         },
         0,
     ).await()
+
+    private suspend fun strings(sql: String): List<String> = driver.executeQuery(
+        null,
+        sql,
+        { cursor ->
+            QueryResult.Value(
+                buildList {
+                    while (cursor.next().value) add(cursor.getString(0)!!)
+                },
+            )
+        },
+        0,
+    ).await()
+
+    companion object {
+        private fun orphanTrack(table: String, owner: String) =
+            "INSERT INTO $table($owner, sync_id, remote_id, title, last_chapter_read, total_chapters, status, " +
+                "score, remote_url, start_date, finish_date) VALUES (9, 1, 7, 't', 1, 0, 0, 0, 'u', 0, 0)"
+
+        /** Every index on a table the upgrade writes in place, with rows that make it write there. */
+        @JvmStatic
+        fun damagedIndexes() = listOf(
+            DamagedIndex("mangas_url_index", listOf(Type.MANGA.entry(1, "/a", true), Type.MANGA.entry(2, "/a", false))),
+            DamagedIndex("novels_url_index", listOf(Type.NOVEL.entry(1, "/a", true), Type.NOVEL.entry(2, "/a", false))),
+            DamagedIndex("chapters_manga_id_index", listOf(Type.MANGA.chapter(10, 9, "/c", false))),
+            DamagedIndex("novel_chapters_novel_id_index", listOf(Type.NOVEL.chapter(10, 9, "/c", false))),
+            DamagedIndex(
+                "history_history_chapter_id_index",
+                listOf("INSERT INTO history(chapter_id, last_read, time_read) VALUES (99, 1, 1)"),
+            ),
+            DamagedIndex(
+                "novel_history_chapter_id_index",
+                listOf("INSERT INTO novel_history(chapter_id, last_read, time_read) VALUES (99, 1, 1)"),
+            ),
+            DamagedIndex(
+                "idx_mangas_categories_manga_id",
+                listOf("INSERT INTO mangas_categories(manga_id, category_id) VALUES (9, 0)"),
+            ),
+            DamagedIndex(
+                "idx_novels_categories_novel_id",
+                listOf("INSERT INTO novels_categories(novel_id, category_id) VALUES (9, 0)"),
+            ),
+            DamagedIndex("idx_manga_sync_manga_id", listOf(orphanTrack("manga_sync", "manga_id"))),
+            DamagedIndex("novel_tracks_novel_id_index", listOf(orphanTrack("novel_tracks", "novel_id"))),
+            DamagedIndex(
+                "excluded_scanlators_manga_id_index",
+                listOf("INSERT INTO excluded_scanlators(manga_id, scanlator) VALUES (9, 's')"),
+            ),
+            DamagedIndex(
+                "search_metadata_uploader_index",
+                listOf("INSERT INTO search_metadata(manga_id, uploader, extra, extra_version) VALUES (9, 'u', '', 0)"),
+            ),
+            DamagedIndex(
+                "search_tags_manga_id_index",
+                listOf("INSERT INTO search_tags(manga_id, name, type) VALUES (9, 't', 0)"),
+            ),
+            DamagedIndex(
+                "search_titles_manga_id_index",
+                listOf("INSERT INTO search_titles(manga_id, title, type) VALUES (9, 't', 0)"),
+            ),
+            DamagedIndex(
+                "merged_chapter_unit_group_index",
+                listOf(
+                    "INSERT INTO merged_chapter_unit(chapter_id, group_id, unit, copy_order, derived_number) " +
+                        "VALUES (10, 9, 0, 0, 1)",
+                ),
+            ),
+            DamagedIndex(
+                "merged_novel_chapter_unit_group_index",
+                listOf(
+                    "INSERT INTO merged_novel_chapter_unit(chapter_id, group_id, unit, copy_order, derived_name, " +
+                        "derived_number) VALUES (10, 9, 0, 0, 'c', 1)",
+                ),
+            ),
+            DamagedIndex(
+                "idx_feed_saved_search_saved_search",
+                listOf("INSERT INTO feed_saved_search(source_key, saved_search, global) VALUES ('s', 9, 0)"),
+            ),
+            DamagedIndex(
+                "idx_merge_group_manga_group_id",
+                listOf("INSERT INTO merge_group_manga(group_id, manga_id) VALUES (9, 9)"),
+            ),
+            DamagedIndex(
+                "idx_merge_group_novel_group_id",
+                listOf("INSERT INTO merge_group_novel(group_id, novel_id) VALUES (9, 9)"),
+            ),
+        )
+    }
 }

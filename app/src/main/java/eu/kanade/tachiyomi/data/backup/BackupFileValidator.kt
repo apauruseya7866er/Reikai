@@ -16,6 +16,7 @@ import eu.kanade.tachiyomi.data.backup.models.StringSetPreferenceValue
 import eu.kanade.tachiyomi.data.backup.models.novelSourceName
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.extension.ExtensionManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.protobuf.ProtoBuf
 import reikai.domain.novel.NovelPreferences
 import reikai.novel.install.LnPluginLoadFailure
@@ -158,6 +159,8 @@ class BackupFileValidator(
                         }
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             throw IllegalStateException(e)
         }

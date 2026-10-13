@@ -2,12 +2,10 @@ package reikai.domain.novel.interactor
 
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.Tracker
-import eu.kanade.tachiyomi.util.lang.convertEpochMillisZone
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
-import kotlinx.datetime.TimeZone
 import org.junit.jupiter.api.Test
 import reikai.domain.novel.NovelChapterRepository
 import reikai.domain.novel.NovelHistoryRepository
@@ -51,9 +49,7 @@ class AddNovelTrackTest {
     fun `the day reading began is sent to the site`() = runTest {
         bindAfterReading(true, false)
 
-        val firstDay = FIRST_READ_AT.convertEpochMillisZone(TimeZone.currentSystemDefault(), TimeZone.UTC)
-
-        coVerify { updater.setRemoteStartDate(tracker, any(), firstDay) }
+        coVerify { updater.setRemoteStartDate(tracker, any(), FIRST_READ_AT) }
     }
 
     @Test
