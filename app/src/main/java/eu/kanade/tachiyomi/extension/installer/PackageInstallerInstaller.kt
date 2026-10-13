@@ -68,7 +68,10 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
                         activeSession?.let { (_, sessionId) ->
                             runCatching { packageInstaller.abandonSession(sessionId) }
                         }
-                        continueQueue(InstallStep.Error.from(e)) // RK
+                        // RK: a plain message, as the other installer errors here; the dialog keeps the trace
+                        continueQueue(
+                            InstallStep.Error("Nothing on this device can confirm the install", e.stackTraceToString()),
+                        )
                     }
                 }
                 PackageInstaller.STATUS_FAILURE_ABORTED -> {
