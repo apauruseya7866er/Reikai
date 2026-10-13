@@ -61,10 +61,10 @@ android {
         // carries the novel auto-scroll switch into start-on-open; 198 carries the custom covers and
         // downloads of duplicates the upgrade merged away; 199 keeps the hash suffix in chapter file names for
         // upgraders; 200 files each merged series' sources in one set of categories. All sit above 0.3.2's
-        // 185, so a 0.3.2 install still runs them. 0.4.0 ships as 201, so further migrations take 202+.
-        // versionName tracks the last shipped release until the next cycle is cut.
-        versionCode = 201
-        versionName = "0.4.0"
+        // 185, so a 0.3.2 install still runs them. 0.4.0 shipped as 201 and 0.4.1 ships as 202, so further
+        // migrations take 203+. versionName tracks the last shipped release until the next cycle is cut.
+        versionCode = 202
+        versionName = "0.4.1"
         // RK <--
 
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
