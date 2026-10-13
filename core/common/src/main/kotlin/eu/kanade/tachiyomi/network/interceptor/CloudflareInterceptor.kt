@@ -66,7 +66,16 @@ class CloudflareInterceptor(
             //     interceptor, so chain.request() holds the URL from before it. Everything the
             //     WebView does has to key off the page the challenge is actually on, or the probe
             //     is scoped to an origin the document never has and the solve watches nothing.
-            val challengeUrl = response.request.url
+            //     The method is read there too, since a 303 turns a POST into a GET.
+            val challenged = response.request
+            // A WebView can only load a page with GET, and loading the url of another method usually reaches an
+            // endpoint that answers GET without a challenge to solve. The clearance covers the whole site, so it's
+            // earned on the site's root page instead.
+            val challengeUrl = if (challenged.method == "GET") {
+                challenged.url
+            } else {
+                challenged.url.newBuilder().encodedPath("/").query(null).fragment(null).build()
+            }
             response.close()
             clearClearance(request.url, challengeUrl)
             val oldCookie = cookieManager.get(challengeUrl)
