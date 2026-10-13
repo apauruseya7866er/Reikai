@@ -77,6 +77,79 @@ ALTER TABLE excluded_scanlators_copy RENAME TO excluded_scanlators;
 -- Merging duplicate chapters looks their history up by chapter
 CREATE INDEX history_chapter_id_index ON history(chapter_id);
 
+-- Reikai: every other table this migration or 51.sqm writes before rebuilding it, or keeps, gets the same
+-- guard without leaving its shape. One whose indexes are all plain has them rebuilt from its rows. One with
+-- a unique constraint may hold rows that constraint should have rejected, which a rebuilt index would refuse
+-- too, so its rows are copied out, the table emptied, which clears its indexes without reading them, and the
+-- rows written back one per key: a chapter's history merges the way the history of duplicate chapters does
+-- below, a track keeps the one furthest read, an update error the latest, and a merge membership the oldest.
+REINDEX novels;
+REINDEX novel_chapters;
+REINDEX novels_categories;
+REINDEX search_metadata;
+REINDEX search_tags;
+REINDEX search_titles;
+REINDEX merged_chapter_unit;
+REINDEX merged_novel_chapter_unit;
+REINDEX feed_saved_search;
+
+CREATE TEMP TABLE novel_history_copy AS SELECT * FROM novel_history NOT INDEXED;
+DELETE FROM novel_history;
+INSERT INTO novel_history(_id, chapter_id, last_read, time_read)
+SELECT min(_id), chapter_id, max(last_read), sum(time_read)
+FROM novel_history_copy
+GROUP BY chapter_id;
+DROP TABLE novel_history_copy;
+
+CREATE TEMP TABLE novel_tracks_copy AS SELECT * FROM novel_tracks NOT INDEXED;
+DELETE FROM novel_tracks;
+INSERT INTO novel_tracks
+SELECT *
+FROM novel_tracks_copy
+WHERE _id IN (
+    SELECT first_value(_id) OVER (PARTITION BY novel_id, sync_id ORDER BY last_chapter_read DESC, _id ASC)
+    FROM novel_tracks_copy
+);
+DROP TABLE novel_tracks_copy;
+
+CREATE TEMP TABLE library_update_errors_copy AS SELECT * FROM library_update_errors NOT INDEXED;
+DELETE FROM library_update_errors;
+INSERT INTO library_update_errors
+SELECT *
+FROM library_update_errors_copy
+WHERE _id IN (
+    SELECT first_value(_id) OVER (PARTITION BY manga_id ORDER BY last_update DESC, _id DESC)
+    FROM library_update_errors_copy
+);
+DROP TABLE library_update_errors_copy;
+
+CREATE TEMP TABLE novel_update_errors_copy AS SELECT * FROM novel_update_errors NOT INDEXED;
+DELETE FROM novel_update_errors;
+INSERT INTO novel_update_errors
+SELECT *
+FROM novel_update_errors_copy
+WHERE _id IN (
+    SELECT first_value(_id) OVER (PARTITION BY novel_id ORDER BY last_update DESC, _id DESC)
+    FROM novel_update_errors_copy
+);
+DROP TABLE novel_update_errors_copy;
+
+CREATE TEMP TABLE merge_group_manga_copy AS SELECT * FROM merge_group_manga NOT INDEXED;
+DELETE FROM merge_group_manga;
+INSERT INTO merge_group_manga
+SELECT *
+FROM merge_group_manga_copy
+WHERE _id IN (SELECT min(_id) FROM merge_group_manga_copy GROUP BY manga_id);
+DROP TABLE merge_group_manga_copy;
+
+CREATE TEMP TABLE merge_group_novel_copy AS SELECT * FROM merge_group_novel NOT INDEXED;
+DELETE FROM merge_group_novel;
+INSERT INTO merge_group_novel
+SELECT *
+FROM merge_group_novel_copy
+WHERE _id IN (SELECT min(_id) FROM merge_group_novel_copy GROUP BY novel_id);
+DROP TABLE merge_group_novel_copy;
+
 -- ---------------------------------------------------------------------------------------------------------
 -- orphans
 -- ---------------------------------------------------------------------------------------------------------
