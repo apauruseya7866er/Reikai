@@ -303,7 +303,7 @@ fun SelectItem(
                     vertical = SettingsItemsPaddings.Vertical,
                 ),
             label = { Text(text = label) },
-            value = options[selectedIndex].toString(),
+            value = options.getOrNull(selectedIndex)?.toString().orEmpty(),
             onValueChange = {},
             readOnly = true,
             singleLine = true,
