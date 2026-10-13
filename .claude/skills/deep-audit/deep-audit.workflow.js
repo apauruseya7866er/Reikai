@@ -30,7 +30,7 @@ const PARITY_BATCH = 10
 const ALWAYS_RULES = ['code-quality.md', 'content-layer.md', 'architecture.md']
 const TAGGED_RULES = { 'screen-conventions.md': 'screens', 'testing.md': 'tests', 'database.md': 'sql' }
 const TAGS = ['untrusted', 'hotpath', 'screens', 'tests', 'sql']
-const ALL_LENSES = ['correctness', 'security', 'performance', 'async', 'dead', 'rules', 'docs', 'tests', 'wiring', 'parity', 'sibling', 'upstream', 'twoends']
+const ALL_LENSES = ['correctness', 'security', 'performance', 'async', 'dead', 'dry', 'rules', 'docs', 'tests', 'wiring', 'parity', 'sibling', 'upstream', 'twoends']
 
 // Finders get the parked list but not the ledger: only a verifier needs a past refutation, and the
 // ledger is long enough that carrying it in every finder prompt was a large share of a run's cost.
@@ -58,13 +58,17 @@ const LENS_BRIEFS = {
   security: { agentType: 'security-reviewer', brief: 'Find security defects per .claude/rules/security.md: untrusted source and extension input, WebView hardening and JavaScript bridges, secrets or personal data in logs, crash reports or backups, file paths built from input.' },
   performance: { agentType: 'performance-reviewer', brief: 'Find real bottlenecks: recomposition storms, main-thread I/O, per-entry work in library-sized loops, queries in loops, leaked scopes, listeners and WebViews.' },
   dead: { brief: 'Find dead and unused code the range added or left behind: unused functions, parameters, preferences, strings, resources and flags, branches that can no longer be reached, commented-out blocks, // RK islands whose purpose is gone. Before calling anything unused, search the WHOLE repository, including src/test, src/androidTest, src/debug, scripts/, .github/, build files, manifests and resources; reflection, @JavascriptInterface, XML references and Metro-generated code all count as uses. "Nothing calls X" is the claim class that fails most, so put exactly what you searched in evidenceDetail. If Spotless or the compiler would already flag it, it is not a finding.' },
+  dry: { brief: 'Find duplicated code and duplicated rules the range added, per the DRY rule in .claude/rules/code-quality.md ("DRY, with a receipt"). For each non-private top-level fun, class, object, extension or composable the range added (git diff ' + RANGE + ' and its "+" declaration lines), search the whole tree for an existing equivalent three ways: by name stem, by receiver and return type, and by the rule it encodes (the same key, constant, condition or formula restated under another name). Search every module, the reikai/domain kernels first, and ../refs/mihon for an inherited shape. A finding names both sites and says which one should call the other, or which kernel both should call. Also report two declarations the range added that restate each other, a private Mihon helper copied rather than shared without a stated reason, and a manga/novel twin that names no pin (a shared kernel, a typed capability or a conformance test). Not findings: an engine twin content-layer.md sanctions and that names its pin, and three similar lines the rule prefers over a helper used once.' },
   rules: { brief: 'Audit against the rule files named below. Read each one first and turn it into a checklist, then walk the code the range changed. Each finding quotes a few words of the exact rule it breaks. Rules a hook already enforces (comment length cap, em dashes, dates in comments, plan codenames) are findings only where the hook cannot see them.' },
   docs: { agentType: 'doc-reviewer', brief: 'Check every claim in the docs in this slice against current code: files, symbols, counts, behaviour. Re-derive any stated count rather than trusting it. Also check CLAUDE.md and .claude/rules claims about code the range changed.' },
   tests: { brief: 'Audit the tests: tests that cannot fail (assertTrue(true), asserting a mock was called without checking arguments, asserting the value just set), names that claim more than the body checks, twin tests that .claude/rules/testing.md says should be one conformance test, and a rule for both content types pinned on only one. For up to five new tests, do a reasoned mutation: name the production clause the test pins and say whether deleting it would turn the test red. If it would not, that is a finding, labelled traced.' },
-  parity: { brief: 'For each user-visible change below, check that manga and novels both got it in this range, per the write-once rule in .claude/rules/content-layer.md. A gap is a finding unless a named mechanism makes the type unable to support it and the Decisions of the surface's subsystem doc record that, or ROADMAP.md labels the gap gated. Also report any "twin of" marker in the range that names no pin (a shared kernel, a typed capability or a conformance test).' },
+  parity: { brief: 'For each user-visible change below, check that manga and novels both got it in this range, per the write-once rule in .claude/rules/content-layer.md. A gap is a finding unless a named mechanism makes the type unable to support it and the Decisions of the surface\'s subsystem doc record that, or ROADMAP.md labels the gap gated. Also report any "twin of" marker in the range that names no pin (a shared kernel, a typed capability or a conformance test).' },
   sibling: { brief: 'Each commit below fixed a defect. For each one, read its diff, state the defect as a pattern, then search the whole tree for other sites with the same pattern: the other content type\'s twin, the other rendering mode, the other viewer, the same call shape elsewhere. Report every site that still carries the defect. A site the commit message deliberately left, with a reason, is not a finding.' },
-  upstream: { brief: 'This surface was taken over, or code on it was deleted. Walk the replaced code\'s behaviour end to end, starting from theirs rather than ours: for a Mihon takeover read ../refs/mihon (docs/dev/off-path-manifest.md lists the replaced files); for Reikai code the range deleted read it with git show at the range base. Mark each behaviour present (cite ours), deliberately dropped (cite the subsystem doc's Decisions) or missing. Report only the missing ones as findings.' },
+  upstream: { brief: 'This surface was taken over, or code on it was deleted. Walk the replaced code\'s behaviour end to end, starting from theirs rather than ours: for a Mihon takeover read ../refs/mihon (docs/dev/off-path-manifest.md lists the replaced files); for Reikai code the range deleted read it with git show at the range base. Mark each behaviour present (cite ours), deliberately dropped (cite the subsystem doc\'s Decisions) or missing. Report only the missing ones as findings.' },
 }
+
+// Range-wide and mostly executed, so it runs once in both modes rather than per slice.
+const DRY_RANGE_BRIEF = 'Check duplication with the tools in scripts/, all read-only. 1) Run pwsh scripts/dup-check.ps1 with no switches (it reads the tree and the refs/mihon clone and writes nothing; never pass -UpdateBaseline) and report every clone it lists that touches a file the range changed, labelled executed. 2) Read git diff ' + RANGE + ' -- scripts/dup-baseline.txt: each line the range added accepts a clone, and is a finding unless the commit that added it explains why the code cannot be shared. 3) Read the commit messages (git log --format=%H%n%B ' + RANGE + '): for each "Reuse: none (searched: ...)" footer, re-run the search it names, plus one by the rule the new symbol encodes; an existing equivalent means the footer is wrong and the code is a duplicate.'
 
 const WIRING_TASKS = [
   { target: 'build and platform wiring', brief: 'Audit build and platform wiring for the range: AndroidManifest entries, ProGuard keeps for surviving Injekt call sites (the keep list and its reasons are in .claude/rules/architecture.md), Gradle dependencies and version-catalog entries that are unused or missing, Metro DI scoping and registration (read scripts/di-interop-check.ps1 and apply its rules by reading, do not run it), build variants and applicationId suffixes.' },
@@ -168,6 +172,9 @@ function planTasks(map, lenses) {
     if (['correctness', 'async', 'security', 'dead'].some(l => on.has(l))) {
       for (const s of code) add('sweep', s.id, findingsPrompt(SWEEP_BRIEF, sliceText(s)))
     }
+    if (on.has('dry')) add('dry', 'duplication across the range', findingsPrompt(`${DRY_RANGE_BRIEF}
+
+Then, over every code slice: ${LENS_BRIEFS.dry.brief}`, whole))
     if (on.has('wiring')) add('wiring', 'build, platform, data and settings', findingsPrompt(WIRING_TASKS.map(w => w.brief).join('\n\n'), `The whole range ${SCOPE}.`))
     if (on.has('rules')) add('rules', 'all rule files', findingsPrompt(`${LENS_BRIEFS.rules.brief} The rule files are ${[...ALWAYS_RULES, ...Object.keys(TAGGED_RULES)].map(r => `.claude/rules/${r}`).join(', ')}.`, whole))
     if ((on.has('parity') || on.has('sibling')) && (map.userVisibleChanges.length || map.fixCommits.length)) {
@@ -187,6 +194,10 @@ function planTasks(map, lenses) {
 
   if (on.has('correctness') || on.has('async')) for (const s of code) add('core', s.id, findingsPrompt(LENS_BRIEFS.core.brief, sliceText(s)), LENS_BRIEFS.core.agentType)
   if (on.has('dead')) for (const s of code) add('dead', s.id, findingsPrompt(LENS_BRIEFS.dead.brief, sliceText(s)))
+  if (on.has('dry')) {
+    add('dry', 'duplication tools and Reuse footers', findingsPrompt(DRY_RANGE_BRIEF, `The whole range ${SCOPE}.`))
+    for (const s of code) add('dry', s.id, findingsPrompt(LENS_BRIEFS.dry.brief, sliceText(s)))
+  }
   if (on.has('security')) for (const s of tagged(code, 'untrusted')) add('security', s.id, findingsPrompt(LENS_BRIEFS.security.brief, sliceText(s)), LENS_BRIEFS.security.agentType)
   if (on.has('performance')) for (const s of tagged(code, 'hotpath')) add('performance', s.id, findingsPrompt(LENS_BRIEFS.performance.brief, sliceText(s)), LENS_BRIEFS.performance.agentType)
   if (on.has('rules')) {
@@ -420,7 +431,7 @@ if (!QUICK) {
     schema: {
       type: 'object',
       properties: { gaps: { type: 'array', items: { type: 'object', properties: {
-        lens: { type: 'string', enum: ['core', 'dead', 'security', 'performance', 'rules', 'docs', 'tests', 'parity', 'sibling', 'upstream'] },
+        lens: { type: 'string', enum: ['core', 'dead', 'dry', 'security', 'performance', 'rules', 'docs', 'tests', 'parity', 'sibling', 'upstream'] },
         target: { type: 'string', description: 'paths, commits or the behaviour to audit' }, why: { type: 'string' },
       }, required: ['lens', 'target', 'why'] } } },
       required: ['gaps'],
