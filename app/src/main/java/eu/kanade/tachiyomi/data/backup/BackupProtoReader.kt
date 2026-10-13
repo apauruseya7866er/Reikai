@@ -42,18 +42,18 @@ class BackupProtoReader(
                 }
 
                 while (true) {
-                    val tag = readVarint(payloadSource) ?: break
+                    val tag = orInvalid { readVarint(payloadSource) } ?: break
                     val wireType = (tag and 0x07).toInt()
                     val fieldNumber = (tag ushr 3).toInt()
 
                     when (wireType) {
                         WIRE_TYPE_LENGTH_DELIMITED -> {
-                            val length = readVarint(payloadSource)
+                            val length = orInvalid { readVarint(payloadSource) }
                                 ?: throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
                             if (length > Int.MAX_VALUE) {
                                 throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
                             }
-                            val bytes = payloadSource.readByteArray(length)
+                            val bytes = orInvalid { payloadSource.readByteArray(length) }
                             // The same mapping Mihon's whole-file BackupDecoder made for a bad entry.
                             try {
                                 onField(fieldNumber, bytes)
@@ -62,15 +62,25 @@ class BackupProtoReader(
                             }
                         }
                         WIRE_TYPE_VARINT -> {
-                            readVarint(payloadSource)
+                            orInvalid { readVarint(payloadSource) }
                                 ?: throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
                         }
-                        WIRE_TYPE_64BIT -> payloadSource.skip(8)
-                        WIRE_TYPE_32BIT -> payloadSource.skip(4)
+                        WIRE_TYPE_64BIT -> orInvalid { payloadSource.skip(8) }
+                        WIRE_TYPE_32BIT -> orInvalid { payloadSource.skip(4) }
                         else -> throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown))
                     }
                 }
             }
+        }
+    }
+
+    // A file cut short (EOF) or failing its gzip check, as Mihon's BackupDecoder.orInvalid reports it. Only around
+    // reading, never onField, so the JSON error and a failure in the caller keep their own messages.
+    private inline fun <T> orInvalid(block: () -> T): T {
+        return try {
+            block()
+        } catch (e: IOException) {
+            throw IOException(context.stringResource(MR.strings.invalid_backup_file_unknown), e)
         }
     }
 

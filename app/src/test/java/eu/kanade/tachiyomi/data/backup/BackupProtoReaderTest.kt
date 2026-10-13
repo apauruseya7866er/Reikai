@@ -57,4 +57,24 @@ class BackupProtoReaderTest {
 
         error.message shouldBe "Invalid backup"
     }
+
+    @Test
+    fun `a truncated backup reads as invalid`() = runTest {
+        val entry = ProtoBuf.encodeToByteArray(BackupManga.serializer(), BackupManga(source = 1L, url = "m"))
+        val file = ByteArrayOutputStream().also { out ->
+            GZIPOutputStream(out).use { BackupProtoWriter.writeField(it, 1, entry) }
+        }.toByteArray()
+        // Cut into the compressed data, past the 8-byte gzip trailer, as an interrupted copy leaves it.
+        val truncated = file.copyOf(file.size - 12)
+        val context = mockk<Context> {
+            every { contentResolver.openInputStream(any()) } returns truncated.inputStream()
+            every { stringResource(MR.strings.invalid_backup_file_unknown) } returns "Invalid backup"
+        }
+
+        val error = shouldThrow<IOException> {
+            BackupProtoReader(context).read(mockk<Uri>()) { _, _ -> }
+        }
+
+        error.message shouldBe "Invalid backup"
+    }
 }

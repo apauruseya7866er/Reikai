@@ -20,11 +20,15 @@ import eu.kanade.tachiyomi.extension.model.Extension
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.runs
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
@@ -114,6 +118,21 @@ class BackupFileValidatorTest {
         shouldThrow<IllegalStateException> {
             validatorOver(truncated, mockk()).checkReadable(mockk<Uri>())
         }
+    }
+
+    @Test
+    fun `a check cancelled while reading stays cancelled instead of reading as a bad file`() = runTest {
+        var thrown: Throwable? = null
+        launch {
+            cancel()
+            try {
+                validator(mockk<NovelSourceManager>(), listOf(novel)).checkReadable(mockk<Uri>())
+            } catch (e: Throwable) {
+                thrown = e
+            }
+        }.join()
+
+        thrown.shouldBeInstanceOf<CancellationException>()
     }
 
     private val novel = 700 to ProtoBuf.encodeToByteArray(
