@@ -8,12 +8,14 @@ name: Build & publish nightly
 on:
   push:
     branches:
-      # Work happens on the release branch, which main only receives at the merge, so automation has
-      # to watch both. They are safe to list together only because of the guard job below: tags are
-      # r<commitCount> and the two branches count independently, so a nightly cut from main while a
+      # Work happens on the release branch (feat/<version> for a feature release, release/<version> for
+      # a fix release), which main only receives at the merge, so automation has to watch both. They
+      # are safe to list together only because of the guard job below: tags are r<commitCount> and
+      # the two branches count independently, so a nightly cut from main while a
       # release branch is ahead would be numbered below the newest one, and the guard refuses that
       # rather than publishing a release its own prune would delete.
       - "feat/**"
+      - "release/**"
       - "fix/**"
       - main
     paths:
