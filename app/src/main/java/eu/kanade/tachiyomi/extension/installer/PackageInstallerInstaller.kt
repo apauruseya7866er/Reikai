@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.extension.installer
 import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -57,7 +58,18 @@ class PackageInstallerInstaller(private val service: Service) : Installer(servic
                         return
                     }
                     userAction.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    service.startActivity(userAction)
+                    try {
+                        service.startActivity(userAction)
+                    } catch (e: ActivityNotFoundException) {
+                        // Some devices have the system installer's confirmation screen disabled or removed
+                        // RK --> the error keeps its message, logged at error level (upstream-sync.md)
+                        logcat(LogPriority.ERROR, e) { "Nothing can confirm the install" }
+                        // RK <--
+                        activeSession?.let { (_, sessionId) ->
+                            runCatching { packageInstaller.abandonSession(sessionId) }
+                        }
+                        continueQueue(InstallStep.Error.from(e)) // RK
+                    }
                 }
                 PackageInstaller.STATUS_FAILURE_ABORTED -> {
                     continueQueue(InstallStep.Idle)
