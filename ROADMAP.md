@@ -6,6 +6,11 @@ Forward plan only: what is left to build, in what order. Shipped work is in [CHA
 
 Backlog, grouped by area. Unordered within an area.
 
+### Novels
+
+- **Hide sentences and clean up injected text** `[M]` - long-press a sentence to hide it everywhere, plus a built-in rule set for donation and community pleas, chapter footers, credits, bare links, emails and separator runs, applied wherever chapter text is processed so the page and read-aloud agree. [Doc](docs/dev/plans/novel-text-cleanup.md).
+- **Audiobook player and sentence transcript** `[L]` - promote read-aloud to sentence granularity so the notification seeks to a real position, keep it playing after the reader closes, and add a full-screen player whose transcript can be tapped to seek. [Doc](docs/dev/plans/novel-audiobook-player.md).
+
 ### UI & design
 
 - **Reikai design refresh (off stock Material 3)** `[L]` - move shape, typography, component styling, spacing and layout off stock Material 3 across the shared `Entry*` surfaces, under whichever theme the reader picked. Exploratory; it starts by seeding tokens in `DESIGN.md`. [Doc](docs/dev/subsystems/content-layer.md).

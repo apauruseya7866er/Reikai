@@ -6,4 +6,5 @@ The template and the rule for what earns a plan live in [.claude/rules/roadmap-p
 
 ## Open plans
 
-None at present.
+- [novel-text-cleanup.md](novel-text-cleanup.md): long-press a sentence to hide it everywhere, a built-in rule set for the junk sources inject, and safe deletion so no rule can empty a chapter.
+- [novel-audiobook-player.md](novel-audiobook-player.md): sentence-granular read-aloud that outlives the reader, with a full-screen player and a tappable sentence transcript.
