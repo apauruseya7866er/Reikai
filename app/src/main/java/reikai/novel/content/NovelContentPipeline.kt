@@ -31,7 +31,14 @@ object NovelContentPipeline {
             content = NovelHtmlUtils.removeExtraParagraphSpacing(content)
         }
 
-        content = NovelRegexReplacements.apply(content, config.regexRulesJson)
+        // The shipped rules first, so a rule the reader wrote matches what is left rather than the
+        // junk underneath it. The master switch gates only these: a rule the reader wrote is theirs.
+        val shipped = if (config.cleanupEnabled) {
+            BuiltinCleanupRules.active(config.disabledCleanupIds)
+        } else {
+            emptyList()
+        }
+        content = NovelRegexReplacements.apply(content, config.regexRulesJson, shipped)
 
         // Before lowercasing, which would hide every sentence end: a full stop followed by a lower-case
         // word is not one.

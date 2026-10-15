@@ -486,6 +486,15 @@ class NovelPreferences(
     /** User find/replace rules, a JSON array of [reikai.novel.content.NovelRegexReplacement]. */
     fun readerRegexReplacements() = preferenceStore.getString("ln_reader_regex_replacements", "[]")
 
+    /** Whether the shipped cleanup rules run, which the reader's own find/replace rules ignore. */
+    fun readerCleanupEnabled() = preferenceStore.getBoolean("ln_reader_cleanup_enabled", true)
+
+    /**
+     * Ids of shipped cleanup rules the reader has turned off, rather than rules deleted, so a fix to a
+     * pattern reaches everyone who left it on.
+     */
+    fun readerDisabledCleanupIds() = preferenceStore.getStringSet("ln_reader_disabled_cleanup_ids", emptySet())
+
     /** CSS the WebView reader adds to every chapter page, a JSON array of [reikai.novel.content.NovelCodeSnippet]. */
     fun readerCssSnippets() = preferenceStore.getString(CSS_SNIPPETS_KEY, "[]")
 

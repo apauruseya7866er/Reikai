@@ -63,8 +63,23 @@ object NovelRegexReplacements {
         return Regex(bounded, options)
     }
 
-    fun apply(content: String, rulesJson: String): String {
-        if (rulesJson.isBlank() || rulesJson == "[]") return content
+    /**
+     * A shipped rule rather than a saved one. Multiline is on so its `^` and `$` are line anchors, the
+     * same as Inkbound's, which a rule whose pattern is authored against chapter markup needs.
+     */
+    fun builtin(pattern: String): Compiled = Compiled(
+        regex = Regex(pattern, setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)),
+        replacement = "",
+        literal = false,
+    )
+
+    /** [shipped] runs first, so a rule the reader wrote matches what the shipped rules left behind. */
+    fun apply(content: String, rulesJson: String, shipped: List<Compiled> = emptyList()): String {
+        if (rulesJson.isBlank() ||
+            rulesJson == "[]"
+        ) {
+            return if (shipped.isEmpty()) content else runAll(content, shipped)
+        }
 
         val compiled = synchronized(cache) {
             cache.computeIfAbsent(rulesJson) { json ->
@@ -80,6 +95,10 @@ object NovelRegexReplacements {
             }
         }
 
+        return runAll(content, shipped + compiled)
+    }
+
+    private fun runAll(content: String, compiled: List<Compiled>): String {
         var result = content
         for (rule in compiled) {
             try {

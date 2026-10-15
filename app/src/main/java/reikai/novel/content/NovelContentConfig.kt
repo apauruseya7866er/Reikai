@@ -27,6 +27,8 @@ data class NovelContentConfig(
     val autoSplit: Boolean = false,
     val autoSplitWordCount: Int = 50,
     val regexRulesJson: String = "[]",
+    val cleanupEnabled: Boolean = true,
+    val disabledCleanupIds: Set<String> = emptySet(),
     /** Applied by the loader after the pipeline, so both readers draw the same escaped text. */
     val showRawHtml: Boolean = false,
 ) {
@@ -51,6 +53,8 @@ data class NovelContentConfig(
             autoSplit = preferences.readerAutoSplitText().get(),
             autoSplitWordCount = preferences.readerAutoSplitWordCount().get(),
             regexRulesJson = preferences.readerRegexReplacements().get(),
+            cleanupEnabled = preferences.readerCleanupEnabled().get(),
+            disabledCleanupIds = preferences.readerDisabledCleanupIds().get(),
             showRawHtml = preferences.readerShowRawHtml().get(),
         )
 
@@ -72,6 +76,8 @@ data class NovelContentConfig(
             preferences.readerAutoSplitText().changes(),
             preferences.readerAutoSplitWordCount().changes(),
             preferences.readerRegexReplacements().changes(),
+            preferences.readerCleanupEnabled().changes(),
+            preferences.readerDisabledCleanupIds().changes(),
             preferences.readerShowRawHtml().changes(),
         )
     }
