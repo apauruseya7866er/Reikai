@@ -157,7 +157,9 @@ fun NovelRegexRuleEditDialog(
                 )
                 preview?.getOrNull()?.takeIf { sample.isNotEmpty() }?.let {
                     Text(
-                        text = it,
+                        // An empty result is the whole answer for a rule that removes text, and
+                        // rendering nothing would read as a preview that did not run.
+                        text = it.ifEmpty { stringResource(MR.strings.novel_regex_sample_emptied) },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.padding(top = MaterialTheme.padding.small),

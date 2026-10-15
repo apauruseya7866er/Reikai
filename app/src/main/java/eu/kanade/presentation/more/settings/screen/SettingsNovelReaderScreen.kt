@@ -12,6 +12,7 @@ import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.screen.novel.NovelCleanupRulesScreen
 import eu.kanade.presentation.more.settings.screen.novel.NovelCodeSnippetsScreen
 import eu.kanade.presentation.more.settings.screen.novel.NovelFontsScreen
 import eu.kanade.presentation.more.settings.screen.novel.NovelRegexRulesScreen
@@ -352,6 +353,12 @@ object SettingsNovelReaderScreen : SearchableSettings {
                     preference = novelPreferences.readerShowRawHtml(),
                     title = stringResource(MR.strings.pref_novel_show_raw_html),
                     subtitle = stringResource(MR.strings.pref_novel_show_raw_html_summary),
+                ),
+                // Before the reader's own rules, which is the order they run in.
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(MR.strings.pref_novel_cleanup_rules),
+                    subtitle = stringResource(MR.strings.pref_novel_cleanup_rules_summary),
+                    onClick = { navigator.push(NovelCleanupRulesScreen()) },
                 ),
                 // Its own screen rather than a row: a rule is five fields plus a preview, and the
                 // list has no useful upper bound.

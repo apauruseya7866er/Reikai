@@ -737,10 +737,34 @@
     <string name="novel_regex_whole_words">Whole words only</string>
     <string name="novel_regex_match_case">Match case</string>
     <string name="novel_regex_sample">Sample text</string>
+    <string name="novel_regex_sample_emptied">Everything in the sample is removed.</string>
     <string name="novel_regex_rule_summary">%1$s to %2$s</string>
     <string name="novel_regex_removes">nothing</string>
     <string name="novel_regex_delete_confirmation">Do you wish to delete the rule \"%1$s\"?</string>
     <string name="information_empty_novel_regex_rules">No rules yet. Add one to rewrite chapter text as it loads.</string>
+    <!-- RK: the shipped text-cleanup rules, which strip injected junk from a chapter before it renders -->
+    <string name="pref_novel_cleanup_rules">Text cleanup</string>
+    <string name="pref_novel_cleanup_rules_summary">Remove the ads and links sources put in novel chapters</string>
+    <string name="pref_novel_cleanup_enabled">Remove ads and injected text</string>
+    <string name="pref_novel_cleanup_enabled_summary">Strips donation and community appeals, chapter footers, translation credits, bare links, emails and separator runs from every chapter, on the page and in read-aloud. Your own find and replace rules always apply.</string>
+    <string name="novel_cleanup_shipped_rules">Shipped rules</string>
+    <string name="novel_cleanup_restore_all">Turn every shipped rule back on</string>
+    <string name="novel_cleanup_fork_title">Copy and edit \"%1$s\"?</string>
+    <string name="novel_cleanup_fork_body">The copy joins your find and replace rules, where you can change it, and this rule switches off so your version is the one that runs.</string>
+    <string name="novel_cleanup_fork">Copy to my rules</string>
+    <string name="novel_cleanup_rule_patreon">Donation links</string>
+    <string name="novel_cleanup_rule_support_me">Support me appeals</string>
+    <string name="novel_cleanup_rule_community">Community and follow requests</string>
+    <string name="novel_cleanup_rule_advanced_chapters">Advance chapter offers</string>
+    <string name="novel_cleanup_rule_chapter_footer">Chapter navigation</string>
+    <string name="novel_cleanup_rule_thanks_reading">Thanks for reading</string>
+    <string name="novel_cleanup_rule_voting">Voting requests</string>
+    <string name="novel_cleanup_rule_novel_promo">Author promotion</string>
+    <string name="novel_cleanup_rule_translation_credits">Translation credits</string>
+    <string name="novel_cleanup_rule_watermark">Site watermarks</string>
+    <string name="novel_cleanup_rule_separator">Separator runs</string>
+    <string name="novel_cleanup_rule_bare_link">Bare links and emails</string>
+    <string name="novel_cleanup_rule_support_sentence">Support me inside a paragraph</string>
     <!-- RK: the WebView reader's CSS and JavaScript snippets -->
     <string name="pref_novel_css_snippets">CSS snippets</string>
     <string name="pref_novel_css_snippets_summary">Add your own styles to every chapter page</string>

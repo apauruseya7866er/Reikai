@@ -13,6 +13,11 @@ Reikai uses its own [Semantic Versioning](https://semver.org/) from the Mihon-ba
 #### Added
 
 - **Injected junk now disappears from novel chapters on its own.** Thirteen shipped rules strip donation and community appeals, chapter footers, translation credits, bare links, emails and the separator runs sources pad chapters with, on the page and in read-aloud alike.
+- **A settings page to turn those rules off, one at a time or all at once.** Each rule shows the pattern behind it, and one can be copied into your own find-and-replace rules to edit without changing what everyone else gets.
+
+#### Fixed
+
+- **A find-and-replace rule that removes text now says so in its preview.** A rule that takes the whole sample used to preview as nothing at all, which read as a preview that had not run.
 
 #### Changed
 
