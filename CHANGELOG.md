@@ -8,6 +8,12 @@ Reikai uses its own [Semantic Versioning](https://semver.org/) from the Mihon-ba
 
 ## [Unreleased]
 
+### Reader
+
+#### Changed
+
+- **A find-and-replace rule with nothing to replace it with now deletes text cleanly.** The gap around it goes too, words either side are not fused into one, a line that was only junk leaves no blank line, and the full stops survive. A rule that would leave nothing is ignored rather than blanking the chapter.
+
 ## [0.4.1]
 
 ### Highlights

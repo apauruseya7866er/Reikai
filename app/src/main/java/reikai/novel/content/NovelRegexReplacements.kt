@@ -13,8 +13,14 @@ object NovelRegexReplacements {
      * exactly as typed, so a price like `$5` does not read as a group and fail the whole rule.
      */
     data class Compiled(val regex: Regex, val replacement: String, val literal: Boolean) {
-        fun applyTo(input: String): String =
-            if (literal) regex.replace(input) { replacement } else regex.replace(input, replacement)
+        /** An empty replacement takes text out of the chapter rather than rewriting it. */
+        val removes: Boolean get() = replacement.isEmpty()
+
+        fun applyTo(input: String): String = when {
+            removes -> input.withoutRanges(regex)
+            literal -> regex.replace(input) { replacement }
+            else -> regex.replace(input, replacement)
+        }
     }
 
     /** The pattern compiled but its replacement cannot be read, so the editor marks the Replace field. */
@@ -82,7 +88,109 @@ object NovelRegexReplacements {
                 logcat(LogPriority.WARN, e) { "Regex replacement failed" }
             }
         }
-        return result
+        // A rule that matches everything leaves a blank chapter, which reads as a broken download
+        // rather than as a cleanup. Showing the junk beats showing nothing.
+        return if (result.any { it.isLetterOrDigit() }) result else content
+    }
+
+/** Punctuation that trails a removed line, so a cut takes it rather than leaving it dangling. */
+    private const val EDGE_SEPARATORS = ",;:–—|/·-"
+
+    /** Spaces [Char.isWhitespace] calls false: the non-breaking ones, and the zero-width space scrapers use to split a domain. */
+    private val EXTRA_SPACES = intArrayOf(0x00A0, 0x2007, 0x202F, 0x200B)
+
+    /**
+     * A newline is never absorbed, so hiding one injected line cannot glue the paragraphs either side
+     * of it, and a sentence terminator never is, so hiding a line keeps the chapter's full stops.
+     */
+    private fun Char.isCutSeparator(): Boolean = when {
+        this == '\n' || this == '\r' -> false
+        this.code in EXTRA_SPACES -> true
+        this.isWhitespace() -> true
+        else -> this in EDGE_SEPARATORS
+    }
+
+    /**
+     * Takes every match out as a range rather than by repeated replacement, so the gaps merge and a
+     * word either side of a cut is not fused into one longer word.
+     */
+    private fun String.withoutRanges(regex: Regex): String {
+        val cuts = regex.findAll(this).map { it.range.first to it.range.last + 1 }.sortedBy { it.first }.toList()
+        if (cuts.isEmpty()) return this
+
+        val out = StringBuilder(length)
+        var cursor = 0
+        var lastKept = ' '
+        var justCut = false
+
+        fun keep(from: Int, to: Int) {
+            if (to <= from) return
+            if (justCut && !lastKept.isWhitespace() && this[from].isLetterOrDigit()) out.append(' ')
+            out.append(this, from, to)
+            lastKept = this[to - 1]
+            justCut = false
+        }
+
+        for (cut in mergeCuts(cuts)) {
+            keep(cursor, minOf(cut.first, length))
+            cursor = maxOf(cut.second, cursor)
+            justCut = true
+        }
+        keep(cursor, length)
+        return out.toString()
+    }
+
+    /** A line holding nothing but the cut gives its line break up too, so hiding one leaves no gap. */
+    private fun String.isBlankBefore(index: Int): Boolean {
+        var i = index - 1
+        while (i >= 0 && this[i] != '\n') {
+            if (!this[i].isWhitespace()) return false
+            i--
+        }
+        return true
+    }
+
+    private fun String.isBlankAfter(index: Int): Boolean {
+        var i = index
+        while (i < length && this[i] != '\n') {
+            if (!this[i].isWhitespace()) return false
+            i++
+        }
+        return true
+    }
+
+    /** Merges overlaps, then grows each over separators, merging again since growing can make two meet. */
+    private fun String.mergeCuts(sorted: List<Pair<Int, Int>>): List<Pair<Int, Int>> {
+        val merged = ArrayList<Pair<Int, Int>>()
+        for (cut in sorted) {
+            val last = merged.lastOrNull()
+            if (last != null && cut.first <= last.second) {
+                if (cut.second > last.second) merged[merged.size - 1] = last.first to cut.second
+            } else {
+                merged.add(cut)
+            }
+        }
+
+        val grown = ArrayList<Pair<Int, Int>>()
+        for (cut in merged) {
+            var start = cut.first
+            var end = cut.second
+            while (start > 0 && this[start - 1].isCutSeparator()) start--
+            while (end < length && this[end].isCutSeparator()) end++
+            if (isBlankBefore(start) && isBlankAfter(end)) {
+                when {
+                    start > 0 && this[start - 1] == '\n' -> start--
+                    end < length && this[end] == '\n' -> end++
+                }
+            }
+            val last = grown.lastOrNull()
+            if (last != null && start <= last.second) {
+                if (end > last.second) grown[grown.size - 1] = last.first to end
+            } else {
+                grown.add(start to end)
+            }
+        }
+        return grown
     }
 
     private val groupNameRegex = Regex("""\(\?<([a-zA-Z][a-zA-Z0-9]*)>""")
